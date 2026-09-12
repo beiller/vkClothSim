@@ -37,15 +37,9 @@ function(spirv base file)
     endif()
 endfunction()
 
-spirv(vk_bg_vert ${CMAKE_SOURCE_DIR}/shaders/vk_bg_vert.vert)
-spirv(vk_bg_frag ${CMAKE_SOURCE_DIR}/shaders/vk_bg_frag.frag)
-spirv(caps_vert ${CMAKE_SOURCE_DIR}/shaders/caps_vert.vert)
-spirv(caps_frag ${CMAKE_SOURCE_DIR}/shaders/caps_frag.frag)
-spirv(cloth_vert ${CMAKE_SOURCE_DIR}/shaders/cloth_vert.vert)
-spirv(cloth_frag ${CMAKE_SOURCE_DIR}/shaders/cloth_frag.frag)
+spirv(mesh_vert ${CMAKE_SOURCE_DIR}/shaders/mesh_vert.vert)
+spirv(mesh_frag ${CMAKE_SOURCE_DIR}/shaders/mesh_frag.frag)
 spirv(softbody ${CMAKE_SOURCE_DIR}/shaders/softbody.comp)
-spirv(ball_vert ${CMAKE_SOURCE_DIR}/shaders/ball_vert.vert)
-spirv(ball_frag ${CMAKE_SOURCE_DIR}/shaders/ball_frag.frag)
 
 # --- Dear ImGui (core + vulkan + glfw backends) ---
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/lib/imgui)

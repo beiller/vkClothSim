@@ -95,29 +95,51 @@ void SoftSim::buildBodySimBuffers(GpuBody& b, const sim::SoftBody& body) {
     for (int i = 0; i < n; ++i)
         for (size_t e = 0; e < lists[i].size(); ++e)
             entries[start[i] + e] = lists[i][e];
-    // the sim buffers (16-byte-stride vec3 positions, matching the render's SSBO)
-    std::vector<float> initPos((size_t)4 * n);
+    // the render Vtx buffers (48 bytes = pos+nrm+col). .pos/.nrm are stepped by the sim; .col
+    // is static. BOTH posA and posB get the full init Vtx: either can be the "current" buffer
+    // the render reads (the .col must be valid in both; .nrm is recomputed each frame).
+    std::vector<float> initVtx((size_t)12 * n);
     for (int i = 0; i < n; ++i) {
         const float* p = body.posPtr(i);
-        initPos[4 * i + 0] = p[0];
-        initPos[4 * i + 1] = p[1];
-        initPos[4 * i + 2] = p[2];
+        const float* nr = body.nrmPtr(i);
+        const float* c = body.colPtr(i);
+        initVtx[12 * i + 0] = p[0];
+        initVtx[12 * i + 1] = p[1];
+        initVtx[12 * i + 2] = p[2];
+        initVtx[12 * i + 3] = 0.0f; // pos (16 B)
+        initVtx[12 * i + 4] = nr[0];
+        initVtx[12 * i + 5] = nr[1];
+        initVtx[12 * i + 6] = nr[2];
+        initVtx[12 * i + 7] = 0.0f; // nrm (16 B)
+        initVtx[12 * i + 8] = c[0];
+        initVtx[12 * i + 9] = c[1];
+        initVtx[12 * i + 10] = c[2];
+        initVtx[12 * i + 11] = 0.0f; // col (16 B)
+    }
+    // prev is the 16-byte-stride pos (zero velocity) — a 16-byte view of the init Vtx.
+    std::vector<float> initPos((size_t)4 * n);
+    for (int i = 0; i < n; ++i) {
+        initPos[4 * i + 0] = initVtx[12 * i + 0];
+        initPos[4 * i + 1] = initVtx[12 * i + 1];
+        initPos[4 * i + 2] = initVtx[12 * i + 2];
         initPos[4 * i + 3] = 0.0f;
     }
-    vkMakeBuffer(dev, m_pdev, b.posA, b.posAMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                 initPos.data());
-    vkMakeBuffer(dev, m_pdev, b.posB, b.posBMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    vkMakeBuffer(dev, m_pdev, b.posA, b.posAMem, (VkDeviceSize)48 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 initVtx.data());
+    vkMakeBuffer(dev, m_pdev, b.posB, b.posBMem, (VkDeviceSize)48 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 initVtx.data());
     vkMakeBuffer(dev, m_pdev, b.prev, b.prevMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                  initPos.data());   // prev = pos (zero velocity)
-    b.initPos = std::move(initPos); // keep a CPU copy for reset
+    b.initVtx = std::move(initVtx); // keep a CPU copy (pos+nrm+col) for reset
+    b.initPos = std::move(initPos); // keep the 16-byte pos copy for prev + reset
     vkMakeBuffer(dev, m_pdev, b.entries, b.entriesMem, (VkDeviceSize)16 * b.nEntries,
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, entries.data());
     vkMakeBuffer(dev, m_pdev, b.entryStart, b.entryStartMem, (VkDeviceSize)4 * (n + 1),
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, start.data());
     // the compute descriptor set (this body's buffers + the shared capsules + phys params)
     std::vector<VkDescriptorBufferInfo> bi = {
-        {b.posA, 0, (VkDeviceSize)16 * n},
-        {b.posB, 0, (VkDeviceSize)16 * n},
+        {b.posA, 0, (VkDeviceSize)48 * n},
+        {b.posB, 0, (VkDeviceSize)48 * n},
         {b.prev, 0, (VkDeviceSize)16 * n},
         {m_capsInstances, 0, (VkDeviceSize)48 * m_nCaps},
         {b.entries, 0, (VkDeviceSize)16 * b.nEntries},
@@ -151,6 +173,29 @@ void SoftSim::recordDispatch(VkCommandBuffer cmd, GpuBody& b, int mode) {
     b.inA = !b.inA;
 }
 
+// The mode-3 normal pass: read the CURRENT buffer's .pos, write .nrm into the SAME buffer.
+// No inA flip (it reads and writes the same buffer), so the buffer the render reads holds the
+// fresh pos + nrm.
+void SoftSim::recordNorm(VkCommandBuffer cmd, GpuBody& b) {
+    VkBuffer rd = b.inA ? b.posA : b.posB;
+    VkBufferMemoryBarrier bmb{};
+    bmb.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    bmb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bmb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bmb.buffer = rd;
+    bmb.offset = 0;
+    bmb.size = VK_WHOLE_SIZE;
+    bmb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    bmb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr,
+                         1, &bmb, 0, nullptr);
+    int pc[4] = {3, b.inA ? 1 : 0, b.n, 0}; // mode, readFromA, n, pinned(unused)
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPl, 0, 1, &b.simSet, 0, nullptr);
+    vkCmdPushConstants(cmd, m_softPl, VK_SHADER_STAGE_COMPUTE_BIT, 0, (uint32_t)sizeof(pc), pc);
+    vkCmdDispatch(cmd, (b.n + 63) / 64, 1, 1);
+}
+
 void SoftSim::recordBody(VkCommandBuffer cmd, GpuBody& b, int relaxIters, int pinned) {
     if (pinned)
         return;
@@ -160,6 +205,7 @@ void SoftSim::recordBody(VkCommandBuffer cmd, GpuBody& b, int relaxIters, int pi
             recordDispatch(cmd, b, 1); // joint relaxation (Jacobi)
         recordDispatch(cmd, b, 2);     // collision
     }
+    recordNorm(cmd, b); // deformed normals (for the render)
 }
 
 void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int clothPinned) {
@@ -185,10 +231,15 @@ void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int clothPinned) {
 }
 
 void SoftSim::resetBody(GpuBody& b) {
+    // restore posA + posB to the initial Vtx (pos+nrm+col) and prev to the initial pos.
     void* pa;
-    VK(vkMapMemory(m_dev, b.posAMem, 0, (VkDeviceSize)16 * b.n, 0, &pa));
-    std::memcpy(pa, b.initPos.data(), (size_t)16 * b.n);
+    VK(vkMapMemory(m_dev, b.posAMem, 0, (VkDeviceSize)48 * b.n, 0, &pa));
+    std::memcpy(pa, b.initVtx.data(), (size_t)48 * b.n);
     vkUnmapMemory(m_dev, b.posAMem);
+    void* pb;
+    VK(vkMapMemory(m_dev, b.posBMem, 0, (VkDeviceSize)48 * b.n, 0, &pb));
+    std::memcpy(pb, b.initVtx.data(), (size_t)48 * b.n);
+    vkUnmapMemory(m_dev, b.posBMem);
     void* pv;
     VK(vkMapMemory(m_dev, b.prevMem, 0, (VkDeviceSize)16 * b.n, 0, &pv));
     std::memcpy(pv, b.initPos.data(), (size_t)16 * b.n);

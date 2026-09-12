@@ -10,7 +10,7 @@ capsules from Jolt are passed to the sim, which runs on the GPU.
 
 Use separation of concerns
 - Rendering
-- Cloth Sim
+- Cloth / Soft Body Sim
 - Jolt physics loop
 
 Inter-communication between those channels.

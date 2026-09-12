@@ -75,7 +75,8 @@ int main() {
             sim.resetSoftBodies();
         }
         scene.stepRigid(1);
-        sim.uploadCapsules(scene.rigid().capsuleGPU()); // -> GPU (the sim + render read them)
+        auto caps = scene.rigid().capsuleGPU(); // the Jolt capsule transforms (CPU -> GPU)
+        sim.uploadCapsules(caps);               // -> GPU (the sim reads them as colliders)
         // the ImGui overlay
         app.pollEvents();
         ImGui_ImplVulkan_NewFrame();
@@ -93,8 +94,8 @@ int main() {
         // one command buffer: the GPU soft-body sim (record) first, then the render + present
         uint32_t idx = app.acquireNextImage();
         VkCommandBuffer cmd = app.beginCommands();
-        sim.record(cmd, ui.sim, scene.clothPinned() ? 1 : 0);                // the GPU soft-body sim
-        renderer.draw(cmd, app, idx, ui.bgColor, ImGui::GetDrawData(), sim); // the render
+        sim.record(cmd, ui.sim, scene.clothPinned() ? 1 : 0);                      // the GPU soft-body sim
+        renderer.draw(cmd, app, idx, ui.bgColor, ImGui::GetDrawData(), sim, caps); // the render
         app.present(idx);
     }
 

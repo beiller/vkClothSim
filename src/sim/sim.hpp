@@ -37,35 +37,52 @@ struct Triangle {
     int a, b, c;
 };
 
-// A soft body's initial state: n vertices (3 floats each) + distance constraints.
+// A soft body's initial state: n vertices (position + normal + color, 3 floats each) + the
+// distance constraints. The (pos, nrm, col) triple is exactly the render vertex (the sim's
+// Vtx struct in softbody.comp) — the sim seeds the GPU with it, steps .pos/.nrm, and the
+// renderer reads the whole thing to draw. .col is static (set here, never touched).
 struct SoftBody {
     int n = 0;
     std::vector<float> pos; // 3n
+    std::vector<float> nrm; // 3n
+    std::vector<float> col; // 3n
     std::vector<Constraint> cons;
 
-    // Build the body from an initial vertex list (3 floats each).
-    void init(const float* p0, int n, std::vector<Constraint> cons) {
+    // Build the body from initial position/normal/color lists (3 floats each) + constraints.
+    void init(const float* p0, const float* n0, const float* c0, int n, std::vector<Constraint> cons) {
         this->n = n;
         pos.assign(p0, p0 + (size_t)3 * n);
+        nrm.assign(n0, n0 + (size_t)3 * n);
+        col.assign(c0, c0 + (size_t)3 * n);
         this->cons = std::move(cons);
     }
 
     int numVertices() const { return n; }
     float* posPtr(int i) { return &pos[3 * (size_t)i]; }
     const float* posPtr(int i) const { return &pos[3 * (size_t)i]; }
+    const float* nrmPtr(int i) const { return &nrm[3 * (size_t)i]; }
+    const float* colPtr(int i) const { return &col[3 * (size_t)i]; }
 };
 
-// Build a CW x CH grid of vertices (3 floats each) + the distance constraints (the grid
-// edges + diagonals) at their tension = 1.0 rest lengths.
-inline void makeCloth(std::vector<float>& verts, std::vector<Constraint>& cons, int CW, int CH, float span, float y0) {
+// Build a CW x CH grid of vertices (pos/nrm/col, 3 floats each) + the distance constraints
+// (the grid edges + diagonals) at their tension = 1.0 rest lengths. The sheet faces +Y (the
+// normals are up); the color is the cloth's albedo.
+inline void makeCloth(std::vector<float>& verts, std::vector<float>& nrm, std::vector<float>& col,
+                      std::vector<Constraint>& cons, int CW, int CH, float span, float y0) {
     const int CN = CW * CH;
     verts.assign((size_t)3 * CN, 0.0f);
+    nrm.assign((size_t)3 * CN, 0.0f);
+    col.assign((size_t)3 * CN, 0.0f);
     for (int gy = 0; gy < CH; ++gy)
         for (int gx = 0; gx < CW; ++gx) {
             int i = gy * CW + gx;
             verts[3 * i + 0] = -span / 2 + span * (float)gx / (float)(CW - 1);
             verts[3 * i + 1] = y0;
             verts[3 * i + 2] = -span / 2 + span * (float)gy / (float)(CH - 1);
+            nrm[3 * i + 1] = 1.0f;  // flat sheet, faces up
+            col[3 * i + 0] = 0.25f; // the cloth's albedo (blue)
+            col[3 * i + 1] = 0.45f;
+            col[3 * i + 2] = 0.78f;
         }
     const float spacing = span / (float)(CW - 1);
     const float diag = spacing * kSqrt2;
@@ -83,11 +100,13 @@ inline void makeCloth(std::vector<float>& verts, std::vector<Constraint>& cons, 
     }
 }
 
-// Build a UV-sphere: the vertex list (3 floats/vert), the distance constraints (the
-// sphere's edges, soft k=0.5), and the triangles (for the render). The two poles are single
-// vertices; the interior is (lat-1) rings of `lon` vertices each.
-inline void makeBall(std::vector<float>& verts, std::vector<Constraint>& cons, std::vector<Triangle>& tris, int lat,
-                     int lon, float radius, float y0) {
+// Build a UV-sphere: the vertex list (pos/nrm/col, 3 floats/vert each), the distance
+// constraints (the sphere's edges, soft k=0.5), and the triangles (for the render). The
+// normals are the rest-state sphere surface directions (the vertex position / radius). The
+// two poles are single vertices; the interior is (lat-1) rings of `lon` vertices each.
+inline void makeBall(std::vector<float>& verts, std::vector<float>& nrm, std::vector<float>& col,
+                     std::vector<Constraint>& cons, std::vector<Triangle>& tris, int lat, int lon, float radius,
+                     float y0) {
     auto vid = [lat, lon](int r, int c) {
         if (r == 0)
             return 0;
@@ -115,14 +134,22 @@ inline void makeBall(std::vector<float>& verts, std::vector<Constraint>& cons, s
     };
     const int BN = 2 + (lat - 1) * lon;
     verts.assign((size_t)3 * BN, 0.0f);
+    nrm.assign((size_t)3 * BN, 0.0f);
+    col.assign((size_t)3 * BN, 0.0f);
     for (int r = 0; r <= lat; ++r)
         for (int c = 0; c < lon; ++c) {
             int i = vid(r, c);
             float x, y, z;
-            vpos(r, c, x, y, z);
+            vpos(r, c, x, y, z); // the un-offset point, at distance `radius` from the center
             verts[3 * i + 0] = x;
             verts[3 * i + 1] = y0 + y;
             verts[3 * i + 2] = z;
+            nrm[3 * i + 0] = x / radius; // rest-state surface normal
+            nrm[3 * i + 1] = y / radius;
+            nrm[3 * i + 2] = z / radius;
+            col[3 * i + 0] = 0.85f; // the ball's albedo (orange)
+            col[3 * i + 1] = 0.35f;
+            col[3 * i + 2] = 0.25f;
         }
     auto bdist = [&](int r1, int c1, int r2, int c2) {
         float ax, ay, az, bx, by, bz;

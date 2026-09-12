@@ -9,16 +9,16 @@ void Scene::init() {
     // objects (initial vertices + joint constraints) stepped by the same GPU solver.
     // Only their shape/constraints differ — the cloth is a CW x CH grid sheet held flat
     // above the pile, the ball a UV sphere held in the air.
-    std::vector<float> verts;
+    std::vector<float> verts, cnrm, ccol;
     std::vector<sim::Constraint> cons;
-    sim::makeCloth(verts, cons, kCW, kCH, kClothSpan, kClothY0);
-    m_cloth.init(verts.data(), kCW * kCH, std::move(cons));
+    sim::makeCloth(verts, cnrm, ccol, cons, kCW, kCH, kClothSpan, kClothY0);
+    m_cloth.init(verts.data(), cnrm.data(), ccol.data(), kCW * kCH, std::move(cons));
 
-    std::vector<float> bverts;
+    std::vector<float> bverts, bnorm, bcol;
     std::vector<sim::Constraint> bcons;
-    sim::makeBall(bverts, bcons, m_ballTris, kBallLat, kBallLon, kBallRadius, kBallY0);
+    sim::makeBall(bverts, bnorm, bcol, bcons, m_ballTris, kBallLat, kBallLon, kBallRadius, kBallY0);
     const int BN = 2 + (kBallLat - 1) * kBallLon;
-    m_ball.init(bverts.data(), BN, std::move(bcons));
+    m_ball.init(bverts.data(), bnorm.data(), bcol.data(), BN, std::move(bcons));
 }
 
 void Scene::stepRigid(int n) {

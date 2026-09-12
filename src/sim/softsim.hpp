@@ -58,7 +58,8 @@ private:
         int n = 0;
         int nEntries = 0;
         bool inA = true;
-        std::vector<float> initPos; // 16-byte stride, kept for reset
+        std::vector<float> initPos; // 16-byte stride (pos), kept for prev + reset
+        std::vector<float> initVtx; // 48-byte stride (pos+nrm+col), kept for reset
     };
     // Create one body's sim buffers (posA/posB/prev + the joint entries) from its initial
     // vertices + constraints, plus its compute descriptor set.
@@ -66,8 +67,13 @@ private:
     // Record ONE soft-body dispatch (barriers + push constants + dispatch) and flip inA (the
     // write went to the other buffer).
     void recordDispatch(VkCommandBuffer cmd, GpuBody& b, int mode);
-    // Record one body's full frame of sim (substeps x {Verlet + relax + collide}); skip if
-    // pinned. The relax is Jacobi (the cloth's joint graph is not bipartite).
+    // Record the mode-3 normal pass for one body: recompute .nrm from the joints into the
+    // CURRENT buffer (no inA flip — it writes to the buffer it reads, so the render reads the
+    // fresh pos + nrm from one buffer).
+    void recordNorm(VkCommandBuffer cmd, GpuBody& b);
+    // Record one body's full frame of sim (substeps x {Verlet + relax + collide} + a final
+    // normal pass); skip if pinned. The relax is Jacobi (the cloth's joint graph is not
+    // bipartite).
     void recordBody(VkCommandBuffer cmd, GpuBody& b, int relaxIters, int pinned);
     // Re-upload one body's initial state to the GPU (posA + prev = initial, inA = true).
     void resetBody(GpuBody& b);

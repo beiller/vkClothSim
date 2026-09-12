@@ -10,7 +10,7 @@
 // thread is writing (the live read/write race is what made the first GPU cloth explode).
 // `prev` is a separate buffer touched only by its own thread (disjoint per vertex).
 //
-// One pipeline, three modes (push constant):
+// One pipeline, four modes (push constant):
 //   0 = Verlet    : read pos + prev -> write new pos (other buf), prev = old pos; the
 //                   per-substep displacement is clamped to maxStep — a hard anti-divergence
 //                   guard so a bad parameter set can never fling a vertex (runaway was the
@@ -20,10 +20,21 @@
 //                   triangle with its edges), so red-black Gauss-Seidel is impossible here —
 //                   Jacobi it is.
 //   2 = collide   : push out of capsules + ground, remove normal velocity
+//   3 = normals   : recompute the deformed per-vertex normal from the first two joints
+//                   (cross of the two joint edges) and write it into .nrm of the CURRENT
+//                   buffer. Reads .pos, writes .nrm (disjoint fields) -> race-free, and no
+//                   ping-pong flip (it writes to the buffer it reads). The renderer lights
+//                   with abs(), so the normal's sign/orientation doesn't matter.
 layout(local_size_x = 64) in;
 
-layout(binding = 0) buffer PosA { vec3 a[]; } posA;
-layout(binding = 1) buffer PosB { vec3 b[]; } posB;
+// A render vertex: position + normal + color (48 bytes; std430 -> each vec3 is a 16-byte
+// block, so the struct is 3 x 16 = 48 bytes). This is the SAME type the renderer reads to
+// draw: the sim steps .pos (Verlet/relax/collide) and recomputes .nrm (mode 3); .col is
+// static (set at init, never touched).
+struct Vtx { vec3 pos; vec3 nrm; vec3 col; };
+
+layout(binding = 0) buffer PosA { Vtx a[]; } posA;
+layout(binding = 1) buffer PosB { Vtx b[]; } posB;
 layout(binding = 2) buffer Prev { vec3 v[]; } prevB;
 
 struct Capsule { vec4 centerRadius; vec4 quat; vec4 halfLen; };   // 48 B, mirrors CapsuleGPU
@@ -50,8 +61,12 @@ layout(binding = 6) buffer PhysP {
 
 layout(push_constant) uniform PC { int mode; int readFromA; int n; int pinned; } pc;
 
-vec3 rpos(int i) { return pc.readFromA != 0 ? posA.a[i] : posB.b[i]; }
-void wpos(int i, vec3 x) { if (pc.readFromA != 0) posB.b[i] = x; else posA.a[i] = x; }
+vec3 rpos(int i) { return pc.readFromA != 0 ? posA.a[i].pos : posB.b[i].pos; }
+void wpos(int i, vec3 x) { if (pc.readFromA != 0) posB.b[i].pos = x; else posA.a[i].pos = x; }
+// The normal field of the CURRENT (read) buffer: written by mode 3 (no flip, so the read
+// buffer is the one that holds the live state). Reads .nrm, writes .nrm (disjoint from the
+// .pos the other modes touch).
+void wnrm(int i, vec3 x) { if (pc.readFromA != 0) posA.a[i].nrm = x; else posB.b[i].nrm = x; }
 
 mat3 quatMat(vec4 q) {
     q = normalize(q);
@@ -141,7 +156,21 @@ void main() {
             Pi += d * ((dist - rest) / dist * 0.5 * en.k * ph.relaxScale);
         }
         wpos(i, Pi);
-    } else {                       // collision
+    } else if (pc.mode == 2) {     // collision
         collideVertex(i);
+    } else {                       // mode 3: recompute the deformed normal from the joints
+        // The normal of the triangle (i, j0, j1) formed by the first two joints is a good
+        // estimate of the deformed surface normal (it works for the cloth AND the ball).
+        // Reads .pos (rpos), writes .nrm (wnrm) — disjoint, so it is race-free and needs no
+        // ping-pong flip.
+        int s0 = estart.s[i], s1 = estart.s[i + 1];
+        if (s1 - s0 >= 2) {
+            vec3 P = rpos(i);
+            vec3 e1 = rpos(ents.e[s0].j) - P;
+            vec3 e2 = rpos(ents.e[s0 + 1].j) - P;
+            vec3 n = cross(e1, e2);
+            float l = length(n);
+            wnrm(i, l > 1e-6 ? n / l : vec3(0.0, 1.0, 0.0));
+        }
     }
 }
