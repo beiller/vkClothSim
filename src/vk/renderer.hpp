@@ -60,7 +60,7 @@ private:
 
     // One GPU soft body (the cloth or the ball): the sim buffers (ping-pong positions + prev
     // + the joint entries) + the compute descriptor set + the render mesh. `inA` tracks which
-    // position buffer holds the current state (the sim flips it every dispatch).
+    // position buffer holds the current state (the sim flips it per dispatch).
     struct GpuBody {
         VkBuffer posA = VK_NULL_HANDLE;   VkDeviceMemory posAMem = VK_NULL_HANDLE;
         VkBuffer posB = VK_NULL_HANDLE;   VkDeviceMemory posBMem = VK_NULL_HANDLE;
@@ -87,9 +87,11 @@ private:
     void uploadGridUbo(Mesh& m);
     // Point a body's render descriptor at its current position buffer (posA or posB).
     void updateRenderSet(GpuBody& b);
-    // Record ONE soft-body dispatch (barrier + push constants + dispatch) and flip inA.
+    // Record ONE soft-body compute dispatch (barriers + push constants + dispatch) and flip
+    // inA (the write went to the other buffer).
     void recordDispatch(VkCommandBuffer cmd, GpuBody& b, int mode);
-    // Record one body's full frame of sim (substeps x {Verlet + relaxIters + collide}); skip if pinned.
+    // Record one body's full frame of sim (substeps x {Verlet + relax + collide}); skip if
+    // pinned. The relax is Jacobi (the cloth's joint graph is not bipartite).
     void recordBody(VkCommandBuffer cmd, GpuBody& b, int relaxIters, int pinned);
     // Re-upload one body's initial state to the GPU (posA + prev = initial, inA = true).
     void resetBody(GpuBody& b);

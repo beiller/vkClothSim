@@ -13,6 +13,7 @@
 #include <imgui_impl_vulkan.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -102,6 +103,15 @@ int main(int argc, char** argv) {
             scene.stepRigid(1);
             renderer.uploadCapsules(scene.rigid().capsuleGPU());
             renderer.stepSoftFrame(app, ui.sim, scene.clothPinned() ? 1 : 0, shotRscale);
+            if ((i + 1) % 150 == 0) {   // trace the cloth y-range to catch a developing oscillation
+                std::vector<float> cp;
+                renderer.readbackBody(app, "cloth", cp);
+                float lo = 1e9f, hi = -1e9f;
+                for (int j = 0; j < (int)cp.size() / 4; ++j) {
+                    lo = std::min(lo, cp[4 * j + 1]); hi = std::max(hi, cp[4 * j + 1]);
+                }
+                std::printf("  step %4d: cloth y=[%.2f, %.2f]\n", i, lo, hi);
+            }
         }
         // read back the settled state (the cloth's drape + the ball's landing) for diagnostics
         std::vector<float> clothPos, ballPos;
@@ -128,6 +138,27 @@ int main(int argc, char** argv) {
                 cz0 = std::min(cz0, z); cz1 = std::max(cz1, z);
             }
             std::printf("  cloth x=[%.2f,%.2f] z=[%.2f,%.2f]\n", cx0, cx1, cz0, cz1);
+            // diagnostic: how far are the cloth joints from their rest lengths? (relax working
+            // -> tiny; a divergent sim -> large.) Catches the explosion mode headlessly.
+            {
+                const int CW = Scene::kCW, CH = Scene::kCH;
+                const float spacing = Scene::kClothSpan / (CW - 1), diag = spacing * 1.41421356f;
+                auto V = [&](int i) { return std::array<float, 3>{clothPos[4 * i], clothPos[4 * i + 1], clothPos[4 * i + 2]}; };
+                auto L = [&](const std::array<float, 3>& a, const std::array<float, 3>& b) {
+                    float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+                    return std::sqrt(dx * dx + dy * dy + dz * dz);
+                };
+                float mxEdge = 0, mxDiag = 0;
+                for (int i = 0; i < cn; ++i) {
+                    int gx = i % CW, gy = i / CW;
+                    if (gx < CW - 1) mxEdge = std::max(mxEdge, std::abs(L(V(i), V(i + 1)) - spacing));
+                    if (gy < CH - 1) mxEdge = std::max(mxEdge, std::abs(L(V(i), V(i + CW)) - spacing));
+                    if (gx < CW - 1 && gy < CH - 1) mxDiag = std::max(mxDiag, std::abs(L(V(i), V(i + CW + 1)) - diag));
+                    if (gx > 0 && gy < CH - 1) mxDiag = std::max(mxDiag, std::abs(L(V(i), V(i + CW - 1)) - diag));
+                }
+                std::printf("  joint error: max edge dev=%.4f m  max diag dev=%.4f m (rest %.4f/%.4f)\n",
+                            mxEdge, mxDiag, spacing, diag);
+            }
             int bn = (int)ballPos.size() / 4;
             float bcx = 0, bcy = 0, bcz = 0;
             for (int i = 0; i < bn; ++i) {

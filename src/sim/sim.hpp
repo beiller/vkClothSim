@@ -141,12 +141,14 @@ public:
 // in a dense pile the colliders overlap each other, so pushing a vertex out of one can
 // re-insert it into an earlier one — the passes converge to a fully-clean vertex set.
 // Generic over the body: the same routine works for the cloth, the ball, and any other
-// soft body.
+// soft body. The passes repeat until clean (like the GPU shader's per-vertex loop); the
+// tight drape packs a few vertices into the narrow gaps between capsules, where the
+// push-out ping-pongs between adjacent colliders and needs many rounds (cap: 64).
 inline void applyCollision(SoftBody& body, const std::vector<Collider>& colliders, float friction = 0.0f) {
     const int n = body.numVertices();
     const float fr = 1.0f - friction;   // tangential velocity kept while in contact
     std::vector<char> dirty(n, 1);      // vertices still needing (re-)checking
-    for (int pass = 0; pass < 8; ++pass) {
+    for (int pass = 0; pass < 64; ++pass) {
         int any = 0;
         for (int i = 0; i < n; ++i) {
             if (!dirty[i]) continue;

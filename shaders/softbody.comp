@@ -11,8 +11,14 @@
 // `prev` is a separate buffer touched only by its own thread (disjoint per vertex).
 //
 // One pipeline, three modes (push constant):
-//   0 = Verlet    : read pos + prev -> write new pos (other buf), prev = old pos
-//   1 = relax     : ONE Jacobi pass over this vertex's joints (snapshot reads)
+//   0 = Verlet    : read pos + prev -> write new pos (other buf), prev = old pos; the
+//                   per-substep displacement is clamped to maxStep — a hard anti-divergence
+//                   guard so a bad parameter set can never fling a vertex (runaway was the
+//                   old explosion mode)
+//   1 = relax     : ONE Jacobi pass over this vertex's joints (snapshot reads). NOTE: the
+//                   cloth's joint graph is NOT bipartite (each grid cell's diagonal forms a
+//                   triangle with its edges), so red-black Gauss-Seidel is impossible here —
+//                   Jacobi it is.
 //   2 = collide   : push out of capsules + ground, remove normal velocity
 layout(local_size_x = 64) in;
 
@@ -39,6 +45,7 @@ layout(binding = 6) buffer PhysP {
     float skin;
     float tension;
     float relaxScale;
+    float maxStep;
 } ph;
 
 layout(push_constant) uniform PC { int mode; int readFromA; int n; int pinned; } pc;
@@ -52,7 +59,7 @@ mat3 quatMat(vec4 q) {
     return mat3(
         vec3(1.0 - 2.0*(y*y + z*z), 2.0*(x*y + z*w), 2.0*(x*z - y*w)),
         vec3(2.0*(x*y - z*w),       1.0 - 2.0*(x*x + z*z), 2.0*(y*z + x*w)),
-        vec3(2.0*(x*z + y*w),       2.0*(y*z - x*w),       1.0 - 2.0*(x*x + z*z)));
+        vec3(2.0*(x*z - y*w),       2.0*(y*z - x*w),       1.0 - 2.0*(x*x + z*z)));
 }
 
 void collideVertex(int i) {
@@ -64,9 +71,12 @@ void collideVertex(int i) {
     vec3 P = rpos(i);
     vec3 Pr = prevB.v[i];
     // Multi-pass (like the CPU): in a clumped pile the capsules overlap, so pushing a vertex
-    // out of one can re-insert it into another — re-check against ALL colliders until clean
-    // (up to 8 passes). Per-vertex, so it is safe inside a single (race-free) dispatch.
-    for (int pass = 0; pass < 8; ++pass) {
+    // out of one can re-insert it into another — re-check against ALL colliders until clean.
+    // The loop breaks early once a vertex is clean (most vertices: 1 pass); the cap is 64
+    // because the tight drape packs a few vertices into the narrow gaps between capsules,
+    // where the push-out ping-pongs between adjacent colliders and needs many rounds.
+    // Per-vertex, so it is safe inside a single (race-free) dispatch.
+    for (int pass = 0; pass < 64; ++pass) {
         bool moved = false;
         for (int c = 0; c < ph.nCaps; ++c) {
             vec3 center = caps.cs[c].centerRadius.xyz;
@@ -111,8 +121,14 @@ void main() {
     if (pc.mode == 0) {            // Verlet
         vec3 P = rpos(i);
         vec3 Pr = prevB.v[i];
-        vec3 vel = (P - Pr) * ph.damping;
-        wpos(i, P + vel + vec3(0.0, ph.gravity, 0.0) * (ph.dt * ph.dt));
+        vec3 d = (P - Pr) * ph.damping + vec3(0.0, ph.gravity, 0.0) * (ph.dt * ph.dt);
+        // Stability guard: bound the per-substep displacement. A bad parameter set (low
+        // damping + a hard impact) used to feed velocity back through the constraints and
+        // diverge; clamping the step makes runaway impossible (a vertex can never travel
+        // more than maxStep per sub-step).
+        float dl = length(d);
+        if (dl > ph.maxStep) d *= ph.maxStep / dl;
+        wpos(i, P + d);
         prevB.v[i] = P;
     } else if (pc.mode == 1) {     // one Jacobi relaxation pass over this vertex's joints
         vec3 Pi = rpos(i);

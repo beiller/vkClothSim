@@ -327,17 +327,21 @@ void Renderer::initCapsules() {
         m_caps.pl, /*depthTest=*/true, &bind, 1, attrs, 3);
 }
 
-// Soft-body sim tuning: Verlet sub-steps per frame. (The Jacobi relax iterations per
-// sub-step = the UI `stiffness`, read each frame.)
+// Soft-body sim tuning: Verlet sub-steps per frame. (The relax passes per sub-step = the UI
+// `stiffness`, read each frame; the cloth runs them as red-black GS pairs, the ball Jacobi.)
 constexpr int SOFT_SUBSTEPS = 3;
 // Matches the Phys struct in softbody.comp (std430 flat scalars).
-struct PhysParams { int nCaps; float dt, damping, gravity, friction, skin, tension, relaxScale; };
-static_assert(sizeof(PhysParams) == 32);
+struct PhysParams { int nCaps; float dt, damping, gravity, friction, skin, tension, relaxScale, maxStep; };
+static_assert(sizeof(PhysParams) == 36);
+// Max vertex displacement per sub-step (m): the hard anti-divergence guard in the Verlet
+// pass. The cloth's smallest rest length is kClothSpan/(kCW-1) ~ 0.13 m, so 0.05 m keeps a
+// single step well under half a joint even under the most extreme parameter sets.
+constexpr float SOFT_MAX_STEP = 0.05f;
 
 void Renderer::initSoftPipeline() {
     VkDevice dev = m_dev;
     // the shared physics params (small SSBO, rewritten each frame)
-    vkMakeBuffer(dev, m_pdev, m_physParams, m_physParamsMem, 32, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    vkMakeBuffer(dev, m_pdev, m_physParams, m_physParamsMem, 36, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     // compute DSL: 0 posA, 1 posB, 2 prev, 3 capsules, 4 entries, 5 entryStart, 6 physParams
     VkDescriptorSetLayoutBinding binds[7]{};
     for (int i = 0; i < 7; ++i) {
@@ -426,7 +430,7 @@ void Renderer::buildBodySimBuffers(GpuBody& b, const sim::SoftBody& body) {
         {m_capsInstances, 0, (VkDeviceSize)48 * m_nCaps},
         {b.entries, 0, (VkDeviceSize)16 * b.nEntries},
         {b.entryStart, 0, (VkDeviceSize)4 * (n + 1)},
-        {m_physParams, 0, 32},
+        {m_physParams, 0, 36},
     };
     VkWriteDescriptorSet w[7]{};
     for (int i = 0; i < 7; ++i) {
@@ -443,7 +447,9 @@ void Renderer::buildBodySimBuffers(GpuBody& b, const sim::SoftBody& body) {
 // Build both GPU soft bodies (the cloth + the ball): their sim buffers + the render meshes.
 void Renderer::initSoftBodies(const Scene& scene) {
     VkDevice dev = m_dev;
-    {   // the cloth: a grid mesh (render) + its joints
+    {   // the cloth: a grid mesh (render) + its joints. The relax is Jacobi (mode 1): the
+        // joint graph is NOT bipartite — each grid cell's diagonal forms a triangle with
+        // its edges — so red-black Gauss-Seidel is impossible here.
         GpuBody& b = m_cloth;
         b.n = scene.cloth().numVertices();
         buildBodySimBuffers(b, scene.cloth());
@@ -470,7 +476,7 @@ void Renderer::initSoftBodies(const Scene& scene) {
         std::memcpy((char*)up + 68, &m_clothH, 4);
         vkUnmapMemory(dev, b.mesh.ubmem);
     }
-    {   // the ball: a sphere mesh (render) + its joints (no pressure — a plain soft body)
+    {   // the ball: a sphere mesh (render) + its joints (no pressure — a plain soft body).
         GpuBody& b = m_ball;
         b.n = scene.ball().numVertices();
         buildBodySimBuffers(b, scene.ball());
@@ -590,6 +596,8 @@ void Renderer::recordDispatch(VkCommandBuffer cmd, GpuBody& b, int mode) {
 
 // Record one body's full frame of sim (substeps x {Verlet + relax + collide}) into cmd. A
 // held (pinned) body is skipped entirely (frozen at its initial positions, no inA flips).
+// The relax is Jacobi for every body: the cloth's joint graph is NOT bipartite (each grid
+// cell's diagonal forms a triangle with its edges), so red-black Gauss-Seidel is impossible.
 void Renderer::recordBody(VkCommandBuffer cmd, GpuBody& b, int relaxIters, int pinned) {
     if (pinned) return;
     for (int s = 0; s < SOFT_SUBSTEPS; ++s) {
@@ -612,9 +620,10 @@ void Renderer::recordSoftSim(VkCommandBuffer cmd, const SimParams& p, int clothP
     phys.skin = 0.01f;
     phys.tension = p.tension;
     phys.relaxScale = m_relaxScale;
+    phys.maxStep = SOFT_MAX_STEP;
     void* up;
-    VK(vkMapMemory(m_dev, m_physParamsMem, 0, 32, 0, &up));
-    std::memcpy(up, &phys, 32);
+    VK(vkMapMemory(m_dev, m_physParamsMem, 0, 36, 0, &up));
+    std::memcpy(up, &phys, 36);
     vkUnmapMemory(m_dev, m_physParamsMem);
     // the relax iterations per sub-step = the UI stiffness (the same value the CPU solver used)
     recordBody(cmd, m_cloth, p.stiffness, clothPinned);
