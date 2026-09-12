@@ -1,0 +1,30 @@
+# clang-format for 3dsim. 4-space indent, 120 cols (the codebase's natural limit),
+# left pointer/reference alignment, sorted includes.
+#
+# Include order is significant for two vendored headers and is enforced via
+# IncludeCategories (Regroup):
+#   - <vulkan/vulkan.h> must precede <GLFW/glfw3.h> (GLFW only declares its Vulkan
+#     entry points if the Vulkan headers came first)
+#   - <Jolt/Jolt.h> must precede the rest of <Jolt/...> (it defines the core macros)
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 120
+AccessModifierOffset: -4
+PointerAlignment: Left
+ReferenceAlignment: Left
+SortIncludes: true
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<Jolt/Jolt\.h>$'
+    Priority: 1
+  - Regex: '^<vulkan/.*'
+    Priority: 1
+  - Regex: '^<GLFW/.*'
+    Priority: 2
+  - Regex: '^<Jolt/.*'
+    Priority: 2
+  - Regex: '.*'
+    Priority: 3
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortLambdasOnASingleLine: Inline
+AllowShortBlocksOnASingleLine: Never

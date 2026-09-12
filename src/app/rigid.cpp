@@ -1,23 +1,25 @@
 // rigid.cpp
 #include "app/rigid.hpp"
-#include <cstdlib>
-#include <thread>
-#include <Jolt/RegisterTypes.h>
+
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/RegisterTypes.h>
+
+#include "math.hpp"
+#include <algorithm>
+#include <random>
+#include <thread>
 
 void RigidScene::init() {
     JPH::RegisterDefaultAllocator();
     JPH::Factory::sInstance = new JPH::Factory();
     JPH::RegisterTypes();
-    m_temp = new JPH::TempAllocatorImpl(10 * 1024 * 1024);
-    unsigned hw = std::thread::hardware_concurrency();
-    if (hw < 1)
-        hw = 1;
-    m_job = new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, hw - 1 > 0 ? hw - 1 : 1);
+    m_temp = new JPH::TempAllocatorImpl((size_t)10 * 1024 * 1024);
+    const unsigned hw = std::max(std::thread::hardware_concurrency(), 1u);
+    m_job = new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, (int)(hw > 1 ? hw - 1 : 1));
 
     m_pair = new JPH::ObjectLayerPairFilterTable(2);
     m_pair->EnableCollision(0, 0);
@@ -36,32 +38,33 @@ void RigidScene::init() {
     JPH::BoxShapeSettings gs(JPH::Vec3(40.0f, 1.0f, 40.0f));
     gs.SetEmbedded();
     JPH::ShapeRefC gshape = gs.Create().Get();
-    JPH::BodyCreationSettings gset(gshape, JPH::RVec3(0.0f, -1.0f, 0.0f), JPH::Quat::sIdentity(), JPH::EMotionType::Static, 0);
+    JPH::BodyCreationSettings gset(gshape, JPH::RVec3(0.0f, -1.0f, 0.0f), JPH::Quat::sIdentity(),
+                                   JPH::EMotionType::Static, 0);
     JPH::Body* gb = bi.CreateBody(gset);
     bi.AddBody(gb->GetID(), JPH::EActivation::DontActivate);
 
-    srand(12345);
     // Dynamic capsules dropped in a column above the origin: they fall, bounce, and clump
     // into a pile. Low restitution + high friction so they settle into a mound.
     // Spawned in a 4x4 m footprint (wider for 50 so the spawn packing stays ~loose, not a
     // dense overlapping column) at staggered heights 4.5..8.0 — the cloud spawns BELOW the
     // held cloth (y=10), so no capsule pokes through the pinned sheet.
     const int kNCaps = 50;
-    const float R = 0.5f, HL = 0.9f;
-    auto rnd = [&] { return (rand() % 1000) / 1000.0f; };
+    // fixed seed: the same pile every run (deliberate, for reproducible scenes)
+    std::mt19937 rng(12345); // NOLINT(bugprone-random-generator-seed)
+    std::uniform_real_distribution<float> rnd(0.0f, 1.0f);
     for (int i = 0; i < kNCaps; ++i) {
-        float px = (rnd() * 2.0f - 1.0f) * 2.0f;
-        float py = 4.5f + 3.5f * rnd();           // staggered heights 4.5..8.0 (top ~9.4 < 10)
-        float pz = (rnd() * 2.0f - 1.0f) * 2.0f;
-        JPH::Quat rot = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), rnd() * 6.28318f)
-                      * JPH::Quat::sRotation(JPH::Vec3::sAxisX(), (rnd() * 2.0f - 1.0f) * 0.9f);
-        JPH::BodyCreationSettings cs(new JPH::CapsuleShape(HL, R), JPH::RVec3(px, py, pz), rot,
-                                     JPH::EMotionType::Dynamic, 1);
+        float px = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
+        float py = 4.5f + 3.5f * rnd(rng); // staggered heights 4.5..8.0 (top ~9.4 < 10)
+        float pz = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
+        JPH::Quat rot = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), rnd(rng) * 2.0f * kPi) *
+                        JPH::Quat::sRotation(JPH::Vec3::sAxisX(), (rnd(rng) * 2.0f - 1.0f) * 0.9f);
+        JPH::BodyCreationSettings cs(new JPH::CapsuleShape(kCapsuleHalfLen, kCapsuleRadius), JPH::RVec3(px, py, pz),
+                                     rot, JPH::EMotionType::Dynamic, 1);
         cs.mFriction = 0.7f;
         cs.mRestitution = 0.05f;
         cs.mLinearDamping = 0.05f;
         JPH::BodyID id = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
-        m_caps.push_back({id, R, HL});
+        m_caps.push_back({id, kCapsuleRadius, kCapsuleHalfLen});
     }
     m_phys->OptimizeBroadPhase();
 }
@@ -70,25 +73,6 @@ void RigidScene::step(int n) {
     const float h = 1.0f / 60.0f;
     for (int i = 0; i < n; ++i)
         m_phys->Update(h, 1, m_temp, m_job);
-}
-
-std::vector<sim::Collider> RigidScene::colliders() const {
-    std::vector<sim::Collider> out;
-    if (!m_phys)
-        return out;
-    const JPH::BodyLockInterface& li = m_phys->GetBodyLockInterface();
-    for (auto& c : m_caps) {
-        JPH::BodyLockRead lk(li, c.id);
-        const JPH::Body& b = lk.GetBody();
-        JPH::Vec3 p = b.GetPosition();
-        JPH::Vec3 axis = b.GetRotation() * JPH::Vec3(0.0f, c.halfLen, 0.0f);
-        sim::Collider col;
-        col.a[0] = p.GetX() - axis.GetX(); col.a[1] = p.GetY() - axis.GetY(); col.a[2] = p.GetZ() - axis.GetZ();
-        col.b[0] = p.GetX() + axis.GetX(); col.b[1] = p.GetY() + axis.GetY(); col.b[2] = p.GetZ() + axis.GetZ();
-        col.r = c.radius;
-        out.push_back(col);
-    }
-    return out;
 }
 
 std::vector<CapsuleGPU> RigidScene::capsuleGPU() const {

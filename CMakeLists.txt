@@ -4,6 +4,7 @@ project(3dsim LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # build/compile_commands.json (clang-tidy / IDEs)
 
 # --- standalone GLFW (window + VkSurface) for vksim ---
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -92,38 +93,4 @@ target_include_directories(vksim PRIVATE
     ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/src)
 
-# --- simtest : headless soft-body test (pure sim/, no Vulkan/Jolt/ImGui) ---
-add_executable(simtest src/simtest.cpp)
-target_compile_features(simtest PRIVATE cxx_std_23)
-target_include_directories(simtest PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
-# --- penprobe : headless one-way-collision probe (Jolt + the sim, no Vulkan) ---
-add_executable(penprobe src/penprobe.cpp src/app/scene.cpp src/app/rigid.cpp)
-target_link_libraries(penprobe PRIVATE Jolt::Jolt)
-target_compile_features(penprobe PRIVATE cxx_std_23)
-target_include_directories(penprobe PRIVATE ${CMAKE_SOURCE_DIR}/src)
-
-# --- official ImGui GLFW+Vulkan example (diagnostic reference) ---
-add_executable(imgui_example
-    ${IMGUI_DIR}/examples/example_glfw_vulkan/main.cpp
-    ${IMGUI_SOURCES})
-target_link_libraries(imgui_example PRIVATE glfw Vulkan::Vulkan)
-target_include_directories(imgui_example PRIVATE ${IMGUI_DIR} ${IMGUI_DIR}/backends)
-target_compile_definitions(imgui_example PRIVATE VK_PROTOTYPES)
-
-# --- headless Vulkan SDF smoke test (sim3d) ---
-add_executable(sim3d src/smoke.cpp)
-target_link_libraries(sim3d PRIVATE Vulkan::Vulkan)
-target_include_directories(sim3d PRIVATE ${GEN_DIR})
-spirv(smoke ${CMAKE_SOURCE_DIR}/shaders/smoke.comp)
-
-# --- raylib/GL capsule viewer (optional; pure-Vulkan is the main path) ---
-option(BUILD_RAYLIB_VIEWER "Build caps3d (raylib/GL viewer)" OFF)
-if(BUILD_RAYLIB_VIEWER)
-    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(OPENGL_VERSION "4.3" CACHE STRING "" FORCE)
-    add_subdirectory(lib/raylib)
-    add_executable(caps3d src/caps3d.cpp)
-    target_link_libraries(caps3d PRIVATE raylib)
-    target_include_directories(caps3d PRIVATE ${CMAKE_SOURCE_DIR}/lib/raylib/src)
-endif()

@@ -5,8 +5,9 @@
 // Knows nothing about the scene, the sim, or the UI — the renderer records the draws.
 #pragma once
 #include <vulkan/vulkan.h>
+
 #include <GLFW/glfw3.h>
-#include <string>
+
 #include <vector>
 
 class VkApp {
@@ -37,12 +38,9 @@ public:
 
     // per-frame: acquire the next image, record commands, submit + wait
     uint32_t acquireNextImage();
-    VkCommandBuffer beginCommands();   // fence wait + reset + begin (one reusable cmd buffer)
-    void submit(VkCommandBuffer cmd);  // end + submit + fence wait
+    VkCommandBuffer beginCommands();  // fence wait + reset + begin (one reusable cmd buffer)
+    void submit(VkCommandBuffer cmd); // end + submit + fence wait
     void present(uint32_t idx);
-
-    // one-shot: read swapchain image `idx` back to a PPM (headless verification)
-    void readbackPPM(uint32_t idx, const std::string& path);
 
 private:
     void createDepth(VkExtent2D ext);

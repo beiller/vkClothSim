@@ -2,14 +2,14 @@
 // The Dear ImGui overlay (the HUD + the controls). Decoupled from the renderer (Vulkan)
 // and the physics: it only depends on ImGui + the UIState (the user-tunable parameters).
 #pragma once
+#include "app/params.hpp" // SimParams (the user-tunable soft-body sim params)
 #include <imgui.h>
-#include "app/params.hpp"   // SimParams (the user-tunable soft-body sim params)
 
 // The user-tunable parameters: the shared soft-body sim params (cloth + ball) + the scene
 // options. Read by the renderer (the sim params + the background color) each frame; written
 // by the ImGui overlay (drawOverlay).
 struct UIState {
-    SimParams sim;              // the shared soft-body sim params (applied to cloth + ball)
+    SimParams sim; // the shared soft-body sim params (applied to cloth + ball)
     float bgColor[3] = {0.10f, 0.11f, 0.15f};
     bool showDemo = false;
 };

@@ -10,36 +10,35 @@
 // the same SimParams (mass/damping/stiffness/tension). No pressure — the ball is a plain
 // soft body, just a different shape + joints than the cloth.
 #pragma once
-#include <vector>
-#include "sim/sim.hpp"
 #include "app/rigid.hpp"
-#include "app/params.hpp"
+#include "math.hpp"
+#include "sim/sim.hpp"
+#include <vector>
 
 class Scene {
 public:
     // scene constants (meters, 60 Hz)
-    static constexpr int kCW = 64, kCH = 64;      // cloth grid (CW*CH points)
-    static constexpr int kSubsteps = 3;           // Verlet sub-steps per frame (all soft bodies)
-    static constexpr int kHoldFrames = 150;       // frames the cloth stays pinned (held flat)
-    static constexpr float kClothSpan = 8.0f;     // cloth width (m)
-    static constexpr float kClothY0 = 10.0f;      // the cloth's held height (m)
-    static constexpr int kBallLat = 32, kBallLon = 32;   // sphere lat/lon divisions (fine enough
-                                                        // to hug the 0.5 m capsules)
-    static constexpr float kBallRadius = 1.5f;    // ball radius (m)
-    static constexpr float kBallY0 = 12.0f;       // ball starting height (m) — above the capsule
-                                                  // spawn cloud (max top ~9.4), so it falls onto
-                                                  // the settled pile instead of through it
-    static constexpr float kBallVol = 4.0f / 3.0f * 3.14159265f * kBallRadius * kBallRadius * kBallRadius;
+    static constexpr int kCW = 64, kCH = 64;           // cloth grid (CW*CH points)
+    static constexpr int kSubsteps = 3;                // Verlet sub-steps per frame (all soft bodies)
+    static constexpr int kHoldFrames = 150;            // frames the cloth stays pinned (held flat)
+    static constexpr float kClothSpan = 8.0f;          // cloth width (m)
+    static constexpr float kClothY0 = 10.0f;           // the cloth's held height (m)
+    static constexpr int kBallLat = 32, kBallLon = 32; // sphere lat/lon divisions (fine enough
+                                                       // to hug the 0.5 m capsules)
+    static constexpr float kBallRadius = 1.5f;         // ball radius (m)
+    static constexpr float kBallY0 = 12.0f;            // ball starting height (m) — above the capsule
+                                                       // spawn cloud (max top ~9.4), so it falls onto
+                                                       // the settled pile instead of through it
+    static constexpr float kBallVol = 4.0f / 3.0f * kPi * kBallRadius * kBallRadius * kBallRadius;
 
     void init();
 
     // one frame of physics (the app calls these, in this order):
-    void stepRigid(int n = 1);   // step the capsules; unpin the cloth after kHoldFrames.
-                                  // (The soft bodies are stepped on the GPU — see Renderer.)
+    void stepRigid(int n = 1); // step the capsules; unpin the cloth after kHoldFrames.
+                               // (The soft bodies are stepped on the GPU — see Renderer.)
 
-    void unpin();    // drop the cloth now (the --shot path: the whole shot is the fall)
-    void reset();    // re-pin the cloth + clear the frame count (the renderer re-uploads the
-                     // soft bodies' initial state; the scene only tracks the pin/frame state)
+    void reset(); // re-pin the cloth + clear the frame count (the renderer re-uploads the
+                  // soft bodies' initial state; the scene only tracks the pin/frame state)
     bool clothPinned() const { return m_pinned != 0; }
 
     // plain-data access for the renderer (no Jolt/Vulkan):
@@ -53,7 +52,7 @@ private:
     // the two soft bodies: their initial state (vertices + joint constraints) is read by the
     // renderer to seed the GPU sim. They are NEVER stepped here (the GPU owns the sim state).
     sim::SoftBody m_cloth, m_ball;
-    std::vector<sim::Triangle> m_ballTris;   // the ball's triangles (render index buffer)
+    std::vector<sim::Triangle> m_ballTris; // the ball's triangles (render index buffer)
     int m_pinned = 1;
     int m_frames = 0;
 };

@@ -1,0 +1,54 @@
+---
+# Lint only the project code: headers under src/ (the vendored lib/ is excluded).
+HeaderFilterRegex: '3dsim/src/'
+FormatStyle: file
+WarningsAsErrors: ''
+# Enabled: the bug-class families (bugprone, clang-analyzer, misc, modernize,
+# performance, readability), minus the checks that clash with the project's
+# conventions (Vulkan/ImGui boilerplate + the established code style):
+#   - readability: naming, identifier-length, magic-numbers, braces, function-size,
+#     isolate-declaration, math-missing-parentheses, implicit-bool-conversion
+#     (the idiomatic `if (handle)` for VK/Jolt pointers), uppercase-literal-suffix
+#     (the `f` suffix style), function-cognitive-complexity
+#   - misc: include-cleaner, const-correctness (the VK() macro pattern),
+#     non-private-member-variables-in-classes (the data structs use public members)
+#   - modernize: avoid-c-style-cast, avoid-c-arrays, use-std-print,
+#     use-designated-initializers, use-trailing-return-type, use-nodiscard
+#     (the accessor-heavy Vulkan API)
+#   - bugprone: easily-swappable-parameters,
+#     invalid-enum-default-initialization (Vulkan create-infos are zero-initialized
+#     on purpose — unused fields must be 0)
+#   - clang-analyzer-core.uninitialized.UndefReturn: false positive in vendored Jolt —
+#     BodyLockRead::GetBody() returns *mBody on the "invalid body id" branch that the
+#     analyzer explores (the real null guard is a JPH_ASSERT it cannot see); our body ids
+#     are always valid, and the diagnostic lands in lib/jolt where no NOLINT can go
+Checks: >-
+  bugprone-*,
+  clang-analyzer-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  -misc-include-cleaner,
+  -misc-const-correctness,
+  -misc-non-private-member-variables-in-classes,
+  -readability-identifier-naming,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-braces-around-statements,
+  -readability-function-size,
+  -readability-isolate-declaration,
+  -readability-math-missing-parentheses,
+  -readability-implicit-bool-conversion,
+  -readability-uppercase-literal-suffix,
+  -readability-function-cognitive-complexity,
+  -modernize-avoid-c-style-cast,
+  -modernize-avoid-c-arrays,
+  -modernize-use-std-print,
+  -modernize-use-designated-initializers,
+  -modernize-use-trailing-return-type,
+  -modernize-use-nodiscard,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-invalid-enum-default-initialization,
+  -clang-analyzer-core.uninitialized.UndefReturn
+...

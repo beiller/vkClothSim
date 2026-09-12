@@ -1,10 +1,11 @@
 // vkapp.cpp
 #include "vk/vkapp.hpp"
-#include "vk/vkutil.hpp"
 
-#include <cstdlib>
+#include "vk/vkutil.hpp"
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string_view>
 #include <vector>
 
 bool VkApp::init(int width, int height, const char* title) {
@@ -29,8 +30,8 @@ bool VkApp::init(int width, int height, const char* title) {
         vkEnumerateInstanceLayerProperties(&nl, nullptr);
         std::vector<VkLayerProperties> lprops(nl);
         vkEnumerateInstanceLayerProperties(&nl, lprops.data());
-        for (auto& p : lprops)
-            if (std::string(p.layerName) == "VK_LAYER_KHRONOS_validation")
+        for (const auto& p : lprops)
+            if (std::string_view(p.layerName) == "VK_LAYER_KHRONOS_validation")
                 layers.push_back(p.layerName);
     }
     VkApplicationInfo app{};
@@ -53,7 +54,7 @@ bool VkApp::init(int width, int height, const char* title) {
     vkEnumeratePhysicalDevices(m_inst, &nd, nullptr);
     std::vector<VkPhysicalDevice> devs(nd);
     vkEnumeratePhysicalDevices(m_inst, &nd, devs.data());
-    for (auto d : devs) {
+    for (auto* d : devs) {
         uint32_t qc = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(d, &qc, nullptr);
         std::vector<VkQueueFamilyProperties> qps(qc);
@@ -153,7 +154,8 @@ bool VkApp::init(int width, int height, const char* title) {
     att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     att[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    VkAttachmentReference cr[2] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}};
+    VkAttachmentReference cr[2] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                                   {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}};
     VkSubpassDescription sp{};
     sp.colorAttachmentCount = 1;
     sp.pColorAttachments = &cr[0];
@@ -209,9 +211,9 @@ bool VkApp::init(int width, int height, const char* title) {
 
 void VkApp::shutdown() {
     VK(vkDeviceWaitIdle(m_dev));
-    for (auto fb : m_fbs)
+    for (auto* fb : m_fbs)
         vkDestroyFramebuffer(m_dev, fb, nullptr);
-    for (auto v : m_views)
+    for (auto* v : m_views)
         vkDestroyImageView(m_dev, v, nullptr);
     vkDestroyRenderPass(m_dev, m_rp, nullptr);
     vkDestroySwapchainKHR(m_dev, m_sc, nullptr);
@@ -231,7 +233,7 @@ bool VkApp::windowShouldClose() const {
     return glfwWindowShouldClose(m_win) != 0;
 }
 
-void VkApp::pollEvents() {
+void VkApp::pollEvents() { // NOLINT(readability-convert-member-functions-to-static)
     glfwPollEvents();
 }
 
@@ -308,65 +310,4 @@ void VkApp::createDepth(VkExtent2D ext) {
     vci.format = VK_FORMAT_D32_SFLOAT;
     vci.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
     VK(vkCreateImageView(m_dev, &vci, nullptr, &m_depthView));
-}
-
-// Read swapchain image `idx` back to a PPM file (one-shot, for headless verification).
-void VkApp::readbackPPM(uint32_t idx, const std::string& path) {
-    VkImageMemoryBarrier bar{};
-    bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    bar.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    bar.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    bar.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    bar.image = m_images[idx];
-    bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-
-    VkBuffer stbuf;
-    VkDeviceMemory stmem;
-    vkMakeBuffer(m_dev, m_pdev, stbuf, stmem,
-                 (VkDeviceSize)m_extent.width * m_extent.height * 4,
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT, nullptr);
-
-    {
-        VkCommandBuffer cmd = beginCommands();
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &bar);
-        VkBufferImageCopy r{};
-        r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        r.imageOffset = {0, 0, 0};
-        r.imageExtent = {m_extent.width, m_extent.height, 1};
-        vkCmdCopyImageToBuffer(cmd, m_images[idx], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, stbuf, 1, &r);
-        submit(cmd);
-    }
-
-    void* p;
-    VK(vkMapMemory(m_dev, stmem, 0, (VkDeviceSize)m_extent.width * m_extent.height * 4, 0, &p));
-    const unsigned char* px = (const unsigned char*)p;
-    std::FILE* f = std::fopen(path.c_str(), "wb");
-    std::fprintf(f, "P6\n%d %d\n255\n", m_extent.width, m_extent.height);
-    std::vector<unsigned char> rgb((size_t)m_extent.width * m_extent.height * 3);
-    bool bgr = (m_scfmt == VK_FORMAT_B8G8R8A8_UNORM);
-    for (size_t i = 0; i < (size_t)m_extent.width * m_extent.height; ++i) {
-        rgb[i * 3 + 0] = bgr ? px[i * 4 + 2] : px[i * 4 + 0];
-        rgb[i * 3 + 1] = px[i * 4 + 1];
-        rgb[i * 3 + 2] = bgr ? px[i * 4 + 0] : px[i * 4 + 2];
-    }
-    std::fwrite(rgb.data(), 1, rgb.size(), f);
-    std::fclose(f);
-    vkUnmapMemory(m_dev, stmem);
-    vkFreeMemory(m_dev, stmem, nullptr);
-    vkDestroyBuffer(m_dev, stbuf, nullptr);
-
-    // restore the image layout for future use
-    bar.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    bar.dstAccessMask = 0;
-    bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    bar.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    {
-        VkCommandBuffer cmd = beginCommands();
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &bar);
-        submit(cmd);
-    }
-    std::printf("wrote %s\n", path.c_str());
 }
