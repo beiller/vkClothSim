@@ -1,0 +1,102 @@
+#version 450
+layout(local_size_x=64, local_size_y=1, local_size_z=1) in;
+
+layout(binding=0) buffer Pos { vec3 pos[]; } posb;
+layout(binding=1) buffer Prev { vec3 prev[]; } prevb;
+struct Capsule { vec4 centerRadius; vec4 quat; vec4 halfLen; };
+layout(binding=2) buffer Capsules { Capsule cs[]; } cc;
+layout(binding=3) buffer Params { int nCaps; float gravity[3]; float dt; int W; int H; int iterations; int pinned; int substeps; } p;
+
+const float GROUND_Y = 0.0;
+// Light velocity damping so the cloth falls at a natural speed; the collision
+// response (removes normal velocity) is what damps the impact/oscillation.
+const float DAMPING = 0.985;
+
+mat3 quatMat(vec4 q) {
+    q = normalize(q);
+    float x = q.x, y = q.y, z = q.z, w = q.w;
+    return mat3(
+        vec3(1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + z * w), 2.0 * (x * z - y * w)),
+        vec3(2.0 * (x * y - z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + x * w)),
+        vec3(2.0 * (x * z + y * w), 2.0 * (y * z - x * w), 1.0 - 2.0 * (x * x + y * y)));
+}
+
+// Correction point i should apply for edge (i,j), from the CURRENT (pre-iteration)
+// positions. Jacobi-style: each point sums these and writes only its own slot, so
+// there is no cross-thread write race (which was pumping energy / buckling the sheet).
+vec3 edgeCorr(int i, int j, float rest) {
+    vec3 d = posb.pos[j] - posb.pos[i];
+    float dist = length(d);
+    if (dist < 1e-6)
+        return vec3(0.0);
+    return d * ((dist - rest) / dist * 0.5);
+}
+
+// Push point i to `target` along surface normal n, removing the normal velocity
+// (prevents the Verlet energy injection that makes the cloth explode).
+void collide(int i, vec3 target, vec3 n) {
+    vec3 pos = posb.pos[i];
+    vec3 prev = prevb.prev[i];
+    vec3 vel = pos - prev;
+    vec3 vt = vel - n * dot(vel, n);   // tangential velocity only
+    posb.pos[i] = target;
+    prevb.prev[i] = target - vt;
+}
+
+void main() {
+    int i = int(gl_GlobalInvocationID.x);
+    int N = p.W * p.H;
+    if (i >= N)
+        return;
+    if (p.pinned == 1)   // held: frozen at the initial flat position
+        return;
+    int W = p.W, H = p.H;
+    int gx = i % W, gy = i / W;
+    float spacing = 8.0 / float(W - 1);
+    float diag = spacing * 1.41421356;
+    for (int s = 0; s < p.substeps; ++s) {
+        vec3 P = posb.pos[i];
+        vec3 Pr = prevb.prev[i];
+        vec3 vel = (P - Pr) * DAMPING;
+        prevb.prev[i] = P;
+        P = P + vel + vec3(p.gravity[0], p.gravity[1], p.gravity[2]) * (p.dt * p.dt);
+        posb.pos[i] = P;
+        for (int it = 0; it < p.iterations; ++it) {
+            vec3 pi = posb.pos[i];
+            vec3 total = vec3(0.0);
+            if (gx < W - 1)      total += edgeCorr(i, i + 1, spacing);
+            if (gx > 0)          total += edgeCorr(i, i - 1, spacing);
+            if (gy < H - 1)      total += edgeCorr(i, i + W, spacing);
+            if (gy > 0)          total += edgeCorr(i, i - W, spacing);
+            if (gx < W - 1 && gy < H - 1) total += edgeCorr(i, i + W + 1, diag);
+            if (gx > 0 && gy > 0)         total += edgeCorr(i, i - W - 1, diag);
+            if (gx > 0 && gy < H - 1)     total += edgeCorr(i, i + W - 1, diag);
+            if (gx < W - 1 && gy > 0)     total += edgeCorr(i, i - W + 1, diag);
+            posb.pos[i] = pi + total;
+        }
+        P = posb.pos[i];
+        for (int c = 0; c < p.nCaps; ++c) {
+            vec4 q = cc.cs[c].quat;
+            vec3 center = cc.cs[c].centerRadius.xyz;
+            float radius = cc.cs[c].centerRadius.w;
+            float halfLen = cc.cs[c].halfLen.x;
+            mat3 R = quatMat(q);
+            vec3 axis = R * vec3(0.0, halfLen, 0.0);
+            vec3 A = center - axis;
+            vec3 B = center + axis;
+            vec3 AB = B - A;
+            float t = clamp(dot(P - A, AB) / max(dot(AB, AB), 1e-6), 0.0, 1.0);
+            vec3 Q = A + AB * t;
+            vec3 d = P - Q;
+            float dist = length(d);
+            if (dist < radius) {
+                vec3 n = dist > 1e-5 ? d / dist : vec3(0.0, 1.0, 0.0);
+                collide(i, Q + n * (radius + 0.01), n);
+                P = posb.pos[i];
+            }
+        }
+        if (P.y < GROUND_Y) {
+            collide(i, vec3(P.x, GROUND_Y, P.z), vec3(0.0, 1.0, 0.0));
+        }
+    }
+}
