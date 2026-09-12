@@ -8,13 +8,12 @@
 #include "caps_vert_spv.hpp"
 #include "cloth_frag_spv.hpp"
 #include "cloth_vert_spv.hpp"
-#include "softbody_spv.hpp"
+#include "sim/softsim.hpp"
 #include "vk/vkapp.hpp"
 #include "vk/vkutil.hpp"
 #include "vk_bg_frag_spv.hpp"
 #include "vk_bg_vert_spv.hpp"
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 #include <imgui_impl_vulkan.h>
 
@@ -183,18 +182,27 @@ void buildCapsuleGeometry(std::vector<float>& verts, std::vector<uint32_t>& idx,
     idx.push_back(gbase + 3);
 }
 
+// viewProj + a body-specific tail into an 80-byte mesh UBO. viewProj + the tail are constant
+// for the life of the app, so this is written ONCE at init (not per frame).
+void writeUbo(VkDevice dev, VkDeviceMemory mem, const Mat4& vp, const float* tail, size_t tailBytes) {
+    void* up;
+    VK(vkMapMemory(dev, mem, 0, 80, 0, &up));
+    std::memcpy(up, vp.m, 64);
+    std::memcpy((char*)up + 64, tail, tailBytes);
+    vkUnmapMemory(dev, mem);
+}
+
 } // namespace
 
-void Renderer::init(VkApp& app, const Scene& scene, const Mat4& viewProj) {
+void Renderer::init(VkApp& app, const Scene& scene, const SoftSim& sim, const Mat4& viewProj) {
     m_dev = app.device();
     m_pdev = app.pdev();
     m_rp = app.renderPass();
     m_vp = viewProj;
-    m_nCaps = scene.rigid().capsuleCount();
+    m_nCaps = sim.capsuleCount();
     initBackground();
-    initCapsules();
-    initSoftPipeline();
-    initSoftBodies(scene);
+    initCapsules(sim);
+    initSoftBodies(scene, sim);
 }
 
 void Renderer::initBackground() {
@@ -221,7 +229,7 @@ void Renderer::initBackground() {
                                     vk_bg_frag_spv_len / 4, m_bgPl, /*depthTest=*/false, &bind, 1, &attr, 1);
 }
 
-void Renderer::initCapsules() {
+void Renderer::initCapsules(const SoftSim& sim) {
     VkDevice dev = m_dev;
     std::vector<float> verts;
     std::vector<uint32_t> idx;
@@ -232,17 +240,19 @@ void Renderer::initCapsules() {
     vkMakeBuffer(dev, m_pdev, m_caps.ibuf, m_caps.ibmem, (VkDeviceSize)idx.size() * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                  idx.data());
     vkMakeBuffer(dev, m_pdev, m_caps.ubuf, m_caps.ubmem, 80, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
-    vkMakeBuffer(dev, m_pdev, m_capsInstances, m_capsInstancesMem, 48 * (VkDeviceSize)m_nCaps,
-                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    // the capsule UBO (viewProj + the cloth grid dims the capsule shader ignores) is constant,
+    // so it is written once here (not per frame).
+    float extra[2] = {Scene::kCW, Scene::kCH};
+    writeUbo(dev, m_caps.ubmem, m_vp, extra, sizeof(extra));
 
-    // bindings: 0 viewProj+grid UBO, 1 per-instance capsule SSBO
+    // bindings: 0 viewProj+grid UBO, 1 the sim's capsule collider SSBO (the instanced draw)
     VkDescriptorSetLayoutBinding binds[2] = {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
     };
     vkMakeDslPool(dev, {binds, binds + 2}, 1, m_caps.dsl, m_caps.pool);
     vkMakeSet(dev, m_caps.pool, m_caps.dsl, {binds, binds + 2}, m_caps.set,
-              {VkDescriptorBufferInfo{m_caps.ubuf, 0, 80}, {m_capsInstances, 0, 48 * (VkDeviceSize)m_nCaps}});
+              {VkDescriptorBufferInfo{m_caps.ubuf, 0, 80}, {sim.capsulesBuffer(), 0, 48 * (VkDeviceSize)m_nCaps}});
     m_caps.pl = vkMakePipelineLayout(dev, m_caps.dsl);
 
     // vertex input: pos(3) nrm(3) capsuleIndex(1) = 28 bytes
@@ -256,148 +266,11 @@ void Renderer::initCapsules() {
                                        caps_frag_spv_len / 4, m_caps.pl, /*depthTest=*/true, &bind, 1, attrs, 3);
 }
 
-namespace {
-
-// Soft-body sim tuning. The Verlet sub-steps per frame = Scene::kSubsteps (the same value
-// the CPU reference uses). The relax passes per sub-step = the UI `stiffness`, read each
-// frame (Jacobi for every body).
-// Matches the Phys struct in softbody.comp (std430 flat scalars).
-struct PhysParams {
-    int nCaps;
-    float dt, damping, gravity, friction, skin, tension, relaxScale, maxStep;
-};
-static_assert(sizeof(PhysParams) == 36);
-// Max vertex displacement per sub-step (m): the hard anti-divergence guard in the Verlet
-// pass. The cloth's smallest rest length is kClothSpan/(kCW-1) ~ 0.13 m, so 0.05 m keeps a
-// single step well under half a joint even under the most extreme parameter sets.
-constexpr float SOFT_MAX_STEP = 0.05f;
-
-// The compute DSL's 7 bindings (shared by both bodies' descriptor sets).
-std::vector<VkDescriptorSetLayoutBinding> softBinds() {
-    std::vector<VkDescriptorSetLayoutBinding> binds(7);
-    for (uint32_t i = 0; i < 7; ++i) {
-        binds[i].binding = i;
-        binds[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        binds[i].descriptorCount = 1;
-        binds[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    }
-    return binds;
-}
-
-} // namespace
-
-void Renderer::initSoftPipeline() {
-    VkDevice dev = m_dev;
-    // the shared physics params (small SSBO, rewritten each frame)
-    vkMakeBuffer(dev, m_pdev, m_physParams, m_physParamsMem, 36, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
-    // compute DSL: 0 posA, 1 posB, 2 prev, 3 capsules, 4 entries, 5 entryStart, 6 physParams
-    const auto binds = softBinds();
-    vkMakeDslPool(dev, binds, /*maxSets=*/2, m_softDsl, m_softPool); // 7 buffers x 2 bodies
-    m_softPl = vkMakePipelineLayout(dev, m_softDsl);
-    VkShaderModule cm = vkMakeModule(dev, softbody_spv, softbody_spv_len / 4);
-    VkPipelineShaderStageCreateInfo cs{};
-    cs.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cs.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    cs.module = cm;
-    cs.pName = "main";
-    VkComputePipelineCreateInfo cpc{};
-    cpc.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    cpc.stage = cs;
-    cpc.layout = m_softPl;
-    VK(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &cpc, nullptr, &m_softPipe));
-    vkDestroyShaderModule(dev, cm, nullptr);
-}
-
-// Create one soft body's sim buffers (posA/posB/prev + the joint entries) from its initial
-// vertices + constraints, and its compute descriptor set.
-void Renderer::buildBodySimBuffers(GpuBody& b, const sim::SoftBody& body) {
-    VkDevice dev = m_dev;
-    const int n = b.n;
-    // the joint entries: each constraint (a,b) adds an entry to a's list (neighbor b) and to
-    // b's list (neighbor a) — the shader relaxes each vertex against its own entries. The
-    // layout mirrors the shader's `struct Entry { int j; float rest; float k; int pad; }`
-    // (16 B) — `j` MUST be an int in memory (the shader reads it as an int).
-    struct EntryBuf {
-        int j;
-        float rest;
-        float k;
-        int pad;
-    };
-    std::vector<std::vector<EntryBuf>> lists(n);
-    for (const auto& c : body.cons) {
-        lists[c.a].push_back({c.b, c.rest, c.k, 0});
-        lists[c.b].push_back({c.a, c.rest, c.k, 0});
-    }
-    std::vector<int> start(n + 1, 0);
-    for (int i = 0; i < n; ++i)
-        start[i + 1] = start[i] + (int)lists[i].size();
-    b.nEntries = start[n];
-    std::vector<EntryBuf> entries(b.nEntries);
-    for (int i = 0; i < n; ++i)
-        for (size_t e = 0; e < lists[i].size(); ++e)
-            entries[start[i] + e] = lists[i][e];
-    // the sim buffers (16-byte-stride vec3 positions, matching the render's SSBO)
-    std::vector<float> initPos((size_t)4 * n);
-    for (int i = 0; i < n; ++i) {
-        const float* p = body.posPtr(i);
-        initPos[4 * i + 0] = p[0];
-        initPos[4 * i + 1] = p[1];
-        initPos[4 * i + 2] = p[2];
-        initPos[4 * i + 3] = 0.0f;
-    }
-    vkMakeBuffer(dev, m_pdev, b.posA, b.posAMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                 initPos.data());
-    vkMakeBuffer(dev, m_pdev, b.posB, b.posBMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
-    vkMakeBuffer(dev, m_pdev, b.prev, b.prevMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                 initPos.data());   // prev = pos (zero velocity)
-    b.initPos = std::move(initPos); // keep a CPU copy for reset
-    vkMakeBuffer(dev, m_pdev, b.entries, b.entriesMem, (VkDeviceSize)16 * b.nEntries,
-                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, entries.data());
-    vkMakeBuffer(dev, m_pdev, b.entryStart, b.entryStartMem, (VkDeviceSize)4 * (n + 1),
-                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, start.data());
-    // the compute descriptor set (this body's buffers + the shared capsules + phys params)
-    std::vector<VkDescriptorBufferInfo> bi = {
-        {b.posA, 0, (VkDeviceSize)16 * n},
-        {b.posB, 0, (VkDeviceSize)16 * n},
-        {b.prev, 0, (VkDeviceSize)16 * n},
-        {m_capsInstances, 0, (VkDeviceSize)48 * m_nCaps},
-        {b.entries, 0, (VkDeviceSize)16 * b.nEntries},
-        {b.entryStart, 0, (VkDeviceSize)4 * (n + 1)},
-        {m_physParams, 0, 36},
-    };
-    vkMakeSet(dev, m_softPool, m_softDsl, softBinds(), b.simSet, bi);
-}
-
-// The cloth + ball share the render mesh path: the index buffer + the 80-byte UBO
-// (viewProj + `extraUbo` at offset 64) + the descriptor set + the pipeline (no vertex
-// input — the positions come from the pos SSBO).
-void Renderer::makeBodyRenderMesh(GpuBody& b, const std::vector<uint32_t>& idx, const void* vertSpv, uint32_t vertLen,
-                                  const void* fragSpv, uint32_t fragLen, const float* extraUbo, size_t extraUboBytes) {
-    VkDevice dev = m_dev;
-    b.mesh.idxCount = (uint32_t)idx.size();
-    b.mesh.sbuf = b.posA;
-    b.mesh.sbmem = b.posAMem; // render reads the current buffer
-    vkMakeBuffer(dev, m_pdev, b.mesh.ibuf, b.mesh.ibmem, (VkDeviceSize)idx.size() * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                 idx.data());
-    vkMakeBuffer(dev, m_pdev, b.mesh.ubuf, b.mesh.ubmem, 80, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
-    makePosUboDescriptorSet(dev, b.mesh, (VkDeviceSize)16 * b.n);
-    b.mesh.pipe = makeGraphicsPipeline(dev, m_rp, vertSpv, vertLen, fragSpv, fragLen, b.mesh.pl, /*depthTest=*/true,
-                                       nullptr, 0, nullptr, 0);
-    void* up;
-    VK(vkMapMemory(dev, b.mesh.ubmem, 0, 80, 0, &up));
-    std::memcpy(up, m_vp.m, 64);
-    std::memcpy((char*)up + 64, extraUbo, extraUboBytes);
-    vkUnmapMemory(dev, b.mesh.ubmem);
-}
-
-// Build both GPU soft bodies (the cloth + the ball): their sim buffers + the render meshes.
-void Renderer::initSoftBodies(const Scene& scene) {
-    { // the cloth: a grid mesh (render) + its joints. The relax is Jacobi (mode 1): the
-        // joint graph is NOT bipartite — each grid cell's diagonal forms a triangle with
-        // its edges — so red-black Gauss-Seidel is impossible here.
-        GpuBody& b = m_cloth;
-        b.n = scene.cloth().numVertices();
-        buildBodySimBuffers(b, scene.cloth());
+// Build both soft bodies' render meshes (the cloth grid + the ball sphere): the index buffer +
+// the 80-byte UBO + the descriptor set (binding 0 = the sim's position buffer) + the pipeline.
+void Renderer::initSoftBodies(const Scene& scene, const SoftSim& sim) {
+    { // the cloth: a grid mesh (render). The index buffer tiles the CW x CH grid.
+        Mesh& m = m_clothMesh;
         std::vector<uint32_t> idx;
         for (int gy = 0; gy < Scene::kCH - 1; ++gy)
             for (int gx = 0; gx < Scene::kCW - 1; ++gx) {
@@ -410,13 +283,11 @@ void Renderer::initSoftBodies(const Scene& scene) {
                 idx.push_back(a + Scene::kCW);
             }
         float extra[2] = {Scene::kCW, Scene::kCH}; // the grid dims (the shader tiles them)
-        makeBodyRenderMesh(b, idx, cloth_vert_spv, cloth_vert_spv_len / 4, cloth_frag_spv, cloth_frag_spv_len / 4,
-                           extra, sizeof(extra));
+        makeBodyRenderMesh(m, sim, SoftSim::kCloth, idx, cloth_vert_spv, cloth_vert_spv_len / 4, cloth_frag_spv,
+                           cloth_frag_spv_len / 4, extra, sizeof(extra));
     }
-    { // the ball: a sphere mesh (render) + its joints (no pressure — a plain soft body).
-        GpuBody& b = m_ball;
-        b.n = scene.ball().numVertices();
-        buildBodySimBuffers(b, scene.ball());
+    { // the ball: a sphere mesh (render). The index buffer is the UV-sphere triangles.
+        Mesh& m = m_ballMesh;
         std::vector<uint32_t> idx;
         for (const auto& t : scene.ballTris()) {
             idx.push_back(t.a);
@@ -424,146 +295,51 @@ void Renderer::initSoftBodies(const Scene& scene) {
             idx.push_back(t.c);
         }
         float extra[3] = {0, 0, 0}; // center unused (the normal is a derivative)
-        makeBodyRenderMesh(b, idx, ball_vert_spv, ball_vert_spv_len / 4, ball_frag_spv, ball_frag_spv_len / 4, extra,
-                           sizeof(extra));
+        makeBodyRenderMesh(m, sim, SoftSim::kBall, idx, ball_vert_spv, ball_vert_spv_len / 4, ball_frag_spv,
+                           ball_frag_spv_len / 4, extra, sizeof(extra));
     }
 }
 
 // The cloth + ball share the same descriptor layout (0: pos SSBO, 1: UBO): create the
-// descriptor set layout + pool + set + pipeline layout for one of them.
-void Renderer::makePosUboDescriptorSet(VkDevice dev, Mesh& m, VkDeviceSize posRange) {
+// descriptor set layout + pool + set + pipeline layout for one of them. `posBuf` (owned by
+// the sim) is binding 0; it is re-pointed each frame by updateSoftRenderSet.
+void Renderer::makePosUboDescriptorSet(VkDevice dev, Mesh& m, VkBuffer posBuf, VkDeviceSize posRange) {
     VkDescriptorSetLayoutBinding rb[2] = {
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
     };
     vkMakeDslPool(dev, {rb, rb + 2}, 1, m.dsl, m.pool);
-    vkMakeSet(dev, m.pool, m.dsl, {rb, rb + 2}, m.set, {VkDescriptorBufferInfo{m.sbuf, 0, posRange}, {m.ubuf, 0, 80}});
+    vkMakeSet(dev, m.pool, m.dsl, {rb, rb + 2}, m.set, {VkDescriptorBufferInfo{posBuf, 0, posRange}, {m.ubuf, 0, 80}});
     m.pl = vkMakePipelineLayout(dev, m.dsl);
 }
 
-// Point a body's render descriptor at the position buffer it is currently in (posA or posB).
-void Renderer::updateRenderSet(GpuBody& b) {
-    VkBuffer cur = b.inA ? b.posA : b.posB;
-    b.mesh.sbuf = cur;
-    VkDescriptorBufferInfo bi{cur, 0, (VkDeviceSize)16 * b.n};
+void Renderer::makeBodyRenderMesh(Mesh& m, const SoftSim& sim, SoftSim::Body body, const std::vector<uint32_t>& idx,
+                                  const void* vertSpv, uint32_t vertLen, const void* fragSpv, uint32_t fragLen,
+                                  const float* extraUbo, size_t extraUboBytes) {
+    VkDevice dev = m_dev;
+    m.idxCount = (uint32_t)idx.size();
+    m.sbuf = VK_NULL_HANDLE; // the position buffer is owned by the sim (never destroyed here)
+    vkMakeBuffer(dev, m_pdev, m.ibuf, m.ibmem, (VkDeviceSize)idx.size() * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                 idx.data());
+    vkMakeBuffer(dev, m_pdev, m.ubuf, m.ubmem, 80, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
+    makePosUboDescriptorSet(dev, m, sim.posBuffer(body), (VkDeviceSize)16 * sim.vertexCount(body));
+    m.pipe = makeGraphicsPipeline(dev, m_rp, vertSpv, vertLen, fragSpv, fragLen, m.pl, /*depthTest=*/true, nullptr, 0,
+                                  nullptr, 0);
+    writeUbo(dev, m.ubmem, m_vp, extraUbo, extraUboBytes); // viewProj + the body tail (constant)
+}
+
+// Point a soft-body render descriptor at the sim's current position buffer (re-done each
+// frame, since the sim ping-pongs posA/posB).
+void Renderer::updateSoftRenderSet(Mesh& m, const SoftSim& sim, SoftSim::Body body) {
+    VkDescriptorBufferInfo bi{sim.posBuffer(body), 0, (VkDeviceSize)16 * sim.vertexCount(body)};
     VkWriteDescriptorSet w{};
     w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    w.dstSet = b.mesh.set;
+    w.dstSet = m.set;
     w.dstBinding = 0;
     w.descriptorCount = 1;
     w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     w.pBufferInfo = &bi;
     vkUpdateDescriptorSets(m_dev, 1, &w, 0, nullptr);
-}
-
-// Record one soft-body dispatch (barrier + pipeline + descriptors + push constants +
-// dispatch) and flip inA (the write went to the other buffer).
-void Renderer::recordDispatch(VkCommandBuffer cmd, GpuBody& b, int mode) {
-    VkBuffer rd = b.inA ? b.posA : b.posB;
-    VkBuffer bufs[2] = {rd, b.prev};
-    VkBufferMemoryBarrier bmb[2]{};
-    for (int i = 0; i < 2; ++i) {
-        bmb[i].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        bmb[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        bmb[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        bmb[i].buffer = bufs[i];
-        bmb[i].offset = 0;
-        bmb[i].size = VK_WHOLE_SIZE;
-        bmb[i].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        bmb[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    }
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr,
-                         2, bmb, 0, nullptr);
-    int pc[4] = {mode, b.inA ? 1 : 0, b.n, 0}; // mode, readFromA, n, pinned(unused)
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPipe);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPl, 0, 1, &b.simSet, 0, nullptr);
-    vkCmdPushConstants(cmd, m_softPl, VK_SHADER_STAGE_COMPUTE_BIT, 0, (uint32_t)sizeof(pc), pc);
-    vkCmdDispatch(cmd, (b.n + 63) / 64, 1, 1);
-    b.inA = !b.inA;
-}
-
-// Record one body's full frame of sim (substeps x {Verlet + relax + collide}) into cmd. A
-// held (pinned) body is skipped entirely (frozen at its initial positions, no inA flips).
-// The relax is Jacobi for every body: the cloth's joint graph is NOT bipartite (each grid
-// cell's diagonal forms a triangle with its edges), so red-black Gauss-Seidel is impossible.
-void Renderer::recordBody(VkCommandBuffer cmd, GpuBody& b, int relaxIters, int pinned) {
-    if (pinned)
-        return;
-    for (int s = 0; s < Scene::kSubsteps; ++s) {
-        recordDispatch(cmd, b, 0); // Verlet
-        for (int k = 0; k < relaxIters; ++k)
-            recordDispatch(cmd, b, 1); // joint relaxation (Jacobi)
-        recordDispatch(cmd, b, 2);     // collision
-    }
-}
-
-// Record the soft-body sim (cloth + ball) into cmd: set the shared phys params, dispatch both
-// bodies, and point both render descriptors at the current position buffers.
-void Renderer::recordSoftSim(VkCommandBuffer cmd, const SimParams& p, int clothPinned) {
-    PhysParams phys;
-    phys.nCaps = m_nCaps;
-    phys.dt = (1.0f / 60.0f) / Scene::kSubsteps;
-    phys.damping = p.damping;
-    phys.gravity = sim::kGravity * p.mass;
-    phys.friction = 0.1f;
-    phys.skin = 0.01f;
-    phys.tension = p.tension;
-    phys.relaxScale = 1.0f; // full-strength relax
-    phys.maxStep = SOFT_MAX_STEP;
-    void* up;
-    VK(vkMapMemory(m_dev, m_physParamsMem, 0, 36, 0, &up));
-    std::memcpy(up, &phys, 36);
-    vkUnmapMemory(m_dev, m_physParamsMem);
-    // the relax iterations per sub-step = the UI stiffness (the same value the CPU solver used)
-    recordBody(cmd, m_cloth, p.stiffness, clothPinned);
-    recordBody(cmd, m_ball, p.stiffness, 0);
-    updateRenderSet(m_cloth);
-    updateRenderSet(m_ball);
-}
-
-// Re-upload one body's initial state to the GPU (posA + prev = initial, inA = true). The GPU
-// is idle here (synchronous submit), so the host-visible buffers can be rewritten directly.
-void Renderer::resetBody(GpuBody& b) {
-    void* pa;
-    VK(vkMapMemory(m_dev, b.posAMem, 0, (VkDeviceSize)16 * b.n, 0, &pa));
-    std::memcpy(pa, b.initPos.data(), (size_t)16 * b.n);
-    vkUnmapMemory(m_dev, b.posAMem);
-    void* pv;
-    VK(vkMapMemory(m_dev, b.prevMem, 0, (VkDeviceSize)16 * b.n, 0, &pv));
-    std::memcpy(pv, b.initPos.data(), (size_t)16 * b.n);
-    vkUnmapMemory(m_dev, b.prevMem);
-    b.inA = true;
-}
-
-void Renderer::resetSoftBodies() {
-    resetBody(m_cloth);
-    resetBody(m_ball);
-}
-
-void Renderer::resetBall() {
-    resetBody(m_ball);
-}
-
-void Renderer::uploadCapsules(const std::vector<CapsuleGPU>& instances) {
-    void* p;
-    VK(vkMapMemory(m_dev, m_capsInstancesMem, 0, 48 * instances.size(), 0, &p));
-    std::memcpy(p, instances.data(), 48 * instances.size());
-    vkUnmapMemory(m_dev, m_capsInstancesMem);
-    // viewProj + the cloth grid dims into the capsule + cloth UBOs (the shaders read what
-    // they need: the capsule shader just viewProj, the cloth shader viewProj+W+H). The ball's
-    // UBO was set once at init (viewProj; its center is unused).
-    uploadGridUbo(m_caps);
-    uploadGridUbo(m_cloth.mesh);
-}
-
-// viewProj + the cloth grid dims (W,H) into a mesh's 80-byte UBO.
-void Renderer::uploadGridUbo(Mesh& m) {
-    void* up;
-    VK(vkMapMemory(m_dev, m.ubmem, 0, 80, 0, &up));
-    std::memcpy(up, m_vp.m, 64);
-    float extra[2] = {Scene::kCW, Scene::kCH};
-    std::memcpy((char*)up + 64, extra, 8);
-    vkUnmapMemory(m_dev, m.ubmem);
 }
 
 void Renderer::drawMesh(VkCommandBuffer cmd, const Mesh& m, VkBuffer* vbuf) {
@@ -576,8 +352,8 @@ void Renderer::drawMesh(VkCommandBuffer cmd, const Mesh& m, VkBuffer* vbuf) {
     vkCmdDrawIndexed(cmd, m.idxCount, 1, 0, 0, 0);
 }
 
-void Renderer::draw(VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui, const SimParams& p,
-                    int clothPinned) {
+void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui,
+                    const SoftSim& sim) {
     // the background color (a UI param)
     {
         void* p;
@@ -586,9 +362,10 @@ void Renderer::draw(VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgu
         std::memcpy(p, col, 16);
         vkUnmapMemory(m_dev, m_bgUmem);
     }
-
-    VkCommandBuffer cmd = app.beginCommands();
-    recordSoftSim(cmd, p, clothPinned); // the GPU soft-body sim runs before the render pass (same command buffer)
+    // the sim ran just before this (same command buffer): re-point the soft-body draws at the
+    // sim's current position buffers (the sim ping-pongs posA/posB).
+    updateSoftRenderSet(m_clothMesh, sim, SoftSim::kCloth);
+    updateSoftRenderSet(m_ballMesh, sim, SoftSim::kBall);
     VkClearValue cv[2]{};
     cv[0].color = {0.04f, 0.04f, 0.05f, 1.0f};
     cv[1].depthStencil = {1.0f, 0};
@@ -613,8 +390,8 @@ void Renderer::draw(VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgu
     vkCmdDraw(cmd, 3, 1, 0, 0);
     // the capsules (+ the ground quad in the same VBO/IBO), the cloth, the ball
     drawMesh(cmd, m_caps, &m_caps.vbuf);
-    drawMesh(cmd, m_cloth.mesh, nullptr);
-    drawMesh(cmd, m_ball.mesh, nullptr);
+    drawMesh(cmd, m_clothMesh, nullptr);
+    drawMesh(cmd, m_ballMesh, nullptr);
     // the ImGui overlay (the same swapchain image; zero CPU pixel copy)
     if (imgui && imgui->CmdLists.Size > 0)
         ImGui_ImplVulkan_RenderDrawData(imgui, cmd);
@@ -652,42 +429,8 @@ void Renderer::shutdown() {
         }
     };
     destroyMesh(m_caps);
-    // the GPU soft bodies: the render mesh (its sbuf aliases a sim buffer, so skip it there)
-    // + the sim buffers (posA/posB/prev/entries/entryStart) + the sim descriptor set (freed
-    // with m_softPool below).
-    auto destroyBody = [this, &destroyMesh](GpuBody& b) {
-        b.mesh.sbuf = VK_NULL_HANDLE;
-        destroyMesh(b.mesh);
-        auto db = [this](VkBuffer buf, VkDeviceMemory mem) {
-            if (buf) {
-                vkDestroyBuffer(m_dev, buf, nullptr);
-                vkFreeMemory(m_dev, mem, nullptr);
-            }
-        };
-        db(b.posA, b.posAMem);
-        db(b.posB, b.posBMem);
-        db(b.prev, b.prevMem);
-        db(b.entries, b.entriesMem);
-        db(b.entryStart, b.entryStartMem);
-    };
-    destroyBody(m_cloth);
-    destroyBody(m_ball);
-    if (m_softPool)
-        vkDestroyDescriptorPool(m_dev, m_softPool, nullptr);
-    if (m_softDsl)
-        vkDestroyDescriptorSetLayout(m_dev, m_softDsl, nullptr);
-    if (m_softPl)
-        vkDestroyPipelineLayout(m_dev, m_softPl, nullptr);
-    if (m_softPipe)
-        vkDestroyPipeline(m_dev, m_softPipe, nullptr);
-    if (m_physParams) {
-        vkDestroyBuffer(m_dev, m_physParams, nullptr);
-        vkFreeMemory(m_dev, m_physParamsMem, nullptr);
-    }
-    if (m_capsInstances) {
-        vkDestroyBuffer(m_dev, m_capsInstances, nullptr);
-        vkFreeMemory(m_dev, m_capsInstancesMem, nullptr);
-    }
+    destroyMesh(m_clothMesh); // its sbuf is VK_NULL_HANDLE (the pos buffer is sim-owned)
+    destroyMesh(m_ballMesh);
     if (m_bgPipe)
         vkDestroyPipeline(m_dev, m_bgPipe, nullptr);
     if (m_bgPl)

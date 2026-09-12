@@ -67,21 +67,23 @@ set(JPH_USE_DX12 OFF)
 set(JPH_USE_CPU_COMPUTE OFF)
 include(${PHYSICS_REPO_ROOT}/Jolt/Jolt.cmake)
 
-# --- vksim : the app (Vulkan + GLFW + ImGui + Jolt + CPU soft-body sim) ---
+# --- vksim : the app (Vulkan + GLFW + ImGui + Jolt + GPU soft-body sim) ---
 #   Split by concern:
-#     sim/sim.hpp            - universal soft-body solver (no Vulkan/Jolt/ImGui)
-#     app/params.hpp         – the user-tunable soft-body sim params (SimParams)
-#     app/rigid.{hpp,cpp}    - rigid-body physics (Jolt: ground + 16 clumping capsules)
-#     app/scene.{hpp,cpp}    - the simulation side: steps the rigid + the soft bodies
+#     sim/sim.hpp            - the soft-body data + builders (no Vulkan/Jolt/ImGui)
+#     sim/softsim.{hpp,cpp}  - the GPU soft-body sim (the "cloth sim": the compute solver)
+#     app/params.hpp         - the user-tunable soft-body sim params (SimParams)
+#     app/rigid.{hpp,cpp}    - rigid-body physics (Jolt: ground + 50 clumping capsules)
+#     app/scene.{hpp,cpp}    - the simulation side: steps the rigid + the soft-body state
 #     app/ui.{hpp,cpp}       - the Dear ImGui overlay (HUD + controls)
 #     vk/vkapp.{hpp,cpp}     - the window (GLFW) + the Vulkan core (device/swapchain/...)
-#     vk/renderer.{hpp,cpp}  - the GPU side: pipelines + buffers + the per-frame draw
+#     vk/renderer.{hpp,cpp}  - the GPU graphics: pipelines + buffers + the per-frame draw
 #     main.cpp               - the app: ties the pieces together + the frame loop
 add_executable(vksim
     src/main.cpp
     src/app/scene.cpp
     src/app/rigid.cpp
     src/app/ui.cpp
+    src/sim/softsim.cpp
     src/vk/vkapp.cpp
     src/vk/renderer.cpp
     ${IMGUI_SOURCES})

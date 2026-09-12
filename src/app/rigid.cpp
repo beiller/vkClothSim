@@ -70,9 +70,8 @@ void RigidScene::init() {
 }
 
 void RigidScene::step(int n) {
-    const float h = 1.0f / 60.0f;
     for (int i = 0; i < n; ++i)
-        m_phys->Update(h, 1, m_temp, m_job);
+        m_phys->Update(kFrameDt, 1, m_temp, m_job);
 }
 
 std::vector<CapsuleGPU> RigidScene::capsuleGPU() const {

@@ -8,6 +8,7 @@
 // The shared constants (the single spelling of each for the whole project).
 inline constexpr float kPi = std::numbers::pi_v<float>;
 inline constexpr float kSqrt2 = std::numbers::sqrt2_v<float>;
+inline constexpr float kFrameDt = 1.0f / 60.0f; // the fixed physics frame (60 Hz)
 
 struct V3 {
     float x, y, z;

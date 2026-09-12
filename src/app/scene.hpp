@@ -19,7 +19,6 @@ class Scene {
 public:
     // scene constants (meters, 60 Hz)
     static constexpr int kCW = 64, kCH = 64;           // cloth grid (CW*CH points)
-    static constexpr int kSubsteps = 3;                // Verlet sub-steps per frame (all soft bodies)
     static constexpr int kHoldFrames = 150;            // frames the cloth stays pinned (held flat)
     static constexpr float kClothSpan = 8.0f;          // cloth width (m)
     static constexpr float kClothY0 = 10.0f;           // the cloth's held height (m)

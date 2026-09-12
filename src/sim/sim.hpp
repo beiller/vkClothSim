@@ -21,6 +21,9 @@ namespace sim {
 // The scene gravity (m/s^2, along -Y). The GPU integrator uses this.
 inline constexpr float kGravity = -9.81f;
 
+// The Verlet sub-steps per frame (all soft bodies). The GPU integrator (softsim) uses this.
+inline constexpr int kSubsteps = 3;
+
 // A two-point distance constraint: keep vertices a..b at rest length `rest`.
 // `k` (0..1) scales how hard the constraint is enforced per relaxation (1 = stiff).
 struct Constraint {

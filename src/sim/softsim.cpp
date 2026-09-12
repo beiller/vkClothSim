@@ -1,0 +1,241 @@
+// softsim.cpp
+#include "sim/softsim.hpp"
+
+#include "softbody_spv.hpp"
+#include "vk/vkutil.hpp"
+#include <cstring>
+
+namespace {
+
+// Matches the Phys struct in softbody.comp (std430 flat scalars).
+struct PhysParams {
+    int nCaps;
+    float dt, damping, gravity, friction, skin, tension, relaxScale, maxStep;
+};
+static_assert(sizeof(PhysParams) == 36);
+
+// Max vertex displacement per sub-step (m): the hard anti-divergence guard in the Verlet
+// pass. The cloth's smallest rest length is kClothSpan/(kCW-1) ~ 0.13 m, so 0.05 m keeps a
+// single step well under half a joint even under the most extreme parameter sets.
+constexpr float SOFT_MAX_STEP = 0.05f;
+
+// The compute DSL's 7 bindings (shared by both bodies' descriptor sets):
+// 0 posA, 1 posB, 2 prev, 3 capsules, 4 entries, 5 entryStart, 6 physParams.
+std::vector<VkDescriptorSetLayoutBinding> softBinds() {
+    std::vector<VkDescriptorSetLayoutBinding> binds(7);
+    for (uint32_t i = 0; i < 7; ++i) {
+        binds[i].binding = i;
+        binds[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binds[i].descriptorCount = 1;
+        binds[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    return binds;
+}
+
+} // namespace
+
+void SoftSim::init(VkDevice dev, VkPhysicalDevice pdev, const sim::SoftBody& cloth, const sim::SoftBody& ball,
+                   int nCaps) {
+    m_dev = dev;
+    m_pdev = pdev;
+    m_nCaps = nCaps;
+
+    // the shared physics params (small SSBO, rewritten each frame)
+    vkMakeBuffer(dev, pdev, m_physParams, m_physParamsMem, 36, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    // the Jolt capsule colliders (shared with the renderer's instanced draw)
+    vkMakeBuffer(dev, pdev, m_capsInstances, m_capsInstancesMem, 48 * (VkDeviceSize)nCaps,
+                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    // compute DSL + pool (7 buffers x 2 bodies) + pipeline
+    const auto binds = softBinds();
+    vkMakeDslPool(dev, binds, /*maxSets=*/2, m_softDsl, m_softPool);
+    m_softPl = vkMakePipelineLayout(dev, m_softDsl);
+    VkShaderModule cm = vkMakeModule(dev, softbody_spv, softbody_spv_len / 4);
+    VkPipelineShaderStageCreateInfo cs{};
+    cs.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cs.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    cs.module = cm;
+    cs.pName = "main";
+    VkComputePipelineCreateInfo cpc{};
+    cpc.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpc.stage = cs;
+    cpc.layout = m_softPl;
+    VK(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &cpc, nullptr, &m_softPipe));
+    vkDestroyShaderModule(dev, cm, nullptr);
+
+    // the two bodies: their sim buffers + compute descriptor sets
+    m_body[kCloth].n = cloth.numVertices();
+    buildBodySimBuffers(m_body[kCloth], cloth);
+    m_body[kBall].n = ball.numVertices();
+    buildBodySimBuffers(m_body[kBall], ball);
+}
+
+void SoftSim::buildBodySimBuffers(GpuBody& b, const sim::SoftBody& body) {
+    VkDevice dev = m_dev;
+    const int n = b.n;
+    // the joint entries: each constraint (a,b) adds an entry to a's list (neighbor b) and to
+    // b's list (neighbor a) — the shader relaxes each vertex against its own entries. The
+    // layout mirrors the shader's `struct Entry { int j; float rest; float k; int pad; }`
+    // (16 B) — `j` MUST be an int in memory (the shader reads it as an int).
+    struct EntryBuf {
+        int j;
+        float rest;
+        float k;
+        int pad;
+    };
+    std::vector<std::vector<EntryBuf>> lists(n);
+    for (const auto& c : body.cons) {
+        lists[c.a].push_back({c.b, c.rest, c.k, 0});
+        lists[c.b].push_back({c.a, c.rest, c.k, 0});
+    }
+    std::vector<int> start(n + 1, 0);
+    for (int i = 0; i < n; ++i)
+        start[i + 1] = start[i] + (int)lists[i].size();
+    b.nEntries = start[n];
+    std::vector<EntryBuf> entries(b.nEntries);
+    for (int i = 0; i < n; ++i)
+        for (size_t e = 0; e < lists[i].size(); ++e)
+            entries[start[i] + e] = lists[i][e];
+    // the sim buffers (16-byte-stride vec3 positions, matching the render's SSBO)
+    std::vector<float> initPos((size_t)4 * n);
+    for (int i = 0; i < n; ++i) {
+        const float* p = body.posPtr(i);
+        initPos[4 * i + 0] = p[0];
+        initPos[4 * i + 1] = p[1];
+        initPos[4 * i + 2] = p[2];
+        initPos[4 * i + 3] = 0.0f;
+    }
+    vkMakeBuffer(dev, m_pdev, b.posA, b.posAMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 initPos.data());
+    vkMakeBuffer(dev, m_pdev, b.posB, b.posBMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    vkMakeBuffer(dev, m_pdev, b.prev, b.prevMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 initPos.data());   // prev = pos (zero velocity)
+    b.initPos = std::move(initPos); // keep a CPU copy for reset
+    vkMakeBuffer(dev, m_pdev, b.entries, b.entriesMem, (VkDeviceSize)16 * b.nEntries,
+                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, entries.data());
+    vkMakeBuffer(dev, m_pdev, b.entryStart, b.entryStartMem, (VkDeviceSize)4 * (n + 1),
+                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, start.data());
+    // the compute descriptor set (this body's buffers + the shared capsules + phys params)
+    std::vector<VkDescriptorBufferInfo> bi = {
+        {b.posA, 0, (VkDeviceSize)16 * n},
+        {b.posB, 0, (VkDeviceSize)16 * n},
+        {b.prev, 0, (VkDeviceSize)16 * n},
+        {m_capsInstances, 0, (VkDeviceSize)48 * m_nCaps},
+        {b.entries, 0, (VkDeviceSize)16 * b.nEntries},
+        {b.entryStart, 0, (VkDeviceSize)4 * (n + 1)},
+        {m_physParams, 0, 36},
+    };
+    vkMakeSet(dev, m_softPool, m_softDsl, softBinds(), b.simSet, bi);
+}
+
+void SoftSim::recordDispatch(VkCommandBuffer cmd, GpuBody& b, int mode) {
+    VkBuffer rd = b.inA ? b.posA : b.posB;
+    VkBuffer bufs[2] = {rd, b.prev};
+    VkBufferMemoryBarrier bmb[2]{};
+    for (int i = 0; i < 2; ++i) {
+        bmb[i].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        bmb[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bmb[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bmb[i].buffer = bufs[i];
+        bmb[i].offset = 0;
+        bmb[i].size = VK_WHOLE_SIZE;
+        bmb[i].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        bmb[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    }
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr,
+                         2, bmb, 0, nullptr);
+    int pc[4] = {mode, b.inA ? 1 : 0, b.n, 0}; // mode, readFromA, n, pinned(unused)
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPl, 0, 1, &b.simSet, 0, nullptr);
+    vkCmdPushConstants(cmd, m_softPl, VK_SHADER_STAGE_COMPUTE_BIT, 0, (uint32_t)sizeof(pc), pc);
+    vkCmdDispatch(cmd, (b.n + 63) / 64, 1, 1);
+    b.inA = !b.inA;
+}
+
+void SoftSim::recordBody(VkCommandBuffer cmd, GpuBody& b, int relaxIters, int pinned) {
+    if (pinned)
+        return;
+    for (int s = 0; s < sim::kSubsteps; ++s) {
+        recordDispatch(cmd, b, 0); // Verlet
+        for (int k = 0; k < relaxIters; ++k)
+            recordDispatch(cmd, b, 1); // joint relaxation (Jacobi)
+        recordDispatch(cmd, b, 2);     // collision
+    }
+}
+
+void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int clothPinned) {
+    PhysParams phys;
+    phys.nCaps = m_nCaps;
+    phys.dt = kFrameDt / sim::kSubsteps;
+    phys.damping = p.damping;
+    phys.gravity = sim::kGravity * p.mass;
+    phys.friction = 0.1f;
+    phys.skin = 0.01f;
+    phys.tension = p.tension;
+    phys.relaxScale = 1.0f; // full-strength relax
+    phys.maxStep = SOFT_MAX_STEP;
+    void* up;
+    VK(vkMapMemory(m_dev, m_physParamsMem, 0, 36, 0, &up));
+    std::memcpy(up, &phys, 36);
+    vkUnmapMemory(m_dev, m_physParamsMem);
+    // the relax iterations per sub-step = the UI stiffness. The cloth is held (pinned) while
+    // it is; the ball is always free.
+    const int pinned[kCount] = {clothPinned, 0};
+    for (int i = 0; i < kCount; ++i)
+        recordBody(cmd, m_body[i], p.stiffness, pinned[i]);
+}
+
+void SoftSim::resetBody(GpuBody& b) {
+    void* pa;
+    VK(vkMapMemory(m_dev, b.posAMem, 0, (VkDeviceSize)16 * b.n, 0, &pa));
+    std::memcpy(pa, b.initPos.data(), (size_t)16 * b.n);
+    vkUnmapMemory(m_dev, b.posAMem);
+    void* pv;
+    VK(vkMapMemory(m_dev, b.prevMem, 0, (VkDeviceSize)16 * b.n, 0, &pv));
+    std::memcpy(pv, b.initPos.data(), (size_t)16 * b.n);
+    vkUnmapMemory(m_dev, b.prevMem);
+    b.inA = true;
+}
+
+void SoftSim::resetSoftBodies() {
+    for (auto& b : m_body)
+        resetBody(b);
+}
+
+void SoftSim::resetBall() {
+    resetBody(m_body[kBall]);
+}
+
+void SoftSim::uploadCapsules(const std::vector<CapsuleGPU>& instances) {
+    void* p;
+    VK(vkMapMemory(m_dev, m_capsInstancesMem, 0, 48 * instances.size(), 0, &p));
+    std::memcpy(p, instances.data(), 48 * instances.size());
+    vkUnmapMemory(m_dev, m_capsInstancesMem);
+}
+
+void SoftSim::shutdown() {
+    if (m_dev == VK_NULL_HANDLE)
+        return;
+    auto db = [this](VkBuffer buf, VkDeviceMemory mem) {
+        if (buf) {
+            vkDestroyBuffer(m_dev, buf, nullptr);
+            vkFreeMemory(m_dev, mem, nullptr);
+        }
+    };
+    for (auto& b : m_body) {
+        db(b.posA, b.posAMem);
+        db(b.posB, b.posBMem);
+        db(b.prev, b.prevMem);
+        db(b.entries, b.entriesMem);
+        db(b.entryStart, b.entryStartMem);
+    }
+    if (m_softPool)
+        vkDestroyDescriptorPool(m_dev, m_softPool, nullptr);
+    if (m_softDsl)
+        vkDestroyDescriptorSetLayout(m_dev, m_softDsl, nullptr);
+    if (m_softPl)
+        vkDestroyPipelineLayout(m_dev, m_softPl, nullptr);
+    if (m_softPipe)
+        vkDestroyPipeline(m_dev, m_softPipe, nullptr);
+    db(m_physParams, m_physParamsMem);
+    db(m_capsInstances, m_capsInstancesMem);
+}

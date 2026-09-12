@@ -1,20 +1,17 @@
 // renderer.hpp
-// The renderer: the GPU side of the app. Owns the per-mesh pipelines + buffers (the
-// full-screen background, the instanced capsules + ground, and the two soft bodies — the
-// cloth sheet + the ball), the soft-body COMPUTE sim (per-frame dispatch, double-buffered,
-// race-free), the per-frame uploads, and the draws.
+// The renderer: the GPU GRAPHICS side of the app. Owns the per-mesh graphics pipelines +
+// buffers (the full-screen background, the instanced capsules + ground, and the two soft
+// bodies — the cloth sheet + the ball) and the per-frame draw.
 //
-// The soft bodies (cloth + ball) are stepped ON THE GPU by ONE general compute shader
-// (shaders/softbody.comp): it takes each body's vertices + joints (two-point distance
-// constraints) + the Jolt capsules (colliders) and does Verlet + joint relaxation + one-way
-// collision. The renderer reads the resulting positions back for the render (same buffer).
+// It does NOT run the soft-body sim: that lives in sim/softsim.{hpp,cpp} (the "cloth sim"
+// concern). The renderer reads the sim's OUTPUT to draw it — the current position buffers
+// (SoftSim::posBuffer) for the soft bodies and the capsule collider buffer
+// (SoftSim::capsulesBuffer) for the instanced capsule draw.
 #pragma once
 #include <vulkan/vulkan.h>
 
-#include "app/params.hpp"
-#include "app/rigid.hpp"
 #include "math.hpp"
-#include "sim/sim.hpp"
+#include "sim/softsim.hpp"
 #include <imgui.h> // ImDrawData (the optional overlay, drawn last)
 #include <vector>
 
@@ -23,20 +20,15 @@ class Scene;
 
 class Renderer {
 public:
-    void init(VkApp& app, const Scene& scene, const Mat4& viewProj);
+    void init(VkApp& app, const Scene& scene, const SoftSim& sim, const Mat4& viewProj);
     void shutdown();
 
     void setViewProj(const Mat4& vp) { m_vp = vp; }
-    // Upload the Jolt capsules (CPU -> GPU): used by BOTH the instanced render and the sim.
-    void uploadCapsules(const std::vector<CapsuleGPU>& instances);
-    // Record the soft-body sim (cloth + ball) dispatches into `cmd` (no submit).
-    void recordSoftSim(VkCommandBuffer cmd, const SimParams& p, int clothPinned);
-    // Re-upload the initial state to the GPU (used on reset: the sim state lives on the GPU).
-    void resetSoftBodies(); // both bodies (R key / reset button)
-    void resetBall();       // just the ball ("reset ball" button)
-    // Record + submit the render into framebuffer `fb`. The soft-body sim is recorded
-    // first (same command buffer).
-    void draw(VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui, const SimParams& p, int clothPinned);
+    // Record + submit the render (background, capsules, cloth, ball, the ImGui overlay) into
+    // framebuffer `fb` on the already-begun `cmd`. The soft-body sim must already have been
+    // recorded into `cmd` (it runs before the render pass); the renderer re-points the
+    // soft-body draws at the sim's current position buffers.
+    void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui, const SoftSim& sim);
 
 private:
     // One indexed render mesh: the pos SSBO (soft bodies) or vertex buffer (capsules) + the
@@ -58,52 +50,22 @@ private:
         uint32_t idxCount = 0;
     };
 
-    // One GPU soft body (the cloth or the ball): the sim buffers (ping-pong positions + prev
-    // + the joint entries) + the compute descriptor set + the render mesh. `inA` tracks which
-    // position buffer holds the current state (the sim flips it per dispatch).
-    struct GpuBody {
-        VkBuffer posA = VK_NULL_HANDLE;
-        VkDeviceMemory posAMem = VK_NULL_HANDLE;
-        VkBuffer posB = VK_NULL_HANDLE;
-        VkDeviceMemory posBMem = VK_NULL_HANDLE;
-        VkBuffer prev = VK_NULL_HANDLE;
-        VkDeviceMemory prevMem = VK_NULL_HANDLE;
-        VkBuffer entries = VK_NULL_HANDLE;
-        VkDeviceMemory entriesMem = VK_NULL_HANDLE;
-        VkBuffer entryStart = VK_NULL_HANDLE;
-        VkDeviceMemory entryStartMem = VK_NULL_HANDLE;
-        VkDescriptorSet simSet = VK_NULL_HANDLE;
-        Mesh mesh; // render (binding 0 = the current pos buffer)
-        int n = 0; // vertex count
-        int nEntries = 0;
-        bool inA = true;
-        std::vector<float> initPos; // the initial state (16-byte stride), for reset
-    };
-
     void initBackground();
-    void initCapsules();
-    void initSoftPipeline();                 // the compute pipeline + dsl + shared phys params
-    void initSoftBodies(const Scene& scene); // build m_cloth + m_ball (sim buffers + render)
-    // Create one body's sim buffers (posA/posB/prev + the joint entries) from its initial
-    // vertices + constraints, plus its compute descriptor set.
-    void buildBodySimBuffers(GpuBody& b, const sim::SoftBody& body);
-    // The cloth + ball share the render descriptor layout (0: pos SSBO, 1: UBO).
-    static void makePosUboDescriptorSet(VkDevice dev, Mesh& m, VkDeviceSize posRange);
+    void initCapsules(const SoftSim& sim);
+    void initSoftBodies(const Scene& scene, const SoftSim& sim); // build the cloth + ball render meshes
+    // The cloth + ball share the render descriptor layout (0: pos SSBO, 1: UBO): create the
+    // descriptor set layout + pool + set + pipeline layout for one of them. `posBuf` (owned
+    // by the sim) is binding 0; it is re-pointed each frame by updateSoftRenderSet.
+    static void makePosUboDescriptorSet(VkDevice dev, Mesh& m, VkBuffer posBuf, VkDeviceSize posRange);
     // The cloth + ball share the render mesh path too: the index buffer + the 80-byte UBO
-    // (viewProj + `extraUbo` at offset 64) + the descriptor set + the pipeline.
-    void makeBodyRenderMesh(GpuBody& b, const std::vector<uint32_t>& idx, const void* vertSpv, uint32_t vertLen,
-                            const void* fragSpv, uint32_t fragLen, const float* extraUbo, size_t extraUboBytes);
-    void uploadGridUbo(Mesh& m);
-    // Point a body's render descriptor at its current position buffer (posA or posB).
-    void updateRenderSet(GpuBody& b);
-    // Record ONE soft-body compute dispatch (barriers + push constants + dispatch) and flip
-    // inA (the write went to the other buffer).
-    void recordDispatch(VkCommandBuffer cmd, GpuBody& b, int mode);
-    // Record one body's full frame of sim (substeps x {Verlet + relax + collide}); skip if
-    // pinned. The relax is Jacobi (the cloth's joint graph is not bipartite).
-    void recordBody(VkCommandBuffer cmd, GpuBody& b, int relaxIters, int pinned);
-    // Re-upload one body's initial state to the GPU (posA + prev = initial, inA = true).
-    void resetBody(GpuBody& b);
+    // (viewProj + `extraUbo` at offset 64) + the descriptor set + the pipeline (no vertex
+    // input — the positions come from the sim's pos SSBO, which it owns).
+    void makeBodyRenderMesh(Mesh& m, const SoftSim& sim, SoftSim::Body body, const std::vector<uint32_t>& idx,
+                            const void* vertSpv, uint32_t vertLen, const void* fragSpv, uint32_t fragLen,
+                            const float* extraUbo, size_t extraUboBytes);
+    // Point a soft-body render descriptor at the sim's current position buffer (re-done each
+    // frame, since the sim ping-pongs posA/posB).
+    void updateSoftRenderSet(Mesh& m, const SoftSim& sim, SoftSim::Body body);
     static void drawMesh(VkCommandBuffer cmd, const Mesh& m, VkBuffer* vbuf);
 
     VkDevice m_dev = VK_NULL_HANDLE;
@@ -122,18 +84,11 @@ private:
     VkPipelineLayout m_bgPl = VK_NULL_HANDLE;
     VkPipeline m_bgPipe = VK_NULL_HANDLE;
 
-    // the instanced capsule + ground mesh
+    // the instanced capsule + ground mesh (its capsule SSBO is the sim's collider buffer)
     Mesh m_caps;
-    VkBuffer m_capsInstances = VK_NULL_HANDLE;
-    VkDeviceMemory m_capsInstancesMem = VK_NULL_HANDLE;
     int m_nCaps = 0;
 
-    // the two GPU soft bodies + the shared compute sim
-    GpuBody m_cloth, m_ball;
-    VkPipeline m_softPipe = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_softDsl = VK_NULL_HANDLE;
-    VkDescriptorPool m_softPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_softPl = VK_NULL_HANDLE;
-    VkBuffer m_physParams = VK_NULL_HANDLE;
-    VkDeviceMemory m_physParamsMem = VK_NULL_HANDLE;
+    // the two soft bodies' render meshes (their position buffers live in the sim)
+    Mesh m_clothMesh;
+    Mesh m_ballMesh;
 };
