@@ -40,9 +40,9 @@ spirv(vk_bg_vert ${CMAKE_SOURCE_DIR}/shaders/vk_bg_vert.vert)
 spirv(vk_bg_frag ${CMAKE_SOURCE_DIR}/shaders/vk_bg_frag.frag)
 spirv(caps_vert ${CMAKE_SOURCE_DIR}/shaders/caps_vert.vert)
 spirv(caps_frag ${CMAKE_SOURCE_DIR}/shaders/caps_frag.frag)
-spirv(cloth ${CMAKE_SOURCE_DIR}/shaders/cloth.comp)
 spirv(cloth_vert ${CMAKE_SOURCE_DIR}/shaders/cloth_vert.vert)
 spirv(cloth_frag ${CMAKE_SOURCE_DIR}/shaders/cloth_frag.frag)
+spirv(softbody ${CMAKE_SOURCE_DIR}/shaders/softbody.comp)
 spirv(ball_vert ${CMAKE_SOURCE_DIR}/shaders/ball_vert.vert)
 spirv(ball_frag ${CMAKE_SOURCE_DIR}/shaders/ball_frag.frag)
 
@@ -66,16 +66,23 @@ set(JPH_USE_DX12 OFF)
 set(JPH_USE_CPU_COMPUTE OFF)
 include(${PHYSICS_REPO_ROOT}/Jolt/Jolt.cmake)
 
-# --- vksim : pure Vulkan + GLFW + ImGui + Jolt + GPU cloth ---
-#   vksim is split by concern:
-#     sim/sim.hpp      - universal soft-body solver (no Vulkan/Jolt/ImGui)
-#     app/rigid.{hpp,cpp} - rigid-body physics (Jolt: ground + 16 clumping capsules)
-#     app/ui.{hpp,cpp}    - the Dear ImGui overlay (HUD + controls)
-#     vk_main.cpp       - the renderer (Vulkan) + the main loop (integration)
+# --- vksim : the app (Vulkan + GLFW + ImGui + Jolt + CPU soft-body sim) ---
+#   Split by concern:
+#     sim/sim.hpp            - universal soft-body solver (no Vulkan/Jolt/ImGui)
+#     app/params.hpp         – the user-tunable soft-body sim params (SimParams)
+#     app/rigid.{hpp,cpp}    - rigid-body physics (Jolt: ground + 16 clumping capsules)
+#     app/scene.{hpp,cpp}    - the simulation side: steps the rigid + the soft bodies
+#     app/ui.{hpp,cpp}       - the Dear ImGui overlay (HUD + controls)
+#     vk/vkapp.{hpp,cpp}     - the window (GLFW) + the Vulkan core (device/swapchain/...)
+#     vk/renderer.{hpp,cpp}  - the GPU side: pipelines + buffers + the per-frame draw
+#     main.cpp               - the app: ties the pieces together + the frame loop
 add_executable(vksim
-    src/vk_main.cpp
+    src/main.cpp
+    src/app/scene.cpp
     src/app/rigid.cpp
     src/app/ui.cpp
+    src/vk/vkapp.cpp
+    src/vk/renderer.cpp
     ${IMGUI_SOURCES})
 target_link_libraries(vksim PRIVATE glfw Vulkan::Vulkan Jolt::Jolt)
 target_compile_features(vksim PRIVATE cxx_std_23)
@@ -83,8 +90,18 @@ target_include_directories(vksim PRIVATE
     ${GEN_DIR}
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/lib/raylib/src)
+    ${CMAKE_SOURCE_DIR}/src)
+
+# --- simtest : headless soft-body test (pure sim/, no Vulkan/Jolt/ImGui) ---
+add_executable(simtest src/simtest.cpp)
+target_compile_features(simtest PRIVATE cxx_std_23)
+target_include_directories(simtest PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+# --- penprobe : headless one-way-collision probe (Jolt + the sim, no Vulkan) ---
+add_executable(penprobe src/penprobe.cpp src/app/scene.cpp src/app/rigid.cpp)
+target_link_libraries(penprobe PRIVATE Jolt::Jolt)
+target_compile_features(penprobe PRIVATE cxx_std_23)
+target_include_directories(penprobe PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 # --- official ImGui GLFW+Vulkan example (diagnostic reference) ---
 add_executable(imgui_example
@@ -95,7 +112,7 @@ target_include_directories(imgui_example PRIVATE ${IMGUI_DIR} ${IMGUI_DIR}/backe
 target_compile_definitions(imgui_example PRIVATE VK_PROTOTYPES)
 
 # --- headless Vulkan SDF smoke test (sim3d) ---
-add_executable(sim3d src/main.cpp)
+add_executable(sim3d src/smoke.cpp)
 target_link_libraries(sim3d PRIVATE Vulkan::Vulkan)
 target_include_directories(sim3d PRIVATE ${GEN_DIR})
 spirv(smoke ${CMAKE_SOURCE_DIR}/shaders/smoke.comp)

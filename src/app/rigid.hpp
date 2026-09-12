@@ -1,5 +1,5 @@
 // rigid.hpp
-// The rigid-body physics (Jolt): a static ground plane + 16 dynamic capsules that fall and
+// The rigid-body physics (Jolt): a static ground plane + 50 dynamic capsules that fall and
 // clump into a pile. Decoupled from the renderer (Vulkan) and the soft-body simulator
 // (sim/): it exposes the capsules' transforms as plain data — sim::Collider segments for
 // the one-way soft-body collision, and CapsuleGPU (per-instance) for the instanced render.
@@ -20,7 +20,7 @@ static_assert(sizeof(CapsuleGPU) == 48);
 
 class RigidScene {
 public:
-    void init();                 // create the physics system, the ground, the 16 capsules
+    void init();                 // create the physics system, the ground, the 50 capsules
     void step(int n);            // run `n` physics sub-steps
     int capsuleCount() const { return (int)m_caps.size(); }
     // The capsules' current transforms as plain segments (one-way soft-body collision).

@@ -14,7 +14,9 @@
 //                      the body's triangles (which the solver itself never sees).
 //
 // The same SoftBody governs every soft body in the scene (cloth, ball, ...). A body is just
-// (n vertices, a set of distance constraints, and a per-body parameter set).
+// (n vertices, a set of distance constraints, and a parameter set: gravity/damping/
+// sub-steps/stiffness/tension). A body's `tension` scales its rest lengths (the solver keeps
+// the base rest lengths, so tension works identically for the cloth and the ball).
 
 #pragma once
 #include <vector>
@@ -52,9 +54,11 @@ public:
     float dt = 1.0f / 60.0f;
     float damping = 0.999f;
     float gravity[3] = {0, -9.81f, 0};   // acceleration applied during integration
+    float tension = 1.0f;                // rest-length scale (<1 loose, >1 taut)
 
     std::vector<float> pos;              // 3n
     std::vector<float> prev;             // 3n
+    std::vector<float> baseRest;         // rest length per constraint at tension = 1
     std::vector<Constraint> cons;
 
     // Build the body from an initial vertex list (3 floats each). prev starts equal to
@@ -70,6 +74,9 @@ public:
         pos.assign(p0, p0 + 3 * n);
         prev = pos;
         this->cons = std::move(cons);
+        baseRest.reserve(this->cons.size());
+        for (auto& c : this->cons)       // the base rest lengths (tension scales these)
+            baseRest.push_back(c.rest);
     }
 
     // Restore an initial vertex list (used for reset).
@@ -78,47 +85,74 @@ public:
         prev = pos;
     }
 
-    // Integrate (Verlet + gravity) then solve the constraints (Gauss-Seidel), `substeps`
-    // times. The caller applies pressure/collisions between/after steps.
-    void step() {
+    // Scale the constraint rest lengths by `tension` (once per frame; call it before the
+    // sub-steps). (x * 1.0 is exact, so tension = 1 is a no-op.)
+    void applyTension() {
+        for (size_t i = 0; i < cons.size(); ++i)
+            cons[i].rest = baseRest[i] * tension;
+    }
+
+    // One sub-step: integrate (Verlet + gravity) then solve the constraints
+    // (Gauss-Seidel, `iterations` passes). The caller may interleave per-sub-step work
+    // (e.g. the one-way collision) between sub-steps.
+    void substep() {
         const float dt2 = dt * dt;
-        for (int s = 0; s < substeps; ++s) {
-            for (int i = 0; i < n; ++i) {
-                float* p = &pos[3 * i], *q = &prev[3 * i];
-                float vx = (p[0] - q[0]) * damping, vy = (p[1] - q[1]) * damping, vz = (p[2] - q[2]) * damping;
-                q[0] = p[0]; q[1] = p[1]; q[2] = p[2];
-                p[0] += vx + gravity[0] * dt2;
-                p[1] += vy + gravity[1] * dt2;
-                p[2] += vz + gravity[2] * dt2;
-            }
-            for (int it = 0; it < iterations; ++it)
-                for (auto& c : cons) {
-                    float* pa = &pos[3 * c.a], *pb = &pos[3 * c.b];
-                    float dx = pb[0] - pa[0], dy = pb[1] - pa[1], dz = pb[2] - pa[2];
-                    float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-                    if (dist < 1e-6f) continue;
-                    float k = (c.rest - dist) / dist * 0.5f * c.k;
-                    float cx = dx * k, cy = dy * k, cz = dz * k;
-                    pa[0] -= cx; pa[1] -= cy; pa[2] -= cz;
-                    pb[0] += cx; pb[1] += cy; pb[2] += cz;
-                }
+        for (int i = 0; i < n; ++i) {
+            float* p = &pos[3 * i], *q = &prev[3 * i];
+            float vx = (p[0] - q[0]) * damping, vy = (p[1] - q[1]) * damping, vz = (p[2] - q[2]) * damping;
+            q[0] = p[0]; q[1] = p[1]; q[2] = p[2];
+            p[0] += vx + gravity[0] * dt2;
+            p[1] += vy + gravity[1] * dt2;
+            p[2] += vz + gravity[2] * dt2;
         }
+        for (int it = 0; it < iterations; ++it)
+            for (auto& c : cons) {
+                float* pa = &pos[3 * c.a], *pb = &pos[3 * c.b];
+                float dx = pb[0] - pa[0], dy = pb[1] - pa[1], dz = pb[2] - pa[2];
+                float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (dist < 1e-6f) continue;
+                float k = (c.rest - dist) / dist * 0.5f * c.k;
+                float cx = dx * k, cy = dy * k, cz = dz * k;
+                pa[0] -= cx; pa[1] -= cy; pa[2] -= cz;
+                pb[0] += cx; pb[1] += cy; pb[2] += cz;
+            }
+    }
+
+    // A full frame: `substeps` sub-steps. The caller applies pressure/collisions
+    // between/after steps (or drives `substep()` itself for per-sub-step work).
+    void step() {
+        applyTension();
+        for (int s = 0; s < substeps; ++s)
+            substep();
     }
 
     int numVertices() const { return n; }
     float* posPtr(int i) { return &pos[3 * i]; }
     const float* posPtr(int i) const { return &pos[3 * i]; }
     float* prevPtr(int i) { return &prev[3 * i]; }
+    const float* prevPtr(int i) const { return &prev[3 * i]; }
 };
 
 // One-way collision: push every vertex of a soft body out of the capsule colliders + the
-// ground (y=0), removing the normal velocity component (prev is adjusted). Generic over
-// the body: the same routine works for the cloth, the ball, and any other soft body.
-inline void applyCollision(SoftBody& body, const std::vector<Collider>& colliders) {
+// ground (y=0), removing the normal velocity component (prev is adjusted) so contact
+// never injects energy. `friction` (0..1) is additionally the fraction of the tangential
+// (sliding) velocity removed per contact — it stops a body sliding off the pile / rolling
+// away (0 = frictionless). The push-out runs in passes over the still-pushed vertices:
+// in a dense pile the colliders overlap each other, so pushing a vertex out of one can
+// re-insert it into an earlier one — the passes converge to a fully-clean vertex set.
+// Generic over the body: the same routine works for the cloth, the ball, and any other
+// soft body.
+inline void applyCollision(SoftBody& body, const std::vector<Collider>& colliders, float friction = 0.0f) {
     const int n = body.numVertices();
-    for (int i = 0; i < n; ++i) {
-        float* p = body.posPtr(i);
-        float* q = body.prevPtr(i);
+    const float fr = 1.0f - friction;   // tangential velocity kept while in contact
+    std::vector<char> dirty(n, 1);      // vertices still needing (re-)checking
+    for (int pass = 0; pass < 8; ++pass) {
+        int any = 0;
+        for (int i = 0; i < n; ++i) {
+            if (!dirty[i]) continue;
+            dirty[i] = 0;
+            float* p = body.posPtr(i);
+            float* q = body.prevPtr(i);
         for (auto& c : colliders) {
             float abx = c.b[0] - c.a[0], aby = c.b[1] - c.a[1], abz = c.b[2] - c.a[2];
             float t = ((p[0] - c.a[0]) * abx + (p[1] - c.a[1]) * aby + (p[2] - c.a[2]) * abz) /
@@ -134,14 +168,20 @@ inline void applyCollision(SoftBody& body, const std::vector<Collider>& collider
                 float vx = p[0] - q[0], vy = p[1] - q[1], vz = p[2] - q[2];
                 float vn = vx * nx + vy * ny + vz * nz;
                 p[0] = tx; p[1] = ty; p[2] = tz;
-                q[0] = tx - (vx - vn * nx); q[1] = ty - (vy - vn * ny); q[2] = tz - (vz - vn * nz);
+                q[0] = tx - (vx - vn * nx) * fr; q[1] = ty - (vy - vn * ny) * fr; q[2] = tz - (vz - vn * nz) * fr;
+                dirty[i] = 1;   // may now be inside an earlier collider
+                any = 1;
             }
         }
         if (p[1] < 0.0f) {   // ground plane y=0
             float vx = p[0] - q[0], vz = p[2] - q[2];
             p[1] = 0.0f;
-            q[0] = p[0] - vx; q[1] = p[1]; q[2] = p[2] - vz;
+            q[0] = p[0] - vx * fr; q[1] = p[1]; q[2] = p[2] - vz * fr;
+            dirty[i] = 1;   // may now be inside a collider
+            any = 1;
         }
+    }
+        if (!any) break;   // nothing moved this pass -> the vertex set is clean
     }
 }
 
@@ -185,10 +225,10 @@ inline void applyPressure(SoftBody& body, const std::vector<Triangle>& tris, flo
 }
 
 // Build a CW x CH grid of vertices (3 floats each) + the distance constraints (the grid
-// edges + diagonals) + the base rest lengths (tension = 1.0). The caller scales the rest
-// lengths by the tension each step.
+// edges + diagonals) at their tension = 1.0 rest lengths (the solver keeps those as the
+// base and scales them by its tension each step).
 inline void makeCloth(std::vector<float>& verts, std::vector<Constraint>& cons,
-                      std::vector<float>& baseRest, int CW, int CH, float span, float y0) {
+                      int CW, int CH, float span, float y0) {
     const int CN = CW * CH;
     verts.assign(3 * CN, 0.0f);
     for (int gy = 0; gy < CH; ++gy)
@@ -201,13 +241,12 @@ inline void makeCloth(std::vector<float>& verts, std::vector<Constraint>& cons,
     const float spacing = span / (CW - 1);
     const float diag = spacing * 1.41421356f;
     cons.clear();
-    baseRest.clear();
     for (int i = 0; i < CN; ++i) {
         int gx = i % CW, gy = i / CW;
-        if (gx < CW - 1) { cons.push_back({i, i + 1, spacing, 1.0f}); baseRest.push_back(spacing); }
-        if (gy < CH - 1) { cons.push_back({i, i + CW, spacing, 1.0f}); baseRest.push_back(spacing); }
-        if (gx < CW - 1 && gy < CH - 1) { cons.push_back({i, i + CW + 1, diag, 1.0f}); baseRest.push_back(diag); }
-        if (gx > 0 && gy < CH - 1) { cons.push_back({i, i + CW - 1, diag, 1.0f}); baseRest.push_back(diag); }
+        if (gx < CW - 1) cons.push_back({i, i + 1, spacing, 1.0f});
+        if (gy < CH - 1) cons.push_back({i, i + CW, spacing, 1.0f});
+        if (gx < CW - 1 && gy < CH - 1) cons.push_back({i, i + CW + 1, diag, 1.0f});
+        if (gx > 0 && gy < CH - 1) cons.push_back({i, i + CW - 1, diag, 1.0f});
     }
 }
 

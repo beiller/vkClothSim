@@ -1,9 +1,9 @@
 #version 450
 layout(location=0) out vec4 outColor;
-layout(location=0) in vec3 vN;
+layout(location=0) in vec3 vWorld;
 
 void main() {
-    vec3 n = normalize(vN);
+    vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
     vec3 L = normalize(vec3(0.4, 0.8, 0.3));
     float d = abs(dot(n, L));
     vec3 base = vec3(0.85, 0.35, 0.25);

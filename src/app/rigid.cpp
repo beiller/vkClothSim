@@ -43,12 +43,16 @@ void RigidScene::init() {
     srand(12345);
     // Dynamic capsules dropped in a column above the origin: they fall, bounce, and clump
     // into a pile. Low restitution + high friction so they settle into a mound.
+    // Spawned in a 4x4 m footprint (wider for 50 so the spawn packing stays ~loose, not a
+    // dense overlapping column) at staggered heights 4.5..8.0 — the cloud spawns BELOW the
+    // held cloth (y=10), so no capsule pokes through the pinned sheet.
+    const int kNCaps = 50;
     const float R = 0.5f, HL = 0.9f;
     auto rnd = [&] { return (rand() % 1000) / 1000.0f; };
-    for (int i = 0; i < 16; ++i) {
-        float px = (rnd() * 2.0f - 1.0f) * 1.2f;
-        float py = 4.5f + 5.0f * rnd();           // staggered heights 4.5..9.5
-        float pz = (rnd() * 2.0f - 1.0f) * 1.2f;
+    for (int i = 0; i < kNCaps; ++i) {
+        float px = (rnd() * 2.0f - 1.0f) * 2.0f;
+        float py = 4.5f + 3.5f * rnd();           // staggered heights 4.5..8.0 (top ~9.4 < 10)
+        float pz = (rnd() * 2.0f - 1.0f) * 2.0f;
         JPH::Quat rot = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), rnd() * 6.28318f)
                       * JPH::Quat::sRotation(JPH::Vec3::sAxisX(), (rnd() * 2.0f - 1.0f) * 0.9f);
         JPH::BodyCreationSettings cs(new JPH::CapsuleShape(HL, R), JPH::RVec3(px, py, pz), rot,

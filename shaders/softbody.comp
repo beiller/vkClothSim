@@ -1,0 +1,131 @@
+#version 450
+// The GPU soft-body sim. ONE general solver: it takes a vertex list + a list of JOINTS
+// (two-point distance constraints) and integrates (Verlet) + relaxes the joints + pushes
+// out of the Jolt capsules / the ground (one-way). The SAME shader + pipeline steps both
+// the cloth and the ball (each with its own vertices + joints) — no pressure, no per-body
+// special cases.
+//
+// RACE-FREE by double-buffering: every position read comes from the READ buffer, every
+// position write goes to the OTHER buffer (ping-pong). A thread never reads a slot another
+// thread is writing (the live read/write race is what made the first GPU cloth explode).
+// `prev` is a separate buffer touched only by its own thread (disjoint per vertex).
+//
+// One pipeline, three modes (push constant):
+//   0 = Verlet    : read pos + prev -> write new pos (other buf), prev = old pos
+//   1 = relax     : ONE Jacobi pass over this vertex's joints (snapshot reads)
+//   2 = collide   : push out of capsules + ground, remove normal velocity
+layout(local_size_x = 64) in;
+
+layout(binding = 0) buffer PosA { vec3 a[]; } posA;
+layout(binding = 1) buffer PosB { vec3 b[]; } posB;
+layout(binding = 2) buffer Prev { vec3 v[]; } prevB;
+
+struct Capsule { vec4 centerRadius; vec4 quat; vec4 halfLen; };   // 48 B, mirrors CapsuleGPU
+layout(binding = 3) buffer Capsules { Capsule cs[]; } caps;
+
+// Per-vertex relaxation entries: for vertex i, the joints it owns are ents[estart[i] ..
+// estart[i+1]); each entry is the joint's OTHER endpoint + rest length + stiffness.
+struct Entry { int j; float rest; float k; int pad; };            // 16 B
+layout(binding = 4) buffer Entries { Entry e[]; } ents;
+layout(binding = 5) buffer EntryStart { int s[]; } estart;        // size n+1
+
+// Shared physics params (std430 flat scalars -> matches the C++ PhysParams exactly).
+layout(binding = 6) buffer PhysP {
+    int nCaps;
+    float dt;
+    float damping;
+    float gravity;
+    float friction;
+    float skin;
+    float tension;
+    float relaxScale;
+} ph;
+
+layout(push_constant) uniform PC { int mode; int readFromA; int n; int pinned; } pc;
+
+vec3 rpos(int i) { return pc.readFromA != 0 ? posA.a[i] : posB.b[i]; }
+void wpos(int i, vec3 x) { if (pc.readFromA != 0) posB.b[i] = x; else posA.a[i] = x; }
+
+mat3 quatMat(vec4 q) {
+    q = normalize(q);
+    float x = q.x, y = q.y, z = q.z, w = q.w;
+    return mat3(
+        vec3(1.0 - 2.0*(y*y + z*z), 2.0*(x*y + z*w), 2.0*(x*z - y*w)),
+        vec3(2.0*(x*y - z*w),       1.0 - 2.0*(x*x + z*z), 2.0*(y*z + x*w)),
+        vec3(2.0*(x*z + y*w),       2.0*(y*z - x*w),       1.0 - 2.0*(x*x + z*z)));
+}
+
+void collideVertex(int i) {
+    // Read the current pos + prev, apply the one-way capsule/ground push-out (removing the
+    // normal velocity so contact doesn't inject energy), and ALWAYS write the result to the
+    // other buffer + prev. The ping-pong needs EVERY slot written each pass — a vertex with
+    // no collision is still copied through (P unchanged), otherwise the other buffer keeps
+    // its stale value.
+    vec3 P = rpos(i);
+    vec3 Pr = prevB.v[i];
+    // Multi-pass (like the CPU): in a clumped pile the capsules overlap, so pushing a vertex
+    // out of one can re-insert it into another — re-check against ALL colliders until clean
+    // (up to 8 passes). Per-vertex, so it is safe inside a single (race-free) dispatch.
+    for (int pass = 0; pass < 8; ++pass) {
+        bool moved = false;
+        for (int c = 0; c < ph.nCaps; ++c) {
+            vec3 center = caps.cs[c].centerRadius.xyz;
+            float radius = caps.cs[c].centerRadius.w;
+            vec3 axis = quatMat(caps.cs[c].quat) * vec3(0.0, caps.cs[c].halfLen.x, 0.0);
+            vec3 A = center - axis, B = center + axis;
+            vec3 AB = B - A;
+            float t = clamp(dot(P - A, AB) / max(dot(AB, AB), 1e-6), 0.0, 1.0);
+            vec3 Q = A + AB * t;
+            vec3 d = P - Q;
+            float dist = length(d);
+            if (dist < radius) {
+                vec3 n = dist > 1e-5 ? d / dist : vec3(0.0, 1.0, 0.0);
+                vec3 target = Q + n * (radius + ph.skin);
+                vec3 vt = (P - Pr) - n * dot(P - Pr, n);    // tangential velocity
+                vt *= (1.0 - ph.friction);
+                P = target;
+                Pr = P - vt;
+                moved = true;
+            }
+        }
+        if (P.y < 0.0) {
+            vec3 n = vec3(0.0, 1.0, 0.0);
+            vec3 target = vec3(P.x, 0.0, P.z);
+            vec3 vt = (P - Pr) - n * dot(P - Pr, n);
+            vt *= (1.0 - ph.friction);
+            P = target;
+            Pr = P - vt;
+            moved = true;
+        }
+        if (!moved) break;   // nothing moved this pass -> the vertex is clean
+    }
+    wpos(i, P);            // ALWAYS write (keeps the ping-pong consistent)
+    prevB.v[i] = Pr;
+}
+
+void main() {
+    int i = int(gl_GlobalInvocationID.x);
+    if (i >= pc.n) return;
+    if (pc.pinned == 1) return;    // held: frozen at the initial position
+
+    if (pc.mode == 0) {            // Verlet
+        vec3 P = rpos(i);
+        vec3 Pr = prevB.v[i];
+        vec3 vel = (P - Pr) * ph.damping;
+        wpos(i, P + vel + vec3(0.0, ph.gravity, 0.0) * (ph.dt * ph.dt));
+        prevB.v[i] = P;
+    } else if (pc.mode == 1) {     // one Jacobi relaxation pass over this vertex's joints
+        vec3 Pi = rpos(i);
+        for (int e = estart.s[i]; e < estart.s[i + 1]; ++e) {
+            Entry en = ents.e[e];
+            vec3 d = rpos(en.j) - Pi;
+            float dist = length(d);
+            if (dist < 1e-6) continue;
+            float rest = en.rest * ph.tension;   // tension scales the rest length (like the CPU)
+            Pi += d * ((dist - rest) / dist * 0.5 * en.k * ph.relaxScale);
+        }
+        wpos(i, Pi);
+    } else {                       // collision
+        collideVertex(i);
+    }
+}
