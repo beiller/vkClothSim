@@ -1,7 +1,5 @@
 #version 450
-// The ONE mesh fragment shader. Lights the per-vertex normal with the per-vertex color as the
-// albedo (the ground/capsules/cloth/ball all share this material model; only the color
-// differs). `abs` makes the lighting correct regardless of normal orientation (double-sided).
+
 layout(location = 0) in vec3 vN;
 layout(location = 1) in vec3 vCol;
 layout(location = 0) out vec4 outColor;

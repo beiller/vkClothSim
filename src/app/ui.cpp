@@ -14,9 +14,10 @@ void drawOverlay(UIState& ui, bool clothPinned, bool& clothReset, bool& ballRese
     ImGui::SeparatorText("soft body sim (cloth + ball)");
     ImGui::SliderFloat("mass", &ui.sim.mass, 0.1f, 10.0f, "%.2f");
     ImGui::SliderFloat("damping", &ui.sim.damping, 0.90f, 1.00f, "%.3f");
-    ImGui::SliderInt("stiffness", &ui.sim.stiffness, 1, 16);
+    ImGui::SliderInt("passes", &ui.sim.passes, 1, 16);
+    ImGui::SliderFloat("stiffness", &ui.sim.stiffness, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("tension", &ui.sim.tension, 0.5f, 1.5f, "%.2f");
-    ImGui::SliderFloat("friction", &ui.sim.friction, 0.0f, 0.9f, "%.2f");
+    ImGui::SliderFloat("friction", &ui.sim.friction, 0.0f, 50.0f, "%.2f");
     if (ImGui::Button("reset params"))
         ui.sim = SimParams{};
     if (ImGui::Button("reset ball"))

@@ -32,8 +32,9 @@ public:
     // renderer reads the SAME buffer (capsulesBuffer) for the instanced capsule draw.
     void uploadCapsules(const std::vector<CapsuleGPU>& instances);
 
-    // Record one frame of the sim (both bodies: substeps x {Verlet + relax + collide}) into
-    // `cmd` (no submit). Call this BEFORE the render reads the position buffers.
+    // Record one frame of the sim (both bodies: substeps x {predict + (collide + relax) x N +
+    // collide + velocity update}) into `cmd` (no submit). Call this BEFORE the render reads the
+    // position buffers.
     void record(VkCommandBuffer cmd, const SimParams& p, int clothPinned);
 
     void resetSoftBodies(); // both bodies (R key / the "reset" button)
@@ -47,14 +48,16 @@ public:
     int capsuleCount() const { return m_nCaps; }
 
 private:
-    // One body's sim state: the ping-pong positions (posA/posB) + prev + sub0 (the sub-step
-    // start position, for friction) + the joint entries. `inA` tracks which position buffer
-    // holds the current state (the sim flips it per dispatch).
+    // One body's sim state: the ping-pong positions (posA/posB) + prev + sub0 (the pre-predict
+    // x0 for the PBD velocity update) + the joint entries. `inA` tracks which position buffer
+    // holds the current state (the sim flips it per position-writing dispatch).
     struct GpuBody {
         VkBuffer posA = VK_NULL_HANDLE, posB = VK_NULL_HANDLE, prev = VK_NULL_HANDLE, sub0 = VK_NULL_HANDLE;
+        VkBuffer contactN = VK_NULL_HANDLE, contactL = VK_NULL_HANDLE;
         VkBuffer entries = VK_NULL_HANDLE, entryStart = VK_NULL_HANDLE;
         VkDeviceMemory posAMem = VK_NULL_HANDLE, posBMem = VK_NULL_HANDLE, prevMem = VK_NULL_HANDLE,
                        sub0Mem = VK_NULL_HANDLE;
+        VkDeviceMemory contactNMem = VK_NULL_HANDLE, contactLMem = VK_NULL_HANDLE;
         VkDeviceMemory entriesMem = VK_NULL_HANDLE, entryStartMem = VK_NULL_HANDLE;
         VkDescriptorSet simSet = VK_NULL_HANDLE;
         int n = 0;
@@ -76,13 +79,16 @@ private:
     // CURRENT buffer (no inA flip — it writes to the buffer it reads, so the render reads the
     // fresh pos + nrm from one buffer).
     void recordNorm(VkCommandBuffer cmd, GpuBody& b);
-    // Record the mode-4 sub-step-start pass: copy the CURRENT position into `sub0` before the
-    // Verlet/relax/collide sub-step (no inA flip — friction reads the sub-step's slip from it).
+    // Record the mode-4 sub-step-start pass: copy the CURRENT position into `sub0` (the
+    // pre-predict x0) before the Verlet predict (no inA flip).
     void recordSub0(VkCommandBuffer cmd, GpuBody& b);
-    // Record one body's full frame of sim (substeps x {Verlet + relax + collide} + a final
-    // normal pass); skip if pinned. The relax is Jacobi (the cloth's joint graph is not
-    // bipartite).
-    void recordBody(VkCommandBuffer cmd, GpuBody& b, int relaxIters, int pinned);
+    // Record the mode-5 velocity-update pass: derive v from (solvedPos - sub0), apply contact
+    // friction, and write `prev` (no inA flip).
+    void recordFinalize(VkCommandBuffer cmd, GpuBody& b);
+    // Record one body's full frame of sim (substeps x {predict + (collide + relax) x iters +
+    // collide + finalize} + a final normal pass); skip if pinned. The relax is Jacobi (the
+    // cloth's joint graph is not bipartite). `iters` = the XPBD solver passes (UI `passes`).
+    void recordBody(VkCommandBuffer cmd, GpuBody& b, int iters, int pinned);
     // Re-upload one body's initial state to the GPU (posA + prev = initial, inA = true).
     void resetBody(GpuBody& b);
 
