@@ -13,7 +13,7 @@
 #include <random>
 #include <thread>
 
-void RigidScene::init() {
+void RigidScene::init(bool single) {
     JPH::RegisterDefaultAllocator();
     JPH::Factory::sInstance = new JPH::Factory();
     JPH::RegisterTypes();
@@ -43,28 +43,37 @@ void RigidScene::init() {
     JPH::Body* gb = bi.CreateBody(gset);
     bi.AddBody(gb->GetID(), JPH::EActivation::DontActivate);
 
-    // Dynamic capsules dropped in a column above the origin: they fall, bounce, and clump
-    // into a pile. Low restitution + high friction so they settle into a mound.
-    // Spawned in a 4x4 m footprint (wider for 50 so the spawn packing stays ~loose, not a
-    // dense overlapping column) at staggered heights 4.5..8.0 — the cloud spawns BELOW the
-    // held cloth (y=10), so no capsule pokes through the pinned sheet.
-    const int kNCaps = 50;
-    // fixed seed: the same pile every run (deliberate, for reproducible scenes)
-    std::mt19937 rng(12345); // NOLINT(bugprone-random-generator-seed)
-    std::uniform_real_distribution<float> rnd(0.0f, 1.0f);
-    for (int i = 0; i < kNCaps; ++i) {
-        float px = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
-        float py = 4.5f + 3.5f * rnd(rng); // staggered heights 4.5..8.0 (top ~9.4 < 10)
-        float pz = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
-        JPH::Quat rot = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), rnd(rng) * 2.0f * kPi) *
-                        JPH::Quat::sRotation(JPH::Vec3::sAxisX(), (rnd(rng) * 2.0f - 1.0f) * 0.9f);
-        JPH::BodyCreationSettings cs(new JPH::CapsuleShape(kCapsuleHalfLen, kCapsuleRadius), JPH::RVec3(px, py, pz),
-                                     rot, JPH::EMotionType::Dynamic, 1);
-        cs.mFriction = 0.7f;
-        cs.mRestitution = 0.05f;
-        cs.mLinearDamping = 0.05f;
-        JPH::BodyID id = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
+    if (single) {
+        // ONE static vertical capsule at the origin (axis +Y): a clean, symmetric test object.
+        // It never moves, so the cloth's drift/balling here is entirely the solver's doing.
+        JPH::BodyCreationSettings cs(new JPH::CapsuleShape(kCapsuleHalfLen, kCapsuleRadius),
+                                     JPH::RVec3(0.0f, 1.5f, 0.0f), JPH::Quat::sIdentity(), JPH::EMotionType::Static, 1);
+        JPH::BodyID id = bi.CreateAndAddBody(cs, JPH::EActivation::DontActivate);
         m_caps.push_back({id, kCapsuleRadius, kCapsuleHalfLen});
+    } else {
+        // Dynamic capsules dropped in a column above the origin: they fall, bounce, and clump
+        // into a pile. Low restitution + high friction so they settle into a mound.
+        // Spawned in a 4x4 m footprint (wider for 50 so the spawn packing stays ~loose, not a
+        // dense overlapping column) at staggered heights 4.5..8.0 — the cloud spawns BELOW the
+        // held cloth (y=10), so no capsule pokes through the pinned sheet.
+        const int kNCaps = 50;
+        // fixed seed: the same pile every run (deliberate, for reproducible scenes)
+        std::mt19937 rng(12345); // NOLINT(bugprone-random-generator-seed)
+        std::uniform_real_distribution<float> rnd(0.0f, 1.0f);
+        for (int i = 0; i < kNCaps; ++i) {
+            float px = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
+            float py = 4.5f + 3.5f * rnd(rng); // staggered heights 4.5..8.0 (top ~9.4 < 10)
+            float pz = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
+            JPH::Quat rot = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), rnd(rng) * 2.0f * kPi) *
+                            JPH::Quat::sRotation(JPH::Vec3::sAxisX(), (rnd(rng) * 2.0f - 1.0f) * 0.9f);
+            JPH::BodyCreationSettings cs(new JPH::CapsuleShape(kCapsuleHalfLen, kCapsuleRadius), JPH::RVec3(px, py, pz),
+                                         rot, JPH::EMotionType::Dynamic, 1);
+            cs.mFriction = 0.7f;
+            cs.mRestitution = 0.05f;
+            cs.mLinearDamping = 0.05f;
+            JPH::BodyID id = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
+            m_caps.push_back({id, kCapsuleRadius, kCapsuleHalfLen});
+        }
     }
     m_phys->OptimizeBroadPhase();
 }

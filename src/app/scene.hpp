@@ -30,7 +30,12 @@ public:
                                                        // the settled pile instead of through it
     static constexpr float kBallVol = 4.0f / 3.0f * kPi * kBallRadius * kBallRadius * kBallRadius;
 
-    void init();
+    // The single-capsule test case (one static capsule, cloth held close + smaller): a
+    // controlled, symmetric scene to isolate the solver's drift/balling.
+    static constexpr float kSingleSpan = 4.0f; // smaller cloth so it mostly drapes the capsule
+    static constexpr float kSingleY0 = 3.5f;   // held just above the capsule top (~2.9)
+
+    void init(bool single = false);
 
     // one frame of physics (the app calls these, in this order):
     void stepRigid(int n = 1); // step the capsules; unpin the cloth after kHoldFrames.

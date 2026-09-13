@@ -16,6 +16,7 @@ void drawOverlay(UIState& ui, bool clothPinned, bool& clothReset, bool& ballRese
     ImGui::SliderFloat("damping", &ui.sim.damping, 0.90f, 1.00f, "%.3f");
     ImGui::SliderInt("stiffness", &ui.sim.stiffness, 1, 16);
     ImGui::SliderFloat("tension", &ui.sim.tension, 0.5f, 1.5f, "%.2f");
+    ImGui::SliderFloat("friction", &ui.sim.friction, 0.0f, 0.9f, "%.2f");
     if (ImGui::Button("reset params"))
         ui.sim = SimParams{};
     if (ImGui::Button("reset ball"))

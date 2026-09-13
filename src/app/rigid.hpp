@@ -29,8 +29,9 @@ public:
     static constexpr float kCapsuleRadius = 0.5f;
     static constexpr float kCapsuleHalfLen = 0.9f;
 
-    void init();      // create the physics system, the ground, the 50 capsules
-    void step(int n); // run `n` physics sub-steps
+    void init(bool single = false); // create the physics system, the ground, + the capsules
+                                    // (50 dynamic, or one static capsule when `single`)
+    void step(int n);               // run `n` physics sub-steps
     int capsuleCount() const { return (int)m_caps.size(); }
     // The capsules' current transforms as per-instance GPU data (the GPU sim's colliders
     // + the instanced render).

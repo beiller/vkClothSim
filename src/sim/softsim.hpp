@@ -47,12 +47,14 @@ public:
     int capsuleCount() const { return m_nCaps; }
 
 private:
-    // One body's sim state: the ping-pong positions (posA/posB) + prev + the joint entries.
-    // `inA` tracks which position buffer holds the current state (the sim flips it per dispatch).
+    // One body's sim state: the ping-pong positions (posA/posB) + prev + sub0 (the sub-step
+    // start position, for friction) + the joint entries. `inA` tracks which position buffer
+    // holds the current state (the sim flips it per dispatch).
     struct GpuBody {
-        VkBuffer posA = VK_NULL_HANDLE, posB = VK_NULL_HANDLE, prev = VK_NULL_HANDLE;
+        VkBuffer posA = VK_NULL_HANDLE, posB = VK_NULL_HANDLE, prev = VK_NULL_HANDLE, sub0 = VK_NULL_HANDLE;
         VkBuffer entries = VK_NULL_HANDLE, entryStart = VK_NULL_HANDLE;
-        VkDeviceMemory posAMem = VK_NULL_HANDLE, posBMem = VK_NULL_HANDLE, prevMem = VK_NULL_HANDLE;
+        VkDeviceMemory posAMem = VK_NULL_HANDLE, posBMem = VK_NULL_HANDLE, prevMem = VK_NULL_HANDLE,
+                       sub0Mem = VK_NULL_HANDLE;
         VkDeviceMemory entriesMem = VK_NULL_HANDLE, entryStartMem = VK_NULL_HANDLE;
         VkDescriptorSet simSet = VK_NULL_HANDLE;
         int n = 0;
@@ -64,6 +66,9 @@ private:
     // Create one body's sim buffers (posA/posB/prev + the joint entries) from its initial
     // vertices + constraints, plus its compute descriptor set.
     void buildBodySimBuffers(GpuBody& b, const sim::SoftBody& body);
+    // Bind the pipeline + descriptors, push the mode push-constants, and dispatch (no barriers,
+    // no inA flip — the caller owns those).
+    void dispatch(VkCommandBuffer cmd, GpuBody& b, int mode);
     // Record ONE soft-body dispatch (barriers + push constants + dispatch) and flip inA (the
     // write went to the other buffer).
     void recordDispatch(VkCommandBuffer cmd, GpuBody& b, int mode);
@@ -71,6 +76,9 @@ private:
     // CURRENT buffer (no inA flip — it writes to the buffer it reads, so the render reads the
     // fresh pos + nrm from one buffer).
     void recordNorm(VkCommandBuffer cmd, GpuBody& b);
+    // Record the mode-4 sub-step-start pass: copy the CURRENT position into `sub0` before the
+    // Verlet/relax/collide sub-step (no inA flip — friction reads the sub-step's slip from it).
+    void recordSub0(VkCommandBuffer cmd, GpuBody& b);
     // Record one body's full frame of sim (substeps x {Verlet + relax + collide} + a final
     // normal pass); skip if pinned. The relax is Jacobi (the cloth's joint graph is not
     // bipartite).

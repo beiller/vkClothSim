@@ -10,26 +10,48 @@ namespace {
 // Matches the Phys struct in softbody.comp (std430 flat scalars).
 struct PhysParams {
     int nCaps;
-    float dt, damping, gravity, friction, skin, tension, relaxScale, maxStep;
+    float dt, damping, gravity, friction, skin, fricMargin, tension, relaxScale, maxStep;
 };
-static_assert(sizeof(PhysParams) == 36);
+static_assert(sizeof(PhysParams) == 40);
 
 // Max vertex displacement per sub-step (m): the hard anti-divergence guard in the Verlet
 // pass. The cloth's smallest rest length is kClothSpan/(kCW-1) ~ 0.13 m, so 0.05 m keeps a
 // single step well under half a joint even under the most extreme parameter sets.
 constexpr float SOFT_MAX_STEP = 0.05f;
 
-// The compute DSL's 7 bindings (shared by both bodies' descriptor sets):
-// 0 posA, 1 posB, 2 prev, 3 capsules, 4 entries, 5 entryStart, 6 physParams.
+// The compute DSL's 8 bindings (shared by both bodies' descriptor sets):
+// 0 posA, 1 posB, 2 prev, 3 capsules, 4 entries, 5 entryStart, 6 physParams, 7 sub0.
 std::vector<VkDescriptorSetLayoutBinding> softBinds() {
-    std::vector<VkDescriptorSetLayoutBinding> binds(7);
-    for (uint32_t i = 0; i < 7; ++i) {
+    std::vector<VkDescriptorSetLayoutBinding> binds(8);
+    for (uint32_t i = 0; i < binds.size(); ++i) {
         binds[i].binding = i;
         binds[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         binds[i].descriptorCount = 1;
         binds[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
     return binds;
+}
+
+// A buffer-memory barrier over `buf` with the sim's standard access (SHADER_READ|WRITE ->
+// SHADER_READ|WRITE). `dst` may be narrowed (e.g. the trailing sub0 READ).
+VkBufferMemoryBarrier bufBarrier(VkBuffer buf,
+                                 VkAccessFlags dst = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT) {
+    VkBufferMemoryBarrier b{};
+    b.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.buffer = buf;
+    b.offset = 0;
+    b.size = VK_WHOLE_SIZE;
+    b.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    b.dstAccessMask = dst;
+    return b;
+}
+
+// A pipeline barrier over `n` buffer barriers, from stage `src` to stage `dst`.
+void stageBarrier(VkCommandBuffer cmd, VkPipelineStageFlags src, VkPipelineStageFlags dst,
+                  const VkBufferMemoryBarrier* bmbs, uint32_t n) {
+    vkCmdPipelineBarrier(cmd, src, dst, 0, 0, nullptr, n, bmbs, 0, nullptr);
 }
 
 } // namespace
@@ -41,7 +63,7 @@ void SoftSim::init(VkDevice dev, VkPhysicalDevice pdev, const sim::SoftBody& clo
     m_nCaps = nCaps;
 
     // the shared physics params (small SSBO, rewritten each frame)
-    vkMakeBuffer(dev, pdev, m_physParams, m_physParamsMem, 36, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    vkMakeBuffer(dev, pdev, m_physParams, m_physParamsMem, 40, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     // the Jolt capsule colliders (shared with the renderer's instanced draw)
     vkMakeBuffer(dev, pdev, m_capsInstances, m_capsInstancesMem, 48 * (VkDeviceSize)nCaps,
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
@@ -129,7 +151,9 @@ void SoftSim::buildBodySimBuffers(GpuBody& b, const sim::SoftBody& body) {
     vkMakeBuffer(dev, m_pdev, b.posB, b.posBMem, (VkDeviceSize)48 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                  initVtx.data());
     vkMakeBuffer(dev, m_pdev, b.prev, b.prevMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                 initPos.data());   // prev = pos (zero velocity)
+                 initPos.data()); // prev = pos (zero velocity)
+    vkMakeBuffer(dev, m_pdev, b.sub0, b.sub0Mem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 initPos.data());   // sub0 = the sub-step start position (for friction)
     b.initVtx = std::move(initVtx); // keep a CPU copy (pos+nrm+col) for reset
     b.initPos = std::move(initPos); // keep the 16-byte pos copy for prev + reset
     vkMakeBuffer(dev, m_pdev, b.entries, b.entriesMem, (VkDeviceSize)16 * b.nEntries,
@@ -144,33 +168,29 @@ void SoftSim::buildBodySimBuffers(GpuBody& b, const sim::SoftBody& body) {
         {m_capsInstances, 0, (VkDeviceSize)48 * m_nCaps},
         {b.entries, 0, (VkDeviceSize)16 * b.nEntries},
         {b.entryStart, 0, (VkDeviceSize)4 * (n + 1)},
-        {m_physParams, 0, 36},
+        {m_physParams, 0, 40},
+        {b.sub0, 0, (VkDeviceSize)16 * n},
     };
     vkMakeSet(dev, m_softPool, m_softDsl, softBinds(), b.simSet, bi);
 }
 
 void SoftSim::recordDispatch(VkCommandBuffer cmd, GpuBody& b, int mode) {
     VkBuffer rd = b.inA ? b.posA : b.posB;
-    VkBuffer bufs[2] = {rd, b.prev};
-    VkBufferMemoryBarrier bmb[2]{};
-    for (int i = 0; i < 2; ++i) {
-        bmb[i].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        bmb[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        bmb[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        bmb[i].buffer = bufs[i];
-        bmb[i].offset = 0;
-        bmb[i].size = VK_WHOLE_SIZE;
-        bmb[i].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        bmb[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    }
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr,
-                         2, bmb, 0, nullptr);
+    // ALL_COMMANDS src stage: the CURRENT pos buffer may have been read by the previous
+    // frame's render pass, so the sim's next access must wait for both compute writes AND
+    // graphics reads.
+    VkBufferMemoryBarrier bmb[2] = {bufBarrier(rd), bufBarrier(b.prev)};
+    stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, bmb, 2);
+    dispatch(cmd, b, mode);
+    b.inA = !b.inA; // the write went to the other buffer
+}
+
+void SoftSim::dispatch(VkCommandBuffer cmd, GpuBody& b, int mode) {
     int pc[4] = {mode, b.inA ? 1 : 0, b.n, 0}; // mode, readFromA, n, pinned(unused)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPl, 0, 1, &b.simSet, 0, nullptr);
     vkCmdPushConstants(cmd, m_softPl, VK_SHADER_STAGE_COMPUTE_BIT, 0, (uint32_t)sizeof(pc), pc);
     vkCmdDispatch(cmd, (b.n + 63) / 64, 1, 1);
-    b.inA = !b.inA;
 }
 
 // The mode-3 normal pass: read the CURRENT buffer's .pos, write .nrm into the SAME buffer.
@@ -178,28 +198,30 @@ void SoftSim::recordDispatch(VkCommandBuffer cmd, GpuBody& b, int mode) {
 // fresh pos + nrm.
 void SoftSim::recordNorm(VkCommandBuffer cmd, GpuBody& b) {
     VkBuffer rd = b.inA ? b.posA : b.posB;
-    VkBufferMemoryBarrier bmb{};
-    bmb.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    bmb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    bmb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    bmb.buffer = rd;
-    bmb.offset = 0;
-    bmb.size = VK_WHOLE_SIZE;
-    bmb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    bmb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr,
-                         1, &bmb, 0, nullptr);
-    int pc[4] = {3, b.inA ? 1 : 0, b.n, 0}; // mode, readFromA, n, pinned(unused)
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPipe);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPl, 0, 1, &b.simSet, 0, nullptr);
-    vkCmdPushConstants(cmd, m_softPl, VK_SHADER_STAGE_COMPUTE_BIT, 0, (uint32_t)sizeof(pc), pc);
-    vkCmdDispatch(cmd, (b.n + 63) / 64, 1, 1);
+    VkBufferMemoryBarrier bmb = bufBarrier(rd);
+    stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, &bmb, 1);
+    dispatch(cmd, b, 3); // no inA flip: it writes .nrm to the buffer it reads
+}
+
+void SoftSim::recordSub0(VkCommandBuffer cmd, GpuBody& b) {
+    // Mode 4 reads the CURRENT position buffer and writes this thread's `sub0` slot. No `inA`
+    // flip (the ping-pong position is untouched). Barrier the CURRENT pos (read) AND `sub0`
+    // (write-after-write from the previous sub-step's mode 4) before the dispatch.
+    VkBuffer rd = b.inA ? b.posA : b.posB;
+    VkBufferMemoryBarrier bmb[2] = {bufBarrier(rd), bufBarrier(b.sub0)};
+    stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, bmb, 2);
+    dispatch(cmd, b, 4); // no inA flip: the ping-pong position is untouched
+    // Make the `sub0` write visible to the later collide READ (the per-dispatch barriers only
+    // cover pos/prev).
+    VkBufferMemoryBarrier sb = bufBarrier(b.sub0, VK_ACCESS_SHADER_READ_BIT);
+    stageBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, &sb, 1);
 }
 
 void SoftSim::recordBody(VkCommandBuffer cmd, GpuBody& b, int relaxIters, int pinned) {
     if (pinned)
         return;
     for (int s = 0; s < sim::kSubsteps; ++s) {
+        recordSub0(cmd, b);        // store the sub-step start position (for friction)
         recordDispatch(cmd, b, 0); // Verlet
         for (int k = 0; k < relaxIters; ++k)
             recordDispatch(cmd, b, 1); // joint relaxation (Jacobi)
@@ -214,20 +236,29 @@ void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int clothPinned) {
     phys.dt = kFrameDt / sim::kSubsteps;
     phys.damping = p.damping;
     phys.gravity = sim::kGravity * p.mass;
-    phys.friction = 0.1f;
+    phys.friction = p.friction;
     phys.skin = 0.01f;
+    phys.fricMargin = 0.2f; // the contact band in which slip-based friction is applied
     phys.tension = p.tension;
     phys.relaxScale = 1.0f; // full-strength relax
     phys.maxStep = SOFT_MAX_STEP;
     void* up;
-    VK(vkMapMemory(m_dev, m_physParamsMem, 0, 36, 0, &up));
-    std::memcpy(up, &phys, 36);
+    VK(vkMapMemory(m_dev, m_physParamsMem, 0, 40, 0, &up));
+    std::memcpy(up, &phys, 40);
     vkUnmapMemory(m_dev, m_physParamsMem);
     // the relax iterations per sub-step = the UI stiffness. The cloth is held (pinned) while
     // it is; the ball is always free.
     const int pinned[kCount] = {clothPinned, 0};
     for (int i = 0; i < kCount; ++i)
         recordBody(cmd, m_body[i], p.stiffness, pinned[i]);
+    // Make the sim's final writes to each body's CURRENT Vtx buffer visible to the render
+    // pass (the renderer reads .pos/.nrm from these buffers in the vertex shader).
+    for (GpuBody& b : m_body) {
+        // Conservative compute->graphics barrier: ALL_COMMANDS covers the sim's compute writes
+        // AND any prior access; the render pass reads .pos/.nrm in the vertex shader.
+        VkBufferMemoryBarrier bmb = bufBarrier(b.inA ? b.posA : b.posB);
+        stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, &bmb, 1);
+    }
 }
 
 void SoftSim::resetBody(GpuBody& b) {
@@ -276,6 +307,7 @@ void SoftSim::shutdown() {
         db(b.posA, b.posAMem);
         db(b.posB, b.posBMem);
         db(b.prev, b.prevMem);
+        db(b.sub0, b.sub0Mem);
         db(b.entries, b.entriesMem);
         db(b.entryStart, b.entryStartMem);
     }

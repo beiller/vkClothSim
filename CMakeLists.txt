@@ -89,4 +89,16 @@ target_include_directories(vksim PRIVATE
     ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/src)
 
+# --- simtest : a headless CPU port of the GPU soft-body solver (no window/Vulkan) ---
+#   Runs the SAME math as shaders/softbody.comp (Verlet + Jacobi relax + capsule/ground
+#   collide) fed the real Jolt capsule pile, and prints per-frame energy/extent metrics so
+#   you can see when and why the cloth gets too energetic.
+#     ./build/simtest <frames>   (default 240)
+add_executable(simtest
+    src/sim/simtest.cpp
+    src/app/rigid.cpp)
+target_link_libraries(simtest PRIVATE Jolt::Jolt)
+target_compile_features(simtest PRIVATE cxx_std_23)
+target_include_directories(simtest PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
 

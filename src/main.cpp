@@ -15,11 +15,17 @@
 #include "vk/renderer.hpp"
 #include "vk/vkapp.hpp"
 #include <cstdio>
+#include <cstring>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
-int main() {
+int main(int argc, char** argv) {
+    bool single = false; // --single: one static capsule + a smaller, closer cloth (controlled test)
+    for (int i = 1; i < argc; ++i)
+        if (std::strcmp(argv[i], "--single") == 0)
+            single = true;
+
     // the window + the Vulkan core
     VkApp app;
     if (!app.init(900, 900, "3dsim"))
@@ -27,7 +33,7 @@ int main() {
 
     // the simulation (the rigid capsules + the soft cloth/ball initial state)
     Scene scene;
-    scene.init();
+    scene.init(single);
 
     // the GPU soft-body sim (the "cloth sim": steps the cloth + the ball on the GPU)
     SoftSim sim;
@@ -91,11 +97,16 @@ int main() {
         if (ballReset)
             sim.resetBall();
         ImGui::Render();
-        // one command buffer: the GPU soft-body sim (record) first, then the render + present
+        // the GPU soft-body sim is submitted + waited on as its OWN command buffer, then the
+        // render is recorded + submitted separately. The queue boundary between the two makes
+        // the compute->render handoff a clean sync point (a single shared command buffer
+        // faulted the GPU / VK_ERROR_DEVICE_LOST).
         uint32_t idx = app.acquireNextImage();
         VkCommandBuffer cmd = app.beginCommands();
         sim.record(cmd, ui.sim, scene.clothPinned() ? 1 : 0);                      // the GPU soft-body sim
-        renderer.draw(cmd, app, idx, ui.bgColor, ImGui::GetDrawData(), sim, caps); // the render
+        app.submit(cmd);                                                           // submit + wait the sim
+        cmd = app.beginCommands();                                                 // reset + begin for the render
+        renderer.draw(cmd, app, idx, ui.bgColor, ImGui::GetDrawData(), sim, caps); // render + submit
         app.present(idx);
     }
 

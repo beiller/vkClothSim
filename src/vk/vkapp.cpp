@@ -241,17 +241,23 @@ bool VkApp::keyIsDown(int key) const {
     return glfwGetKey(m_win, key) == GLFW_PRESS;
 }
 
-// Acquire the next image (waits on the fence; beginCommands re-checks it before reuse).
+// Acquire the next image. No fence/semaphore: `vkAcquireNextImageKHR` blocks until an image is
+// available, so the image is safe to use when this returns. This app is fully synchronous (the
+// submit fence is waited on before present), so a separate acquire fence is not needed — and
+// reusing/resetting one across frames was the source of the hangs.
 uint32_t VkApp::acquireNextImage() {
     uint32_t idx = 0;
-    VK(vkAcquireNextImageKHR(m_dev, m_sc, UINT64_MAX, VK_NULL_HANDLE, m_fence, &idx));
+    VkResult r = vkAcquireNextImageKHR(m_dev, m_sc, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &idx);
+    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
+        std::fprintf(stderr, "vk error %d @%s:%d\n", (int)r, __FILE__, __LINE__);
+        std::abort();
+    }
     return idx;
 }
 
-// Fence wait (the previous submit signaled it) + reset + begin the reusable command buffer.
+// Reset + begin the reusable command buffer. The previous frame's submit fence was already
+// waited on in `submit()` before present, so the command buffer is free to reuse.
 VkCommandBuffer VkApp::beginCommands() {
-    if (vkGetFenceStatus(m_dev, m_fence) == VK_SUCCESS)
-        vkResetFences(m_dev, 1, &m_fence);
     VK(vkResetCommandBuffer(m_cmd, 0));
     VkCommandBufferBeginInfo cbi{};
     cbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -259,7 +265,9 @@ VkCommandBuffer VkApp::beginCommands() {
     return m_cmd;
 }
 
-// End the command buffer, submit, and wait on the fence (per-frame sync).
+// End the command buffer, submit, wait on the fence (per-stage sync), then reset the fence so
+// it can be reused by a later submit in the same frame (the sim and the render are submitted
+// separately so the compute->render handoff is a clean queue boundary).
 void VkApp::submit(VkCommandBuffer cmd) {
     VK(vkEndCommandBuffer(cmd));
     VkSubmitInfo si{};
@@ -268,6 +276,7 @@ void VkApp::submit(VkCommandBuffer cmd) {
     si.pCommandBuffers = &cmd;
     VK(vkQueueSubmit(m_queue, 1, &si, m_fence));
     VK(vkWaitForFences(m_dev, 1, &m_fence, VK_TRUE, 30000000000ull));
+    VK(vkResetFences(m_dev, 1, &m_fence));
 }
 
 void VkApp::present(uint32_t idx) {

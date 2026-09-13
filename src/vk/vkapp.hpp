@@ -64,5 +64,5 @@ private:
     VkExtent2D m_extent{};
     VkCommandPool m_pool = VK_NULL_HANDLE;
     VkCommandBuffer m_cmd = VK_NULL_HANDLE;
-    VkFence m_fence = VK_NULL_HANDLE;
+    VkFence m_fence = VK_NULL_HANDLE; // guards the command-buffer submit (per-frame sync)
 };

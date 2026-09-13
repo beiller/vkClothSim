@@ -8,12 +8,15 @@
 // The soft-body sim parameters (tuned in real time via the UI). Shared by all soft
 // bodies: the same values drive the cloth and the ball identically.
 struct SimParams {
-    float mass = 1.0f;     // scales gravity (heavier = falls faster, drapes more)
-    float damping = 0.96f; // velocity damping per sub-step. Stability is guaranteed by the
-                           // per-substep velocity clamp (maxStep), so this no longer
-                           // controls whether the sim explodes — it only trades how much
-                           // velocity the cloth keeps: lower holds the drape (less slide),
-                           // higher lets it flow and slide more. 0.96 keeps a good drape.
-    int stiffness = 8;     // Jacobi constraint relax passes per sub-step (higher = stiffer)
-    float tension = 1.0f;  // rest-length scale (<1 loose/wrinkly, >1 taut)
+    float mass = 1.0f;      // scales gravity (heavier = falls faster, drapes more)
+    float damping = 0.96f;  // velocity damping per sub-step. Stability is guaranteed by the
+                            // per-substep velocity clamp (maxStep), so this no longer
+                            // controls whether the sim explodes — it only trades how much
+                            // velocity the cloth keeps: lower holds the drape (less slide),
+                            // higher lets it flow and slide more. 0.96 keeps a good drape.
+    int stiffness = 8;      // Jacobi constraint relax passes per sub-step (higher = stiffer)
+    float tension = 1.0f;   // rest-length scale (<1 loose/wrinkly, >1 taut)
+    float friction = 0.35f; // contact friction: the fraction of tangential velocity removed on
+                            // contact. Low = the cloth slides off the capsules; high = it grips
+                            // and stays draped (but can stick/crumple in place).
 };
