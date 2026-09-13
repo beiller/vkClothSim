@@ -1,7 +1,3 @@
-// vkutil.hpp
-// Small Vulkan helpers shared by the window/core (vkapp), the renderer, and the
-// headless tools: the error-check macro, memory-type lookup, buffer creation, shader
-// modules, and descriptor-set layout/pool/set creation. No scene/sim/UI knowledge.
 #pragma once
 #include <vulkan/vulkan.h>
 
@@ -11,7 +7,6 @@
 #include <cstring>
 #include <vector>
 
-// Check a VkResult; print + abort on failure.
 #define VK(x)                                                                                                          \
     do {                                                                                                               \
         VkResult _r = (x);                                                                                             \
@@ -21,7 +16,6 @@
         }                                                                                                              \
     } while (0)
 
-// Pick a memory-type index that is in `mr`'s bits and has ALL of `need` set (fallback 0).
 inline uint32_t vkFindMemoryType(VkPhysicalDevice pdev, const VkMemoryRequirements& mr, VkMemoryPropertyFlags need) {
     VkPhysicalDeviceMemoryProperties mpp;
     vkGetPhysicalDeviceMemoryProperties(pdev, &mpp);
@@ -31,8 +25,6 @@ inline uint32_t vkFindMemoryType(VkPhysicalDevice pdev, const VkMemoryRequiremen
     return 0;
 }
 
-// Create a HOST_VISIBLE|HOST_COHERENT buffer (+ memory); optionally fill it with `data`.
-// Everything the app uploads per frame is host-visible (small CPU->GPU copies).
 inline void vkMakeBuffer(VkDevice dev, VkPhysicalDevice pdev, VkBuffer& buf, VkDeviceMemory& mem, VkDeviceSize size,
                          VkBufferUsageFlags usage, const void* data) {
     VkBufferCreateInfo bci{};
@@ -57,7 +49,6 @@ inline void vkMakeBuffer(VkDevice dev, VkPhysicalDevice pdev, VkBuffer& buf, VkD
     }
 }
 
-// A shader module from baked SPIR-V (`nwords` = the array's length in uint32s).
 inline VkShaderModule vkMakeModule(VkDevice dev, const void* code, uint32_t nwords) {
     VkShaderModuleCreateInfo smc{};
     smc.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -68,8 +59,6 @@ inline VkShaderModule vkMakeModule(VkDevice dev, const void* code, uint32_t nwor
     return m;
 }
 
-// A descriptor-set layout for `binds` + a pool that can allocate up to `maxSets` sets
-// of it (one pool slot per binding, grouped by type).
 inline void vkMakeDslPool(VkDevice dev, const std::vector<VkDescriptorSetLayoutBinding>& binds, uint32_t maxSets,
                           VkDescriptorSetLayout& dsl, VkDescriptorPool& pool) {
     VkDescriptorSetLayoutCreateInfo dslc{};
@@ -94,8 +83,6 @@ inline void vkMakeDslPool(VkDevice dev, const std::vector<VkDescriptorSetLayoutB
     VK(vkCreateDescriptorPool(dev, &dpc, nullptr, &pool));
 }
 
-// Allocate one set from `pool` (of layout `dsl`) and write one buffer binding per layout
-// binding (`bufs` in the same order as `binds`).
 inline void vkMakeSet(VkDevice dev, VkDescriptorPool pool, VkDescriptorSetLayout dsl,
                       const std::vector<VkDescriptorSetLayoutBinding>& binds, VkDescriptorSet& set,
                       const std::vector<VkDescriptorBufferInfo>& bufs) {
@@ -117,7 +104,6 @@ inline void vkMakeSet(VkDevice dev, VkDescriptorPool pool, VkDescriptorSetLayout
     vkUpdateDescriptorSets(dev, (uint32_t)w.size(), w.data(), 0, nullptr);
 }
 
-// A pipeline layout from a single set layout.
 inline VkPipelineLayout vkMakePipelineLayout(VkDevice dev, VkDescriptorSetLayout dsl) {
     VkPipelineLayoutCreateInfo plc{};
     plc.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;

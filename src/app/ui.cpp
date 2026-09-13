@@ -1,4 +1,3 @@
-// ui.cpp
 #include "app/ui.hpp"
 
 void drawOverlay(UIState& ui, bool clothPinned, bool& clothReset, bool& ballReset) {

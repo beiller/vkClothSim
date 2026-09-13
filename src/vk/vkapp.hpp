@@ -1,8 +1,3 @@
-// vkapp.hpp
-// The window + the Vulkan core. A GLFW window (GLFW_NO_API), a VkInstance/VkDevice with a
-// single graphics+present queue, a swapchain (+ views + framebuffers) into one render
-// pass (color + D32 depth), and a fence-guarded command buffer for per-frame recording.
-// Knows nothing about the scene, the sim, or the UI — the renderer records the draws.
 #pragma once
 #include <vulkan/vulkan.h>
 
@@ -12,17 +7,13 @@
 
 class VkApp {
 public:
-    // Create the window + all the Vulkan objects. Returns false (message on stderr) on
-    // failure.
     bool init(int width, int height, const char* title);
     void shutdown();
 
-    // the window
     bool windowShouldClose() const;
     void pollEvents();
     bool keyIsDown(int key) const;
 
-    // handles (for the renderer + the ImGui backends)
     GLFWwindow* glfwWindow() const { return m_win; }
     VkInstance instance() const { return m_inst; }
     VkPhysicalDevice pdev() const { return m_pdev; }
@@ -36,10 +27,9 @@ public:
     VkExtent2D extent() const { return m_extent; }
     uint32_t imageCount() const { return (uint32_t)m_images.size(); }
 
-    // per-frame: acquire the next image, record commands, submit + wait
     uint32_t acquireNextImage();
-    VkCommandBuffer beginCommands();  // fence wait + reset + begin (one reusable cmd buffer)
-    void submit(VkCommandBuffer cmd); // end + submit + fence wait
+    VkCommandBuffer beginCommands();
+    void submit(VkCommandBuffer cmd);
     void present(uint32_t idx);
 
 private:
@@ -64,5 +54,5 @@ private:
     VkExtent2D m_extent{};
     VkCommandPool m_pool = VK_NULL_HANDLE;
     VkCommandBuffer m_cmd = VK_NULL_HANDLE;
-    VkFence m_fence = VK_NULL_HANDLE; // guards the command-buffer submit (per-frame sync)
+    VkFence m_fence = VK_NULL_HANDLE;
 };

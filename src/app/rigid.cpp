@@ -1,4 +1,3 @@
-// rigid.cpp
 #include "app/rigid.hpp"
 
 #include <Jolt/Core/Factory.h>
@@ -44,25 +43,16 @@ void RigidScene::init(bool single) {
     bi.AddBody(gb->GetID(), JPH::EActivation::DontActivate);
 
     if (single) {
-        // ONE static vertical capsule at the origin (axis +Y): a clean, symmetric test object.
-        // It never moves, so the cloth's drift/balling here is entirely the solver's doing.
         JPH::BodyCreationSettings cs(new JPH::CapsuleShape(kCapsuleHalfLen, kCapsuleRadius),
                                      JPH::RVec3(0.0f, 1.5f, 0.0f), JPH::Quat::sIdentity(), JPH::EMotionType::Static, 1);
-        JPH::BodyID id = bi.CreateAndAddBody(cs, JPH::EActivation::DontActivate);
-        m_caps.push_back({id, kCapsuleRadius, kCapsuleHalfLen});
+        m_caps.push_back(bi.CreateAndAddBody(cs, JPH::EActivation::DontActivate));
     } else {
-        // Dynamic capsules dropped in a column above the origin: they fall, bounce, and clump
-        // into a pile. Low restitution + high friction so they settle into a mound.
-        // Spawned in a 4x4 m footprint (wider for 50 so the spawn packing stays ~loose, not a
-        // dense overlapping column) at staggered heights 4.5..8.0 — the cloud spawns BELOW the
-        // held cloth (y=10), so no capsule pokes through the pinned sheet.
         const int kNCaps = 50;
-        // fixed seed: the same pile every run (deliberate, for reproducible scenes)
         std::mt19937 rng(12345); // NOLINT(bugprone-random-generator-seed)
         std::uniform_real_distribution<float> rnd(0.0f, 1.0f);
         for (int i = 0; i < kNCaps; ++i) {
             float px = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
-            float py = 4.5f + 3.5f * rnd(rng); // staggered heights 4.5..8.0 (top ~9.4 < 10)
+            float py = 4.5f + 3.5f * rnd(rng);
             float pz = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
             JPH::Quat rot = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), rnd(rng) * 2.0f * kPi) *
                             JPH::Quat::sRotation(JPH::Vec3::sAxisX(), (rnd(rng) * 2.0f - 1.0f) * 0.9f);
@@ -71,8 +61,7 @@ void RigidScene::init(bool single) {
             cs.mFriction = 0.7f;
             cs.mRestitution = 0.05f;
             cs.mLinearDamping = 0.05f;
-            JPH::BodyID id = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
-            m_caps.push_back({id, kCapsuleRadius, kCapsuleHalfLen});
+            m_caps.push_back(bi.CreateAndAddBody(cs, JPH::EActivation::Activate));
         }
     }
     m_phys->OptimizeBroadPhase();
@@ -89,19 +78,19 @@ std::vector<CapsuleGPU> RigidScene::capsuleGPU() const {
         return data;
     const JPH::BodyLockInterface& li = m_phys->GetBodyLockInterface();
     for (size_t i = 0; i < m_caps.size(); ++i) {
-        JPH::BodyLockRead lock(li, m_caps[i].id);
+        JPH::BodyLockRead lock(li, m_caps[i]);
         const JPH::Body& b = lock.GetBody();
         JPH::Vec3 p = b.GetPosition();
         JPH::Quat q = b.GetRotation();
         data[i].centerRadius[0] = p.GetX();
         data[i].centerRadius[1] = p.GetY();
         data[i].centerRadius[2] = p.GetZ();
-        data[i].centerRadius[3] = m_caps[i].radius;
+        data[i].centerRadius[3] = kCapsuleRadius;
         data[i].quat[0] = q.GetX();
         data[i].quat[1] = q.GetY();
         data[i].quat[2] = q.GetZ();
         data[i].quat[3] = q.GetW();
-        data[i].halfLen[0] = m_caps[i].halfLen;
+        data[i].halfLen[0] = kCapsuleHalfLen;
     }
     return data;
 }

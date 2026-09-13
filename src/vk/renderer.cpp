@@ -1,20 +1,15 @@
-// renderer.cpp
 #include "vk/renderer.hpp"
 
-#include "app/rigid.hpp"
-#include "app/scene.hpp"
 #include "mesh_frag_spv.hpp"
 #include "mesh_vert_spv.hpp"
-#include "sim/softsim.hpp"
 #include "vk/vkapp.hpp"
 #include "vk/vkutil.hpp"
+#include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <imgui_impl_vulkan.h>
 
 namespace {
 
-// The render DSL's 2 bindings, shared by every mesh (0: the Vtx SSBO, 1: the viewProj UBO).
 std::vector<VkDescriptorSetLayoutBinding> meshBinds() {
     return {
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
@@ -22,9 +17,6 @@ std::vector<VkDescriptorSetLayoutBinding> meshBinds() {
     };
 }
 
-// Create the ONE graphics pipeline: triangle list, no culling, dynamic viewport/scissor, no
-// blend, MSAA off, depth test+write on, and NO vertex input (the vertices come from the Vtx
-// SSBO indexed by gl_VertexIndex). The shaders are the baked SPIR-V (mesh_vert + mesh_frag).
 VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void* vsSpv, uint32_t vsLen, const void* fsSpv,
                                 uint32_t fsLen, VkPipelineLayout layout) {
     VkShaderModule vs = vkMakeModule(dev, vsSpv, vsLen);
@@ -101,34 +93,17 @@ VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void* vsSpv
     return pipe;
 }
 
-// The ground quad as render Vtx (pos + nrm + col, 48 bytes each) + its index list. The
-// normals face +Y and the color is the ground's albedo. Static (built once at init).
 void buildGroundVtx(std::vector<float>& vtx, std::vector<uint32_t>& idx) {
     const float G = 55.0f;
     const float gv[4][3] = {{-G, 0.0f, -G}, {G, 0.0f, -G}, {G, 0.0f, G}, {-G, 0.0f, G}};
     const float COL[3] = {0.19f, 0.21f, 0.17f};
     vtx.clear();
     for (const auto& v : gv) {
-        vtx.push_back(v[0]);
-        vtx.push_back(v[1]);
-        vtx.push_back(v[2]);
-        vtx.push_back(0.0f); // pos
-        vtx.push_back(0.0f);
-        vtx.push_back(1.0f);
-        vtx.push_back(0.0f);
-        vtx.push_back(0.0f); // nrm (up)
-        vtx.push_back(COL[0]);
-        vtx.push_back(COL[1]);
-        vtx.push_back(COL[2]);
-        vtx.push_back(0.0f); // col
+        vtx.insert(vtx.end(), {v[0], v[1], v[2], 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, COL[0], COL[1], COL[2], 0.0f});
     }
     idx = {0, 1, 2, 0, 2, 3};
 }
 
-// Build each capsule's LOCAL geometry (position + normal per vertex, 6 floats each) + the
-// shared index list. Capsule `ci`'s vertices occupy [ci*VPC, ci*VPC+VPC). `VPC` = (M+1)*S.
-// The per-frame bake (Renderer::bakeCapsules) applies each capsule's rotation + center + the
-// red albedo to turn this into the world-space Vtx buffer.
 void buildCapsuleBase(std::vector<float>& base, std::vector<uint32_t>& idx, int nCaps, float R, float H) {
     const int S = 20, M = 32;
     const int VPC = (M + 1) * S;
@@ -159,10 +134,10 @@ void buildCapsuleBase(std::vector<float>& base, std::vector<uint32_t>& idx, int 
                 float phi = (float)j / S * twoPi;
                 float cp = std::cos(phi), sp = std::sin(phi);
                 size_t v = capBase + (size_t)i * S + j;
-                base[6 * v + 0] = r * cp; // local pos
+                base[6 * v + 0] = r * cp;
                 base[6 * v + 1] = y;
                 base[6 * v + 2] = r * sp;
-                base[6 * v + 3] = cp; // local nrm
+                base[6 * v + 3] = cp;
                 base[6 * v + 4] = -dr;
                 base[6 * v + 5] = sp;
             }
@@ -184,141 +159,82 @@ void buildCapsuleBase(std::vector<float>& base, std::vector<uint32_t>& idx, int 
     }
 }
 
-// quaternion -> 3x3 rotation matrix (matches the shader's quatMat; the capsule bake uses it).
-void quatToMat3(const float q[4], float m[9]) {
-    float x = q[0], y = q[1], z = q[2], w = q[3];
-    m[0] = 1.0f - 2.0f * (y * y + z * z);
-    m[1] = 2.0f * (x * y + z * w);
-    m[2] = 2.0f * (x * z - y * w);
-    m[3] = 2.0f * (x * y - z * w);
-    m[4] = 1.0f - 2.0f * (x * x + z * z);
-    m[5] = 2.0f * (y * z + x * w);
-    m[6] = 2.0f * (x * z + y * w);
-    m[7] = 2.0f * (y * z - x * w);
-    m[8] = 1.0f - 2.0f * (x * x + y * y);
-}
-
 } // namespace
 
-void Renderer::init(VkApp& app, const Scene& scene, const SoftSim& sim, const Mat4& viewProj) {
+void Renderer::init(VkApp& app, std::span<const SoftDraw> soft, int nCaps, const Mat4& viewProj) {
     m_dev = app.device();
     m_pdev = app.pdev();
     m_rp = app.renderPass();
     m_vp = viewProj;
-    m_nCaps = sim.capsuleCount();
+    m_nCaps = nCaps;
 
-    // the ONE shared viewProj UBO (64 bytes; the camera is fixed, so written once at init).
     vkMakeBuffer(m_dev, m_pdev, m_uUbuf, m_uUmem, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, viewProj.m);
-
-    // the ONE render DSL (0: Vtx SSBO, 1: UBO) + pool (4 sets) + pipeline layout + pipeline.
     const auto binds = meshBinds();
-    vkMakeDslPool(m_dev, binds, /*maxSets=*/4, m_dsl, m_pool);
+    vkMakeDslPool(m_dev, binds, (uint32_t)soft.size() + 2, m_dsl, m_pool);
     m_pl = vkMakePipelineLayout(m_dev, m_dsl);
     m_pipe = makeGraphicsPipeline(m_dev, m_rp, mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
                                   mesh_frag_spv_len / 4, m_pl);
 
-    initGround();
-    initCapsules();
-    initSoftBodies(scene, sim);
-}
+    std::vector<float> gvtx;
+    std::vector<uint32_t> gidx;
+    buildGroundVtx(gvtx, gidx);
+    vkMakeBuffer(m_dev, m_pdev, m_groundVtx, m_groundVtxMem, (VkDeviceSize)gvtx.size() * 4,
+                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, gvtx.data());
+    makeMesh(m_ground, m_groundVtx, (VkDeviceSize)gvtx.size() * 4, gidx.data(), (uint32_t)gidx.size());
 
-void Renderer::initGround() {
-    std::vector<float> vtx;
-    std::vector<uint32_t> idx;
-    buildGroundVtx(vtx, idx);
-    vkMakeBuffer(m_dev, m_pdev, m_groundVtx, m_groundVtxMem, (VkDeviceSize)vtx.size() * 4,
-                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, vtx.data());
-    makeMesh(m_ground, idx, m_groundVtx, (VkDeviceSize)vtx.size() * 4);
-}
-
-void Renderer::initCapsules() {
     const int S = 20, M = 32;
     m_vpc = (uint32_t)((M + 1) * S);
-    std::vector<uint32_t> idx;
-    buildCapsuleBase(m_capsBase, idx, m_nCaps, RigidScene::kCapsuleRadius, RigidScene::kCapsuleHalfLen);
+    std::vector<uint32_t> cidx;
+    buildCapsuleBase(m_capsBase, cidx, m_nCaps, kCapsuleRadius, kCapsuleHalfLen);
     const size_t vcount = (size_t)m_nCaps * m_vpc;
     vkMakeBuffer(m_dev, m_pdev, m_capsVtx, m_capsVtxMem, (VkDeviceSize)48 * vcount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                  nullptr);
-    makeMesh(m_caps, idx, m_capsVtx, (VkDeviceSize)48 * vcount);
+    makeMesh(m_caps, m_capsVtx, (VkDeviceSize)48 * vcount, cidx.data(), (uint32_t)cidx.size());
+
+    m_soft.resize(soft.size());
+    for (size_t i = 0; i < soft.size(); ++i)
+        makeMesh(m_soft[i], soft[i].vertices, soft[i].vertexBytes, soft[i].indices.data(),
+                 (uint32_t)soft[i].indices.size());
 }
 
-// Build the two soft bodies' render meshes (the cloth grid + the ball sphere): the index
-// buffer + the descriptor set (binding 0 = the sim's current Vtx buffer, re-pointed per
-// frame). The Vtx SSBO is owned by the sim (never destroyed here).
-void Renderer::initSoftBodies(const Scene& scene, const SoftSim& sim) {
-    { // the cloth: tile the CW x CH grid.
-        std::vector<uint32_t> idx;
-        for (int gy = 0; gy < Scene::kCH - 1; ++gy)
-            for (int gx = 0; gx < Scene::kCW - 1; ++gx) {
-                auto a = (uint32_t)(gy * Scene::kCW + gx);
-                idx.push_back(a);
-                idx.push_back(a + 1);
-                idx.push_back(a + Scene::kCW);
-                idx.push_back(a + 1);
-                idx.push_back(a + Scene::kCW + 1);
-                idx.push_back(a + Scene::kCW);
-            }
-        makeMesh(m_cloth, idx, sim.posBuffer(SoftSim::kCloth), (VkDeviceSize)48 * sim.vertexCount(SoftSim::kCloth));
-    }
-    { // the ball: the UV-sphere triangles.
-        std::vector<uint32_t> idx;
-        for (const auto& t : scene.ballTris()) {
-            idx.push_back(t.a);
-            idx.push_back(t.b);
-            idx.push_back(t.c);
-        }
-        makeMesh(m_ball, idx, sim.posBuffer(SoftSim::kBall), (VkDeviceSize)48 * sim.vertexCount(SoftSim::kBall));
-    }
-}
-
-void Renderer::makeMesh(Mesh& m, const std::vector<uint32_t>& idx, VkBuffer vtxBuf, VkDeviceSize vtxRange) {
-    m.idxCount = (uint32_t)idx.size();
-    vkMakeBuffer(m_dev, m_pdev, m.ibuf, m.ibmem, (VkDeviceSize)idx.size() * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                 idx.data());
+void Renderer::makeMesh(Mesh& m, VkBuffer vtx, VkDeviceSize vtxSize, const uint32_t* idx, uint32_t idxCount) {
+    m.idxCount = idxCount;
+    vkMakeBuffer(m_dev, m_pdev, m.ibuf, m.ibmem, (VkDeviceSize)idxCount * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, idx);
     std::vector<VkDescriptorBufferInfo> bi = {
-        {vtxBuf, 0, vtxRange},
+        {vtx, 0, vtxSize},
         {m_uUbuf, 0, 64},
     };
     vkMakeSet(m_dev, m_pool, m_dsl, meshBinds(), m.set, bi);
 }
 
-void Renderer::updateSoftRenderSet(Mesh& m, const SoftSim& sim, SoftSim::Body body) {
-    VkDescriptorBufferInfo bi{sim.posBuffer(body), 0, (VkDeviceSize)48 * sim.vertexCount(body)};
-    VkWriteDescriptorSet w{};
-    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    w.dstSet = m.set;
-    w.dstBinding = 0;
-    w.descriptorCount = 1;
-    w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    w.pBufferInfo = &bi;
-    vkUpdateDescriptorSets(m_dev, 1, &w, 0, nullptr);
-}
-
-void Renderer::bakeCapsules(const std::vector<CapsuleGPU>& caps) {
-    const float COL[3] = {0.85f, 0.35f, 0.30f}; // the capsule's albedo (red)
+void Renderer::bakeCapsules(std::span<const CapsuleGPU> caps) {
+    const float COL[3] = {0.85f, 0.35f, 0.30f};
     void* o;
     VK(vkMapMemory(m_dev, m_capsVtxMem, 0, (VkDeviceSize)48 * m_nCaps * m_vpc, 0, &o));
     auto* out = static_cast<float*>(o);
     for (size_t ci = 0; ci < caps.size(); ++ci) {
-        const float q[4] = {caps[ci].quat[0], caps[ci].quat[1], caps[ci].quat[2], caps[ci].quat[3]};
-        float m[9];
-        quatToMat3(q, m);
-        const float cx = caps[ci].centerRadius[0], cy = caps[ci].centerRadius[1], cz = caps[ci].centerRadius[2];
-        for (size_t j = 0; j < m_vpc; ++j) {
+        const CapsuleGPU& c = caps[ci];
+        float qm[9];
+        quatToMat3(c.quat, qm);
+        V3 center{c.centerRadius[0], c.centerRadius[1], c.centerRadius[2]};
+        for (uint32_t j = 0; j < m_vpc; ++j) {
             size_t v = ci * m_vpc + j;
             const float* bp = &m_capsBase[6 * v];
+            V3 lp{bp[0], bp[1], bp[2]};
+            V3 ln{bp[3], bp[4], bp[5]};
+            V3 rp{qm[0] * lp.x + qm[3] * lp.y + qm[6] * lp.z + center.x,
+                  qm[1] * lp.x + qm[4] * lp.y + qm[7] * lp.z + center.y,
+                  qm[2] * lp.x + qm[5] * lp.y + qm[8] * lp.z + center.z};
+            V3 rn{qm[0] * ln.x + qm[3] * ln.y + qm[6] * ln.z, qm[1] * ln.x + qm[4] * ln.y + qm[7] * ln.z,
+                  qm[2] * ln.x + qm[5] * ln.y + qm[8] * ln.z};
             float* op = &out[12 * v];
-            float lp0 = bp[0], lp1 = bp[1], lp2 = bp[2];
-            float ln0 = bp[3], ln1 = bp[4], ln2 = bp[5];
-            // R * v for the column-major `m` (m[col*3+row] = M[row][col]): (R*v).row =
-            // sum_col M[row][col] * v[col] = sum_col m[col*3+row] * v[col].
-            op[0] = m[0] * lp0 + m[3] * lp1 + m[6] * lp2 + cx;
-            op[1] = m[1] * lp0 + m[4] * lp1 + m[7] * lp2 + cy;
-            op[2] = m[2] * lp0 + m[5] * lp1 + m[8] * lp2 + cz;
+            op[0] = rp.x;
+            op[1] = rp.y;
+            op[2] = rp.z;
             op[3] = 0.0f;
-            op[4] = m[0] * ln0 + m[3] * ln1 + m[6] * ln2;
-            op[5] = m[1] * ln0 + m[4] * ln1 + m[7] * ln2;
-            op[6] = m[2] * ln0 + m[5] * ln1 + m[8] * ln2;
+            op[4] = rn.x;
+            op[5] = rn.y;
+            op[6] = rn.z;
             op[7] = 0.0f;
             op[8] = COL[0];
             op[9] = COL[1];
@@ -336,13 +252,8 @@ void Renderer::drawMesh(VkCommandBuffer cmd, VkPipelineLayout pl, const Mesh& m)
 }
 
 void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui,
-                    const SoftSim& sim, const std::vector<CapsuleGPU>& caps) {
-    // the sky is the render pass' clear color (a UI param) — no background shader.
-    // the sim ran just before this (same command buffer): bake the capsules + re-point the
-    // soft-body draws at the sim's current Vtx buffers (the sim ping-pongs posA/posB).
+                    std::span<const CapsuleGPU> caps) {
     bakeCapsules(caps);
-    updateSoftRenderSet(m_cloth, sim, SoftSim::kCloth);
-    updateSoftRenderSet(m_ball, sim, SoftSim::kBall);
     VkClearValue cv[2]{};
     cv[0].color = {bg[0], bg[1], bg[2], 1.0f};
     cv[1].depthStencil = {1.0f, 0};
@@ -359,13 +270,11 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg
     vkCmdSetViewport(cmd, 0, 1, &vpt);
     VkRect2D sc{0, 0, ext.width, ext.height};
     vkCmdSetScissor(cmd, 0, 1, &sc);
-    // every mesh shares the one pipeline + pipeline layout: bind it once, then draw each.
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipe);
     drawMesh(cmd, m_pl, m_ground);
     drawMesh(cmd, m_pl, m_caps);
-    drawMesh(cmd, m_pl, m_cloth);
-    drawMesh(cmd, m_pl, m_ball);
-    // the ImGui overlay (the same swapchain image; zero CPU pixel copy)
+    for (const auto& m : m_soft)
+        drawMesh(cmd, m_pl, m);
     if (imgui && imgui->CmdLists.Size > 0)
         ImGui_ImplVulkan_RenderDrawData(imgui, cmd);
     vkCmdEndRenderPass(cmd);
@@ -381,7 +290,6 @@ void Renderer::shutdown() {
             vkFreeMemory(m_dev, mem, nullptr);
         }
     };
-    // the descriptor sets are freed by the pool (destroyed below), matching the sim.
     auto destroyMesh = [this](Mesh& m) {
         if (m.ibuf) {
             vkDestroyBuffer(m_dev, m.ibuf, nullptr);
@@ -390,8 +298,8 @@ void Renderer::shutdown() {
     };
     destroyMesh(m_ground);
     destroyMesh(m_caps);
-    destroyMesh(m_cloth); // its Vtx SSBO is sim-owned (not destroyed here)
-    destroyMesh(m_ball);  // its Vtx SSBO is sim-owned (not destroyed here)
+    for (auto& m : m_soft)
+        destroyMesh(m);
     if (m_pool)
         vkDestroyDescriptorPool(m_dev, m_pool, nullptr);
     if (m_dsl)

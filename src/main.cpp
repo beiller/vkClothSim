@@ -1,9 +1,3 @@
-// main.cpp
-// The app: the main loop that ties the pieces together. VkApp owns the window + the
-// Vulkan core; Scene owns the simulation data (the rigid capsules + the soft cloth/ball
-// initial state); SoftSim owns the GPU soft-body sim (steps the cloth + the ball);
-// Renderer owns the GPU graphics (pipelines + buffers + the per-frame draw, reading the
-// sim's output); ui.{hpp,cpp} the ImGui overlay.
 #include <vulkan/vulkan.h>
 
 #include <GLFW/glfw3.h>
@@ -21,34 +15,31 @@
 #include <imgui_impl_vulkan.h>
 
 int main(int argc, char** argv) {
-    bool single = false; // --single: one static capsule + a smaller, closer cloth (controlled test)
+    bool single = false;
     for (int i = 1; i < argc; ++i)
         if (std::strcmp(argv[i], "--single") == 0)
             single = true;
 
-    // the window + the Vulkan core
     VkApp app;
     if (!app.init(900, 900, "3dsim"))
         return 1;
 
-    // the simulation (the rigid capsules + the soft cloth/ball initial state)
     Scene scene;
     scene.init(single);
 
-    // the GPU soft-body sim (the "cloth sim": steps the cloth + the ball on the GPU)
     SoftSim sim;
-    sim.init(app.device(), app.pdev(), scene.cloth(), scene.ball(), scene.rigid().capsuleCount());
+    sim.init(app.device(), app.pdev(), scene.rigid().capsuleCount());
+    sim.registerBody(scene.cloth().mesh, scene.cloth().cons);
+    sim.registerBody(scene.ball().mesh, scene.ball().cons);
+    sim.build();
 
-    // fixed camera looking at the capsule field
     const float aspect = (float)app.extent().width / (float)app.extent().height;
     const Mat4 vp = mul4(perspective(50.0f, aspect, 0.1f, 300.0f),
                          lookAt({0.0f, 9.0f, 14.0f}, {0.0f, 3.0f, 0.0f}, {0.0f, 1.0f, 0.0f}));
 
-    // the GPU graphics (the pipelines + the per-frame draws; reads the sim's output)
     Renderer renderer;
-    renderer.init(app, scene, sim, vp);
+    renderer.init(app, sim.draws(), scene.rigid().capsuleCount(), vp);
 
-    // the ImGui context + the GLFW/Vulkan backends (drawn into the same swapchain)
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForVulkan(app.glfwWindow(), true);
@@ -72,18 +63,16 @@ int main(int argc, char** argv) {
     ImGui_ImplVulkan_Init(&ii);
 
     UIState ui;
-
     std::printf("3dsim: vulkan+imgui | GPU soft-body sim | R to reset | esc/close to quit\n");
     while (!app.windowShouldClose()) {
-        // input + physics (the rigid capsules on the CPU; the soft bodies step on the GPU)
         if (app.keyIsDown(GLFW_KEY_R)) {
             scene.reset();
-            sim.resetSoftBodies();
+            sim.reset(3);
         }
         scene.stepRigid(1);
-        auto caps = scene.rigid().capsuleGPU(); // the Jolt capsule transforms (CPU -> GPU)
-        sim.uploadCapsules(caps);               // -> GPU (the sim reads them as colliders)
-        // the ImGui overlay
+        auto caps = scene.rigid().capsuleGPU();
+        sim.uploadCapsules(caps);
+
         app.pollEvents();
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -92,29 +81,26 @@ int main(int argc, char** argv) {
         drawOverlay(ui, scene.clothPinned(), clothReset, ballReset);
         if (clothReset) {
             scene.reset();
-            sim.resetSoftBodies();
+            sim.reset(3);
         }
         if (ballReset)
-            sim.resetBall();
+            sim.reset(2);
         ImGui::Render();
-        // the GPU soft-body sim is submitted + waited on as its OWN command buffer, then the
-        // render is recorded + submitted separately. The queue boundary between the two makes
-        // the compute->render handoff a clean sync point (a single shared command buffer
-        // faulted the GPU / VK_ERROR_DEVICE_LOST).
+
         uint32_t idx = app.acquireNextImage();
         VkCommandBuffer cmd = app.beginCommands();
-        sim.record(cmd, ui.sim, scene.clothPinned() ? 1 : 0);                      // the GPU soft-body sim
-        app.submit(cmd);                                                           // submit + wait the sim
-        cmd = app.beginCommands();                                                 // reset + begin for the render
-        renderer.draw(cmd, app, idx, ui.bgColor, ImGui::GetDrawData(), sim, caps); // render + submit
+        sim.record(cmd, ui.sim, scene.clothPinned() ? 1 : 0);
+        app.submit(cmd);
+        cmd = app.beginCommands();
+        renderer.draw(cmd, app, idx, ui.bgColor, ImGui::GetDrawData(), caps);
         app.present(idx);
     }
 
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
-    renderer.shutdown(); // destroys the descriptor sets that reference the sim's buffers
-    sim.shutdown();      // destroys the sim's buffers (positions + capsules) + the compute pipeline
+    renderer.shutdown();
+    sim.shutdown();
     app.shutdown();
     return 0;
 }

@@ -1,21 +1,23 @@
-// math.hpp
-// Minimal column-major mat4 / vec3 (the camera math + the UBO packing) + the shared
-// constants (kPi, kSqrt2). Header-only, no deps.
 #pragma once
 #include <cmath>
 #include <numbers>
 
-// The shared constants (the single spelling of each for the whole project).
 inline constexpr float kPi = std::numbers::pi_v<float>;
 inline constexpr float kSqrt2 = std::numbers::sqrt2_v<float>;
-inline constexpr float kFrameDt = 1.0f / 60.0f; // the fixed physics frame (60 Hz)
+inline constexpr float kFrameDt = 1.0f / 60.0f;
 
 struct V3 {
     float x, y, z;
 };
 
+inline V3 vAdd(V3 a, V3 b) {
+    return {a.x + b.x, a.y + b.y, a.z + b.z};
+}
 inline V3 vSub(V3 a, V3 b) {
     return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+inline V3 vScale(V3 a, float s) {
+    return {a.x * s, a.y * s, a.z * s};
 }
 inline float vDot(V3 a, V3 b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
@@ -23,12 +25,14 @@ inline float vDot(V3 a, V3 b) {
 inline V3 vCross(V3 a, V3 b) {
     return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
+inline float vLen(V3 a) {
+    return std::sqrt(vDot(a, a));
+}
 inline V3 vNorm(V3 a) {
-    float l = std::sqrt(vDot(a, a));
-    return {a.x / l, a.y / l, a.z / l};
+    float l = vLen(a);
+    return vScale(a, 1.0f / l);
 }
 
-// Column-major 4x4 (m[col*4+row]); matches the GLSL mat4 layout exactly.
 struct Mat4 {
     float m[16];
 };
@@ -78,4 +82,17 @@ inline Mat4 lookAt(V3 eye, V3 at, V3 up) {
     r.m[14] = vDot(f, eye);
     r.m[15] = 1;
     return r;
+}
+
+inline void quatToMat3(const float q[4], float m[9]) {
+    float x = q[0], y = q[1], z = q[2], w = q[3];
+    m[0] = 1.0f - 2.0f * (y * y + z * z);
+    m[1] = 2.0f * (x * y + z * w);
+    m[2] = 2.0f * (x * z - y * w);
+    m[3] = 2.0f * (x * y - z * w);
+    m[4] = 1.0f - 2.0f * (x * x + z * z);
+    m[5] = 2.0f * (y * z + x * w);
+    m[6] = 2.0f * (x * z + y * w);
+    m[7] = 2.0f * (y * z - x * w);
+    m[8] = 1.0f - 2.0f * (x * x + y * y);
 }

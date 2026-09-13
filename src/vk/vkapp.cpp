@@ -1,4 +1,3 @@
-// vkapp.cpp
 #include "vk/vkapp.hpp"
 
 #include "vk/vkutil.hpp"
@@ -49,7 +48,6 @@ bool VkApp::init(int width, int height, const char* title) {
 
     VK(glfwCreateWindowSurface(m_inst, m_win, nullptr, &m_surface));
 
-    // the first physical device with a graphics + present queue
     uint32_t nd = 0;
     vkEnumeratePhysicalDevices(m_inst, &nd, nullptr);
     std::vector<VkPhysicalDevice> devs(nd);
@@ -96,7 +94,6 @@ bool VkApp::init(int width, int height, const char* title) {
     VK(vkCreateDevice(m_pdev, &dci, nullptr, &m_dev));
     vkGetDeviceQueue(m_dev, m_qf, 0, &m_queue);
 
-    // swapchain (first surface format, current extent, min+1 images)
     VkSurfaceCapabilitiesKHR caps;
     VK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_pdev, m_surface, &caps));
     uint32_t nf = 0;
@@ -133,10 +130,8 @@ bool VkApp::init(int width, int height, const char* title) {
     m_images.resize(icnt);
     vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, m_images.data());
 
-    // depth (shared by all framebuffers)
     createDepth(m_extent);
 
-    // render pass (color + depth)
     VkAttachmentDescription att[2]{};
     att[0].format = fmt.format;
     att[0].samples = VK_SAMPLE_COUNT_1_BIT;
@@ -168,7 +163,6 @@ bool VkApp::init(int width, int height, const char* title) {
     rpc.pSubpasses = &sp;
     VK(vkCreateRenderPass(m_dev, &rpc, nullptr, &m_rp));
 
-    // image views + framebuffers
     m_views.resize(icnt);
     m_fbs.resize(icnt);
     for (uint32_t i = 0; i < icnt; ++i) {
@@ -191,7 +185,6 @@ bool VkApp::init(int width, int height, const char* title) {
         VK(vkCreateFramebuffer(m_dev, &fci, nullptr, &m_fbs[i]));
     }
 
-    // one reusable command buffer + one fence (per-frame sync)
     VkCommandPoolCreateInfo cpc{};
     cpc.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     cpc.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -241,10 +234,6 @@ bool VkApp::keyIsDown(int key) const {
     return glfwGetKey(m_win, key) == GLFW_PRESS;
 }
 
-// Acquire the next image. No fence/semaphore: `vkAcquireNextImageKHR` blocks until an image is
-// available, so the image is safe to use when this returns. This app is fully synchronous (the
-// submit fence is waited on before present), so a separate acquire fence is not needed — and
-// reusing/resetting one across frames was the source of the hangs.
 uint32_t VkApp::acquireNextImage() {
     uint32_t idx = 0;
     VkResult r = vkAcquireNextImageKHR(m_dev, m_sc, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &idx);
@@ -255,8 +244,6 @@ uint32_t VkApp::acquireNextImage() {
     return idx;
 }
 
-// Reset + begin the reusable command buffer. The previous frame's submit fence was already
-// waited on in `submit()` before present, so the command buffer is free to reuse.
 VkCommandBuffer VkApp::beginCommands() {
     VK(vkResetCommandBuffer(m_cmd, 0));
     VkCommandBufferBeginInfo cbi{};
@@ -265,9 +252,6 @@ VkCommandBuffer VkApp::beginCommands() {
     return m_cmd;
 }
 
-// End the command buffer, submit, wait on the fence (per-stage sync), then reset the fence so
-// it can be reused by a later submit in the same frame (the sim and the render are submitted
-// separately so the compute->render handoff is a clean queue boundary).
 void VkApp::submit(VkCommandBuffer cmd) {
     VK(vkEndCommandBuffer(cmd));
     VkSubmitInfo si{};
@@ -289,7 +273,6 @@ void VkApp::present(uint32_t idx) {
     VK(vkQueuePresentKHR(m_queue, &pi));
 }
 
-// Create the shared depth image + view (D32).
 void VkApp::createDepth(VkExtent2D ext) {
     VkImageCreateInfo dci{};
     dci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
