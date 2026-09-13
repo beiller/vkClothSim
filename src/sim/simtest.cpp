@@ -12,28 +12,19 @@
 
 namespace {
 
-// Matches the shader's PhysP (the soft-body physics params, std430 flat scalars).
 struct PhysParams {
     int nCaps;
     float dt, damping, gravity, friction, skin, fricMargin, tension, stiff, maxStep;
 };
 
-// XPBD compliance for the one-way collision constraint (mirrors softbody.comp).
 constexpr float COLLIDE_COMPLIANCE = 0.02f;
-// XPBD compliance for the tangential friction constraint (mirrors softbody.comp).
 constexpr float FRICTION_COMPLIANCE = 0.0f;
-
-// XPBD compliance for distance constraints from the 0..1 `stiff` scale (mirrors softbody.comp).
-// A finite minimum alpha is required: alpha=0 (infinitely stiff) + Jacobi + the PBD velocity
-// update injects energy in the clumped contact pile.
 constexpr float MIN_CONSTRAINT_ALPHA = 10.0f;
 float constraintAlpha(const PhysParams& ph) {
     float a = (ph.stiff > 1e-3f) ? 10.0f / ph.stiff : 1e3f;
     return std::max(a, MIN_CONSTRAINT_ALPHA);
 }
 
-// --- small vec3 math ---
-// (named F3: math.hpp also defines a V3; this one is the test's private vec3)
 struct F3 {
     float x, y, z;
 };
@@ -53,7 +44,6 @@ float len(F3 a) {
     return std::sqrt(dot(a, a));
 }
 
-// quaternion -> 3x3 (column-major m[col*3+row] = M[row][col]); matches the renderer/solver.
 void quatToMat3(const float q[4], float m[9]) {
     float x = q[0], y = q[1], z = q[2], w = q[3];
     m[0] = 1.0f - 2.0f * (y * y + z * z);
@@ -67,8 +57,6 @@ void quatToMat3(const float q[4], float m[9]) {
     m[8] = 1.0f - 2.0f * (x * x + y * y);
 }
 
-// The precomputed capsule collider data (one per capsule, recomputed once per frame): the
-// capsule segment endpoints (A,B), AB + |AB|^2, and the radius. The collide loop uses this.
 struct CapInfo {
     F3 A, B, AB;
     float ab2, radius;
@@ -79,7 +67,7 @@ std::vector<CapInfo> prepareCaps(const std::vector<CapsuleGPU>& caps) {
         const CapsuleGPU& cg = caps[c];
         float m[9];
         quatToMat3(cg.quat, m);
-        F3 axis = opScale({m[3], m[4], m[5]}, cg.halfLen[0]); // R*(0,1,0) = the 2nd column
+        F3 axis = opScale({m[3], m[4], m[5]}, cg.halfLen[0]);
         F3 center = {cg.centerRadius[0], cg.centerRadius[1], cg.centerRadius[2]};
         CapInfo& ci = out[c];
         ci.A = opSub(center, axis);
@@ -91,12 +79,9 @@ std::vector<CapInfo> prepareCaps(const std::vector<CapsuleGPU>& caps) {
     return out;
 }
 
-// --- one soft body's CPU state (mirrors the GPU's GpuBody: ping-pong posA/posB + prev) ---
 struct Body {
     int n = 0;
-    std::vector<F3> posA, posB;
-    std::vector<F3> prev;
-    std::vector<F3> sub0;
+    std::vector<F3> pos, prev, sub0;
     struct Contact {
         F3 n;
         float lambda;
@@ -107,22 +92,14 @@ struct Body {
         float rest, k;
     };
     std::vector<Entry> ents;
-    std::vector<int> estart; // n+1
+    std::vector<int> estart, colorStart, colorVerts;
+    int colorCount = 0;
     std::vector<F3> initPos;
     const std::vector<sim::Constraint>* cons = nullptr;
-    bool inA = true;
-
-    // Ping-pong: reads come from ONE buffer, writes go to the OTHER (mirrors the shader's
-    // rpos/wpos). After each dispatch inA flips, so `cur()` (rd) always returns the buffer
-    // that holds the freshest state.
-    const F3* rd() const { return (inA ? posA : posB).data(); }
-    F3* wr() { return (inA ? posB : posA).data(); }
-    const F3* cur() const { return rd(); }
 
     void build(const sim::SoftBody& sb) {
         n = sb.numVertices();
-        posA.resize(n);
-        posB.resize(n);
+        pos.resize(n);
         prev.resize(n);
         sub0.resize(n);
         contact.resize(n);
@@ -130,13 +107,11 @@ struct Body {
         for (int i = 0; i < n; ++i) {
             const float* p = sb.posPtr(i);
             initPos[i] = {p[0], p[1], p[2]};
-            posA[i] = initPos[i];
-            posB[i] = initPos[i];
+            pos[i] = initPos[i];
             prev[i] = initPos[i];
             sub0[i] = initPos[i];
             contact[i] = Contact{{0.0f, 0.0f, 0.0f}, 0.0f};
         }
-        // the joint entries (mirror softsim.cpp's buildBodySimBuffers)
         std::vector<std::vector<Entry>> lists(n);
         for (const auto& c : sb.cons) {
             lists[c.a].push_back({c.b, c.rest, c.k});
@@ -150,34 +125,16 @@ struct Body {
             for (size_t e = 0; e < lists[i].size(); ++e)
                 ents[estart[i] + e] = lists[i][e];
         cons = &sb.cons;
+        colorStart = sb.colorStart;
+        colorVerts = sb.colorVerts;
+        colorCount = sb.colorCount;
     }
 
     void reset() {
-        for (int i = 0; i < n; ++i) {
-            posA[i] = initPos[i];
-            posB[i] = initPos[i];
-            prev[i] = initPos[i];
-            sub0[i] = initPos[i];
-            contact[i] = Contact{{0.0f, 0.0f, 0.0f}, 0.0f};
-        }
-        inA = true;
-    }
-
-    // mode 0: Verlet predict (read pos + prev -> write predicted pos; clamp the step to
-    // maxStep). `prev` is NOT touched here; the velocity update (finalize) owns it.
-    void verlet(const PhysParams& ph) {
-        const F3* r = rd();
-        F3* w = wr();
-        for (int i = 0; i < n; ++i) {
-            F3 P = r[i], Pr = prev[i];
-            F3 d = opScale(opSub(P, Pr), ph.damping);
-            d.y += ph.gravity * ph.dt * ph.dt;
-            float dl = len(d);
-            if (dl > ph.maxStep)
-                d = opScale(d, ph.maxStep / dl);
-            w[i] = opAdd(P, d);
-        }
-        inA = !inA;
+        pos = initPos;
+        prev = initPos;
+        sub0 = initPos;
+        resetContacts();
     }
 
     void resetContacts() {
@@ -185,84 +142,85 @@ struct Body {
             contact[i] = Contact{{0.0f, 0.0f, 0.0f}, 0.0f};
     }
 
-    // mode 1: ONE Jacobi XPBD pass over this vertex's joints (snapshot reads, write other).
-    // Distance constraint solved with compliance: x_i += (en.k / (2 + alpha)) * C/dist * d.
-    // Position only; `prev` is updated after the solve, so constraint motion feeds the PBD
-    // velocity update.
-    void relax(const PhysParams& ph) {
-        const F3* r = rd();
-        F3* w = wr();
-        float alpha = constraintAlpha(ph);
+    void verlet(const PhysParams& ph) {
         for (int i = 0; i < n; ++i) {
-            F3 Pi = r[i];
-            for (int e = estart[i]; e < estart[i + 1]; ++e) {
-                const Entry& en = ents[e];
-                F3 d = opSub(r[en.j], Pi);
-                float dist = len(d);
-                if (dist < 1e-6f)
-                    continue;
-                float rest = en.rest * ph.tension;
-                float s = (dist - rest) / dist * (en.k / (2.0f + alpha));
-                Pi = opAdd(Pi, opScale(d, s));
-            }
-            w[i] = Pi;
+            F3 P = pos[i], Pr = prev[i];
+            F3 d = opScale(opSub(P, Pr), ph.damping);
+            d.y += ph.gravity * ph.dt * ph.dt;
+            float dl = len(d);
+            if (dl > ph.maxStep)
+                d = opScale(d, ph.maxStep / dl);
+            pos[i] = opAdd(P, d);
         }
-        inA = !inA;
     }
 
-    // mode 2: collide + friction (capsules + ground): ONE XPBD pass over the normal contact
-    // and the Coulomb tangential constraint. Called N times per sub-step + once at the end.
-    void collide(const PhysParams& ph, const std::vector<CapInfo>& caps) {
-        const F3* r = rd();
-        F3* w = wr();
-        for (int i = 0; i < n; ++i) {
-            F3 P = r[i];
-            Contact ct = contact[i];
-            for (int c = 0; c < ph.nCaps; ++c) {
-                const CapInfo& ci = caps[c];
-                float t = std::clamp(dot(opSub(P, ci.A), ci.AB) / std::max(ci.ab2, 1e-6f), 0.0f, 1.0f);
-                F3 Q = opAdd(ci.A, opScale(ci.AB, t));
-                F3 d = opSub(P, Q);
-                float dist = len(d);
-                float C = dist - (ci.radius + ph.skin);
-                if (C < 0.0f) {
-                    F3 nrm = dist > 1e-5f ? opScale(d, 1.0f / dist) : F3{0, 1, 0};
-                    float corr = -C / (1.0f + COLLIDE_COMPLIANCE);
-                    P = opAdd(P, opScale(nrm, corr));
-                    ct.n = opAdd(ct.n, opScale(nrm, corr));
-                    ct.lambda += corr;
-                }
-            }
-            if (P.y < 0.0f) {
-                float corr = -P.y / (1.0f + COLLIDE_COMPLIANCE);
-                P.y += corr;
-                ct.n.y += corr;
+    F3 collideVertex(const PhysParams& ph, int i, F3 P, const std::vector<CapInfo>& caps) {
+        Contact ct = contact[i];
+        for (int c = 0; c < ph.nCaps; ++c) {
+            const CapInfo& ci = caps[c];
+            float t = std::clamp(dot(opSub(P, ci.A), ci.AB) / std::max(ci.ab2, 1e-6f), 0.0f, 1.0f);
+            F3 Q = opAdd(ci.A, opScale(ci.AB, t));
+            F3 d = opSub(P, Q);
+            float dist = len(d);
+            float C = dist - (ci.radius + ph.skin);
+            if (C < 0.0f) {
+                F3 nrm = dist > 1e-5f ? opScale(d, 1.0f / dist) : F3{0, 1, 0};
+                float corr = -C / (1.0f + COLLIDE_COMPLIANCE);
+                P = opAdd(P, opScale(nrm, corr));
+                ct.n = opAdd(ct.n, opScale(nrm, corr));
                 ct.lambda += corr;
             }
-            float nl = len(ct.n);
-            if (nl > 1e-8f) {
-                F3 fn = opScale(ct.n, 1.0f / nl);
-                F3 rel = opSub(P, sub0[i]);
-                F3 vt = opSub(rel, opScale(fn, dot(rel, fn)));
-                float l = len(vt);
-                float limit = ph.friction * ct.lambda;
-                if (l > 1e-8f && limit > 0.0f) {
-                    float corr = std::min(l, limit) / (1.0f + FRICTION_COMPLIANCE);
-                    P = opSub(P, opScale(vt, corr / l));
-                }
-            }
-            w[i] = P;
-            contact[i] = ct;
         }
-        inA = !inA;
+        if (P.y < 0.0f) {
+            float corr = -P.y / (1.0f + COLLIDE_COMPLIANCE);
+            P.y += corr;
+            ct.n.y += corr;
+            ct.lambda += corr;
+        }
+        float nl = len(ct.n);
+        if (nl > 1e-8f) {
+            F3 fn = opScale(ct.n, 1.0f / nl);
+            F3 rel = opSub(P, sub0[i]);
+            F3 vt = opSub(rel, opScale(fn, dot(rel, fn)));
+            float l = len(vt);
+            float limit = ph.friction * ct.lambda;
+            if (l > 1e-8f && limit > 0.0f) {
+                float corr = std::min(l, limit) / (1.0f + FRICTION_COMPLIANCE);
+                P = opSub(P, opScale(vt, corr / l));
+            }
+        }
+        contact[i] = ct;
+        return P;
     }
 
-    // mode 5: velocity update (reads the current solved pos + `sub0`, writes `prev`; no
-    // ping-pong flip). v = (solvedPos - x0) / dt; at contact, remove inward normal velocity.
+    void relaxVertex(const PhysParams& ph, int i) {
+        F3 P = pos[i];
+        float alpha = constraintAlpha(ph);
+        for (int e = estart[i]; e < estart[i + 1]; ++e) {
+            const Entry& en = ents[e];
+            F3 d = opSub(pos[en.j], P);
+            float dist = len(d);
+            if (dist < 1e-6f)
+                continue;
+            float rest = en.rest * ph.tension;
+            P = opAdd(P, opScale(d, (dist - rest) / dist * (en.k / (2.0f + alpha))));
+        }
+        pos[i] = P;
+    }
+
+    void solveVertex(const PhysParams& ph, int i, const std::vector<CapInfo>& caps) {
+        pos[i] = collideVertex(ph, i, pos[i], caps);
+        relaxVertex(ph, i);
+    }
+
+    void collideAll(const PhysParams& ph, const std::vector<CapInfo>& caps) {
+        for (int i = 0; i < n; ++i)
+            pos[i] = collideVertex(ph, i, pos[i], caps);
+    }
+
     void finalize(const PhysParams& ph) {
-        const F3* p = cur();
         for (int i = 0; i < n; ++i) {
-            F3 P = p[i];
+            F3 P = pos[i];
             F3 v = opScale(opSub(P, sub0[i]), 1.0f / ph.dt);
             float nl = len(contact[i].n);
             if (nl > 1e-8f) {
@@ -275,22 +233,19 @@ struct Body {
         }
     }
 
-    // step one frame: per sub-step, PREDICT (Verlet) once, then ITERATIVELY project
-    // (collide + relax) N times + a final collide + a velocity update; skip if pinned.
     void step(const PhysParams& ph, int iters, const std::vector<CapInfo>& caps, int pinned) {
         if (pinned)
             return;
         for (int s = 0; s < sim::kSubsteps; ++s) {
-            const F3* r0 = rd();
             for (int i = 0; i < n; ++i)
-                sub0[i] = r0[i];
-            verlet(ph);
+                sub0[i] = pos[i];
             resetContacts();
-            for (int k = 0; k < iters; ++k) {
-                collide(ph, caps);
-                relax(ph);
-            }
-            collide(ph, caps);
+            verlet(ph);
+            for (int it = 0; it < iters; ++it)
+                for (int c = 0; c < colorCount; ++c)
+                    for (int idx = colorStart[c]; idx < colorStart[c + 1]; ++idx)
+                        solveVertex(ph, colorVerts[idx], caps);
+            collideAll(ph, caps);
             finalize(ph);
         }
     }
@@ -299,15 +254,13 @@ struct Body {
 struct Metrics {
     float maxV = 0, ke = 0, stretch = 0;
     F3 center{0, 0, 0}, ext{0, 0, 0};
-    F3 com{0, 0, 0}; // mean position (center of mass); the drift metric
-    float maxY = 0;  // highest vertex (is the cloth's center held up on the capsule?)
+    F3 com{0, 0, 0};
+    float maxY = 0;
 };
 
-// Per-frame metrics: maxV/KE from the frame displacement, the bbox extent/center, and the
-// mean relative joint stretch. `prevFramePos` is updated to the current pos on each call.
 Metrics metrics(const Body& b, std::vector<F3>& prevFramePos, float dt) {
     Metrics m;
-    const F3* p = b.cur();
+    const F3* p = b.pos.data();
     F3 mn = {1e9f, 1e9f, 1e9f}, mx = {-1e9f, -1e9f, -1e9f};
     F3 com = {0, 0, 0};
     float ke2 = 0;
@@ -343,36 +296,33 @@ Metrics metrics(const Body& b, std::vector<F3>& prevFramePos, float dt) {
 } // namespace
 
 int main(int argc, char** argv) {
-    SimParams ui; // the real soft-body params (so the friction default matches the GPU sim)
+    SimParams ui;
     const int FRAMES = (argc > 1) ? (int)std::strtol(argv[1], nullptr, 10) : 240;
     const float FRICTION = (argc > 2) ? std::strtof(argv[2], nullptr) : ui.friction;
-    const bool NOCOLS = (argc > 3) && std::strtol(argv[3], nullptr, 10) != 0;      // flat ground only
-    const bool BEND = (argc > 5) && std::strtol(argv[5], nullptr, 10) != 0;        // add bending (skip-1) joints
-    const bool SINGLE = (argc > 6) && std::strtol(argv[6], nullptr, 10) != 0;      // single static capsule
-    const float ZOFF = (argc > 7) ? std::strtof(argv[7], nullptr) : 0.0f;          // shift the cloth's start in z
-    const float STIFF = (argc > 8) ? std::strtof(argv[8], nullptr) : ui.stiffness; // XPBD stiffness scale
-    // scene constants (mirror Scene in app/scene.hpp)
+    const bool NOCOLS = (argc > 3) && std::strtol(argv[3], nullptr, 10) != 0;
+    const bool BEND = (argc > 5) && std::strtol(argv[5], nullptr, 10) != 0;
+    const bool SINGLE = (argc > 6) && std::strtol(argv[6], nullptr, 10) != 0;
+    const float ZOFF = (argc > 7) ? std::strtof(argv[7], nullptr) : 0.0f;
+    const float STIFF = (argc > 8) ? std::strtof(argv[8], nullptr) : ui.stiffness;
     const int CW = 64, CH = 64, holdFrames = 150;
     const float kDefaultSpan = SINGLE ? 3.0f : 8.0f;
     const float kClothSpan = (argc > 4) ? std::strtof(argv[4], nullptr) : kDefaultSpan;
-    const float kClothY0 = SINGLE ? 3.5f : 10.0f; // in single mode the cloth starts close above the capsule
+    const float kClothY0 = SINGLE ? 3.5f : 10.0f;
     const int kBallLat = 32, kBallLon = 32;
     const float kBallRadius = 1.5f, kBallY0 = 12.0f;
 
-    // the rigid capsule pile (Jolt, CPU)
     RigidScene rigid;
     rigid.init();
 
-    // the two soft bodies (the SAME kind of thing: a vertex list + distance joints)
     sim::SoftBody cloth, ball;
     {
         std::vector<float> v, nr, co;
         std::vector<sim::Constraint> cons;
         sim::makeCloth(v, nr, co, cons, CW, CH, kClothSpan, kClothY0);
-        if (ZOFF != 0.0f) // bias the start in z to test whether the drift tracks the perturbation
+        if (ZOFF != 0.0f)
             for (size_t i = 0; i < v.size(); i += 3)
                 v[i + 2] += ZOFF;
-        if (BEND) { // optional: bending (skip-1) joints resist folding (real cloth has this)
+        if (BEND) {
             const float sp = kClothSpan / (CW - 1);
             for (int gy = 0; gy < CH; ++gy)
                 for (int gx = 0; gx < CW; ++gx) {
@@ -394,8 +344,6 @@ int main(int argc, char** argv) {
     cb.build(cloth);
     bb.build(ball);
 
-    // the physics params (the SimParams `ui` above supplies damping/mass/tension; friction
-    // comes from the CLI or the real SimParams default)
     PhysParams ph;
     ph.dt = kFrameDt / sim::kSubsteps;
     ph.damping = ui.damping;
@@ -408,11 +356,10 @@ int main(int argc, char** argv) {
     ph.maxStep = 0.05f;
 
     std::vector<F3> prevCloth((size_t)CW * CH), prevBall(ball.numVertices());
-    // seed the frame-displacement tracking with the initial positions (frame 0 => v = 0)
     for (int i = 0; i < cb.n; ++i)
-        prevCloth[i] = cb.initPos[i];
+        prevCloth[i] = cb.pos[i];
     for (int i = 0; i < bb.n; ++i)
-        prevBall[i] = bb.initPos[i];
+        prevBall[i] = bb.pos[i];
 
     Metrics clothFinal, ballFinal;
     float clothPeakV = 0, clothPeakKe = 0, clothPeakStretch = 0;
@@ -427,7 +374,6 @@ int main(int argc, char** argv) {
     for (int f = 0; f < FRAMES; ++f) {
         std::vector<CapsuleGPU> caps;
         if (SINGLE) {
-            // one static vertical capsule at (0, 1.5, 0): {center, radius}, {quat (axis +Y)}, {halfLen}
             caps.push_back(CapsuleGPU{{0.f, 1.5f, 0.f, 0.5f}, {0.f, 0.f, 0.f, 1.f}, {0.9f, 0.f, 0.f, 0.f}});
         } else {
             rigid.step(1);
@@ -436,8 +382,8 @@ int main(int argc, char** argv) {
         }
         auto ccaps = prepareCaps(caps);
         ph.nCaps = (int)caps.size();
-        cb.step(ph, ui.passes, ccaps, f < holdFrames); // cloth pinned while held
-        bb.step(ph, ui.passes, ccaps, 0);              // ball always free
+        cb.step(ph, ui.passes, ccaps, f < holdFrames);
+        bb.step(ph, ui.passes, ccaps, 0);
         Metrics cm = metrics(cb, prevCloth, kFrameDt);
         Metrics bm = metrics(bb, prevBall, kFrameDt);
         clothFinal = cm;

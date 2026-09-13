@@ -1,64 +1,18 @@
 #version 450
-// The GPU soft-body sim. ONE general XPBD-style solver: it takes a vertex list + a list of
-// JOINTS (two-point distance constraints). Per sub-step it PREDICTS (Verlet), then
-// ITERATIVELY projects position to satisfy TWO constraint sets — the joints (relax) and the
-// Jolt capsules/ground (collide, one-way) — repeating N times (N = passes). Constraint
-// stiffness comes from XPBD compliance, not from the iteration count. The collision pass
-// applies the normal correction and the Coulomb tangential friction; the velocity-update pass
-// then derives v from (solvedPos - sub0), removes inward normal velocity at contact, and
-// writes `prev`. The SAME shader + pipeline steps both the cloth and the ball
-// (each with its own vertices + joints) — no pressure, no per-body special cases.
-//
-// RACE-FREE by double-buffering: every position read comes from the READ buffer, every
-// position write goes to the OTHER buffer (ping-pong). A thread never reads a slot another
-// thread is writing (the live read/write race is what made the first GPU cloth explode).
-// `prev` is a separate buffer touched only by its own thread (disjoint per vertex).
-//
-// One pipeline, six modes (push constant):
-//   0 = predict   : read pos + prev -> write predicted pos (other buf). The per-substep
-//                   displacement is clamped to maxStep (a hard anti-divergence guard).
-//                   `prev` is NOT touched; the velocity update (mode 5) owns it.
-//   1 = relax     : ONE Jacobi XPBD pass over this vertex's joints (snapshot reads). NOTE:
-//                   the cloth's joint graph is NOT bipartite (each grid cell's diagonal forms
-//                   a triangle with its edges), so red-black Gauss-Seidel is impossible here —
-//                   Jacobi it is. Moves position only; `prev` is updated after the solve.
-//   2 = collide   : ONE XPBD pass over capsules + ground (one-way SDF projection) + the
-//                   Coulomb tangential constraint. Recorded N times interleaved with relax
-//                   (mode 1) + once at the end of the sub-step. Moves position only; `prev`
-//                   is updated after the solve.
-//   3 = normals   : recompute the deformed per-vertex normal from the first two joints
-//                   (cross of the two joint edges) and write it into .nrm of the CURRENT
-//                   buffer. Reads .pos, writes .nrm (disjoint fields) -> race-free, and no
-//                   ping-pong flip (it writes to the buffer it reads). The renderer lights
-//                   with abs(), so the normal's sign/orientation doesn't matter.
-//   4 = sub0      : copy the CURRENT position into `sub0` (the pre-predict x0 for the
-//                   velocity update) and reset this sub-step's contact state. No ping-pong
-//                   flip.
-//   5 = finalize  : velocity update. v = (solvedPos - sub0) / dt; remove inward normal
-//                   velocity at contact; write prev = solvedPos - v*dt. Reads current pos +
-//                   sub0 + contact, writes prev.
 layout(local_size_x = 64) in;
 
-// A render vertex: position + normal + color (48 bytes; std430 -> each vec3 is a 16-byte
-// block, so the struct is 3 x 16 = 48 bytes). This is the SAME type the renderer reads to
-// draw: the sim steps .pos (Verlet/relax/collide) and recomputes .nrm (mode 3); .col is
-// static (set at init, never touched).
 struct Vtx { vec3 pos; vec3 nrm; vec3 col; };
+layout(binding = 0) buffer Vtxs { Vtx v[]; } vtxs;
+layout(binding = 1) buffer Prev { vec3 v[]; } prevB;
 
-layout(binding = 0) buffer PosA { Vtx a[]; } posA;
-layout(binding = 1) buffer PosB { Vtx b[]; } posB;
-layout(binding = 2) buffer Prev { vec3 v[]; } prevB;
+struct Capsule { vec4 centerRadius; vec4 quat; vec4 halfLen; };
+layout(binding = 2) buffer Capsules { Capsule cs[]; } caps;
 
-struct Capsule { vec4 centerRadius; vec4 quat; vec4 halfLen; };   // 48 B, mirrors CapsuleGPU
-layout(binding = 3) buffer Capsules { Capsule cs[]; } caps;
+struct Entry { int j; float rest; float k; int pad; };
+layout(binding = 3) buffer Entries { Entry e[]; } ents;
+layout(binding = 4) buffer EntryStart { int s[]; } estart;
+layout(binding = 5) buffer ColorVerts { int v[]; } colorVerts;
 
-// Per-vertex relaxation entries: for vertex i, the joints it owns are ents[estart[i] ..
-// estart[i+1]); each entry is the joint's OTHER endpoint + rest length + stiffness.
-struct Entry { int j; float rest; float k; int pad; };            // 16 B
-layout(binding = 4) buffer Entries { Entry e[]; } ents;
-layout(binding = 5) buffer EntryStart { int s[]; } estart;        // size n+1
-
-// Shared physics params (std430 flat scalars -> matches the C++ PhysParams exactly).
 layout(binding = 6) buffer PhysP {
     int nCaps;
     float dt;
@@ -68,58 +22,38 @@ layout(binding = 6) buffer PhysP {
     float skin;
     float fricMargin;
     float tension;
-    float stiff;   // XPBD constraint stiffness scale (1 = stiff, <1 = compliant)
+    float stiff;
     float maxStep;
 } ph;
 
-// The position at the start of the current sub-step (x0, before the Verlet predict). The
-// velocity-update step derives the post-solve velocity from (solvedPos - sub0).
 layout(binding = 7) buffer Sub0 { vec3 v[]; } sub0;
-
-// Per-vertex contact state for the current sub-step: the accumulated normal correction and
-// the scalar normal impulse used by the Coulomb tangential constraint.
 layout(binding = 8) buffer ContactN { vec4 n[]; } contactN;
 layout(binding = 9) buffer ContactL { float l[]; } contactL;
 
-layout(push_constant) uniform PC { int mode; int readFromA; int n; int pinned; } pc;
+layout(push_constant) uniform PC { int mode; int n; int groupOffset; int pinned; } pc;
 
-vec3 rpos(int i) { return pc.readFromA != 0 ? posA.a[i].pos : posB.b[i].pos; }
-void wpos(int i, vec3 x) { if (pc.readFromA != 0) posB.b[i].pos = x; else posA.a[i].pos = x; }
-// The normal field of the CURRENT (read) buffer: written by mode 3 (no flip, so the read
-// buffer is the one that holds the live state). Reads .nrm, writes .nrm (disjoint from the
-// .pos the other modes touch).
-void wnrm(int i, vec3 x) { if (pc.readFromA != 0) posA.a[i].nrm = x; else posB.b[i].nrm = x; }
+vec3 rpos(int i) { return vtxs.v[i].pos; }
+void wpos(int i, vec3 x) { vtxs.v[i].pos = x; }
+void wnrm(int i, vec3 x) { vtxs.v[i].nrm = x; }
 
 mat3 quatMat(vec4 q) {
     q = normalize(q);
     float x = q.x, y = q.y, z = q.z, w = q.w;
     return mat3(
-        vec3(1.0 - 2.0*(y*y + z*z), 2.0*(x*y + z*w), 2.0*(x*z - y*w)),
-        vec3(2.0*(x*y - z*w),       1.0 - 2.0*(x*x + z*z), 2.0*(y*z + x*w)),
-        vec3(2.0*(x*z - y*w),       2.0*(y*z - x*w),       1.0 - 2.0*(x*x + z*z)));
+        vec3(1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + z * w), 2.0 * (x * z - y * w)),
+        vec3(2.0 * (x * y - z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + x * w)),
+        vec3(2.0 * (x * z + y * w), 2.0 * (y * z - x * w), 1.0 - 2.0 * (x * x + y * y)));
 }
 
-// XPBD compliance for the one-way collision constraint. Small = stiff/hard contact.
 const float COLLIDE_COMPLIANCE = 0.02;
 const float FRICTION_COMPLIANCE = 0.0;
-
-// The XPBD compliance for distance constraints. `ph.stiff` is a 0..1 stiffness scale:
-// stiff=1 -> the stiffest finite compliance, stiff<1 -> more compliant. A finite minimum
-// alpha is required: alpha=0 (infinitely stiff) + Jacobi + the PBD velocity update injects
-// energy in the clumped contact pile.
 const float MIN_CONSTRAINT_ALPHA = 10.0;
 float constraintAlpha() {
     float a = (ph.stiff > 1e-3) ? 10.0 / ph.stiff : 1e3;
     return max(a, MIN_CONSTRAINT_ALPHA);
 }
 
-// ONE XPBD collision pass: a single sweep over ALL capsules + the ground. Pushing a vertex
-// out of one capsule can re-insert it into another, so the OUTER solver iterations (N collide
-// passes per sub-step) converge the overlap. Each normal constraint is solved with a one-way
-// SDF projection: C = dist - (radius + skin) >= 0, lambda = -C / (1 + alpha), x += lambda *
-// grad. The accumulated normal correction also defines the tangential slip constraint.
-void collideVertex(int i) {
-    vec3 P = rpos(i);
+vec3 collideVertex(int i, vec3 P) {
     vec3 cN = contactN.n[i].xyz;
     float cL = contactL.l[i];
     for (int c = 0; c < ph.nCaps; ++c) {
@@ -159,73 +93,63 @@ void collideVertex(int i) {
             P -= vt * (corr / lv);
         }
     }
-    wpos(i, P); // ALWAYS write (keeps the ping-pong consistent)
     contactN.n[i] = vec4(cN, 0.0);
     contactL.l[i] = cL;
+    return P;
 }
 
 void main() {
     int i = int(gl_GlobalInvocationID.x);
     if (i >= pc.n) return;
-    if (pc.pinned == 1) return;    // held: frozen at the initial position
+    if (pc.pinned == 1) return;
+    int vi = (pc.mode == 1) ? colorVerts.v[pc.groupOffset + i] : i;
 
-    if (pc.mode == 0) {            // Verlet predict (position only; `prev` is updated in mode 5)
-        vec3 P = rpos(i);
-        vec3 Pr = prevB.v[i];
+    if (pc.mode == 0) {
+        vec3 P = rpos(vi);
+        vec3 Pr = prevB.v[vi];
         vec3 d = (P - Pr) * ph.damping + vec3(0.0, ph.gravity, 0.0) * (ph.dt * ph.dt);
-        // Stability guard: bound the per-substep displacement. A bad parameter set (low
-        // damping + a hard impact) used to feed velocity back through the constraints and
-        // diverge; clamping the step makes runaway impossible (a vertex can never travel
-        // more than maxStep per sub-step).
         float dl = length(d);
-        if (dl > ph.maxStep) d *= ph.maxStep / dl;
-        wpos(i, P + d);
-    } else if (pc.mode == 1) {     // ONE Jacobi XPBD pass over this vertex's joints
-        // Distance constraint solved with compliance: C = dist - rest, lambda = -C / (2 + alpha),
-        // x_i += (en.k / (2 + alpha)) * (C / dist) * (x_j - x_i). `en.k` is the per-joint
-        // relative stiffness (cloth edges = 1, ball/bend = softer). Position only; `prev` is
-        // updated after the solve, so constraint motion feeds the PBD velocity update.
-        vec3 Pi = rpos(i);
+        if (dl > ph.maxStep)
+            d *= ph.maxStep / dl;
+        wpos(vi, P + d);
+    } else if (pc.mode == 1) {
+        vec3 P = collideVertex(vi, rpos(vi));
         float alpha = constraintAlpha();
-        for (int e = estart.s[i]; e < estart.s[i + 1]; ++e) {
+        for (int e = estart.s[vi]; e < estart.s[vi + 1]; ++e) {
             Entry en = ents.e[e];
-            vec3 d = rpos(en.j) - Pi;
+            vec3 d = rpos(en.j) - P;
             float dist = length(d);
             if (dist < 1e-6) continue;
             float rest = en.rest * ph.tension;
-            Pi += d * ((dist - rest) / dist * (en.k / (2.0 + alpha)));
+            P += d * ((dist - rest) / dist * (en.k / (2.0 + alpha)));
         }
-        wpos(i, Pi);
-    } else if (pc.mode == 2) {     // collision (position-only XPBD projection)
-        collideVertex(i);
-    } else if (pc.mode == 3) {     // recompute the deformed normal from the joints
-        // The normal of the triangle (i, j0, j1) formed by the first two joints is a good
-        // estimate of the deformed surface normal (it works for the cloth AND the ball).
-        // Reads .pos (rpos), writes .nrm (wnrm) — disjoint, so it is race-free and needs no
-        // ping-pong flip.
-        int s0 = estart.s[i], s1 = estart.s[i + 1];
+        wpos(vi, P);
+    } else if (pc.mode == 2) {
+        wpos(vi, collideVertex(vi, rpos(vi)));
+    } else if (pc.mode == 3) {
+        int s0 = estart.s[vi], s1 = estart.s[vi + 1];
         if (s1 - s0 >= 2) {
-            vec3 P = rpos(i);
+            vec3 P = rpos(vi);
             vec3 e1 = rpos(ents.e[s0].j) - P;
             vec3 e2 = rpos(ents.e[s0 + 1].j) - P;
             vec3 n = cross(e1, e2);
             float l = length(n);
-            wnrm(i, l > 1e-6 ? n / l : vec3(0.0, 1.0, 0.0));
+            wnrm(vi, l > 1e-6 ? n / l : vec3(0.0, 1.0, 0.0));
         }
-    } else if (pc.mode == 4) { // store the pre-predict position (x0) + reset the sub-step contacts
-        sub0.v[i] = rpos(i);
-        contactN.n[i] = vec4(0.0);
-        contactL.l[i] = 0.0;
-    } else if (pc.mode == 5) { // velocity update (writes `prev` only)
-        vec3 P = rpos(i);
-        vec3 v = (P - sub0.v[i]) / ph.dt;
-        float nl = length(contactN.n[i].xyz);
+    } else if (pc.mode == 4) {
+        sub0.v[vi] = rpos(vi);
+        contactN.n[vi] = vec4(0.0);
+        contactL.l[vi] = 0.0;
+    } else if (pc.mode == 5) {
+        vec3 P = rpos(vi);
+        vec3 v = (P - sub0.v[vi]) / ph.dt;
+        float nl = length(contactN.n[vi].xyz);
         if (nl > 1e-8) {
-            vec3 fn = contactN.n[i].xyz / nl;
+            vec3 fn = contactN.n[vi].xyz / nl;
             float vn = dot(v, fn);
             if (vn < 0.0)
-                v -= fn * vn; // zero inward normal velocity (no restitution)
+                v -= fn * vn;
         }
-        prevB.v[i] = P - v * ph.dt;
+        prevB.v[vi] = P - v * ph.dt;
     }
 }

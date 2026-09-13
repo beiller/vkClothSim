@@ -43,18 +43,52 @@ struct Triangle {
 // renderer reads the whole thing to draw. .col is static (set here, never touched).
 struct SoftBody {
     int n = 0;
-    std::vector<float> pos; // 3n
-    std::vector<float> nrm; // 3n
-    std::vector<float> col; // 3n
+    std::vector<float> pos;
+    std::vector<float> nrm;
+    std::vector<float> col;
     std::vector<Constraint> cons;
+    int colorCount = 0;
+    std::vector<int> colorStart;
+    std::vector<int> colorVerts;
 
-    // Build the body from initial position/normal/color lists (3 floats each) + constraints.
     void init(const float* p0, const float* n0, const float* c0, int n, std::vector<Constraint> cons) {
         this->n = n;
         pos.assign(p0, p0 + (size_t)3 * n);
         nrm.assign(n0, n0 + (size_t)3 * n);
         col.assign(c0, c0 + (size_t)3 * n);
         this->cons = std::move(cons);
+        buildColoring();
+    }
+
+    void buildColoring() {
+        std::vector<std::vector<int>> adj(n);
+        for (const auto& c : cons) {
+            adj[c.a].push_back(c.b);
+            adj[c.b].push_back(c.a);
+        }
+        std::vector<int> vertexColor(n, -1);
+        std::vector<std::vector<int>> groups;
+        for (int i = 0; i < n; ++i) {
+            bool used[64] = {};
+            for (int nb : adj[i])
+                if (vertexColor[nb] >= 0 && vertexColor[nb] < 64)
+                    used[vertexColor[nb]] = true;
+            size_t c = 0;
+            while (c < 64 && used[c])
+                ++c;
+            if (c == groups.size())
+                groups.resize(c + 1);
+            vertexColor[i] = (int)c;
+            groups[c].push_back(i);
+        }
+        colorCount = (int)groups.size();
+        colorStart.assign(colorCount + 1, 0);
+        for (int c = 0; c < colorCount; ++c)
+            colorStart[c + 1] = colorStart[c] + (int)groups[c].size();
+        colorVerts.resize(n);
+        for (int c = 0; c < colorCount; ++c)
+            for (size_t j = 0; j < groups[c].size(); ++j)
+                colorVerts[colorStart[c] + j] = groups[c][j];
     }
 
     int numVertices() const { return n; }
