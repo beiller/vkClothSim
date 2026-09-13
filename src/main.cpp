@@ -8,6 +8,7 @@
 #include "sim/softsim.hpp"
 #include "vk/renderer.hpp"
 #include "vk/vkapp.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <imgui.h>
@@ -72,14 +73,35 @@ int main(int argc, char** argv) {
 
     UIState ui;
     std::printf("3dsim: vulkan+imgui | GPU soft-body sim | R to reset | esc/close to quit\n");
+    const double kStepSec = kFrameDt;
+    double prevTime = glfwGetTime();
+    double accumulator = 0.0;
+    std::vector<CapsuleGPU> caps = scene.rigid().capsuleGPU();
+
     while (!app.windowShouldClose()) {
         if (app.keyIsDown(GLFW_KEY_R)) {
             scene.reset();
             sim.reset(allBodies);
         }
-        scene.stepRigid(1);
-        auto caps = scene.rigid().capsuleGPU();
-        sim.uploadCapsules(caps);
+
+        double now = glfwGetTime();
+        double frameTime = std::min(now - prevTime, 4.0 * kStepSec);
+        prevTime = now;
+        accumulator += frameTime;
+        int steps = 0;
+        while (accumulator >= kStepSec && steps < 4) {
+            accumulator -= kStepSec;
+            ++steps;
+        }
+        if (steps > 0) {
+            scene.stepRigid(steps);
+            caps = scene.rigid().capsuleGPU();
+            sim.uploadCapsules(caps);
+            VkCommandBuffer simCmd = app.beginCommands();
+            for (int s = 0; s < steps; ++s)
+                sim.record(simCmd, ui.sim, scene.pinnedMask());
+            app.submit(simCmd);
+        }
 
         app.pollEvents();
         ImGui_ImplVulkan_NewFrame();
@@ -97,9 +119,6 @@ int main(int argc, char** argv) {
 
         uint32_t idx = app.acquireNextImage();
         VkCommandBuffer cmd = app.beginCommands();
-        sim.record(cmd, ui.sim, scene.pinnedMask());
-        app.submit(cmd);
-        cmd = app.beginCommands();
         renderer.draw(cmd, app, idx, ui.bgColor, ImGui::GetDrawData(), caps);
         app.present(idx);
     }

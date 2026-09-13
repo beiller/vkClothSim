@@ -2,6 +2,7 @@
 
 #include "softbody_spv.hpp"
 #include "vk/vkutil.hpp"
+#include <cmath>
 #include <cstring>
 
 namespace {
@@ -145,7 +146,7 @@ void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask) {
     PhysParams phys{};
     phys.nCaps = m_nCaps;
     phys.dt = kFrameDt / sim::kSubsteps;
-    phys.damping = p.damping;
+    phys.damping = std::pow(p.damping, 1.0f / (float)sim::kSubsteps);
     phys.gravity = sim::kGravity * p.mass;
     phys.friction = p.friction;
     phys.skin = kSkin;
@@ -168,8 +169,11 @@ void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask) {
     stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, first.data(),
                  (uint32_t)first.size());
 
-    for (size_t i = 0; i < m_body.size(); ++i)
-        recordBody(cmd, m_body[i], p.passes, (pinnedMask >> (int)i) & 1);
+    for (size_t i = 0; i < m_body.size(); ++i) {
+        const int pinned = (pinnedMask >> (int)i) & 1;
+        for (int s = 0; s < sim::kSubsteps; ++s)
+            recordBody(cmd, m_body[i], p.passes, pinned);
+    }
 
     for (const GpuBody& b : m_body) {
         VkBufferMemoryBarrier bmb = bufBarrier(b.vtx);
