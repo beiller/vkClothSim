@@ -155,7 +155,6 @@ void SoftSim::recordBody(VkCommandBuffer cmd, const GpuBody& b, int iters, int p
             recordMode(cmd, b, 1, b.soft.colorStart[c + 1] - b.soft.colorStart[c], b.soft.colorStart[c]);
     recordMode(cmd, b, 2, n, 0);
     recordMode(cmd, b, 5, n, 0);
-    recordMode(cmd, b, 3, n, 0);
 }
 
 void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask) {
@@ -187,6 +186,9 @@ void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask) {
         for (int s = 0; s < sim::kSubsteps; ++s)
             recordBody(cmd, m_body[i], p.passes, pinned);
     }
+    for (size_t i = 0; i < m_body.size(); ++i)
+        if (!((pinnedMask >> (int)i) & 1))
+            recordMode(cmd, m_body[i], 3, m_body[i].soft.n, 0);
 
     for (const GpuBody& b : m_body) {
         VkBufferMemoryBarrier bmb[2] = {bufBarrier(b.pos), bufBarrier(b.nrm)};

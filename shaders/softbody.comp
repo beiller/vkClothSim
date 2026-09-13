@@ -98,7 +98,11 @@ vec3 collideVertex(int i, vec3 P) {
     for (int c = 0; c < ph.nCaps; ++c) {
         vec3 center = caps.cs[c].centerRadius.xyz;
         float radius = caps.cs[c].centerRadius.w;
-        vec3 axis = quatMat(caps.cs[c].quat) * vec3(0.0, caps.cs[c].halfLen.x, 0.0);
+        float hl = caps.cs[c].halfLen.x;
+        float bd = radius + ph.skin + hl;
+        vec3 dc = P - center;
+        if (dot(dc, dc) > bd * bd) continue;
+        vec3 axis = quatMat(caps.cs[c].quat) * vec3(0.0, hl, 0.0);
         vec3 A = center - axis, B = center + axis;
         vec3 AB = B - A;
         float t = clamp(dot(P - A, AB) / max(dot(AB, AB), 1e-6), 0.0, 1.0);
@@ -151,7 +155,7 @@ void main() {
             d *= ph.maxStep / dl;
         wpos(vi, P + d);
     } else if (pc.mode == 1) {
-        vec3 P = collideVertex(vi, rpos(vi));
+        vec3 P = rpos(vi);
         float alpha = constraintAlpha();
         for (int e = estart.s[vi]; e < estart.s[vi + 1]; ++e) {
             Entry en = ents.e[e];
