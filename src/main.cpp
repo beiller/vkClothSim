@@ -25,12 +25,18 @@ int main(int argc, char** argv) {
         return 1;
 
     Scene scene;
-    scene.init(single);
+    scene.initRigid(single);
+    const float span = single ? Scene::kSingleSpan : Scene::kClothSpan;
+    const float y0 = single ? Scene::kSingleY0 : Scene::kClothY0;
+    const int clothIdx = scene.add(makeCloth(Scene::kCW, Scene::kCH, span, y0), true);
+    const int ballIdx =
+        scene.add(makeBall(Scene::kBallLat, Scene::kBallLon, Scene::kBallRadius, Scene::kBallY0), false);
+    const int allBodies = (1 << scene.size()) - 1;
 
     SoftSim sim;
     sim.init(app.device(), app.pdev(), scene.rigid().capsuleCount());
-    sim.registerBody(scene.cloth().mesh, scene.cloth().cons);
-    sim.registerBody(scene.ball().mesh, scene.ball().cons);
+    for (const auto& s : scene.softs())
+        sim.registerBody(s.mesh.mesh, s.mesh.cons);
     sim.build();
 
     const float aspect = (float)app.extent().width / (float)app.extent().height;
@@ -67,7 +73,7 @@ int main(int argc, char** argv) {
     while (!app.windowShouldClose()) {
         if (app.keyIsDown(GLFW_KEY_R)) {
             scene.reset();
-            sim.reset(3);
+            sim.reset(allBodies);
         }
         scene.stepRigid(1);
         auto caps = scene.rigid().capsuleGPU();
@@ -78,18 +84,18 @@ int main(int argc, char** argv) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         bool clothReset = false, ballReset = false;
-        drawOverlay(ui, scene.clothPinned(), clothReset, ballReset);
+        drawOverlay(ui, scene.isPinned(clothIdx), clothReset, ballReset);
         if (clothReset) {
             scene.reset();
-            sim.reset(3);
+            sim.reset(allBodies);
         }
         if (ballReset)
-            sim.reset(2);
+            sim.reset(1 << ballIdx);
         ImGui::Render();
 
         uint32_t idx = app.acquireNextImage();
         VkCommandBuffer cmd = app.beginCommands();
-        sim.record(cmd, ui.sim, scene.clothPinned() ? 1 : 0);
+        sim.record(cmd, ui.sim, scene.pinnedMask());
         app.submit(cmd);
         cmd = app.beginCommands();
         renderer.draw(cmd, app, idx, ui.bgColor, ImGui::GetDrawData(), caps);

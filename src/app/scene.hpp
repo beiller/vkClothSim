@@ -1,7 +1,7 @@
 #pragma once
 #include "app/geometry.hpp"
 #include "app/rigid.hpp"
-#include "math.hpp"
+#include <vector>
 
 class Scene {
 public:
@@ -15,18 +15,27 @@ public:
     static constexpr float kSingleSpan = 4.0f;
     static constexpr float kSingleY0 = 3.5f;
 
-    void init(bool single = false);
-    void stepRigid(int n = 1);
-    void reset();
-    bool clothPinned() const { return m_pinned != 0; }
+    struct Soft {
+        SoftMesh mesh;
+        bool pinned = false;
+    };
 
-    const SoftMesh& cloth() const { return m_cloth; }
-    const SoftMesh& ball() const { return m_ball; }
+    void initRigid(bool single = false) { m_rigid.init(single); }
+    int add(SoftMesh mesh, bool pinned = false);
+    int size() const { return (int)m_softs.size(); }
+    const std::vector<Soft>& softs() const { return m_softs; }
     const RigidScene& rigid() const { return m_rigid; }
+    void stepRigid(int n = 1);
+    void reset() {
+        m_frames = 0;
+        m_pinned = true;
+    }
+    bool isPinned(int index) const { return m_pinned && m_softs[index].pinned; }
+    int pinnedMask() const;
 
 private:
     RigidScene m_rigid;
-    SoftMesh m_cloth, m_ball;
-    int m_pinned = 1;
+    std::vector<Soft> m_softs;
     int m_frames = 0;
+    bool m_pinned = true;
 };
