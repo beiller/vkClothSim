@@ -2,8 +2,9 @@
 #include <vulkan/vulkan.h>
 
 #include "capsule.hpp"
+#include "gpuverts.hpp"
 #include "math.hpp"
-#include "sim/softdraw.hpp"
+#include "mesh.hpp"
 #include <imgui.h>
 #include <span>
 #include <vector>
@@ -12,22 +13,28 @@ class VkApp;
 
 class Renderer {
 public:
-    void init(VkApp& app, std::span<const SoftDraw> soft, int nCaps, const Mat4& viewProj);
+    void init(VkApp& app, int nCaps, int nSoft, const Mat4& viewProj);
+    int addMesh(const Mesh& mesh);
+    VertexStore vertexBuffer(int handle) const;
     void shutdown();
     void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui,
               std::span<const CapsuleGPU> caps);
 
 private:
-    struct Mesh {
+    struct GpuMesh {
+        VkBuffer vtx = VK_NULL_HANDLE;
+        VkDeviceMemory vtxMem = VK_NULL_HANDLE;
         VkBuffer ibuf = VK_NULL_HANDLE;
         VkDeviceMemory ibmem = VK_NULL_HANDLE;
         VkDescriptorSet set = VK_NULL_HANDLE;
         uint32_t idxCount = 0;
+        uint32_t vtxCount = 0;
     };
 
-    void makeMesh(Mesh& m, VkBuffer vtx, VkDeviceSize vtxSize, const uint32_t* idx, uint32_t idxCount);
+    void makeMesh(GpuMesh& m, VkBuffer vtx, VkDeviceMemory vtxMem, VkDeviceSize vtxSize, const uint32_t* idx,
+                  uint32_t idxCount);
     void bakeCapsules(std::span<const CapsuleGPU> caps);
-    static void drawMesh(VkCommandBuffer cmd, VkPipelineLayout pl, const Mesh& m);
+    static void drawMesh(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& m);
 
     VkDevice m_dev = VK_NULL_HANDLE;
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;
@@ -49,7 +56,7 @@ private:
     std::vector<float> m_capsBase;
     uint32_t m_vpc = 0;
 
-    Mesh m_ground;
-    Mesh m_caps;
-    std::vector<Mesh> m_soft;
+    GpuMesh m_ground;
+    GpuMesh m_caps;
+    std::vector<GpuMesh> m_soft;
 };

@@ -33,18 +33,20 @@ int main(int argc, char** argv) {
         scene.add(makeBall(Scene::kBallLat, Scene::kBallLon, Scene::kBallRadius, Scene::kBallY0), false);
     const int allBodies = (1 << scene.size()) - 1;
 
-    SoftSim sim;
-    sim.init(app.device(), app.pdev(), scene.rigid().capsuleCount());
-    for (const auto& s : scene.softs())
-        sim.registerBody(s.mesh.mesh, s.mesh.cons);
-    sim.build();
-
     const float aspect = (float)app.extent().width / (float)app.extent().height;
     const Mat4 vp = mul4(perspective(50.0f, aspect, 0.1f, 300.0f),
                          lookAt({0.0f, 9.0f, 14.0f}, {0.0f, 3.0f, 0.0f}, {0.0f, 1.0f, 0.0f}));
 
     Renderer renderer;
-    renderer.init(app, sim.draws(), scene.rigid().capsuleCount(), vp);
+    renderer.init(app, scene.rigid().capsuleCount(), scene.size(), vp);
+
+    SoftSim sim;
+    sim.init(app.device(), app.pdev(), scene.rigid().capsuleCount());
+    for (int i = 0; i < scene.size(); ++i) {
+        const int handle = renderer.addMesh(scene.softs()[i].mesh.mesh);
+        sim.registerBody(renderer.vertexBuffer(handle), scene.softs()[i].mesh.mesh, scene.softs()[i].mesh.cons);
+    }
+    sim.build();
 
     ImGui::CreateContext();
     ImGui::StyleColorsDark();

@@ -161,7 +161,7 @@ void buildCapsuleBase(std::vector<float>& base, std::vector<uint32_t>& idx, int 
 
 } // namespace
 
-void Renderer::init(VkApp& app, std::span<const SoftDraw> soft, int nCaps, const Mat4& viewProj) {
+void Renderer::init(VkApp& app, int nCaps, int nSoft, const Mat4& viewProj) {
     m_dev = app.device();
     m_pdev = app.pdev();
     m_rp = app.renderPass();
@@ -170,7 +170,7 @@ void Renderer::init(VkApp& app, std::span<const SoftDraw> soft, int nCaps, const
 
     vkMakeBuffer(m_dev, m_pdev, m_uUbuf, m_uUmem, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, viewProj.m);
     const auto binds = meshBinds();
-    vkMakeDslPool(m_dev, binds, (uint32_t)soft.size() + 2, m_dsl, m_pool);
+    vkMakeDslPool(m_dev, binds, (uint32_t)nSoft + 2, m_dsl, m_pool);
     m_pl = vkMakePipelineLayout(m_dev, m_dsl);
     m_pipe = makeGraphicsPipeline(m_dev, m_rp, mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
                                   mesh_frag_spv_len / 4, m_pl);
@@ -180,7 +180,7 @@ void Renderer::init(VkApp& app, std::span<const SoftDraw> soft, int nCaps, const
     buildGroundVtx(gvtx, gidx);
     vkMakeBuffer(m_dev, m_pdev, m_groundVtx, m_groundVtxMem, (VkDeviceSize)gvtx.size() * 4,
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, gvtx.data());
-    makeMesh(m_ground, m_groundVtx, (VkDeviceSize)gvtx.size() * 4, gidx.data(), (uint32_t)gidx.size());
+    makeMesh(m_ground, m_groundVtx, m_groundVtxMem, (VkDeviceSize)gvtx.size() * 4, gidx.data(), (uint32_t)gidx.size());
 
     const int S = 20, M = 32;
     m_vpc = (uint32_t)((M + 1) * S);
@@ -189,15 +189,14 @@ void Renderer::init(VkApp& app, std::span<const SoftDraw> soft, int nCaps, const
     const size_t vcount = (size_t)m_nCaps * m_vpc;
     vkMakeBuffer(m_dev, m_pdev, m_capsVtx, m_capsVtxMem, (VkDeviceSize)48 * vcount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                  nullptr);
-    makeMesh(m_caps, m_capsVtx, (VkDeviceSize)48 * vcount, cidx.data(), (uint32_t)cidx.size());
-
-    m_soft.resize(soft.size());
-    for (size_t i = 0; i < soft.size(); ++i)
-        makeMesh(m_soft[i], soft[i].vertices, soft[i].vertexBytes, soft[i].indices.data(),
-                 (uint32_t)soft[i].indices.size());
+    makeMesh(m_caps, m_capsVtx, m_capsVtxMem, (VkDeviceSize)48 * vcount, cidx.data(), (uint32_t)cidx.size());
 }
 
-void Renderer::makeMesh(Mesh& m, VkBuffer vtx, VkDeviceSize vtxSize, const uint32_t* idx, uint32_t idxCount) {
+void Renderer::makeMesh(GpuMesh& m, VkBuffer vtx, VkDeviceMemory vtxMem, VkDeviceSize vtxSize, const uint32_t* idx,
+                        uint32_t idxCount) {
+    m.vtx = vtx;
+    m.vtxMem = vtxMem;
+    m.vtxCount = (uint32_t)(vtxSize / 48);
     m.idxCount = idxCount;
     vkMakeBuffer(m_dev, m_pdev, m.ibuf, m.ibmem, (VkDeviceSize)idxCount * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, idx);
     std::vector<VkDescriptorBufferInfo> bi = {
@@ -205,6 +204,23 @@ void Renderer::makeMesh(Mesh& m, VkBuffer vtx, VkDeviceSize vtxSize, const uint3
         {m_uUbuf, 0, 64},
     };
     vkMakeSet(m_dev, m_pool, m_dsl, meshBinds(), m.set, bi);
+}
+
+int Renderer::addMesh(const Mesh& mesh) {
+    const auto count = (uint32_t)mesh.vertexCount();
+    VkBuffer vtx = VK_NULL_HANDLE;
+    VkDeviceMemory vtxMem = VK_NULL_HANDLE;
+    vkMakeBuffer(m_dev, m_pdev, vtx, vtxMem, (VkDeviceSize)48 * count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 mesh.vtx.data());
+    GpuMesh m;
+    makeMesh(m, vtx, vtxMem, (VkDeviceSize)48 * count, mesh.indices.data(), (uint32_t)mesh.indices.size());
+    m_soft.push_back(m);
+    return (int)m_soft.size() - 1;
+}
+
+VertexStore Renderer::vertexBuffer(int handle) const {
+    const GpuMesh& m = m_soft[handle];
+    return VertexStore{m.vtx, m.vtxMem, m.vtxCount};
 }
 
 void Renderer::bakeCapsules(std::span<const CapsuleGPU> caps) {
@@ -245,7 +261,7 @@ void Renderer::bakeCapsules(std::span<const CapsuleGPU> caps) {
     vkUnmapMemory(m_dev, m_capsVtxMem);
 }
 
-void Renderer::drawMesh(VkCommandBuffer cmd, VkPipelineLayout pl, const Mesh& m) {
+void Renderer::drawMesh(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& m) {
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pl, 0, 1, &m.set, 0, nullptr);
     vkCmdBindIndexBuffer(cmd, m.ibuf, 0, VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(cmd, m.idxCount, 1, 0, 0, 0);
@@ -290,16 +306,26 @@ void Renderer::shutdown() {
             vkFreeMemory(m_dev, mem, nullptr);
         }
     };
-    auto destroyMesh = [this](Mesh& m) {
+    auto destroySoftMesh = [this](GpuMesh& m) {
+        if (m.vtx) {
+            vkDestroyBuffer(m_dev, m.vtx, nullptr);
+            vkFreeMemory(m_dev, m.vtxMem, nullptr);
+        }
         if (m.ibuf) {
             vkDestroyBuffer(m_dev, m.ibuf, nullptr);
             vkFreeMemory(m_dev, m.ibmem, nullptr);
         }
     };
-    destroyMesh(m_ground);
-    destroyMesh(m_caps);
+    auto destroyStaticMesh = [this](GpuMesh& m) {
+        if (m.ibuf) {
+            vkDestroyBuffer(m_dev, m.ibuf, nullptr);
+            vkFreeMemory(m_dev, m.ibmem, nullptr);
+        }
+    };
+    destroyStaticMesh(m_ground);
+    destroyStaticMesh(m_caps);
     for (auto& m : m_soft)
-        destroyMesh(m);
+        destroySoftMesh(m);
     if (m_pool)
         vkDestroyDescriptorPool(m_dev, m_pool, nullptr);
     if (m_dsl)

@@ -44,12 +44,12 @@ void SoftSim::init(VkDevice dev, VkPhysicalDevice pdev, int nCaps) {
     m_nCaps = nCaps;
 }
 
-void SoftSim::registerBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons) {
+void SoftSim::registerBody(const VertexStore& store, const Mesh& mesh, const std::vector<sim::Constraint>& cons) {
     GpuBody b;
     b.soft.init(mesh, cons);
     const int n = b.soft.n;
-    vkMakeBuffer(m_dev, m_pdev, b.vtx, b.vtxMem, (VkDeviceSize)48 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                 b.soft.vtx.data());
+    b.vtx = store.buffer;
+    b.vtxMem = store.memory;
     vkMakeBuffer(m_dev, m_pdev, b.prev, b.prevMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                  b.soft.pos4.data());
     vkMakeBuffer(m_dev, m_pdev, b.sub0, b.sub0Mem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -64,11 +64,6 @@ void SoftSim::registerBody(const Mesh& mesh, const std::vector<sim::Constraint>&
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, b.soft.entryStart.data());
     vkMakeBuffer(m_dev, m_pdev, b.colorVerts, b.colorVertsMem, (VkDeviceSize)4 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                  b.soft.colorVerts.data());
-    SoftDraw d;
-    d.vertices = b.vtx;
-    d.vertexBytes = (VkDeviceSize)48 * n;
-    d.indices = mesh.indices;
-    m_draw.push_back(std::move(d));
     m_body.push_back(std::move(b));
 }
 
@@ -229,7 +224,6 @@ void SoftSim::shutdown() {
         }
     };
     for (auto& b : m_body) {
-        db(b.vtx, b.vtxMem);
         db(b.prev, b.prevMem);
         db(b.sub0, b.sub0Mem);
         db(b.contactN, b.contactNMem);

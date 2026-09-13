@@ -2,24 +2,23 @@
 #include <vulkan/vulkan.h>
 
 #include "capsule.hpp"
+#include "gpuverts.hpp"
 #include "mesh.hpp"
 #include "sim/params.hpp"
 #include "sim/phys.hpp"
 #include "sim/sim.hpp"
-#include "sim/softdraw.hpp"
 #include <span>
 #include <vector>
 
 class SoftSim {
 public:
     void init(VkDevice dev, VkPhysicalDevice pdev, int nCaps);
-    void registerBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons);
+    void registerBody(const VertexStore& store, const Mesh& mesh, const std::vector<sim::Constraint>& cons);
     void build();
     void shutdown();
     void uploadCapsules(std::span<const CapsuleGPU> caps);
     void record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask);
     void reset(int mask);
-    std::span<const SoftDraw> draws() const { return m_draw; }
 
 private:
     struct GpuBody {
@@ -43,7 +42,6 @@ private:
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;
     int m_nCaps = 0;
     std::vector<GpuBody> m_body;
-    std::vector<SoftDraw> m_draw;
     VkPipeline m_softPipe = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_softDsl = VK_NULL_HANDLE;
     VkDescriptorPool m_softPool = VK_NULL_HANDLE;
