@@ -9,7 +9,7 @@ public:
     static constexpr int kHoldFrames = 150;
     static constexpr float kClothSpan = 8.0f;
     static constexpr float kClothY0 = 10.0f;
-    static constexpr int kBallLat = 32, kBallLon = 32;
+    static constexpr int kBallSubdiv = 2;
     static constexpr float kBallRadius = 1.5f;
     static constexpr float kBallY0 = 12.0f;
     static constexpr float kSingleSpan = 4.0f;

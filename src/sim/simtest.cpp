@@ -254,7 +254,7 @@ int main(int argc, char** argv) {
     const float kDefaultSpan = SINGLE ? 3.0f : Scene::kClothSpan;
     const float kClothSpan = (argc > 4) ? std::strtof(argv[4], nullptr) : kDefaultSpan;
     const float kClothY0 = SINGLE ? Scene::kSingleY0 : Scene::kClothY0;
-    const int kBallLat = Scene::kBallLat, kBallLon = Scene::kBallLon;
+    const int kBallSubdiv = Scene::kBallSubdiv;
     const float kBallRadius = Scene::kBallRadius, kBallY0 = Scene::kBallY0;
 
     RigidScene rigid;
@@ -278,7 +278,7 @@ int main(int argc, char** argv) {
     }
     sim::SoftBody cloth;
     cloth.init(clothMesh.mesh, clothMesh.cons);
-    SoftMesh ballMesh = makeBall(kBallLat, kBallLon, kBallRadius, kBallY0);
+    SoftMesh ballMesh = makeBall(kBallRadius, kBallY0, kBallSubdiv);
     sim::SoftBody ball;
     ball.init(ballMesh.mesh, ballMesh.cons);
 

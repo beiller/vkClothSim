@@ -30,8 +30,7 @@ int main(int argc, char** argv) {
     const float span = single ? Scene::kSingleSpan : Scene::kClothSpan;
     const float y0 = single ? Scene::kSingleY0 : Scene::kClothY0;
     const int clothIdx = scene.add(makeCloth(Scene::kCW, Scene::kCH, span, y0), true);
-    const int ballIdx =
-        scene.add(makeBall(Scene::kBallLat, Scene::kBallLon, Scene::kBallRadius, Scene::kBallY0), false);
+    const int ballIdx = scene.add(makeBall(Scene::kBallRadius, Scene::kBallY0, Scene::kBallSubdiv), false);
     const int allBodies = (1 << scene.size()) - 1;
 
     const float aspect = (float)app.extent().width / (float)app.extent().height;
