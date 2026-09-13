@@ -32,6 +32,20 @@ inline V3 vNorm(V3 a) {
     float l = vLen(a);
     return vScale(a, 1.0f / l);
 }
+inline V3 vAt(const float* p, int i) {
+    const int o = 3 * i;
+    return {p[o], p[o + 1], p[o + 2]};
+}
+inline void vStore(float* p, int i, V3 v) {
+    const int o = 3 * i;
+    p[o] = v.x;
+    p[o + 1] = v.y;
+    p[o + 2] = v.z;
+}
+inline V3 m3v(const float m[9], V3 v) {
+    return {m[0] * v.x + m[3] * v.y + m[6] * v.z, m[1] * v.x + m[4] * v.y + m[7] * v.z,
+            m[2] * v.x + m[5] * v.y + m[8] * v.z};
+}
 
 struct Mat4 {
     float m[16];

@@ -13,7 +13,7 @@
 
 class RigidScene {
 public:
-    void init(bool single = false);
+    void init();
     void step(int n);
     int capsuleCount() const { return (int)m_caps.size(); }
     std::vector<CapsuleGPU> capsuleGPU() const;

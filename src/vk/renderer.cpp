@@ -228,7 +228,7 @@ VertexStore Renderer::normalBuffer(int handle) const {
 }
 
 void Renderer::bakeCapsules(std::span<const CapsuleGPU> caps) {
-    const float COL[3] = {0.85f, 0.35f, 0.30f};
+    const V3 capCol{0.85f, 0.35f, 0.30f};
     const size_t vcount = (size_t)m_nCaps * m_vpc;
     void *oPos, *oNrm, *oCol;
     VK(vkMapMemory(m_dev, m_caps.posMem, 0, (VkDeviceSize)12 * vcount, 0, &oPos));
@@ -241,29 +241,14 @@ void Renderer::bakeCapsules(std::span<const CapsuleGPU> caps) {
         const CapsuleGPU& c = caps[ci];
         float qm[9];
         quatToMat3(c.quat, qm);
-        V3 center{c.centerRadius[0], c.centerRadius[1], c.centerRadius[2]};
+        const V3 center{c.centerRadius[0], c.centerRadius[1], c.centerRadius[2]};
+        const int base = (int)(ci * m_vpc);
         for (uint32_t j = 0; j < m_vpc; ++j) {
-            size_t v = ci * m_vpc + j;
-            const float* bp = &m_capsBase[6 * v];
-            V3 lp{bp[0], bp[1], bp[2]};
-            V3 ln{bp[3], bp[4], bp[5]};
-            V3 rp{qm[0] * lp.x + qm[3] * lp.y + qm[6] * lp.z + center.x,
-                  qm[1] * lp.x + qm[4] * lp.y + qm[7] * lp.z + center.y,
-                  qm[2] * lp.x + qm[5] * lp.y + qm[8] * lp.z + center.z};
-            V3 rn{qm[0] * ln.x + qm[3] * ln.y + qm[6] * ln.z, qm[1] * ln.x + qm[4] * ln.y + qm[7] * ln.z,
-                  qm[2] * ln.x + qm[5] * ln.y + qm[8] * ln.z};
-            float* op = &outPos[3 * v];
-            op[0] = rp.x;
-            op[1] = rp.y;
-            op[2] = rp.z;
-            float* on = &outNrm[3 * v];
-            on[0] = rn.x;
-            on[1] = rn.y;
-            on[2] = rn.z;
-            float* oc = &outCol[3 * v];
-            oc[0] = COL[0];
-            oc[1] = COL[1];
-            oc[2] = COL[2];
+            const int v = base + (int)j;
+            const float* bp = &m_capsBase[6 * (size_t)v];
+            vStore(outPos, v, vAdd(m3v(qm, {bp[0], bp[1], bp[2]}), center));
+            vStore(outNrm, v, m3v(qm, {bp[3], bp[4], bp[5]}));
+            vStore(outCol, v, capCol);
         }
     }
     vkUnmapMemory(m_dev, m_caps.posMem);

@@ -12,15 +12,13 @@ public:
     static constexpr int kBallSubdiv = 2;
     static constexpr float kBallRadius = 1.5f;
     static constexpr float kBallY0 = 12.0f;
-    static constexpr float kSingleSpan = 4.0f;
-    static constexpr float kSingleY0 = 3.5f;
 
     struct Soft {
         SoftMesh mesh;
         bool pinned = false;
     };
 
-    void initRigid(bool single = false) { m_rigid.init(single); }
+    void initRigid() { m_rigid.init(); }
     int add(SoftMesh mesh, bool pinned = false);
     int size() const { return (int)m_softs.size(); }
     const std::vector<Soft>& softs() const { return m_softs; }

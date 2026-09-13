@@ -71,11 +71,4 @@ target_include_directories(vksim PRIVATE
     ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/src)
 
-add_executable(simtest
-    src/sim/simtest.cpp
-    src/app/rigid.cpp)
-target_link_libraries(simtest PRIVATE Jolt::Jolt)
-target_compile_features(simtest PRIVATE cxx_std_23)
-target_include_directories(simtest PRIVATE ${CMAKE_SOURCE_DIR}/src)
-
 

@@ -10,6 +10,11 @@ namespace sim {
 inline constexpr float kGravity = -9.81f;
 inline constexpr int kSubsteps = 3;
 
+inline void prefixSum(std::vector<int>& v) {
+    for (size_t i = 1; i < v.size(); ++i)
+        v[i] += v[i - 1];
+}
+
 struct Constraint {
     int a, b;
     float rest;
@@ -53,8 +58,7 @@ private:
             ++entryStart[c.a + 1];
             ++entryStart[c.b + 1];
         }
-        for (int i = 1; i <= n; ++i)
-            entryStart[i] += entryStart[i - 1];
+        prefixSum(entryStart);
         entries.resize((size_t)entryStart[n]);
         std::vector<int> cur(n);
         for (int i = 0; i < n; ++i)
@@ -100,8 +104,7 @@ private:
         triStart.assign(n + 1, 0);
         for (uint32_t v : idx)
             ++triStart[(size_t)v + 1];
-        for (int i = 1; i <= n; ++i)
-            triStart[i] += triStart[i - 1];
+        prefixSum(triStart);
         triList.resize(idx.size());
         std::vector<int> cur(n);
         for (int i = 0; i < n; ++i)

@@ -12,7 +12,7 @@
 #include <random>
 #include <thread>
 
-void RigidScene::init(bool single) {
+void RigidScene::init() {
     JPH::RegisterDefaultAllocator();
     JPH::Factory::sInstance = new JPH::Factory();
     JPH::RegisterTypes();
@@ -42,27 +42,21 @@ void RigidScene::init(bool single) {
     JPH::Body* gb = bi.CreateBody(gset);
     bi.AddBody(gb->GetID(), JPH::EActivation::DontActivate);
 
-    if (single) {
-        JPH::BodyCreationSettings cs(new JPH::CapsuleShape(kCapsuleHalfLen, kCapsuleRadius),
-                                     JPH::RVec3(0.0f, 1.5f, 0.0f), JPH::Quat::sIdentity(), JPH::EMotionType::Static, 1);
-        m_caps.push_back(bi.CreateAndAddBody(cs, JPH::EActivation::DontActivate));
-    } else {
-        const int kNCaps = 50;
-        std::mt19937 rng(12345); // NOLINT(bugprone-random-generator-seed)
-        std::uniform_real_distribution<float> rnd(0.0f, 1.0f);
-        for (int i = 0; i < kNCaps; ++i) {
-            float px = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
-            float py = 4.5f + 3.5f * rnd(rng);
-            float pz = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
-            JPH::Quat rot = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), rnd(rng) * 2.0f * kPi) *
-                            JPH::Quat::sRotation(JPH::Vec3::sAxisX(), (rnd(rng) * 2.0f - 1.0f) * 0.9f);
-            JPH::BodyCreationSettings cs(new JPH::CapsuleShape(kCapsuleHalfLen, kCapsuleRadius), JPH::RVec3(px, py, pz),
-                                         rot, JPH::EMotionType::Dynamic, 1);
-            cs.mFriction = 0.7f;
-            cs.mRestitution = 0.05f;
-            cs.mLinearDamping = 0.05f;
-            m_caps.push_back(bi.CreateAndAddBody(cs, JPH::EActivation::Activate));
-        }
+    const int kNCaps = 50;
+    std::mt19937 rng(12345); // NOLINT(bugprone-random-generator-seed)
+    std::uniform_real_distribution<float> rnd(0.0f, 1.0f);
+    for (int i = 0; i < kNCaps; ++i) {
+        float px = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
+        float py = 4.5f + 3.5f * rnd(rng);
+        float pz = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
+        JPH::Quat rot = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), rnd(rng) * 2.0f * kPi) *
+                        JPH::Quat::sRotation(JPH::Vec3::sAxisX(), (rnd(rng) * 2.0f - 1.0f) * 0.9f);
+        JPH::BodyCreationSettings cs(new JPH::CapsuleShape(kCapsuleHalfLen, kCapsuleRadius), JPH::RVec3(px, py, pz),
+                                     rot, JPH::EMotionType::Dynamic, 1);
+        cs.mFriction = 0.7f;
+        cs.mRestitution = 0.05f;
+        cs.mLinearDamping = 0.05f;
+        m_caps.push_back(bi.CreateAndAddBody(cs, JPH::EActivation::Activate));
     }
     m_phys->OptimizeBroadPhase();
 }

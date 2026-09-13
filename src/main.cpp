@@ -10,26 +10,18 @@
 #include "vk/vkapp.hpp"
 #include <algorithm>
 #include <cstdio>
-#include <cstring>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
-int main(int argc, char** argv) {
-    bool single = false;
-    for (int i = 1; i < argc; ++i)
-        if (std::strcmp(argv[i], "--single") == 0)
-            single = true;
-
+int main() {
     VkApp app;
     if (!app.init(900, 900, "3dsim"))
         return 1;
 
     Scene scene;
-    scene.initRigid(single);
-    const float span = single ? Scene::kSingleSpan : Scene::kClothSpan;
-    const float y0 = single ? Scene::kSingleY0 : Scene::kClothY0;
-    const int clothIdx = scene.add(makeCloth(Scene::kCW, Scene::kCH, span, y0), true);
+    scene.initRigid();
+    const int clothIdx = scene.add(makeCloth(Scene::kCW, Scene::kCH, Scene::kClothSpan, Scene::kClothY0), true);
     const int ballIdx = scene.add(makeBall(Scene::kBallRadius, Scene::kBallY0, Scene::kBallSubdiv), false);
     const int allBodies = (1 << scene.size()) - 1;
 
@@ -48,6 +40,11 @@ int main(int argc, char** argv) {
                          scene.softs()[i].mesh.cons);
     }
     sim.build();
+
+    auto resetAll = [&] {
+        scene.reset();
+        sim.reset(allBodies);
+    };
 
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
@@ -79,10 +76,8 @@ int main(int argc, char** argv) {
     std::vector<CapsuleGPU> caps = scene.rigid().capsuleGPU();
 
     while (!app.windowShouldClose()) {
-        if (app.keyIsDown(GLFW_KEY_R)) {
-            scene.reset();
-            sim.reset(allBodies);
-        }
+        if (app.keyIsDown(GLFW_KEY_R))
+            resetAll();
 
         double now = glfwGetTime();
         double frameTime = std::min(now - prevTime, 4.0 * kStepSec);
@@ -109,10 +104,8 @@ int main(int argc, char** argv) {
         ImGui::NewFrame();
         bool clothReset = false, ballReset = false;
         drawOverlay(ui, scene.isPinned(clothIdx), clothReset, ballReset);
-        if (clothReset) {
-            scene.reset();
-            sim.reset(allBodies);
-        }
+        if (clothReset)
+            resetAll();
         if (ballReset)
             sim.reset(1 << ballIdx);
         ImGui::Render();

@@ -147,8 +147,10 @@ void main() {
     int vi = (pc.mode == 1) ? colorVerts.v[pc.groupOffset + i] : i;
 
     if (pc.mode == 0) {
-        vec3 P = rpos(vi);
-        vec3 Pr = rprev(vi);
+        vec3 P = rpos(vi), Pr = rprev(vi);
+        wsub0(vi, P);
+        contactN.n[vi] = vec4(0.0);
+        contactL.l[vi] = 0.0;
         vec3 d = (P - Pr) * ph.damping + vec3(0.0, ph.gravity, 0.0) * (ph.dt * ph.dt);
         float dl = length(d);
         if (dl > ph.maxStep)
@@ -167,7 +169,17 @@ void main() {
         }
         wpos(vi, P);
     } else if (pc.mode == 2) {
-        wpos(vi, collideVertex(vi, rpos(vi)));
+        vec3 P = collideVertex(vi, rpos(vi));
+        wpos(vi, P);
+        vec3 v = (P - rsub0(vi)) / ph.dt;
+        float nl = length(contactN.n[vi].xyz);
+        if (nl > 1e-8) {
+            vec3 fn = contactN.n[vi].xyz / nl;
+            float vn = dot(v, fn);
+            if (vn < 0.0)
+                v -= fn * vn;
+        }
+        wprev(vi, P - v * ph.dt);
     } else if (pc.mode == 3) {
         vec3 sum = vec3(0.0);
         for (int t = triStart.s[vi]; t < triStart.s[vi + 1]; ++t) {
@@ -179,20 +191,5 @@ void main() {
         }
         float l = length(sum);
         wnrm(vi, l > 1e-6 ? sum / l : rnrm(vi));
-    } else if (pc.mode == 4) {
-        wsub0(vi, rpos(vi));
-        contactN.n[vi] = vec4(0.0);
-        contactL.l[vi] = 0.0;
-    } else if (pc.mode == 5) {
-        vec3 P = rpos(vi);
-        vec3 v = (P - rsub0(vi)) / ph.dt;
-        float nl = length(contactN.n[vi].xyz);
-        if (nl > 1e-8) {
-            vec3 fn = contactN.n[vi].xyz / nl;
-            float vn = dot(v, fn);
-            if (vn < 0.0)
-                v -= fn * vn;
-        }
-        wprev(vi, P - v * ph.dt);
     }
 }

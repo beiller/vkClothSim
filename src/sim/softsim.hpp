@@ -7,7 +7,6 @@
 #include "sim/params.hpp"
 #include "sim/phys.hpp"
 #include "sim/sim.hpp"
-#include <array>
 #include <span>
 #include <vector>
 
@@ -38,7 +37,7 @@ private:
     };
 
     void makeBodySet(GpuBody& b);
-    static std::array<VkBufferMemoryBarrier, 6> runtimeBarriers(const GpuBody& b);
+    static int modeBarriers(const GpuBody& b, int mode, VkBufferMemoryBarrier* out);
     void dispatch(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset);
     void recordMode(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset);
     void recordBody(VkCommandBuffer cmd, const GpuBody& b, int iters, int pinned);
