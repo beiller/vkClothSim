@@ -3,7 +3,6 @@
 #include "softbody_spv.hpp"
 #include "vk/vkutil.hpp"
 #include <cmath>
-#include <cstring>
 
 namespace {
 
@@ -132,12 +131,16 @@ void SoftSim::dispatch(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, i
     vkCmdDispatch(cmd, (n + 63) / 64, 1, 1);
 }
 
+std::array<VkBufferMemoryBarrier, 6> SoftSim::runtimeBarriers(const GpuBody& b) {
+    return {bufBarrier(b.pos),  bufBarrier(b.nrm),      bufBarrier(b.prev),
+            bufBarrier(b.sub0), bufBarrier(b.contactN), bufBarrier(b.contactL)};
+}
+
 void SoftSim::recordMode(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset) {
     if (n <= 0)
         return;
-    VkBufferMemoryBarrier bmb[6] = {bufBarrier(b.pos),  bufBarrier(b.nrm),      bufBarrier(b.prev),
-                                    bufBarrier(b.sub0), bufBarrier(b.contactN), bufBarrier(b.contactL)};
-    stageBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, bmb, 6);
+    const auto bmb = runtimeBarriers(b);
+    stageBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, bmb.data(), 6);
     dispatch(cmd, b, mode, n, groupOffset);
 }
 
@@ -166,19 +169,12 @@ void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask) {
     phys.tension = p.tension;
     phys.stiff = p.stiffness;
     phys.maxStep = kSoftMaxStep;
-    void* up;
-    VK(vkMapMemory(m_dev, m_physParamsMem, 0, 36, 0, &up));
-    std::memcpy(up, &phys, 36);
-    vkUnmapMemory(m_dev, m_physParamsMem);
+    vkWriteBuffer(m_dev, m_physParamsMem, &phys, 36);
 
     std::vector<VkBufferMemoryBarrier> first;
     for (const GpuBody& b : m_body) {
-        first.push_back(bufBarrier(b.pos));
-        first.push_back(bufBarrier(b.nrm));
-        first.push_back(bufBarrier(b.prev));
-        first.push_back(bufBarrier(b.sub0));
-        first.push_back(bufBarrier(b.contactN));
-        first.push_back(bufBarrier(b.contactL));
+        const auto rb = runtimeBarriers(b);
+        first.insert(first.end(), rb.begin(), rb.end());
         first.push_back(bufBarrier(b.tris));
         first.push_back(bufBarrier(b.triStart));
         first.push_back(bufBarrier(b.triList));
@@ -199,31 +195,13 @@ void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask) {
 }
 
 void SoftSim::resetBody(GpuBody& b) {
-    const int n = b.soft.n;
-    void* pPos;
-    VK(vkMapMemory(m_dev, b.posMem, 0, (VkDeviceSize)12 * n, 0, &pPos));
-    std::memcpy(pPos, b.soft.pos0.data(), (size_t)12 * n);
-    vkUnmapMemory(m_dev, b.posMem);
-    void* pNrm;
-    VK(vkMapMemory(m_dev, b.nrmMem, 0, (VkDeviceSize)12 * n, 0, &pNrm));
-    std::memcpy(pNrm, b.soft.nrm0.data(), (size_t)12 * n);
-    vkUnmapMemory(m_dev, b.nrmMem);
-    void* pv;
-    VK(vkMapMemory(m_dev, b.prevMem, 0, (VkDeviceSize)12 * n, 0, &pv));
-    std::memcpy(pv, b.soft.pos0.data(), (size_t)12 * n);
-    vkUnmapMemory(m_dev, b.prevMem);
-    void* ps;
-    VK(vkMapMemory(m_dev, b.sub0Mem, 0, (VkDeviceSize)12 * n, 0, &ps));
-    std::memcpy(ps, b.soft.pos0.data(), (size_t)12 * n);
-    vkUnmapMemory(m_dev, b.sub0Mem);
-    void* cn;
-    VK(vkMapMemory(m_dev, b.contactNMem, 0, (VkDeviceSize)16 * n, 0, &cn));
-    std::memset(cn, 0, (size_t)16 * n);
-    vkUnmapMemory(m_dev, b.contactNMem);
-    void* cl;
-    VK(vkMapMemory(m_dev, b.contactLMem, 0, (VkDeviceSize)4 * n, 0, &cl));
-    std::memset(cl, 0, (size_t)4 * n);
-    vkUnmapMemory(m_dev, b.contactLMem);
+    const VkDeviceSize posBytes = (VkDeviceSize)12 * b.soft.n;
+    vkWriteBuffer(m_dev, b.posMem, b.soft.pos0.data(), posBytes);
+    vkWriteBuffer(m_dev, b.nrmMem, b.soft.nrm0.data(), posBytes);
+    vkWriteBuffer(m_dev, b.prevMem, b.soft.pos0.data(), posBytes);
+    vkWriteBuffer(m_dev, b.sub0Mem, b.soft.pos0.data(), posBytes);
+    vkZeroBuffer(m_dev, b.contactNMem, (VkDeviceSize)16 * b.soft.n);
+    vkZeroBuffer(m_dev, b.contactLMem, (VkDeviceSize)4 * b.soft.n);
 }
 
 void SoftSim::reset(int mask) {
@@ -233,32 +211,23 @@ void SoftSim::reset(int mask) {
 }
 
 void SoftSim::uploadCapsules(std::span<const CapsuleGPU> caps) {
-    void* p;
-    VK(vkMapMemory(m_dev, m_capsInstancesMem, 0, 48 * (VkDeviceSize)caps.size(), 0, &p));
-    std::memcpy(p, caps.data(), 48 * (size_t)caps.size());
-    vkUnmapMemory(m_dev, m_capsInstancesMem);
+    vkWriteBuffer(m_dev, m_capsInstancesMem, caps.data(), 48 * (VkDeviceSize)caps.size());
 }
 
 void SoftSim::shutdown() {
     if (m_dev == VK_NULL_HANDLE)
         return;
-    auto db = [this](VkBuffer buf, VkDeviceMemory mem) {
-        if (buf) {
-            vkDestroyBuffer(m_dev, buf, nullptr);
-            vkFreeMemory(m_dev, mem, nullptr);
-        }
-    };
     for (auto& b : m_body) {
-        db(b.prev, b.prevMem);
-        db(b.sub0, b.sub0Mem);
-        db(b.contactN, b.contactNMem);
-        db(b.contactL, b.contactLMem);
-        db(b.entries, b.entriesMem);
-        db(b.entryStart, b.entryStartMem);
-        db(b.colorVerts, b.colorVertsMem);
-        db(b.tris, b.trisMem);
-        db(b.triStart, b.triStartMem);
-        db(b.triList, b.triListMem);
+        vkFreeBuffer(m_dev, b.prev, b.prevMem);
+        vkFreeBuffer(m_dev, b.sub0, b.sub0Mem);
+        vkFreeBuffer(m_dev, b.contactN, b.contactNMem);
+        vkFreeBuffer(m_dev, b.contactL, b.contactLMem);
+        vkFreeBuffer(m_dev, b.entries, b.entriesMem);
+        vkFreeBuffer(m_dev, b.entryStart, b.entryStartMem);
+        vkFreeBuffer(m_dev, b.colorVerts, b.colorVertsMem);
+        vkFreeBuffer(m_dev, b.tris, b.trisMem);
+        vkFreeBuffer(m_dev, b.triStart, b.triStartMem);
+        vkFreeBuffer(m_dev, b.triList, b.triListMem);
     }
     if (m_softPool)
         vkDestroyDescriptorPool(m_dev, m_softPool, nullptr);
@@ -268,6 +237,6 @@ void SoftSim::shutdown() {
         vkDestroyPipelineLayout(m_dev, m_softPl, nullptr);
     if (m_softPipe)
         vkDestroyPipeline(m_dev, m_softPipe, nullptr);
-    db(m_physParams, m_physParamsMem);
-    db(m_capsInstances, m_capsInstancesMem);
+    vkFreeBuffer(m_dev, m_physParams, m_physParamsMem);
+    vkFreeBuffer(m_dev, m_capsInstances, m_capsInstancesMem);
 }

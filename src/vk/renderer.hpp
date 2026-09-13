@@ -32,8 +32,8 @@ private:
         uint32_t vtxCount = 0;
     };
 
-    void makeMesh(GpuMesh& m, VkBuffer pos, VkDeviceMemory posMem, VkBuffer nrm, VkDeviceMemory nrmMem, VkBuffer col,
-                  VkDeviceMemory colMem, uint32_t vtxCount, const uint32_t* idx, uint32_t idxCount);
+    void makeMesh(GpuMesh& m, uint32_t vtxCount, const float* pos, const float* nrm, const float* col,
+                  const uint32_t* idx, uint32_t idxCount);
     void bakeCapsules(std::span<const CapsuleGPU> caps);
     static void drawMesh(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& m);
 

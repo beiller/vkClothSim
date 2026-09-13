@@ -49,6 +49,27 @@ inline void vkMakeBuffer(VkDevice dev, VkPhysicalDevice pdev, VkBuffer& buf, VkD
     }
 }
 
+inline void vkWriteBuffer(VkDevice dev, VkDeviceMemory mem, const void* data, VkDeviceSize size) {
+    void* p;
+    VK(vkMapMemory(dev, mem, 0, size, 0, &p));
+    std::memcpy(p, data, size);
+    vkUnmapMemory(dev, mem);
+}
+
+inline void vkZeroBuffer(VkDevice dev, VkDeviceMemory mem, VkDeviceSize size) {
+    void* p;
+    VK(vkMapMemory(dev, mem, 0, size, 0, &p));
+    std::memset(p, 0, size);
+    vkUnmapMemory(dev, mem);
+}
+
+inline void vkFreeBuffer(VkDevice dev, VkBuffer buf, VkDeviceMemory mem) {
+    if (buf) {
+        vkDestroyBuffer(dev, buf, nullptr);
+        vkFreeMemory(dev, mem, nullptr);
+    }
+}
+
 inline VkShaderModule vkMakeModule(VkDevice dev, const void* code, uint32_t nwords) {
     VkShaderModuleCreateInfo smc{};
     smc.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
