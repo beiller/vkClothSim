@@ -13,7 +13,9 @@ namespace {
 std::vector<VkDescriptorSetLayoutBinding> meshBinds() {
     return {
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
-        {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
     };
 }
 
@@ -93,15 +95,19 @@ VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void* vsSpv
     return pipe;
 }
 
-void buildGroundVtx(std::vector<float>& vtx, std::vector<uint32_t>& idx) {
+void buildGroundMesh(Mesh& m) {
     const float G = 55.0f;
     const float gv[4][3] = {{-G, 0.0f, -G}, {G, 0.0f, -G}, {G, 0.0f, G}, {-G, 0.0f, G}};
     const float COL[3] = {0.19f, 0.21f, 0.17f};
-    vtx.clear();
+    m.pos.clear();
+    m.nrm.clear();
+    m.col.clear();
     for (const auto& v : gv) {
-        vtx.insert(vtx.end(), {v[0], v[1], v[2], 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, COL[0], COL[1], COL[2], 0.0f});
+        m.pos.insert(m.pos.end(), {v[0], v[1], v[2]});
+        m.nrm.insert(m.nrm.end(), {0.0f, 0.0f, 1.0f});
+        m.col.insert(m.col.end(), {COL[0], COL[1], COL[2]});
     }
-    idx = {0, 1, 2, 0, 2, 3};
+    m.indices = {0, 1, 2, 0, 2, 3};
 }
 
 void buildCapsuleBase(std::vector<float>& base, std::vector<uint32_t>& idx, int nCaps, float R, float H) {
@@ -175,32 +181,62 @@ void Renderer::init(VkApp& app, int nCaps, int nSoft, const Mat4& viewProj) {
     m_pipe = makeGraphicsPipeline(m_dev, m_rp, mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
                                   mesh_frag_spv_len / 4, m_pl);
 
-    std::vector<float> gvtx;
-    std::vector<uint32_t> gidx;
-    buildGroundVtx(gvtx, gidx);
-    vkMakeBuffer(m_dev, m_pdev, m_groundVtx, m_groundVtxMem, (VkDeviceSize)gvtx.size() * 4,
-                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, gvtx.data());
-    makeMesh(m_ground, m_groundVtx, m_groundVtxMem, (VkDeviceSize)gvtx.size() * 4, gidx.data(), (uint32_t)gidx.size());
+    Mesh ground;
+    buildGroundMesh(ground);
+    const auto gvcount = (uint32_t)ground.vertexCount();
+    VkBuffer gPos = VK_NULL_HANDLE, gNrm = VK_NULL_HANDLE, gCol = VK_NULL_HANDLE;
+    VkDeviceMemory gPosMem = VK_NULL_HANDLE, gNrmMem = VK_NULL_HANDLE, gColMem = VK_NULL_HANDLE;
+    vkMakeBuffer(m_dev, m_pdev, gPos, gPosMem, (VkDeviceSize)12 * gvcount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 ground.pos.data());
+    vkMakeBuffer(m_dev, m_pdev, gNrm, gNrmMem, (VkDeviceSize)12 * gvcount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 ground.nrm.data());
+    vkMakeBuffer(m_dev, m_pdev, gCol, gColMem, (VkDeviceSize)12 * gvcount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 ground.col.data());
+    m_ground.pos = gPos;
+    m_ground.nrm = gNrm;
+    m_ground.col = gCol;
+    m_ground.posMem = gPosMem;
+    m_ground.nrmMem = gNrmMem;
+    m_ground.colMem = gColMem;
+    makeMesh(m_ground, gPos, gPosMem, gNrm, gNrmMem, gCol, gColMem, (uint32_t)gvcount, ground.indices.data(),
+             (uint32_t)ground.indices.size());
 
     const int S = 20, M = 32;
     m_vpc = (uint32_t)((M + 1) * S);
     std::vector<uint32_t> cidx;
     buildCapsuleBase(m_capsBase, cidx, m_nCaps, kCapsuleRadius, kCapsuleHalfLen);
     const size_t vcount = (size_t)m_nCaps * m_vpc;
-    vkMakeBuffer(m_dev, m_pdev, m_capsVtx, m_capsVtxMem, (VkDeviceSize)48 * vcount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                 nullptr);
-    makeMesh(m_caps, m_capsVtx, m_capsVtxMem, (VkDeviceSize)48 * vcount, cidx.data(), (uint32_t)cidx.size());
+    VkBuffer cPos = VK_NULL_HANDLE, cNrm = VK_NULL_HANDLE, cCol = VK_NULL_HANDLE;
+    VkDeviceMemory cPosMem = VK_NULL_HANDLE, cNrmMem = VK_NULL_HANDLE, cColMem = VK_NULL_HANDLE;
+    vkMakeBuffer(m_dev, m_pdev, cPos, cPosMem, (VkDeviceSize)12 * vcount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    vkMakeBuffer(m_dev, m_pdev, cNrm, cNrmMem, (VkDeviceSize)12 * vcount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    vkMakeBuffer(m_dev, m_pdev, cCol, cColMem, (VkDeviceSize)12 * vcount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    m_caps.pos = cPos;
+    m_caps.nrm = cNrm;
+    m_caps.col = cCol;
+    m_caps.posMem = cPosMem;
+    m_caps.nrmMem = cNrmMem;
+    m_caps.colMem = cColMem;
+    makeMesh(m_caps, cPos, cPosMem, cNrm, cNrmMem, cCol, cColMem, (uint32_t)vcount, cidx.data(), (uint32_t)cidx.size());
 }
 
-void Renderer::makeMesh(GpuMesh& m, VkBuffer vtx, VkDeviceMemory vtxMem, VkDeviceSize vtxSize, const uint32_t* idx,
+void Renderer::makeMesh(GpuMesh& m, VkBuffer pos, VkDeviceMemory posMem, VkBuffer nrm, VkDeviceMemory nrmMem,
+                        VkBuffer col, VkDeviceMemory colMem, uint32_t vtxCount, const uint32_t* idx,
                         uint32_t idxCount) {
-    m.vtx = vtx;
-    m.vtxMem = vtxMem;
-    m.vtxCount = (uint32_t)(vtxSize / 48);
+    m.pos = pos;
+    m.nrm = nrm;
+    m.col = col;
+    m.posMem = posMem;
+    m.nrmMem = nrmMem;
+    m.colMem = colMem;
+    m.vtxCount = vtxCount;
     m.idxCount = idxCount;
     vkMakeBuffer(m_dev, m_pdev, m.ibuf, m.ibmem, (VkDeviceSize)idxCount * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, idx);
+    const VkDeviceSize attrSize = (VkDeviceSize)12 * vtxCount;
     std::vector<VkDescriptorBufferInfo> bi = {
-        {vtx, 0, vtxSize},
+        {pos, 0, attrSize},
+        {nrm, 0, attrSize},
+        {col, 0, attrSize},
         {m_uUbuf, 0, 64},
     };
     vkMakeSet(m_dev, m_pool, m_dsl, meshBinds(), m.set, bi);
@@ -208,26 +244,39 @@ void Renderer::makeMesh(GpuMesh& m, VkBuffer vtx, VkDeviceMemory vtxMem, VkDevic
 
 int Renderer::addMesh(const Mesh& mesh) {
     const auto count = (uint32_t)mesh.vertexCount();
-    VkBuffer vtx = VK_NULL_HANDLE;
-    VkDeviceMemory vtxMem = VK_NULL_HANDLE;
-    vkMakeBuffer(m_dev, m_pdev, vtx, vtxMem, (VkDeviceSize)48 * count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                 mesh.vtx.data());
     GpuMesh m;
-    makeMesh(m, vtx, vtxMem, (VkDeviceSize)48 * count, mesh.indices.data(), (uint32_t)mesh.indices.size());
+    vkMakeBuffer(m_dev, m_pdev, m.pos, m.posMem, (VkDeviceSize)12 * count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 mesh.pos.data());
+    vkMakeBuffer(m_dev, m_pdev, m.nrm, m.nrmMem, (VkDeviceSize)12 * count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 mesh.nrm.data());
+    vkMakeBuffer(m_dev, m_pdev, m.col, m.colMem, (VkDeviceSize)12 * count, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 mesh.col.data());
+    makeMesh(m, m.pos, m.posMem, m.nrm, m.nrmMem, m.col, m.colMem, count, mesh.indices.data(),
+             (uint32_t)mesh.indices.size());
     m_soft.push_back(m);
     return (int)m_soft.size() - 1;
 }
 
-VertexStore Renderer::vertexBuffer(int handle) const {
+VertexStore Renderer::positionBuffer(int handle) const {
     const GpuMesh& m = m_soft[handle];
-    return VertexStore{m.vtx, m.vtxMem, m.vtxCount};
+    return VertexStore{m.pos, m.posMem, m.vtxCount};
+}
+
+VertexStore Renderer::normalBuffer(int handle) const {
+    const GpuMesh& m = m_soft[handle];
+    return VertexStore{m.nrm, m.nrmMem, m.vtxCount};
 }
 
 void Renderer::bakeCapsules(std::span<const CapsuleGPU> caps) {
     const float COL[3] = {0.85f, 0.35f, 0.30f};
-    void* o;
-    VK(vkMapMemory(m_dev, m_capsVtxMem, 0, (VkDeviceSize)48 * m_nCaps * m_vpc, 0, &o));
-    auto* out = static_cast<float*>(o);
+    const size_t vcount = (size_t)m_nCaps * m_vpc;
+    void *oPos, *oNrm, *oCol;
+    VK(vkMapMemory(m_dev, m_caps.posMem, 0, (VkDeviceSize)12 * vcount, 0, &oPos));
+    VK(vkMapMemory(m_dev, m_caps.nrmMem, 0, (VkDeviceSize)12 * vcount, 0, &oNrm));
+    VK(vkMapMemory(m_dev, m_caps.colMem, 0, (VkDeviceSize)12 * vcount, 0, &oCol));
+    auto* outPos = static_cast<float*>(oPos);
+    auto* outNrm = static_cast<float*>(oNrm);
+    auto* outCol = static_cast<float*>(oCol);
     for (size_t ci = 0; ci < caps.size(); ++ci) {
         const CapsuleGPU& c = caps[ci];
         float qm[9];
@@ -243,22 +292,23 @@ void Renderer::bakeCapsules(std::span<const CapsuleGPU> caps) {
                   qm[2] * lp.x + qm[5] * lp.y + qm[8] * lp.z + center.z};
             V3 rn{qm[0] * ln.x + qm[3] * ln.y + qm[6] * ln.z, qm[1] * ln.x + qm[4] * ln.y + qm[7] * ln.z,
                   qm[2] * ln.x + qm[5] * ln.y + qm[8] * ln.z};
-            float* op = &out[12 * v];
+            float* op = &outPos[3 * v];
             op[0] = rp.x;
             op[1] = rp.y;
             op[2] = rp.z;
-            op[3] = 0.0f;
-            op[4] = rn.x;
-            op[5] = rn.y;
-            op[6] = rn.z;
-            op[7] = 0.0f;
-            op[8] = COL[0];
-            op[9] = COL[1];
-            op[10] = COL[2];
-            op[11] = 0.0f;
+            float* on = &outNrm[3 * v];
+            on[0] = rn.x;
+            on[1] = rn.y;
+            on[2] = rn.z;
+            float* oc = &outCol[3 * v];
+            oc[0] = COL[0];
+            oc[1] = COL[1];
+            oc[2] = COL[2];
         }
     }
-    vkUnmapMemory(m_dev, m_capsVtxMem);
+    vkUnmapMemory(m_dev, m_caps.posMem);
+    vkUnmapMemory(m_dev, m_caps.nrmMem);
+    vkUnmapMemory(m_dev, m_caps.colMem);
 }
 
 void Renderer::drawMesh(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& m) {
@@ -306,26 +356,16 @@ void Renderer::shutdown() {
             vkFreeMemory(m_dev, mem, nullptr);
         }
     };
-    auto destroySoftMesh = [this](GpuMesh& m) {
-        if (m.vtx) {
-            vkDestroyBuffer(m_dev, m.vtx, nullptr);
-            vkFreeMemory(m_dev, m.vtxMem, nullptr);
-        }
-        if (m.ibuf) {
-            vkDestroyBuffer(m_dev, m.ibuf, nullptr);
-            vkFreeMemory(m_dev, m.ibmem, nullptr);
-        }
+    auto destroyMesh = [this, &db](GpuMesh& m) {
+        db(m.pos, m.posMem);
+        db(m.nrm, m.nrmMem);
+        db(m.col, m.colMem);
+        db(m.ibuf, m.ibmem);
     };
-    auto destroyStaticMesh = [this](GpuMesh& m) {
-        if (m.ibuf) {
-            vkDestroyBuffer(m_dev, m.ibuf, nullptr);
-            vkFreeMemory(m_dev, m.ibmem, nullptr);
-        }
-    };
-    destroyStaticMesh(m_ground);
-    destroyStaticMesh(m_caps);
+    destroyMesh(m_ground);
+    destroyMesh(m_caps);
     for (auto& m : m_soft)
-        destroySoftMesh(m);
+        destroyMesh(m);
     if (m_pool)
         vkDestroyDescriptorPool(m_dev, m_pool, nullptr);
     if (m_dsl)
@@ -335,6 +375,4 @@ void Renderer::shutdown() {
     if (m_pipe)
         vkDestroyPipeline(m_dev, m_pipe, nullptr);
     db(m_uUbuf, m_uUmem);
-    db(m_groundVtx, m_groundVtxMem);
-    db(m_capsVtx, m_capsVtxMem);
 }

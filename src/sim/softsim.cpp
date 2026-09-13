@@ -8,7 +8,7 @@
 namespace {
 
 std::vector<VkDescriptorSetLayoutBinding> softBinds() {
-    std::vector<VkDescriptorSetLayoutBinding> binds(10);
+    std::vector<VkDescriptorSetLayoutBinding> binds(14);
     for (uint32_t i = 0; i < binds.size(); ++i) {
         binds[i].binding = i;
         binds[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -45,16 +45,19 @@ void SoftSim::init(VkDevice dev, VkPhysicalDevice pdev, int nCaps) {
     m_nCaps = nCaps;
 }
 
-void SoftSim::registerBody(const VertexStore& store, const Mesh& mesh, const std::vector<sim::Constraint>& cons) {
+void SoftSim::registerBody(const VertexStore& pos, const VertexStore& nrm, const Mesh& mesh,
+                           const std::vector<sim::Constraint>& cons) {
     GpuBody b;
     b.soft.init(mesh, cons);
     const int n = b.soft.n;
-    b.vtx = store.buffer;
-    b.vtxMem = store.memory;
-    vkMakeBuffer(m_dev, m_pdev, b.prev, b.prevMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                 b.soft.pos4.data());
-    vkMakeBuffer(m_dev, m_pdev, b.sub0, b.sub0Mem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                 b.soft.pos4.data());
+    b.pos = pos.buffer;
+    b.posMem = pos.memory;
+    b.nrm = nrm.buffer;
+    b.nrmMem = nrm.memory;
+    vkMakeBuffer(m_dev, m_pdev, b.prev, b.prevMem, (VkDeviceSize)12 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 b.soft.pos0.data());
+    vkMakeBuffer(m_dev, m_pdev, b.sub0, b.sub0Mem, (VkDeviceSize)12 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 b.soft.pos0.data());
     vkMakeBuffer(m_dev, m_pdev, b.contactN, b.contactNMem, (VkDeviceSize)16 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                  nullptr);
     vkMakeBuffer(m_dev, m_pdev, b.contactL, b.contactLMem, (VkDeviceSize)4 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -65,6 +68,12 @@ void SoftSim::registerBody(const VertexStore& store, const Mesh& mesh, const std
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, b.soft.entryStart.data());
     vkMakeBuffer(m_dev, m_pdev, b.colorVerts, b.colorVertsMem, (VkDeviceSize)4 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                  b.soft.colorVerts.data());
+    vkMakeBuffer(m_dev, m_pdev, b.tris, b.trisMem, (VkDeviceSize)4 * mesh.indices.size(),
+                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.indices.data());
+    vkMakeBuffer(m_dev, m_pdev, b.triStart, b.triStartMem, (VkDeviceSize)4 * (n + 1),
+                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, b.soft.triStart.data());
+    vkMakeBuffer(m_dev, m_pdev, b.triList, b.triListMem, (VkDeviceSize)4 * b.soft.triList.size(),
+                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, b.soft.triList.data());
     m_body.push_back(std::move(b));
 }
 
@@ -97,16 +106,20 @@ void SoftSim::build() {
 void SoftSim::makeBodySet(GpuBody& b) {
     const int n = b.soft.n;
     std::vector<VkDescriptorBufferInfo> bi = {
-        {b.vtx, 0, (VkDeviceSize)48 * n},
-        {b.prev, 0, (VkDeviceSize)16 * n},
+        {b.pos, 0, (VkDeviceSize)12 * n},
+        {b.nrm, 0, (VkDeviceSize)12 * n},
+        {b.prev, 0, (VkDeviceSize)12 * n},
         {m_capsInstances, 0, (VkDeviceSize)48 * m_nCaps},
         {b.entries, 0, (VkDeviceSize)16 * b.soft.entries.size()},
         {b.entryStart, 0, (VkDeviceSize)4 * (n + 1)},
         {b.colorVerts, 0, (VkDeviceSize)4 * n},
         {m_physParams, 0, 36},
-        {b.sub0, 0, (VkDeviceSize)16 * n},
+        {b.sub0, 0, (VkDeviceSize)12 * n},
         {b.contactN, 0, (VkDeviceSize)16 * n},
         {b.contactL, 0, (VkDeviceSize)4 * n},
+        {b.tris, 0, (VkDeviceSize)4 * b.soft.triList.size()},
+        {b.triStart, 0, (VkDeviceSize)4 * (n + 1)},
+        {b.triList, 0, (VkDeviceSize)4 * b.soft.triList.size()},
     };
     vkMakeSet(m_dev, m_softPool, m_softDsl, softBinds(), b.simSet, bi);
 }
@@ -122,9 +135,9 @@ void SoftSim::dispatch(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, i
 void SoftSim::recordMode(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset) {
     if (n <= 0)
         return;
-    VkBufferMemoryBarrier bmb[5] = {bufBarrier(b.vtx), bufBarrier(b.prev), bufBarrier(b.sub0), bufBarrier(b.contactN),
-                                    bufBarrier(b.contactL)};
-    stageBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, bmb, 5);
+    VkBufferMemoryBarrier bmb[6] = {bufBarrier(b.pos),  bufBarrier(b.nrm),      bufBarrier(b.prev),
+                                    bufBarrier(b.sub0), bufBarrier(b.contactN), bufBarrier(b.contactL)};
+    stageBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, bmb, 6);
     dispatch(cmd, b, mode, n, groupOffset);
 }
 
@@ -160,11 +173,15 @@ void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask) {
 
     std::vector<VkBufferMemoryBarrier> first;
     for (const GpuBody& b : m_body) {
-        first.push_back(bufBarrier(b.vtx));
+        first.push_back(bufBarrier(b.pos));
+        first.push_back(bufBarrier(b.nrm));
         first.push_back(bufBarrier(b.prev));
         first.push_back(bufBarrier(b.sub0));
         first.push_back(bufBarrier(b.contactN));
         first.push_back(bufBarrier(b.contactL));
+        first.push_back(bufBarrier(b.tris));
+        first.push_back(bufBarrier(b.triStart));
+        first.push_back(bufBarrier(b.triList));
     }
     stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, first.data(),
                  (uint32_t)first.size());
@@ -176,31 +193,35 @@ void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask) {
     }
 
     for (const GpuBody& b : m_body) {
-        VkBufferMemoryBarrier bmb = bufBarrier(b.vtx);
-        stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, &bmb, 1);
+        VkBufferMemoryBarrier bmb[2] = {bufBarrier(b.pos), bufBarrier(b.nrm)};
+        stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, bmb, 2);
     }
 }
 
 void SoftSim::resetBody(GpuBody& b) {
     const int n = b.soft.n;
-    void* pvtx;
-    VK(vkMapMemory(m_dev, b.vtxMem, 0, (VkDeviceSize)48 * n, 0, &pvtx));
-    std::memcpy(pvtx, b.soft.vtx.data(), (size_t)48 * n);
-    vkUnmapMemory(m_dev, b.vtxMem);
+    void* pPos;
+    VK(vkMapMemory(m_dev, b.posMem, 0, (VkDeviceSize)12 * n, 0, &pPos));
+    std::memcpy(pPos, b.soft.pos0.data(), (size_t)12 * n);
+    vkUnmapMemory(m_dev, b.posMem);
+    void* pNrm;
+    VK(vkMapMemory(m_dev, b.nrmMem, 0, (VkDeviceSize)12 * n, 0, &pNrm));
+    std::memcpy(pNrm, b.soft.nrm0.data(), (size_t)12 * n);
+    vkUnmapMemory(m_dev, b.nrmMem);
     void* pv;
-    VK(vkMapMemory(m_dev, b.prevMem, 0, (VkDeviceSize)16 * n, 0, &pv));
-    std::memcpy(pv, b.soft.pos4.data(), (size_t)16 * n);
+    VK(vkMapMemory(m_dev, b.prevMem, 0, (VkDeviceSize)12 * n, 0, &pv));
+    std::memcpy(pv, b.soft.pos0.data(), (size_t)12 * n);
     vkUnmapMemory(m_dev, b.prevMem);
     void* ps;
-    VK(vkMapMemory(m_dev, b.sub0Mem, 0, (VkDeviceSize)16 * n, 0, &ps));
-    std::memcpy(ps, b.soft.pos4.data(), (size_t)16 * n);
+    VK(vkMapMemory(m_dev, b.sub0Mem, 0, (VkDeviceSize)12 * n, 0, &ps));
+    std::memcpy(ps, b.soft.pos0.data(), (size_t)12 * n);
     vkUnmapMemory(m_dev, b.sub0Mem);
     void* cn;
     VK(vkMapMemory(m_dev, b.contactNMem, 0, (VkDeviceSize)16 * n, 0, &cn));
     std::memset(cn, 0, (size_t)16 * n);
     vkUnmapMemory(m_dev, b.contactNMem);
     void* cl;
-    VK(vkMapMemory(m_dev, b.contactLMem, 0, (size_t)4 * n, 0, &cl));
+    VK(vkMapMemory(m_dev, b.contactLMem, 0, (VkDeviceSize)4 * n, 0, &cl));
     std::memset(cl, 0, (size_t)4 * n);
     vkUnmapMemory(m_dev, b.contactLMem);
 }
@@ -235,6 +256,9 @@ void SoftSim::shutdown() {
         db(b.entries, b.entriesMem);
         db(b.entryStart, b.entryStartMem);
         db(b.colorVerts, b.colorVertsMem);
+        db(b.tris, b.trisMem);
+        db(b.triStart, b.triStartMem);
+        db(b.triList, b.triListMem);
     }
     if (m_softPool)
         vkDestroyDescriptorPool(m_dev, m_softPool, nullptr);

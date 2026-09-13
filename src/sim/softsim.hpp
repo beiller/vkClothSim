@@ -13,7 +13,8 @@
 class SoftSim {
 public:
     void init(VkDevice dev, VkPhysicalDevice pdev, int nCaps);
-    void registerBody(const VertexStore& store, const Mesh& mesh, const std::vector<sim::Constraint>& cons);
+    void registerBody(const VertexStore& pos, const VertexStore& nrm, const Mesh& mesh,
+                      const std::vector<sim::Constraint>& cons);
     void build();
     void shutdown();
     void uploadCapsules(std::span<const CapsuleGPU> caps);
@@ -23,12 +24,15 @@ public:
 private:
     struct GpuBody {
         sim::SoftBody soft;
-        VkBuffer vtx = VK_NULL_HANDLE, prev = VK_NULL_HANDLE, sub0 = VK_NULL_HANDLE;
+        VkBuffer pos = VK_NULL_HANDLE, nrm = VK_NULL_HANDLE, prev = VK_NULL_HANDLE, sub0 = VK_NULL_HANDLE;
         VkBuffer contactN = VK_NULL_HANDLE, contactL = VK_NULL_HANDLE;
         VkBuffer entries = VK_NULL_HANDLE, entryStart = VK_NULL_HANDLE, colorVerts = VK_NULL_HANDLE;
-        VkDeviceMemory vtxMem = VK_NULL_HANDLE, prevMem = VK_NULL_HANDLE, sub0Mem = VK_NULL_HANDLE;
+        VkBuffer tris = VK_NULL_HANDLE, triStart = VK_NULL_HANDLE, triList = VK_NULL_HANDLE;
+        VkDeviceMemory posMem = VK_NULL_HANDLE, nrmMem = VK_NULL_HANDLE, prevMem = VK_NULL_HANDLE,
+                       sub0Mem = VK_NULL_HANDLE;
         VkDeviceMemory contactNMem = VK_NULL_HANDLE, contactLMem = VK_NULL_HANDLE;
         VkDeviceMemory entriesMem = VK_NULL_HANDLE, entryStartMem = VK_NULL_HANDLE, colorVertsMem = VK_NULL_HANDLE;
+        VkDeviceMemory trisMem = VK_NULL_HANDLE, triStartMem = VK_NULL_HANDLE, triListMem = VK_NULL_HANDLE;
         VkDescriptorSet simSet = VK_NULL_HANDLE;
     };
 

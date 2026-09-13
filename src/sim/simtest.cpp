@@ -60,8 +60,8 @@ struct Body {
         contact.resize(n);
         initPos.resize(n);
         for (int i = 0; i < n; ++i) {
-            const size_t o = (size_t)12 * i;
-            initPos[i] = {sb.vtx[o], sb.vtx[o + 1], sb.vtx[o + 2]};
+            const size_t o = (size_t)3 * i;
+            initPos[i] = {sb.pos0[o], sb.pos0[o + 1], sb.pos0[o + 2]};
             pos[i] = initPos[i];
             prev[i] = initPos[i];
             sub0[i] = initPos[i];
@@ -263,8 +263,8 @@ int main(int argc, char** argv) {
 
     SoftMesh clothMesh = makeCloth(CW, CH, kClothSpan, kClothY0);
     if (ZOFF != 0.0f)
-        for (size_t i = 0; i < clothMesh.mesh.vtx.size(); i += 12)
-            clothMesh.mesh.vtx[i + 2] += ZOFF;
+        for (size_t i = 0; i < clothMesh.mesh.pos.size(); i += 3)
+            clothMesh.mesh.pos[i + 2] += ZOFF;
     if (BEND) {
         const float sp = kClothSpan / (CW - 1);
         for (int gy = 0; gy < CH; ++gy)

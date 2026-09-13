@@ -44,7 +44,8 @@ int main(int argc, char** argv) {
     sim.init(app.device(), app.pdev(), scene.rigid().capsuleCount());
     for (int i = 0; i < scene.size(); ++i) {
         const int handle = renderer.addMesh(scene.softs()[i].mesh.mesh);
-        sim.registerBody(renderer.vertexBuffer(handle), scene.softs()[i].mesh.mesh, scene.softs()[i].mesh.cons);
+        sim.registerBody(renderer.positionBuffer(handle), renderer.normalBuffer(handle), scene.softs()[i].mesh.mesh,
+                         scene.softs()[i].mesh.cons);
     }
     sim.build();
 

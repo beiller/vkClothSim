@@ -11,18 +11,20 @@ struct SoftMesh {
 inline SoftMesh makeCloth(int CW, int CH, float span, float y0) {
     SoftMesh out;
     const int CN = CW * CH;
-    out.mesh.vtx.assign((size_t)12 * CN, 0.0f);
+    out.mesh.pos.assign((size_t)3 * CN, 0.0f);
+    out.mesh.nrm.assign((size_t)3 * CN, 0.0f);
+    out.mesh.col.assign((size_t)3 * CN, 0.0f);
     for (int gy = 0; gy < CH; ++gy)
         for (int gx = 0; gx < CW; ++gx) {
             int i = gy * CW + gx;
-            size_t o = (size_t)12 * i;
-            out.mesh.vtx[o] = -span / 2 + span * (float)gx / (float)(CW - 1);
-            out.mesh.vtx[o + 1] = y0;
-            out.mesh.vtx[o + 2] = -span / 2 + span * (float)gy / (float)(CH - 1);
-            out.mesh.vtx[o + 4] = 1.0f;
-            out.mesh.vtx[o + 8] = 0.25f;
-            out.mesh.vtx[o + 9] = 0.45f;
-            out.mesh.vtx[o + 10] = 0.78f;
+            size_t o = (size_t)3 * i;
+            out.mesh.pos[o] = -span / 2 + span * (float)gx / (float)(CW - 1);
+            out.mesh.pos[o + 1] = y0;
+            out.mesh.pos[o + 2] = -span / 2 + span * (float)gy / (float)(CH - 1);
+            out.mesh.nrm[o + 1] = 1.0f;
+            out.mesh.col[o] = 0.25f;
+            out.mesh.col[o + 1] = 0.45f;
+            out.mesh.col[o + 2] = 0.78f;
         }
     const float spacing = span / (float)(CW - 1);
     const float diag = spacing * kSqrt2;
@@ -92,7 +94,7 @@ inline IcoSphere makeIcosphere(int subdiv) {
 }
 
 inline void addBallEdges(SoftMesh& mesh, const std::vector<uint32_t>& tris) {
-    const float* vtx = mesh.mesh.vtx.data();
+    const float* pos = mesh.mesh.pos.data();
     std::map<uint64_t, bool> seen;
     for (size_t f = 0; f < tris.size(); f += 3) {
         const uint32_t e[3][2] = {{tris[f], tris[f + 1]}, {tris[f + 1], tris[f + 2]}, {tris[f + 2], tris[f]}};
@@ -103,8 +105,8 @@ inline void addBallEdges(SoftMesh& mesh, const std::vector<uint32_t>& tris) {
             if (seen.contains(key))
                 continue;
             seen[key] = true;
-            const size_t oa = (size_t)12 * lo, ob = (size_t)12 * hi;
-            const float dx = vtx[oa] - vtx[ob], dy = vtx[oa + 1] - vtx[ob + 1], dz = vtx[oa + 2] - vtx[ob + 2];
+            const size_t oa = (size_t)3 * lo, ob = (size_t)3 * hi;
+            const float dx = pos[oa] - pos[ob], dy = pos[oa + 1] - pos[ob + 1], dz = pos[oa + 2] - pos[ob + 2];
             mesh.cons.push_back({lo, hi, std::sqrt(dx * dx + dy * dy + dz * dz), 0.5f});
         }
     }
@@ -112,17 +114,17 @@ inline void addBallEdges(SoftMesh& mesh, const std::vector<uint32_t>& tris) {
 
 inline void addAntipodalTies(SoftMesh& mesh) {
     const int n = mesh.mesh.vertexCount();
-    const float* vtx = mesh.mesh.vtx.data();
+    const float* pos = mesh.mesh.pos.data();
     V3 c{0, 0, 0};
     for (int i = 0; i < n; ++i) {
-        const size_t o = (size_t)12 * i;
-        c = vAdd(c, V3{vtx[o], vtx[o + 1], vtx[o + 2]});
+        const size_t o = (size_t)3 * i;
+        c = vAdd(c, V3{pos[o], pos[o + 1], pos[o + 2]});
     }
     c = vScale(c, 1.0f / (float)n);
     std::vector<V3> dir(n);
     for (int i = 0; i < n; ++i) {
-        const size_t o = (size_t)12 * i;
-        V3 d{vtx[o] - c.x, vtx[o + 1] - c.y, vtx[o + 2] - c.z};
+        const size_t o = (size_t)3 * i;
+        V3 d{pos[o] - c.x, pos[o + 1] - c.y, pos[o + 2] - c.z};
         dir[i] = vScale(d, 1.0f / vLen(d));
     }
     for (int i = 0; i < n; ++i) {
@@ -139,8 +141,8 @@ inline void addAntipodalTies(SoftMesh& mesh) {
         }
         if (partner <= i)
             continue;
-        const size_t oa = (size_t)12 * i, ob = (size_t)12 * partner;
-        const float dx = vtx[oa] - vtx[ob], dy = vtx[oa + 1] - vtx[ob + 1], dz = vtx[oa + 2] - vtx[ob + 2];
+        const size_t oa = (size_t)3 * i, ob = (size_t)3 * partner;
+        const float dx = pos[oa] - pos[ob], dy = pos[oa + 1] - pos[ob + 1], dz = pos[oa + 2] - pos[ob + 2];
         mesh.cons.push_back({i, partner, std::sqrt(dx * dx + dy * dy + dz * dz), 0.5f});
     }
 }
@@ -149,22 +151,24 @@ inline SoftMesh makeBall(float radius, float y0, int subdiv = 3) {
     IcoSphere ico = makeIcosphere(subdiv);
     const int n = (int)ico.verts.size();
     SoftMesh out;
-    out.mesh.vtx.assign((size_t)12 * n, 0.0f);
+    out.mesh.pos.assign((size_t)3 * n, 0.0f);
+    out.mesh.nrm.assign((size_t)3 * n, 0.0f);
+    out.mesh.col.assign((size_t)3 * n, 0.0f);
     out.mesh.indices = ico.tris;
     const V3 center{0, y0, 0};
     for (int i = 0; i < n; ++i) {
         const V3 dir = ico.verts[i];
         const V3 p = vAdd(center, vScale(dir, radius));
-        const size_t o = (size_t)12 * i;
-        out.mesh.vtx[o] = p.x;
-        out.mesh.vtx[o + 1] = p.y;
-        out.mesh.vtx[o + 2] = p.z;
-        out.mesh.vtx[o + 4] = dir.x;
-        out.mesh.vtx[o + 5] = dir.y;
-        out.mesh.vtx[o + 6] = dir.z;
-        out.mesh.vtx[o + 8] = 0.85f;
-        out.mesh.vtx[o + 9] = 0.35f;
-        out.mesh.vtx[o + 10] = 0.25f;
+        const size_t o = (size_t)3 * i;
+        out.mesh.pos[o] = p.x;
+        out.mesh.pos[o + 1] = p.y;
+        out.mesh.pos[o + 2] = p.z;
+        out.mesh.nrm[o] = dir.x;
+        out.mesh.nrm[o + 1] = dir.y;
+        out.mesh.nrm[o + 2] = dir.z;
+        out.mesh.col[o] = 0.85f;
+        out.mesh.col[o + 1] = 0.35f;
+        out.mesh.col[o + 2] = 0.25f;
     }
     addBallEdges(out, ico.tris);
     addAntipodalTies(out);

@@ -25,29 +25,25 @@ struct Entry {
 
 struct SoftBody {
     int n = 0;
-    std::vector<float> vtx;
-    std::vector<float> pos4;
+    std::vector<float> pos0;
+    std::vector<float> nrm0;
     std::vector<Constraint> cons;
     std::vector<Entry> entries;
     std::vector<int> entryStart;
     int colorCount = 0;
     std::vector<int> colorStart;
     std::vector<int> colorVerts;
+    std::vector<int> triStart;
+    std::vector<int> triList;
 
     void init(const Mesh& mesh, const std::vector<Constraint>& c) {
         n = mesh.vertexCount();
-        vtx = mesh.vtx;
+        pos0 = mesh.pos;
+        nrm0 = mesh.nrm;
         cons = c;
-        pos4.resize((size_t)4 * n);
-        for (int i = 0; i < n; ++i) {
-            const size_t p = (size_t)4 * i, o = (size_t)12 * i;
-            pos4[p] = vtx[o];
-            pos4[p + 1] = vtx[o + 1];
-            pos4[p + 2] = vtx[o + 2];
-            pos4[p + 3] = 0.0f;
-        }
         buildEntries();
         buildColoring();
+        buildTriangles(mesh);
     }
 
 private:
@@ -97,6 +93,24 @@ private:
         for (int c = 0; c < colorCount; ++c)
             for (size_t j = 0; j < groups[c].size(); ++j)
                 colorVerts[colorStart[c] + (int)j] = groups[c][j];
+    }
+
+    void buildTriangles(const Mesh& mesh) {
+        const auto& idx = mesh.indices;
+        triStart.assign(n + 1, 0);
+        for (uint32_t v : idx)
+            ++triStart[(size_t)v + 1];
+        for (int i = 1; i <= n; ++i)
+            triStart[i] += triStart[i - 1];
+        triList.resize(idx.size());
+        std::vector<int> cur(n);
+        for (int i = 0; i < n; ++i)
+            cur[i] = triStart[i];
+        for (size_t f = 0; f < idx.size(); f += 3)
+            for (int k = 0; k < 3; ++k) {
+                const int v = (int)idx[f + (size_t)k];
+                triList[cur[v]++] = (int)(f / 3);
+            }
     }
 };
 

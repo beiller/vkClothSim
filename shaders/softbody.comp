@@ -1,19 +1,19 @@
 #version 450
 layout(local_size_x = 64) in;
 
-struct Vtx { vec3 pos; vec3 nrm; vec3 col; };
-layout(binding = 0) buffer Vtxs { Vtx v[]; } vtxs;
-layout(binding = 1) buffer Prev { vec3 v[]; } prevB;
+layout(binding = 0) buffer PosB { float p[]; } posB;
+layout(binding = 1) buffer NrmB { float p[]; } nrmB;
+layout(binding = 2) buffer Prev { float v[]; } prevB;
 
 struct Capsule { vec4 centerRadius; vec4 quat; vec4 halfLen; };
-layout(binding = 2) buffer Capsules { Capsule cs[]; } caps;
+layout(binding = 3) buffer Capsules { Capsule cs[]; } caps;
 
 struct Entry { int j; float rest; float k; int pad; };
-layout(binding = 3) buffer Entries { Entry e[]; } ents;
-layout(binding = 4) buffer EntryStart { int s[]; } estart;
-layout(binding = 5) buffer ColorVerts { int v[]; } colorVerts;
+layout(binding = 4) buffer Entries { Entry e[]; } ents;
+layout(binding = 5) buffer EntryStart { int s[]; } estart;
+layout(binding = 6) buffer ColorVerts { int v[]; } colorVerts;
 
-layout(binding = 6) buffer PhysP {
+layout(binding = 7) buffer PhysP {
     int nCaps;
     float dt;
     float damping;
@@ -25,15 +25,55 @@ layout(binding = 6) buffer PhysP {
     float maxStep;
 } ph;
 
-layout(binding = 7) buffer Sub0 { vec3 v[]; } sub0;
-layout(binding = 8) buffer ContactN { vec4 n[]; } contactN;
-layout(binding = 9) buffer ContactL { float l[]; } contactL;
+layout(binding = 8) buffer Sub0 { float v[]; } sub0;
+layout(binding = 9) buffer ContactN { vec4 n[]; } contactN;
+layout(binding = 10) buffer ContactL { float l[]; } contactL;
+layout(binding = 11) buffer Tris { uint t[]; } tris;
+layout(binding = 12) buffer TriStart { int s[]; } triStart;
+layout(binding = 13) buffer TriList { int l[]; } triList;
 
 layout(push_constant) uniform PC { int mode; int n; int groupOffset; int pad; } pc;
 
-vec3 rpos(int i) { return vtxs.v[i].pos; }
-void wpos(int i, vec3 x) { vtxs.v[i].pos = x; }
-void wnrm(int i, vec3 x) { vtxs.v[i].nrm = x; }
+vec3 rpos(int i) {
+    int o = i * 3;
+    return vec3(posB.p[o], posB.p[o + 1], posB.p[o + 2]);
+}
+vec3 rprev(int i) {
+    int o = i * 3;
+    return vec3(prevB.v[o], prevB.v[o + 1], prevB.v[o + 2]);
+}
+vec3 rsub0(int i) {
+    int o = i * 3;
+    return vec3(sub0.v[o], sub0.v[o + 1], sub0.v[o + 2]);
+}
+void wpos(int i, vec3 x) {
+    int o = i * 3;
+    posB.p[o] = x.x;
+    posB.p[o + 1] = x.y;
+    posB.p[o + 2] = x.z;
+}
+void wprev(int i, vec3 x) {
+    int o = i * 3;
+    prevB.v[o] = x.x;
+    prevB.v[o + 1] = x.y;
+    prevB.v[o + 2] = x.z;
+}
+void wsub0(int i, vec3 x) {
+    int o = i * 3;
+    sub0.v[o] = x.x;
+    sub0.v[o + 1] = x.y;
+    sub0.v[o + 2] = x.z;
+}
+void wnrm(int i, vec3 x) {
+    int o = i * 3;
+    nrmB.p[o] = x.x;
+    nrmB.p[o + 1] = x.y;
+    nrmB.p[o + 2] = x.z;
+}
+vec3 rnrm(int i) {
+    int o = i * 3;
+    return vec3(nrmB.p[o], nrmB.p[o + 1], nrmB.p[o + 2]);
+}
 
 mat3 quatMat(vec4 q) {
     q = normalize(q);
@@ -83,7 +123,7 @@ vec3 collideVertex(int i, vec3 P) {
     float nl = length(cN);
     if (nl > 1e-8) {
         vec3 fn = cN / nl;
-        vec3 rel = P - sub0.v[i];
+        vec3 rel = P - rsub0(i);
         vec3 vt = rel - fn * dot(rel, fn);
         float lv = length(vt);
         float limit = ph.friction * cL;
@@ -104,7 +144,7 @@ void main() {
 
     if (pc.mode == 0) {
         vec3 P = rpos(vi);
-        vec3 Pr = prevB.v[vi];
+        vec3 Pr = rprev(vi);
         vec3 d = (P - Pr) * ph.damping + vec3(0.0, ph.gravity, 0.0) * (ph.dt * ph.dt);
         float dl = length(d);
         if (dl > ph.maxStep)
@@ -125,22 +165,23 @@ void main() {
     } else if (pc.mode == 2) {
         wpos(vi, collideVertex(vi, rpos(vi)));
     } else if (pc.mode == 3) {
-        int s0 = estart.s[vi], s1 = estart.s[vi + 1];
-        if (s1 - s0 >= 2) {
-            vec3 P = rpos(vi);
-            vec3 e1 = rpos(ents.e[s0].j) - P;
-            vec3 e2 = rpos(ents.e[s0 + 1].j) - P;
-            vec3 n = cross(e1, e2);
-            float l = length(n);
-            wnrm(vi, l > 1e-6 ? n / l : vec3(0.0, 1.0, 0.0));
+        vec3 sum = vec3(0.0);
+        for (int t = triStart.s[vi]; t < triStart.s[vi + 1]; ++t) {
+            int f = triList.l[t] * 3;
+            vec3 pa = rpos(int(tris.t[f]));
+            vec3 pb = rpos(int(tris.t[f + 1]));
+            vec3 pc = rpos(int(tris.t[f + 2]));
+            sum += cross(pb - pa, pc - pa);
         }
+        float l = length(sum);
+        wnrm(vi, l > 1e-6 ? sum / l : rnrm(vi));
     } else if (pc.mode == 4) {
-        sub0.v[vi] = rpos(vi);
+        wsub0(vi, rpos(vi));
         contactN.n[vi] = vec4(0.0);
         contactL.l[vi] = 0.0;
     } else if (pc.mode == 5) {
         vec3 P = rpos(vi);
-        vec3 v = (P - sub0.v[vi]) / ph.dt;
+        vec3 v = (P - rsub0(vi)) / ph.dt;
         float nl = length(contactN.n[vi].xyz);
         if (nl > 1e-8) {
             vec3 fn = contactN.n[vi].xyz / nl;
@@ -148,6 +189,6 @@ void main() {
             if (vn < 0.0)
                 v -= fn * vn;
         }
-        prevB.v[vi] = P - v * ph.dt;
+        wprev(vi, P - v * ph.dt);
     }
 }
