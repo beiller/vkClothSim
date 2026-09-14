@@ -10,6 +10,10 @@ struct V3 {
     float x, y, z;
 };
 
+struct V4 {
+    float x, y, z, w;
+};
+
 inline V3 vAdd(V3 a, V3 b) {
     return {a.x + b.x, a.y + b.y, a.z + b.z};
 }

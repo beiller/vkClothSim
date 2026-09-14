@@ -1,4 +1,5 @@
 #pragma once
+#include "capsule.hpp"
 #include "mesh.hpp"
 #include "sim/sim.hpp"
 #include <map>
@@ -156,4 +157,32 @@ inline SoftMesh makeBall(float radius, float y0, int subdiv = 3) {
     addBallEdges(out, ico.tris);
     addAntipodalTies(out);
     return out;
+}
+
+inline Mesh makeCapsuleMesh(int nCaps) {
+    Mesh m;
+    const size_t vcount = (size_t)nCaps * kCapVPC;
+    m.pos.assign(3 * vcount, 0.0f);
+    m.nrm.assign(3 * vcount, 0.0f);
+    m.col.assign(3 * vcount, 0.0f);
+    const int S = kCapPhiSegs, M = kCapYRows;
+    const int VPC = (int)kCapVPC;
+    for (int ci = 0; ci < nCaps; ++ci) {
+        const uint32_t capBase = (uint32_t)ci * VPC;
+        for (int i = 0; i < M; ++i)
+            for (int j = 0; j < S; ++j) {
+                const uint32_t jn = (uint32_t)((j + 1) % S);
+                const uint32_t a = capBase + (uint32_t)i * S + (uint32_t)j;
+                const uint32_t b = capBase + (uint32_t)i * S + jn;
+                const uint32_t c = capBase + (uint32_t)(i + 1) * S + (uint32_t)j;
+                const uint32_t d = capBase + (uint32_t)(i + 1) * S + jn;
+                m.indices.push_back(a);
+                m.indices.push_back(b);
+                m.indices.push_back(d);
+                m.indices.push_back(a);
+                m.indices.push_back(d);
+                m.indices.push_back(c);
+            }
+    }
+    return m;
 }

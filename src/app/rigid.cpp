@@ -7,10 +7,16 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/RegisterTypes.h>
 
-#include "math.hpp"
 #include <algorithm>
-#include <random>
 #include <thread>
+
+namespace {
+
+JPH::Quat jQuat(V4 q) {
+    return JPH::Quat(q.x, q.y, q.z, q.w);
+}
+
+} // namespace
 
 void RigidScene::init() {
     JPH::RegisterDefaultAllocator();
@@ -41,24 +47,28 @@ void RigidScene::init() {
                                    JPH::EMotionType::Static, 0);
     JPH::Body* gb = bi.CreateBody(gset);
     bi.AddBody(gb->GetID(), JPH::EActivation::DontActivate);
-
-    const int kNCaps = 50;
-    std::mt19937 rng(12345); // NOLINT(bugprone-random-generator-seed)
-    std::uniform_real_distribution<float> rnd(0.0f, 1.0f);
-    for (int i = 0; i < kNCaps; ++i) {
-        float px = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
-        float py = 4.5f + 3.5f * rnd(rng);
-        float pz = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
-        JPH::Quat rot = JPH::Quat::sRotation(JPH::Vec3::sAxisY(), rnd(rng) * 2.0f * kPi) *
-                        JPH::Quat::sRotation(JPH::Vec3::sAxisX(), (rnd(rng) * 2.0f - 1.0f) * 0.9f);
-        JPH::BodyCreationSettings cs(new JPH::CapsuleShape(kCapsuleHalfLen, kCapsuleRadius), JPH::RVec3(px, py, pz),
-                                     rot, JPH::EMotionType::Dynamic, 1);
-        cs.mFriction = 0.7f;
-        cs.mRestitution = 0.05f;
-        cs.mLinearDamping = 0.05f;
-        m_caps.push_back(bi.CreateAndAddBody(cs, JPH::EActivation::Activate));
-    }
     m_phys->OptimizeBroadPhase();
+}
+
+int RigidScene::addCapsule(const CapsuleCollider& collider) {
+    auto& bi = m_phys->GetBodyInterface();
+    const CapsuleParams& params = collider.params();
+    const V3 pos = collider.position();
+    const V4 quat = collider.orientation();
+    JPH::BodyCreationSettings cs(new JPH::CapsuleShape(params.halfLen, params.radius),
+                                 JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat), JPH::EMotionType::Dynamic, 1);
+    cs.mFriction = 0.7f;
+    cs.mRestitution = 0.05f;
+    cs.mLinearDamping = 0.05f;
+    JPH::BodyID id = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
+    m_bodies.push_back({id, params});
+    return (int)m_bodies.size() - 1;
+}
+
+void RigidScene::updateCollider(int handle, V3 pos, V4 quat) {
+    auto& bi = m_phys->GetBodyInterface();
+    bi.SetPosition(m_bodies[handle].id, JPH::RVec3(pos.x, pos.y, pos.z), JPH::EActivation::Activate);
+    bi.SetRotation(m_bodies[handle].id, jQuat(quat), JPH::EActivation::Activate);
 }
 
 void RigidScene::step(int n) {
@@ -66,25 +76,42 @@ void RigidScene::step(int n) {
         m_phys->Update(kFrameDt, 1, m_temp, m_job);
 }
 
-std::vector<CapsuleGPU> RigidScene::capsuleGPU() const {
-    std::vector<CapsuleGPU> data(m_caps.size());
+std::vector<CapsulePose> RigidScene::capsulePose() const {
+    std::vector<CapsulePose> out(m_bodies.size());
     if (!m_phys)
-        return data;
+        return out;
     const JPH::BodyLockInterface& li = m_phys->GetBodyLockInterface();
-    for (size_t i = 0; i < m_caps.size(); ++i) {
-        JPH::BodyLockRead lock(li, m_caps[i]);
+    for (size_t i = 0; i < m_bodies.size(); ++i) {
+        JPH::BodyLockRead lock(li, m_bodies[i].id);
         const JPH::Body& b = lock.GetBody();
         JPH::Vec3 p = b.GetPosition();
         JPH::Quat q = b.GetRotation();
-        data[i].centerRadius[0] = p.GetX();
-        data[i].centerRadius[1] = p.GetY();
-        data[i].centerRadius[2] = p.GetZ();
-        data[i].centerRadius[3] = kCapsuleRadius;
-        data[i].quat[0] = q.GetX();
-        data[i].quat[1] = q.GetY();
-        data[i].quat[2] = q.GetZ();
-        data[i].quat[3] = q.GetW();
-        data[i].halfLen[0] = kCapsuleHalfLen;
+        out[i].pos = {p.GetX(), p.GetY(), p.GetZ()};
+        out[i].quat = {q.GetX(), q.GetY(), q.GetZ(), q.GetW()};
     }
-    return data;
+    return out;
+}
+
+std::vector<CapsuleGPU> RigidScene::capsuleGPU() const {
+    std::vector<CapsuleGPU> out(m_bodies.size());
+    if (!m_phys)
+        return out;
+    const JPH::BodyLockInterface& li = m_phys->GetBodyLockInterface();
+    for (size_t i = 0; i < m_bodies.size(); ++i) {
+        JPH::BodyLockRead lock(li, m_bodies[i].id);
+        const JPH::Body& b = lock.GetBody();
+        JPH::Vec3 p = b.GetPosition();
+        JPH::Quat q = b.GetRotation();
+        const CapsuleParams& cp = m_bodies[i].params;
+        out[i].centerRadius[0] = p.GetX();
+        out[i].centerRadius[1] = p.GetY();
+        out[i].centerRadius[2] = p.GetZ();
+        out[i].centerRadius[3] = cp.radius;
+        out[i].quat[0] = q.GetX();
+        out[i].quat[1] = q.GetY();
+        out[i].quat[2] = q.GetZ();
+        out[i].quat[3] = q.GetW();
+        out[i].halfLen[0] = cp.halfLen;
+    }
+    return out;
 }

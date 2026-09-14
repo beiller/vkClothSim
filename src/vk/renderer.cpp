@@ -110,73 +110,53 @@ void buildGroundMesh(Mesh& m) {
     m.indices = {0, 1, 2, 0, 2, 3};
 }
 
-void buildCapsuleBase(std::vector<float>& base, std::vector<uint32_t>& idx, int nCaps, float R, float H) {
-    const int S = 20, M = 32;
-    const int VPC = (M + 1) * S;
+void buildCapsuleBase(std::vector<float>& base, float R, float H) {
+    const int S = kCapPhiSegs, M = kCapYRows;
     const float twoPi = 2.0f * kPi;
-    base.assign((size_t)nCaps * VPC * 6, 0.0f);
-    idx.clear();
-    for (int ci = 0; ci < nCaps; ++ci) {
-        float top = H + R, bot = -H - R;
-        uint32_t capBase = (uint32_t)ci * VPC;
-        for (int i = 0; i <= M; ++i) {
-            float t = (float)i / M;
-            float y = top - t * (top - bot);
-            float r, dr, dy;
-            if (y >= H)
-                dy = y - H;
-            else if (y <= -H)
-                dy = y + H;
-            else
-                dy = 0.0f;
-            if (dy == 0.0f) {
-                r = R;
-                dr = 0.0f;
-            } else {
-                r = std::sqrt(std::max(0.0f, R * R - dy * dy));
-                dr = (r > 1e-5f) ? -dy / r : 0.0f;
-            }
-            for (int j = 0; j < S; ++j) {
-                float phi = (float)j / S * twoPi;
-                float cp = std::cos(phi), sp = std::sin(phi);
-                size_t v = capBase + (size_t)i * S + j;
-                base[6 * v + 0] = r * cp;
-                base[6 * v + 1] = y;
-                base[6 * v + 2] = r * sp;
-                base[6 * v + 3] = cp;
-                base[6 * v + 4] = -dr;
-                base[6 * v + 5] = sp;
-            }
+    base.assign((size_t)(M + 1) * S * 6, 0.0f);
+    const float top = H + R, bot = -H - R;
+    for (int i = 0; i <= M; ++i) {
+        float t = (float)i / M;
+        float y = top - t * (top - bot);
+        float r, dr, dy;
+        if (y >= H)
+            dy = y - H;
+        else if (y <= -H)
+            dy = y + H;
+        else
+            dy = 0.0f;
+        if (dy == 0.0f) {
+            r = R;
+            dr = 0.0f;
+        } else {
+            r = std::sqrt(std::max(0.0f, R * R - dy * dy));
+            dr = (r > 1e-5f) ? -dy / r : 0.0f;
         }
-        for (int i = 0; i < M; ++i)
-            for (int j = 0; j < S; ++j) {
-                uint32_t jn = (j + 1) % S;
-                uint32_t a = capBase + (uint32_t)i * S + j;
-                uint32_t b = capBase + (uint32_t)i * S + jn;
-                uint32_t c = capBase + (uint32_t)(i + 1) * S + j;
-                uint32_t d = capBase + (uint32_t)(i + 1) * S + jn;
-                idx.push_back(a);
-                idx.push_back(b);
-                idx.push_back(d);
-                idx.push_back(a);
-                idx.push_back(d);
-                idx.push_back(c);
-            }
+        for (int j = 0; j < S; ++j) {
+            float phi = (float)j / S * twoPi;
+            float cp = std::cos(phi), sp = std::sin(phi);
+            size_t v = (size_t)i * S + j;
+            base[6 * v + 0] = r * cp;
+            base[6 * v + 1] = y;
+            base[6 * v + 2] = r * sp;
+            base[6 * v + 3] = cp;
+            base[6 * v + 4] = -dr;
+            base[6 * v + 5] = sp;
+        }
     }
 }
 
 } // namespace
 
-void Renderer::init(VkApp& app, int nCaps, int nSoft, const Mat4& viewProj) {
+void Renderer::init(VkApp& app, int nMeshes, const Mat4& viewProj) {
     m_dev = app.device();
     m_pdev = app.pdev();
     m_rp = app.renderPass();
     m_vp = viewProj;
-    m_nCaps = nCaps;
 
     vkMakeBuffer(m_dev, m_pdev, m_uUbuf, m_uUmem, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, viewProj.m);
     const auto binds = meshBinds();
-    vkMakeDslPool(m_dev, binds, (uint32_t)nSoft + 2, m_dsl, m_pool);
+    vkMakeDslPool(m_dev, binds, (uint32_t)nMeshes + 1, m_dsl, m_pool);
     m_pl = vkMakePipelineLayout(m_dev, m_dsl);
     m_pipe = makeGraphicsPipeline(m_dev, m_rp, mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
                                   mesh_frag_spv_len / 4, m_pl);
@@ -186,13 +166,39 @@ void Renderer::init(VkApp& app, int nCaps, int nSoft, const Mat4& viewProj) {
     const auto gvcount = (uint32_t)ground.vertexCount();
     makeMesh(m_ground, gvcount, ground.pos.data(), ground.nrm.data(), ground.col.data(), ground.indices.data(),
              (uint32_t)ground.indices.size());
+}
 
-    const int S = 20, M = 32;
-    m_vpc = (uint32_t)((M + 1) * S);
-    std::vector<uint32_t> cidx;
-    buildCapsuleBase(m_capsBase, cidx, m_nCaps, kCapsuleRadius, kCapsuleHalfLen);
-    const size_t vcount = (size_t)m_nCaps * m_vpc;
-    makeMesh(m_caps, (uint32_t)vcount, nullptr, nullptr, nullptr, cidx.data(), (uint32_t)cidx.size());
+MeshGpu Renderer::createReadWriteBuffer(const Mesh& mesh) {
+    const uint32_t n = (uint32_t)mesh.vertexCount();
+    const VkDeviceSize bytes = (VkDeviceSize)12 * n;
+    VkBuffer pos, nrm;
+    VkDeviceMemory posMem, nrmMem;
+    vkMakeBuffer(m_dev, m_pdev, pos, posMem, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.pos.data());
+    vkMakeBuffer(m_dev, m_pdev, nrm, nrmMem, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.nrm.data());
+    return MeshGpu{VertexStore{pos, posMem, n}, VertexStore{nrm, nrmMem, n}};
+}
+
+int Renderer::addMesh(const Mesh& mesh, const MeshGpu& rw) {
+    GpuMesh m;
+    m.pos = rw.pos.buffer;
+    m.posMem = rw.pos.memory;
+    m.nrm = rw.nrm.buffer;
+    m.nrmMem = rw.nrm.memory;
+    m.vtxCount = rw.pos.count;
+    m.idxCount = (uint32_t)mesh.indices.size();
+    const VkDeviceSize attrSize = (VkDeviceSize)12 * m.vtxCount;
+    vkMakeBuffer(m_dev, m_pdev, m.col, m.colMem, attrSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.col.data());
+    vkMakeBuffer(m_dev, m_pdev, m.ibuf, m.ibmem, (VkDeviceSize)m.idxCount * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                 mesh.indices.data());
+    std::vector<VkDescriptorBufferInfo> bi = {
+        {m.pos, 0, attrSize}, {m.nrm, 0, attrSize}, {m.col, 0, attrSize}, {m_uUbuf, 0, 64}};
+    vkMakeSet(m_dev, m_pool, m_dsl, meshBinds(), m.set, bi);
+    m_soft.push_back(m);
+    return (int)m_soft.size() - 1;
+}
+
+void Renderer::setCapsuleIndex(int idx) {
+    m_capsIdx = idx;
 }
 
 void Renderer::makeMesh(GpuMesh& m, uint32_t vtxCount, const float* pos, const float* nrm, const float* col,
@@ -209,31 +215,14 @@ void Renderer::makeMesh(GpuMesh& m, uint32_t vtxCount, const float* pos, const f
     vkMakeSet(m_dev, m_pool, m_dsl, meshBinds(), m.set, bi);
 }
 
-int Renderer::addMesh(const Mesh& mesh) {
-    GpuMesh m;
-    makeMesh(m, (uint32_t)mesh.vertexCount(), mesh.pos.data(), mesh.nrm.data(), mesh.col.data(), mesh.indices.data(),
-             (uint32_t)mesh.indices.size());
-    m_soft.push_back(m);
-    return (int)m_soft.size() - 1;
-}
-
-VertexStore Renderer::positionBuffer(int handle) const {
-    const GpuMesh& m = m_soft[handle];
-    return VertexStore{m.pos, m.posMem, m.vtxCount};
-}
-
-VertexStore Renderer::normalBuffer(int handle) const {
-    const GpuMesh& m = m_soft[handle];
-    return VertexStore{m.nrm, m.nrmMem, m.vtxCount};
-}
-
 void Renderer::bakeCapsules(std::span<const CapsuleGPU> caps) {
+    GpuMesh& cm = m_soft[m_capsIdx];
     const V3 capCol{0.85f, 0.35f, 0.30f};
-    const size_t vcount = (size_t)m_nCaps * m_vpc;
+    const size_t vcount = (size_t)caps.size() * kCapVPC;
     void *oPos, *oNrm, *oCol;
-    VK(vkMapMemory(m_dev, m_caps.posMem, 0, (VkDeviceSize)12 * vcount, 0, &oPos));
-    VK(vkMapMemory(m_dev, m_caps.nrmMem, 0, (VkDeviceSize)12 * vcount, 0, &oNrm));
-    VK(vkMapMemory(m_dev, m_caps.colMem, 0, (VkDeviceSize)12 * vcount, 0, &oCol));
+    VK(vkMapMemory(m_dev, cm.posMem, 0, (VkDeviceSize)12 * vcount, 0, &oPos));
+    VK(vkMapMemory(m_dev, cm.nrmMem, 0, (VkDeviceSize)12 * vcount, 0, &oNrm));
+    VK(vkMapMemory(m_dev, cm.colMem, 0, (VkDeviceSize)12 * vcount, 0, &oCol));
     auto* outPos = static_cast<float*>(oPos);
     auto* outNrm = static_cast<float*>(oNrm);
     auto* outCol = static_cast<float*>(oCol);
@@ -242,18 +231,30 @@ void Renderer::bakeCapsules(std::span<const CapsuleGPU> caps) {
         float qm[9];
         quatToMat3(c.quat, qm);
         const V3 center{c.centerRadius[0], c.centerRadius[1], c.centerRadius[2]};
-        const int base = (int)(ci * m_vpc);
-        for (uint32_t j = 0; j < m_vpc; ++j) {
-            const int v = base + (int)j;
-            const float* bp = &m_capsBase[6 * (size_t)v];
+        const std::vector<float>& base = baseFor(c.centerRadius[3], c.halfLen[0]);
+        const int vbase = (int)(ci * kCapVPC);
+        for (uint32_t j = 0; j < kCapVPC; ++j) {
+            const int v = vbase + (int)j;
+            const float* bp = &base[6 * (size_t)j];
             vStore(outPos, v, vAdd(m3v(qm, {bp[0], bp[1], bp[2]}), center));
             vStore(outNrm, v, m3v(qm, {bp[3], bp[4], bp[5]}));
             vStore(outCol, v, capCol);
         }
     }
-    vkUnmapMemory(m_dev, m_caps.posMem);
-    vkUnmapMemory(m_dev, m_caps.nrmMem);
-    vkUnmapMemory(m_dev, m_caps.colMem);
+    vkUnmapMemory(m_dev, cm.posMem);
+    vkUnmapMemory(m_dev, cm.nrmMem);
+    vkUnmapMemory(m_dev, cm.colMem);
+}
+
+const std::vector<float>& Renderer::baseFor(float radius, float halfLen) {
+    for (const auto& b : m_capsBases)
+        if (b.params.radius == radius && b.params.halfLen == halfLen)
+            return b.v;
+    CapsuleBase nb;
+    nb.params = {halfLen, radius};
+    buildCapsuleBase(nb.v, radius, halfLen);
+    m_capsBases.push_back(std::move(nb));
+    return m_capsBases.back().v;
 }
 
 void Renderer::drawMesh(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& m) {
@@ -283,7 +284,6 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg
     vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipe);
     drawMesh(cmd, m_pl, m_ground);
-    drawMesh(cmd, m_pl, m_caps);
     for (const auto& m : m_soft)
         drawMesh(cmd, m_pl, m);
     if (imgui && imgui->CmdLists.Size > 0)
@@ -302,7 +302,6 @@ void Renderer::shutdown() {
         vkFreeBuffer(m_dev, m.ibuf, m.ibmem);
     };
     destroyMesh(m_ground);
-    destroyMesh(m_caps);
     for (auto& m : m_soft)
         destroyMesh(m);
     if (m_pool)

@@ -56,7 +56,6 @@ include(${PHYSICS_REPO_ROOT}/Jolt/Jolt.cmake)
 
 add_executable(vksim
     src/main.cpp
-    src/app/scene.cpp
     src/app/rigid.cpp
     src/app/ui.cpp
     src/sim/softsim.cpp

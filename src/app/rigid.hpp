@@ -14,12 +14,20 @@
 class RigidScene {
 public:
     void init();
+    int addCapsule(const CapsuleCollider& collider);
+    void updateCollider(int handle, V3 pos, V4 quat);
     void step(int n);
-    int capsuleCount() const { return (int)m_caps.size(); }
+    int capsuleCount() const { return (int)m_bodies.size(); }
+    std::vector<CapsulePose> capsulePose() const;
     std::vector<CapsuleGPU> capsuleGPU() const;
 
 private:
-    std::vector<JPH::BodyID> m_caps;
+    struct RigidBody {
+        JPH::BodyID id;
+        CapsuleParams params;
+    };
+
+    std::vector<RigidBody> m_bodies;
     JPH::PhysicsSystem* m_phys = nullptr;
     JPH::JobSystemThreadPool* m_job = nullptr;
     JPH::TempAllocatorImpl* m_temp = nullptr;

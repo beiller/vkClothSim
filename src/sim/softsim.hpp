@@ -12,12 +12,12 @@
 
 class SoftSim {
 public:
-    void init(VkDevice dev, VkPhysicalDevice pdev, int nCaps);
-    void registerBody(const VertexStore& pos, const VertexStore& nrm, const Mesh& mesh,
-                      const std::vector<sim::Constraint>& cons);
+    void init(VkDevice dev, VkPhysicalDevice pdev);
+    void addCapsule(const CapsuleCollider& collider);
+    void addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw);
     void build();
     void shutdown();
-    void uploadCapsules(std::span<const CapsuleGPU> caps);
+    void syncColliders(std::span<const CapsulePose> poses);
     void record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask);
     void reset(int mask);
 
@@ -45,7 +45,7 @@ private:
 
     VkDevice m_dev = VK_NULL_HANDLE;
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;
-    int m_nCaps = 0;
+    std::vector<CapsuleParams> m_colliders;
     std::vector<GpuBody> m_body;
     VkPipeline m_softPipe = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_softDsl = VK_NULL_HANDLE;

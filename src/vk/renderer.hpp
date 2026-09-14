@@ -13,10 +13,10 @@ class VkApp;
 
 class Renderer {
 public:
-    void init(VkApp& app, int nCaps, int nSoft, const Mat4& viewProj);
-    int addMesh(const Mesh& mesh);
-    VertexStore positionBuffer(int handle) const;
-    VertexStore normalBuffer(int handle) const;
+    void init(VkApp& app, int nMeshes, const Mat4& viewProj);
+    MeshGpu createReadWriteBuffer(const Mesh& mesh);
+    int addMesh(const Mesh& mesh, const MeshGpu& rw);
+    void setCapsuleIndex(int idx);
     void shutdown();
     void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui,
               std::span<const CapsuleGPU> caps);
@@ -35,13 +35,18 @@ private:
     void makeMesh(GpuMesh& m, uint32_t vtxCount, const float* pos, const float* nrm, const float* col,
                   const uint32_t* idx, uint32_t idxCount);
     void bakeCapsules(std::span<const CapsuleGPU> caps);
+    const std::vector<float>& baseFor(float radius, float halfLen);
     static void drawMesh(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& m);
+
+    struct CapsuleBase {
+        CapsuleParams params;
+        std::vector<float> v;
+    };
 
     VkDevice m_dev = VK_NULL_HANDLE;
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;
     VkRenderPass m_rp = VK_NULL_HANDLE;
     Mat4 m_vp{};
-    int m_nCaps = 0;
 
     VkBuffer m_uUbuf = VK_NULL_HANDLE;
     VkDeviceMemory m_uUmem = VK_NULL_HANDLE;
@@ -50,10 +55,9 @@ private:
     VkPipelineLayout m_pl = VK_NULL_HANDLE;
     VkPipeline m_pipe = VK_NULL_HANDLE;
 
-    std::vector<float> m_capsBase;
-    uint32_t m_vpc = 0;
+    std::vector<CapsuleBase> m_capsBases;
 
     GpuMesh m_ground;
-    GpuMesh m_caps;
     std::vector<GpuMesh> m_soft;
+    int m_capsIdx = 0;
 };

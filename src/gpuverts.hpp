@@ -8,3 +8,8 @@ struct VertexStore {
     VkDeviceMemory memory = VK_NULL_HANDLE;
     uint32_t count = 0;
 };
+
+struct MeshGpu {
+    VertexStore pos;
+    VertexStore nrm;
+};
