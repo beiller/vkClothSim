@@ -7,13 +7,24 @@
 #include <string_view>
 #include <vector>
 
+namespace {
+
+void checkResult(VkResult r, const char* what) {
+    if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR || r == VK_ERROR_OUT_OF_DATE_KHR)
+        return;
+    std::fprintf(stderr, "vk %s error %d @%s:%d\n", what, (int)r, __FILE__, __LINE__);
+    std::abort();
+}
+
+} // namespace
+
 bool VkApp::init(int width, int height, const char* title) {
     if (!glfwInit()) {
         std::fprintf(stderr, "glfwInit failed\n");
         return false;
     }
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     m_win = glfwCreateWindow(width, height, title, nullptr, nullptr);
     if (!m_win) {
         std::fprintf(stderr, "window creation failed\n");
@@ -94,46 +105,15 @@ bool VkApp::init(int width, int height, const char* title) {
     VK(vkCreateDevice(m_pdev, &dci, nullptr, &m_dev));
     vkGetDeviceQueue(m_dev, m_qf, 0, &m_queue);
 
-    VkSurfaceCapabilitiesKHR caps;
-    VK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_pdev, m_surface, &caps));
     uint32_t nf = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_pdev, m_surface, &nf, nullptr);
     std::vector<VkSurfaceFormatKHR> fmts(nf);
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_pdev, m_surface, &nf, fmts.data());
-    VkSurfaceFormatKHR fmt = fmts[0];
-    m_scfmt = fmt.format;
-    m_extent = caps.currentExtent;
-    if (m_extent.width == 0xFFFFFFFF) {
-        int w, h;
-        glfwGetFramebufferSize(m_win, &w, &h);
-        m_extent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
-    }
-    uint32_t icnt = caps.minImageCount + 1;
-    if (caps.maxImageCount && icnt > caps.maxImageCount)
-        icnt = caps.maxImageCount;
-    VkSwapchainCreateInfoKHR scc{};
-    scc.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-    scc.surface = m_surface;
-    scc.minImageCount = icnt;
-    scc.imageFormat = fmt.format;
-    scc.imageColorSpace = fmt.colorSpace;
-    scc.imageExtent = m_extent;
-    scc.imageArrayLayers = 1;
-    scc.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    scc.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    scc.preTransform = caps.currentTransform;
-    scc.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    scc.presentMode = VK_PRESENT_MODE_FIFO_KHR;
-    scc.clipped = VK_TRUE;
-    VK(vkCreateSwapchainKHR(m_dev, &scc, nullptr, &m_sc));
-    vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, nullptr);
-    m_images.resize(icnt);
-    vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, m_images.data());
-
-    createDepth(m_extent);
+    m_fmt = fmts[0];
+    m_scfmt = m_fmt.format;
 
     VkAttachmentDescription att[2]{};
-    att[0].format = fmt.format;
+    att[0].format = m_fmt.format;
     att[0].samples = VK_SAMPLE_COUNT_1_BIT;
     att[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     att[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -163,27 +143,7 @@ bool VkApp::init(int width, int height, const char* title) {
     rpc.pSubpasses = &sp;
     VK(vkCreateRenderPass(m_dev, &rpc, nullptr, &m_rp));
 
-    m_views.resize(icnt);
-    m_fbs.resize(icnt);
-    for (uint32_t i = 0; i < icnt; ++i) {
-        VkImageViewCreateInfo vci{};
-        vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        vci.image = m_images[i];
-        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        vci.format = fmt.format;
-        vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VK(vkCreateImageView(m_dev, &vci, nullptr, &m_views[i]));
-        VkImageView fatts[2] = {m_views[i], m_depthView};
-        VkFramebufferCreateInfo fci{};
-        fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        fci.renderPass = m_rp;
-        fci.attachmentCount = 2;
-        fci.pAttachments = fatts;
-        fci.width = m_extent.width;
-        fci.height = m_extent.height;
-        fci.layers = 1;
-        VK(vkCreateFramebuffer(m_dev, &fci, nullptr, &m_fbs[i]));
-    }
+    recreateSwapchain();
 
     VkCommandPoolCreateInfo cpc{};
     cpc.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -204,15 +164,8 @@ bool VkApp::init(int width, int height, const char* title) {
 
 void VkApp::shutdown() {
     VK(vkDeviceWaitIdle(m_dev));
-    for (auto* fb : m_fbs)
-        vkDestroyFramebuffer(m_dev, fb, nullptr);
-    for (auto* v : m_views)
-        vkDestroyImageView(m_dev, v, nullptr);
+    destroySwapchainResources();
     vkDestroyRenderPass(m_dev, m_rp, nullptr);
-    vkDestroySwapchainKHR(m_dev, m_sc, nullptr);
-    vkDestroyImageView(m_dev, m_depthView, nullptr);
-    vkDestroyImage(m_dev, m_depth, nullptr);
-    vkFreeMemory(m_dev, m_depthMem, nullptr);
     vkDestroyFence(m_dev, m_fence, nullptr);
     vkDestroyCommandPool(m_dev, m_pool, nullptr);
     vkDestroyDevice(m_dev, nullptr);
@@ -226,8 +179,12 @@ bool VkApp::windowShouldClose() const {
     return glfwWindowShouldClose(m_win) != 0;
 }
 
-void VkApp::pollEvents() { // NOLINT(readability-convert-member-functions-to-static)
+void VkApp::pollEvents() {
     glfwPollEvents();
+    int w, h;
+    glfwGetFramebufferSize(m_win, &w, &h);
+    if (w > 0 && h > 0 && ((uint32_t)w != m_extent.width || (uint32_t)h != m_extent.height))
+        recreateSwapchain();
 }
 
 bool VkApp::keyIsDown(int key) const {
@@ -236,11 +193,8 @@ bool VkApp::keyIsDown(int key) const {
 
 uint32_t VkApp::acquireNextImage() {
     uint32_t idx = 0;
-    VkResult r = vkAcquireNextImageKHR(m_dev, m_sc, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &idx);
-    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
-        std::fprintf(stderr, "vk error %d @%s:%d\n", (int)r, __FILE__, __LINE__);
-        std::abort();
-    }
+    const VkResult r = vkAcquireNextImageKHR(m_dev, m_sc, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &idx);
+    checkResult(r, "acquire");
     return idx;
 }
 
@@ -270,7 +224,93 @@ void VkApp::present(uint32_t idx) {
     pi.swapchainCount = 1;
     pi.pSwapchains = &m_sc;
     pi.pImageIndices = &idx;
-    VK(vkQueuePresentKHR(m_queue, &pi));
+    checkResult(vkQueuePresentKHR(m_queue, &pi), "present");
+}
+
+void VkApp::recreateSwapchain() {
+    VK(vkDeviceWaitIdle(m_dev));
+    uint32_t nImg = (uint32_t)m_images.size();
+    uint32_t drain;
+    for (uint32_t i = 0; i < nImg; ++i)
+        vkAcquireNextImageKHR(m_dev, m_sc, 1000000000ull, VK_NULL_HANDLE, VK_NULL_HANDLE, &drain);
+    destroySwapchainResources();
+
+    VkSurfaceCapabilitiesKHR caps;
+    VK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_pdev, m_surface, &caps));
+    m_extent = caps.currentExtent;
+    if (m_extent.width == 0xFFFFFFFF) {
+        int w, h;
+        glfwGetFramebufferSize(m_win, &w, &h);
+        m_extent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
+    }
+    if (m_extent.width == 0)
+        m_extent.width = 1;
+    if (m_extent.height == 0)
+        m_extent.height = 1;
+
+    uint32_t icnt = caps.minImageCount + 1;
+    if (caps.maxImageCount && icnt > caps.maxImageCount)
+        icnt = caps.maxImageCount;
+    VkSwapchainCreateInfoKHR scc{};
+    scc.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    scc.surface = m_surface;
+    scc.minImageCount = icnt;
+    scc.imageFormat = m_fmt.format;
+    scc.imageColorSpace = m_fmt.colorSpace;
+    scc.imageExtent = m_extent;
+    scc.imageArrayLayers = 1;
+    scc.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    scc.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    scc.preTransform = caps.currentTransform;
+    scc.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    scc.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    scc.clipped = VK_TRUE;
+    VK(vkCreateSwapchainKHR(m_dev, &scc, nullptr, &m_sc));
+    vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, nullptr);
+    m_images.resize(icnt);
+    vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, m_images.data());
+
+    createDepth(m_extent);
+
+    m_views.resize(icnt);
+    m_fbs.resize(icnt);
+    for (uint32_t i = 0; i < icnt; ++i) {
+        VkImageViewCreateInfo vci{};
+        vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vci.image = m_images[i];
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format = m_fmt.format;
+        vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VK(vkCreateImageView(m_dev, &vci, nullptr, &m_views[i]));
+        VkImageView fatts[2] = {m_views[i], m_depthView};
+        VkFramebufferCreateInfo fci{};
+        fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fci.renderPass = m_rp;
+        fci.attachmentCount = 2;
+        fci.pAttachments = fatts;
+        fci.width = m_extent.width;
+        fci.height = m_extent.height;
+        fci.layers = 1;
+        VK(vkCreateFramebuffer(m_dev, &fci, nullptr, &m_fbs[i]));
+    }
+}
+
+void VkApp::destroySwapchainResources() {
+    for (auto* fb : m_fbs)
+        vkDestroyFramebuffer(m_dev, fb, nullptr);
+    for (auto* v : m_views)
+        vkDestroyImageView(m_dev, v, nullptr);
+    if (m_sc)
+        vkDestroySwapchainKHR(m_dev, m_sc, nullptr);
+    vkDestroyImageView(m_dev, m_depthView, nullptr);
+    vkDestroyImage(m_dev, m_depth, nullptr);
+    vkFreeMemory(m_dev, m_depthMem, nullptr);
+    m_fbs.clear();
+    m_views.clear();
+    m_sc = VK_NULL_HANDLE;
+    m_depth = VK_NULL_HANDLE;
+    m_depthMem = VK_NULL_HANDLE;
+    m_depthView = VK_NULL_HANDLE;
 }
 
 void VkApp::createDepth(VkExtent2D ext) {

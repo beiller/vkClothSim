@@ -34,6 +34,8 @@ public:
 
 private:
     void createDepth(VkExtent2D ext);
+    void recreateSwapchain();
+    void destroySwapchainResources();
 
     GLFWwindow* m_win = nullptr;
     VkInstance m_inst = VK_NULL_HANDLE;
@@ -51,6 +53,7 @@ private:
     VkDeviceMemory m_depthMem = VK_NULL_HANDLE;
     VkImageView m_depthView = VK_NULL_HANDLE;
     VkFormat m_scfmt = VK_FORMAT_UNDEFINED;
+    VkSurfaceFormatKHR m_fmt{};
     VkExtent2D m_extent{};
     VkCommandPool m_pool = VK_NULL_HANDLE;
     VkCommandBuffer m_cmd = VK_NULL_HANDLE;

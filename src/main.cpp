@@ -122,9 +122,13 @@ int main() {
     int frames = 0;
     bool held = true;
 
-    const float aspect = (float)app.extent().width / (float)app.extent().height;
-    const Mat4 vp = mul4(perspective(50.0f, aspect, 0.1f, 300.0f),
-                         lookAt({0.0f, 9.0f, 14.0f}, {0.0f, 3.0f, 0.0f}, {0.0f, 1.0f, 0.0f}));
+    const Mat4 view = lookAt({0.0f, 9.0f, 14.0f}, {0.0f, 3.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+    auto makeVP = [view](VkExtent2D ext) {
+        return mul4(perspective(50.0f, (float)ext.width / (float)ext.height, 0.1f, 300.0f), view);
+    };
+    const VkExtent2D initExt = app.extent();
+    const Mat4 vp = makeVP(initExt);
+    VkExtent2D lastExt = initExt;
 
     const int nInstances = (int)softs.size() + kNCapsules;
     Renderer renderer;
@@ -207,6 +211,11 @@ int main() {
         }
 
         app.pollEvents();
+        const VkExtent2D ext = app.extent();
+        if (ext.width != lastExt.width || ext.height != lastExt.height) {
+            lastExt = ext;
+            renderer.setViewProj(makeVP(ext));
+        }
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();

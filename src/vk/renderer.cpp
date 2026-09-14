@@ -115,7 +115,6 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     m_dev = app.device();
     m_pdev = app.pdev();
     m_rp = app.renderPass();
-    m_vp = viewProj;
 
     vkMakeBuffer(m_dev, m_pdev, m_vpUbuf, m_vpMem, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, viewProj.m);
     const auto binds = meshBinds();
@@ -161,6 +160,10 @@ int Renderer::addInstance(int geom) {
 
 void Renderer::setModel(int inst, const Mat4& model) {
     m_insts[inst].model = model;
+}
+
+void Renderer::setViewProj(const Mat4& vp) {
+    vkWriteBuffer(m_dev, m_vpMem, vp.m, 64);
 }
 
 void Renderer::drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const InstancedMesh& inst) {

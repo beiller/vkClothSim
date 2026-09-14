@@ -20,6 +20,7 @@ public:
     GpuMeshRef addMesh(const Mesh& mesh);
     int addInstance(int geom);
     void setModel(int inst, const Mat4& model);
+    void setViewProj(const Mat4& vp);
     void shutdown();
     void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui);
 
@@ -46,7 +47,6 @@ private:
     VkDevice m_dev = VK_NULL_HANDLE;
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;
     VkRenderPass m_rp = VK_NULL_HANDLE;
-    Mat4 m_vp{};
 
     VkBuffer m_vpUbuf = VK_NULL_HANDLE;
     VkDeviceMemory m_vpMem = VK_NULL_HANDLE;
