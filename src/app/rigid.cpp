@@ -13,7 +13,7 @@
 namespace {
 
 JPH::Quat jQuat(V4 q) {
-    return JPH::Quat(q.x, q.y, q.z, q.w);
+    return {q.x, q.y, q.z, q.w};
 }
 
 } // namespace
@@ -50,25 +50,18 @@ void RigidScene::init() {
     m_phys->OptimizeBroadPhase();
 }
 
-int RigidScene::addCapsule(const CapsuleCollider& collider) {
+void RigidScene::addCapsule(const CapsuleCollider& collider) {
     auto& bi = m_phys->GetBodyInterface();
     const CapsuleParams& params = collider.params();
     const V3 pos = collider.position();
     const V4 quat = collider.orientation();
-    JPH::BodyCreationSettings cs(new JPH::CapsuleShape(params.halfLen, params.radius),
-                                 JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat), JPH::EMotionType::Dynamic, 1);
+    JPH::BodyCreationSettings cs(new JPH::CapsuleShape(params.halfLen, params.radius), JPH::RVec3(pos.x, pos.y, pos.z),
+                                 jQuat(quat), JPH::EMotionType::Dynamic, 1);
     cs.mFriction = 0.7f;
     cs.mRestitution = 0.05f;
     cs.mLinearDamping = 0.05f;
-    JPH::BodyID id = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
+    const JPH::BodyID id = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
     m_bodies.push_back({id, params});
-    return (int)m_bodies.size() - 1;
-}
-
-void RigidScene::updateCollider(int handle, V3 pos, V4 quat) {
-    auto& bi = m_phys->GetBodyInterface();
-    bi.SetPosition(m_bodies[handle].id, JPH::RVec3(pos.x, pos.y, pos.z), JPH::EActivation::Activate);
-    bi.SetRotation(m_bodies[handle].id, jQuat(quat), JPH::EActivation::Activate);
 }
 
 void RigidScene::step(int n) {
@@ -88,30 +81,6 @@ std::vector<CapsulePose> RigidScene::capsulePose() const {
         JPH::Quat q = b.GetRotation();
         out[i].pos = {p.GetX(), p.GetY(), p.GetZ()};
         out[i].quat = {q.GetX(), q.GetY(), q.GetZ(), q.GetW()};
-    }
-    return out;
-}
-
-std::vector<CapsuleGPU> RigidScene::capsuleGPU() const {
-    std::vector<CapsuleGPU> out(m_bodies.size());
-    if (!m_phys)
-        return out;
-    const JPH::BodyLockInterface& li = m_phys->GetBodyLockInterface();
-    for (size_t i = 0; i < m_bodies.size(); ++i) {
-        JPH::BodyLockRead lock(li, m_bodies[i].id);
-        const JPH::Body& b = lock.GetBody();
-        JPH::Vec3 p = b.GetPosition();
-        JPH::Quat q = b.GetRotation();
-        const CapsuleParams& cp = m_bodies[i].params;
-        out[i].centerRadius[0] = p.GetX();
-        out[i].centerRadius[1] = p.GetY();
-        out[i].centerRadius[2] = p.GetZ();
-        out[i].centerRadius[3] = cp.radius;
-        out[i].quat[0] = q.GetX();
-        out[i].quat[1] = q.GetY();
-        out[i].quat[2] = q.GetZ();
-        out[i].quat[3] = q.GetW();
-        out[i].halfLen[0] = cp.halfLen;
     }
     return out;
 }

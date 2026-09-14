@@ -14,12 +14,9 @@
 class RigidScene {
 public:
     void init();
-    int addCapsule(const CapsuleCollider& collider);
-    void updateCollider(int handle, V3 pos, V4 quat);
+    void addCapsule(const CapsuleCollider& collider);
     void step(int n);
-    int capsuleCount() const { return (int)m_bodies.size(); }
     std::vector<CapsulePose> capsulePose() const;
-    std::vector<CapsuleGPU> capsuleGPU() const;
 
 private:
     struct RigidBody {

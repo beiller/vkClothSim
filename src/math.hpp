@@ -55,6 +55,15 @@ struct Mat4 {
     float m[16];
 };
 
+inline Mat4 mat4Identity() {
+    Mat4 r{};
+    r.m[0] = 1.0f;
+    r.m[5] = 1.0f;
+    r.m[10] = 1.0f;
+    r.m[15] = 1.0f;
+    return r;
+}
+
 inline Mat4 mul4(const Mat4& a, const Mat4& b) {
     Mat4 r{};
     for (int c = 0; c < 4; ++c)

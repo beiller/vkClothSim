@@ -2,53 +2,56 @@
 #include "capsule.hpp"
 #include "mesh.hpp"
 #include "sim/sim.hpp"
+#include <algorithm>
+#include <cmath>
 #include <map>
 
-struct SoftMesh {
-    Mesh mesh;
-    std::vector<sim::Constraint> cons;
-};
-
-inline SoftMesh makeCloth(int CW, int CH, float span, float y0) {
-    SoftMesh out;
+inline Mesh makeClothMesh(int CW, int CH, float span, float y0) {
+    Mesh out;
     const int CN = CW * CH;
-    out.mesh.pos.assign((size_t)3 * CN, 0.0f);
-    out.mesh.nrm.assign((size_t)3 * CN, 0.0f);
-    out.mesh.col.assign((size_t)3 * CN, 0.0f);
+    out.pos.assign((size_t)3 * CN, 0.0f);
+    out.nrm.assign((size_t)3 * CN, 0.0f);
+    out.col.assign((size_t)3 * CN, 0.0f);
     const V3 clothCol{0.25f, 0.45f, 0.78f};
     for (int gy = 0; gy < CH; ++gy)
         for (int gx = 0; gx < CW; ++gx) {
             int i = gy * CW + gx;
             const float x = -span / 2 + span * (float)gx / (float)(CW - 1);
             const float z = -span / 2 + span * (float)gy / (float)(CH - 1);
-            vStore(out.mesh.pos.data(), i, {x, y0, z});
-            out.mesh.nrm[3 * i + 1] = 1.0f;
-            vStore(out.mesh.col.data(), i, clothCol);
+            vStore(out.pos.data(), i, {x, y0, z});
+            out.nrm[3 * i + 1] = 1.0f;
+            vStore(out.col.data(), i, clothCol);
         }
+    for (int gy = 0; gy < CH - 1; ++gy)
+        for (int gx = 0; gx < CW - 1; ++gx) {
+            auto a = (uint32_t)(gy * CW + gx);
+            out.indices.push_back(a);
+            out.indices.push_back(a + 1);
+            out.indices.push_back(a + (uint32_t)CW);
+            out.indices.push_back(a + 1);
+            out.indices.push_back(a + (uint32_t)CW + 1);
+            out.indices.push_back(a + (uint32_t)CW);
+        }
+    return out;
+}
+
+inline std::vector<sim::Constraint> makeClothCons(int CW, int CH, float span) {
+    std::vector<sim::Constraint> cons;
+    const int CN = CW * CH;
     const float spacing = span / (float)(CW - 1);
     const float diag = spacing * kSqrt2;
     for (int i = 0; i < CN; ++i) {
         int gx = i % CW, gy = i / CW;
         if (gx < CW - 1)
-            out.cons.push_back({i, i + 1, spacing, 1.0f});
+            cons.push_back({i, i + 1, spacing, 1.0f});
         if (gy < CH - 1)
-            out.cons.push_back({i, i + CW, spacing, 1.0f});
+            cons.push_back({i, i + CW, spacing, 1.0f});
         if (gx < CW - 1 && gy < CH - 1)
-            out.cons.push_back({i, i + CW + 1, diag, 1.0f});
+            cons.push_back({i, i + CW + 1, diag, 1.0f});
         if (gx > 0 && gy < CH - 1)
-            out.cons.push_back({i, i + CW - 1, diag, 1.0f});
+            cons.push_back({i, i + CW - 1, diag, 1.0f});
     }
-    for (int gy = 0; gy < CH - 1; ++gy)
-        for (int gx = 0; gx < CW - 1; ++gx) {
-            auto a = (uint32_t)(gy * CW + gx);
-            out.mesh.indices.push_back(a);
-            out.mesh.indices.push_back(a + 1);
-            out.mesh.indices.push_back(a + (uint32_t)CW);
-            out.mesh.indices.push_back(a + 1);
-            out.mesh.indices.push_back(a + (uint32_t)CW + 1);
-            out.mesh.indices.push_back(a + (uint32_t)CW);
-        }
-    return out;
+    return cons;
 }
 
 struct IcoSphere {
@@ -92,8 +95,8 @@ inline IcoSphere makeIcosphere(int subdiv) {
     return {verts, tris};
 }
 
-inline void addBallEdges(SoftMesh& mesh, const std::vector<uint32_t>& tris) {
-    const float* pos = mesh.mesh.pos.data();
+inline void addBallEdges(const Mesh& mesh, std::vector<sim::Constraint>& cons, const std::vector<uint32_t>& tris) {
+    const float* pos = mesh.pos.data();
     std::map<uint64_t, bool> seen;
     for (size_t f = 0; f < tris.size(); f += 3) {
         const uint32_t e[3][2] = {{tris[f], tris[f + 1]}, {tris[f + 1], tris[f + 2]}, {tris[f + 2], tris[f]}};
@@ -104,14 +107,14 @@ inline void addBallEdges(SoftMesh& mesh, const std::vector<uint32_t>& tris) {
             if (seen.contains(key))
                 continue;
             seen[key] = true;
-            mesh.cons.push_back({lo, hi, vLen(vSub(vAt(pos, lo), vAt(pos, hi))), 0.5f});
+            cons.push_back({lo, hi, vLen(vSub(vAt(pos, lo), vAt(pos, hi))), 0.5f});
         }
     }
 }
 
-inline void addAntipodalTies(SoftMesh& mesh) {
-    const int n = mesh.mesh.vertexCount();
-    const float* pos = mesh.mesh.pos.data();
+inline void addAntipodalTies(const Mesh& mesh, std::vector<sim::Constraint>& cons) {
+    const int n = mesh.vertexCount();
+    const float* pos = mesh.pos.data();
     V3 c{0, 0, 0};
     for (int i = 0; i < n; ++i)
         c = vAdd(c, vAt(pos, i));
@@ -133,30 +136,35 @@ inline void addAntipodalTies(SoftMesh& mesh) {
         }
         if (partner <= i)
             continue;
-        mesh.cons.push_back({i, partner, vLen(vSub(vAt(pos, i), vAt(pos, partner))), 0.5f});
+        cons.push_back({i, partner, vLen(vSub(vAt(pos, i), vAt(pos, partner))), 0.5f});
     }
 }
 
-inline SoftMesh makeBall(float radius, float y0, int subdiv = 3) {
+inline Mesh makeBallMesh(float radius, float y0, int subdiv = 3) {
     IcoSphere ico = makeIcosphere(subdiv);
     const int n = (int)ico.verts.size();
-    SoftMesh out;
-    out.mesh.pos.assign((size_t)3 * n, 0.0f);
-    out.mesh.nrm.assign((size_t)3 * n, 0.0f);
-    out.mesh.col.assign((size_t)3 * n, 0.0f);
-    out.mesh.indices = ico.tris;
+    Mesh out;
+    out.pos.assign((size_t)3 * n, 0.0f);
+    out.nrm.assign((size_t)3 * n, 0.0f);
+    out.col.assign((size_t)3 * n, 0.0f);
+    out.indices = ico.tris;
     const V3 center{0, y0, 0};
     const V3 ballCol{0.85f, 0.35f, 0.25f};
     for (int i = 0; i < n; ++i) {
         const V3 dir = ico.verts[i];
         const V3 p = vAdd(center, vScale(dir, radius));
-        vStore(out.mesh.pos.data(), i, p);
-        vStore(out.mesh.nrm.data(), i, dir);
-        vStore(out.mesh.col.data(), i, ballCol);
+        vStore(out.pos.data(), i, p);
+        vStore(out.nrm.data(), i, dir);
+        vStore(out.col.data(), i, ballCol);
     }
-    addBallEdges(out, ico.tris);
-    addAntipodalTies(out);
     return out;
+}
+
+inline std::vector<sim::Constraint> makeBallCons(const Mesh& mesh) {
+    std::vector<sim::Constraint> cons;
+    addBallEdges(mesh, cons, mesh.indices);
+    addAntipodalTies(mesh, cons);
+    return cons;
 }
 
 inline Mesh makeCapsuleMesh(int nCaps) {
@@ -167,11 +175,38 @@ inline Mesh makeCapsuleMesh(int nCaps) {
     m.col.assign(3 * vcount, 0.0f);
     const int S = kCapPhiSegs, M = kCapYRows;
     const int VPC = (int)kCapVPC;
+    const float R = kCapsule.radius, H = kCapsule.halfLen;
+    const float top = H + R, bot = -H - R, twoPi = 2.0f * kPi;
+    const V3 capCol{0.85f, 0.35f, 0.30f};
     for (int ci = 0; ci < nCaps; ++ci) {
         const uint32_t capBase = (uint32_t)ci * VPC;
+        for (int i = 0; i <= M; ++i) {
+            const float y = top - (float)i / M * (top - bot);
+            float dy = 0.0f;
+            if (y >= H)
+                dy = y - H;
+            else if (y <= -H)
+                dy = y + H;
+            float r, dr;
+            if (dy == 0.0f) {
+                r = R;
+                dr = 0.0f;
+            } else {
+                r = std::sqrt(std::max(0.0f, R * R - dy * dy));
+                dr = (r > 1e-5f) ? -dy / r : 0.0f;
+            }
+            for (int j = 0; j < S; ++j) {
+                const float phi = (float)j / S * twoPi;
+                const float cp = std::cos(phi), sp = std::sin(phi);
+                const int v = (int)(capBase + (size_t)i * S + (size_t)j);
+                vStore(m.pos.data(), v, {r * cp, y, r * sp});
+                vStore(m.nrm.data(), v, {cp, -dr, sp});
+                vStore(m.col.data(), v, capCol);
+            }
+        }
         for (int i = 0; i < M; ++i)
             for (int j = 0; j < S; ++j) {
-                const uint32_t jn = (uint32_t)((j + 1) % S);
+                const auto jn = (uint32_t)((j + 1) % S);
                 const uint32_t a = capBase + (uint32_t)i * S + (uint32_t)j;
                 const uint32_t b = capBase + (uint32_t)i * S + jn;
                 const uint32_t c = capBase + (uint32_t)(i + 1) * S + (uint32_t)j;

@@ -50,7 +50,7 @@ void SoftSim::addCapsule(const CapsuleCollider& collider) {
 void SoftSim::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw) {
     GpuBody b;
     b.soft.init(mesh, cons);
-    const int n = b.soft.n;
+    const auto vn = (VkDeviceSize)b.soft.n;
     b.pos = rw.pos.buffer;
     b.posMem = rw.pos.memory;
     b.nrm = rw.nrm.buffer;
@@ -58,15 +58,15 @@ void SoftSim::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& 
     auto mk = [this](VkBuffer& buf, VkDeviceMemory& mem, VkDeviceSize bytes, const void* data) {
         vkMakeBuffer(m_dev, m_pdev, buf, mem, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, data);
     };
-    mk(b.prev, b.prevMem, 12 * n, b.soft.pos0.data());
-    mk(b.sub0, b.sub0Mem, 12 * n, b.soft.pos0.data());
-    mk(b.contactN, b.contactNMem, 16 * n, nullptr);
-    mk(b.contactL, b.contactLMem, 4 * n, nullptr);
+    mk(b.prev, b.prevMem, 12 * vn, b.soft.pos0.data());
+    mk(b.sub0, b.sub0Mem, 12 * vn, b.soft.pos0.data());
+    mk(b.contactN, b.contactNMem, 16 * vn, nullptr);
+    mk(b.contactL, b.contactLMem, 4 * vn, nullptr);
     mk(b.entries, b.entriesMem, 16 * b.soft.entries.size(), b.soft.entries.data());
-    mk(b.entryStart, b.entryStartMem, 4 * (n + 1), b.soft.entryStart.data());
-    mk(b.colorVerts, b.colorVertsMem, 4 * n, b.soft.colorVerts.data());
+    mk(b.entryStart, b.entryStartMem, 4 * (vn + 1), b.soft.entryStart.data());
+    mk(b.colorVerts, b.colorVertsMem, 4 * vn, b.soft.colorVerts.data());
     mk(b.tris, b.trisMem, 4 * mesh.indices.size(), mesh.indices.data());
-    mk(b.triStart, b.triStartMem, 4 * (n + 1), b.soft.triStart.data());
+    mk(b.triStart, b.triStartMem, 4 * (vn + 1), b.soft.triStart.data());
     mk(b.triList, b.triListMem, 4 * b.soft.triList.size(), b.soft.triList.data());
     m_body.push_back(std::move(b));
 }

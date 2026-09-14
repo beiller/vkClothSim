@@ -29,7 +29,6 @@ inline constexpr CapsuleParams kCapsule{kCapsuleHalfLen, kCapsuleRadius};
 
 class CapsuleCollider {
 public:
-    explicit CapsuleCollider(CapsuleParams params) : m_params(params) {}
     CapsuleCollider(CapsuleParams params, V3 position, V4 orientation)
         : m_params(params), m_position(position), m_orientation(orientation) {}
     const CapsuleParams& params() const { return m_params; }
@@ -38,13 +37,6 @@ public:
 
 private:
     CapsuleParams m_params;
-    V3 m_position{0.0f, 0.0f, 0.0f};
-    V4 m_orientation{0.0f, 0.0f, 0.0f, 1.0f};
+    V3 m_position;
+    V4 m_orientation;
 };
-
-inline CapsuleCollider capsuleCollider(CapsuleParams params) {
-    return CapsuleCollider(params);
-}
-inline CapsuleCollider capsuleCollider(CapsuleParams params, V3 position, V4 orientation) {
-    return CapsuleCollider(params, position, orientation);
-}

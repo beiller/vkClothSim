@@ -92,9 +92,9 @@ inline void vkMakeDslPool(VkDevice dev, const std::vector<VkDescriptorSetLayoutB
         auto it =
             std::ranges::find_if(sizes, [&](const VkDescriptorPoolSize& s) { return s.type == b.descriptorType; });
         if (it == sizes.end())
-            sizes.push_back({b.descriptorType, 1});
+            sizes.push_back({b.descriptorType, maxSets});
         else
-            ++it->descriptorCount;
+            it->descriptorCount += maxSets;
     }
     VkDescriptorPoolCreateInfo dpc{};
     dpc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
