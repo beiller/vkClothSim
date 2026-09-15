@@ -4,7 +4,7 @@ void drawOverlay(UIState& ui, bool clothPinned, bool& clothReset, bool& ballRese
     clothReset = false;
     ballReset = false;
     ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(320, 220), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(320, 410), ImGuiCond_Always);
     ImGui::Begin("3dsim");
     ImGui::ColorEdit3("background", ui.bgColor);
     ImGui::Text("%.1f fps", ImGui::GetIO().Framerate);
@@ -17,6 +17,10 @@ void drawOverlay(UIState& ui, bool clothPinned, bool& clothReset, bool& ballRese
     ImGui::SliderFloat("stiffness", &ui.sim.stiffness, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("tension", &ui.sim.tension, 0.5f, 1.5f, "%.2f");
     ImGui::SliderFloat("friction", &ui.sim.friction, 0.0f, 50.0f, "%.2f");
+    ImGui::SeparatorText("cloth substeps / frame");
+    ImGui::SliderInt("cloth", &ui.clothSteps, 1, 32);
+    ImGui::SeparatorText("jolt iterations");
+    ImGui::SliderInt("velocity", &ui.joltIters, 1, 64);
     if (ImGui::Button("reset params"))
         ui.sim = SimParams{};
     if (ImGui::Button("reset ball"))

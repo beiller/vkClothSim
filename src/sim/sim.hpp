@@ -8,7 +8,6 @@
 namespace sim {
 
 inline constexpr float kGravity = -9.81f;
-inline constexpr int kSubsteps = 3;
 
 inline void prefixSum(std::vector<int>& v) {
     for (size_t i = 1; i < v.size(); ++i)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint.sh — the code linters for 3dsim.
-#   ./lint.sh     check: clang-format (fails on diffs) + clang-tidy over src/
+#   ./lint.sh     check: clang-format (fails on diffs) + clang-tidy over src/ + glslang over shaders/
 #   ./lint.sh -f  same, but also rewrites formatting in place
 # The vendored libraries (lib/) are never linted. clang-tidy uses the CMake compile
 # database (build/compile_commands.json; reconfigured automatically if missing).
@@ -38,5 +38,14 @@ EOF
 echo "== clang-tidy ($(echo $DBFILES | wc -w) TUs) =="
 # shellcheck disable=SC2086
 clang-tidy -p build --header-filter='3dsim/src/' $DBFILES
+
+# glslangValidator validates each shader against the Vulkan target (the shaders use
+# Vulkan builtins like gl_VertexIndex / push_constant, which the default OpenGL target
+# rejects). Stage is inferred from the file extension (.vert/.frag/.comp).
+SHADERS=$(find shaders -name '*.vert' -o -name '*.frag' -o -name '*.comp')
+
+echo "== glsl ($(echo $SHADERS | wc -w) shaders) =="
+# shellcheck disable=SC2086
+glslangValidator --target-env vulkan1.1 $SHADERS
 
 echo "== ok =="

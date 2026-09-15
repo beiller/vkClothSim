@@ -173,11 +173,11 @@ void SoftSim::recordBody(VkCommandBuffer cmd, const GpuBody& b, int iters, int p
     recordMode(cmd, b, 2, n, 0);
 }
 
-void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask) {
+void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int steps, int pinnedMask) {
     PhysParams phys{};
     phys.nCaps = (int)m_colliders.size();
-    phys.dt = kFrameDt / sim::kSubsteps;
-    phys.damping = std::pow(p.damping, 1.0f / (float)sim::kSubsteps);
+    phys.dt = kFrameDt / (float)steps;
+    phys.damping = std::pow(p.damping, 1.0f / (float)steps);
     phys.gravity = sim::kGravity * p.mass;
     phys.friction = p.friction;
     phys.skin = kSkin;
@@ -195,7 +195,7 @@ void SoftSim::record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask) {
 
     for (size_t i = 0; i < m_body.size(); ++i) {
         const int pinned = (pinnedMask >> (int)i) & 1;
-        for (int s = 0; s < sim::kSubsteps; ++s)
+        for (int s = 0; s < steps; ++s)
             recordBody(cmd, m_body[i], p.passes, pinned);
     }
     for (size_t i = 0; i < m_body.size(); ++i)

@@ -15,7 +15,8 @@ class RigidScene {
 public:
     void init();
     void addCapsule(const CapsuleCollider& collider);
-    void step(int n);
+    void step();
+    void setVelocitySteps(int n);
     std::vector<CapsulePose> capsulePose() const;
 
 private:
@@ -25,6 +26,7 @@ private:
     };
 
     std::vector<RigidBody> m_bodies;
+    JPH::PhysicsSettings m_settings;
     JPH::PhysicsSystem* m_phys = nullptr;
     JPH::JobSystemThreadPool* m_job = nullptr;
     JPH::TempAllocatorImpl* m_temp = nullptr;

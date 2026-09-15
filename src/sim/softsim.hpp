@@ -18,7 +18,7 @@ public:
     void build();
     void shutdown();
     void syncColliders(std::span<const CapsulePose> poses);
-    void record(VkCommandBuffer cmd, const SimParams& p, int pinnedMask);
+    void record(VkCommandBuffer cmd, const SimParams& p, int steps, int pinnedMask);
     void reset(int mask);
 
 private:

@@ -64,9 +64,13 @@ void RigidScene::addCapsule(const CapsuleCollider& collider) {
     m_bodies.push_back({id, params});
 }
 
-void RigidScene::step(int n) {
-    for (int i = 0; i < n; ++i)
-        m_phys->Update(kFrameDt, 1, m_temp, m_job);
+void RigidScene::step() {
+    m_phys->Update(kFrameDt, 1, m_temp, m_job);
+}
+
+void RigidScene::setVelocitySteps(int n) {
+    m_settings.mNumVelocitySteps = (unsigned)n;
+    m_phys->SetPhysicsSettings(m_settings);
 }
 
 std::vector<CapsulePose> RigidScene::capsulePose() const {

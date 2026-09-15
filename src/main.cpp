@@ -10,7 +10,6 @@
 #include "sim/softsim.hpp"
 #include "vk/renderer.hpp"
 #include "vk/vkapp.hpp"
-#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <imgui.h>
@@ -181,34 +180,21 @@ int main() {
 
     UIState ui;
     std::printf("3dsim: vulkan+imgui | GPU soft-body sim | R to reset | esc/close to quit\n");
-    const double kStepSec = kFrameDt;
-    double prevTime = glfwGetTime();
-    double accumulator = 0.0;
 
     while (!app.windowShouldClose()) {
         if (app.keyIsDown(GLFW_KEY_R))
             resetAll();
 
-        double now = glfwGetTime();
-        double frameTime = std::min(now - prevTime, 4.0 * kStepSec);
-        prevTime = now;
-        accumulator += frameTime;
-        int steps = 0;
-        while (accumulator >= kStepSec && steps < 4) {
-            accumulator -= kStepSec;
-            ++steps;
-        }
-        if (steps > 0) {
-            rigid.step(steps);
-            frames += steps;
-            if (frames >= kHoldFrames)
-                held = false;
-            sim.syncColliders(rigid.capsulePose());
-            VkCommandBuffer simCmd = app.beginCommands();
-            for (int s = 0; s < steps; ++s)
-                sim.record(simCmd, ui.sim, pinnedMask(softs, held));
-            app.submit(simCmd);
-        }
+        ++frames;
+        if (frames >= kHoldFrames)
+            held = false;
+
+        rigid.setVelocitySteps(ui.joltIters);
+        rigid.step();
+        sim.syncColliders(rigid.capsulePose());
+        VkCommandBuffer simCmd = app.beginCommands();
+        sim.record(simCmd, ui.sim, ui.clothSteps, pinnedMask(softs, held));
+        app.submit(simCmd);
 
         app.pollEvents();
         const VkExtent2D ext = app.extent();
