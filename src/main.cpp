@@ -129,9 +129,12 @@ int main() {
     const Mat4 vp = makeVP(initExt);
     VkExtent2D lastExt = initExt;
 
-    const int nInstances = (int)softs.size() + kNCapsules;
+    const int nInstances = (int)softs.size() + kNCapsules + 1;
     Renderer renderer;
     renderer.init(app, nInstances, vp);
+
+    const Renderer::GpuMeshRef groundRef = renderer.addMesh(makeGroundMesh());
+    renderer.addInstance(groundRef.geom);
 
     const Renderer::GpuMeshRef capGeom = renderer.addMesh(makeCapsuleMesh(1));
     std::vector<int> capInsts;

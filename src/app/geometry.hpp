@@ -167,6 +167,24 @@ inline std::vector<sim::Constraint> makeBallCons(const Mesh& mesh) {
     return cons;
 }
 
+inline Mesh makeGroundMesh() {
+    Mesh m;
+    const float G = 55.0f;
+    const V3 corners[4] = {{-G, 0.0f, -G}, {G, 0.0f, -G}, {G, 0.0f, G}, {-G, 0.0f, G}};
+    const V3 up{0.0f, 0.0f, 1.0f};
+    const V3 groundCol{0.19f, 0.21f, 0.17f};
+    m.pos.assign(3 * 4, 0.0f);
+    m.nrm.assign(3 * 4, 0.0f);
+    m.col.assign(3 * 4, 0.0f);
+    for (int i = 0; i < 4; ++i) {
+        vStore(m.pos.data(), i, corners[i]);
+        vStore(m.nrm.data(), i, up);
+        vStore(m.col.data(), i, groundCol);
+    }
+    m.indices = {0, 1, 2, 0, 2, 3};
+    return m;
+}
+
 inline Mesh makeCapsuleMesh(int nCaps) {
     Mesh m;
     const size_t vcount = (size_t)nCaps * kCapVPC;

@@ -94,21 +94,6 @@ VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void* vsSpv
     return pipe;
 }
 
-void buildGroundMesh(Mesh& m) {
-    const float G = 55.0f;
-    const float gv[4][3] = {{-G, 0.0f, -G}, {G, 0.0f, -G}, {G, 0.0f, G}, {-G, 0.0f, G}};
-    const float COL[3] = {0.19f, 0.21f, 0.17f};
-    m.pos.clear();
-    m.nrm.clear();
-    m.col.clear();
-    for (const auto& v : gv) {
-        m.pos.insert(m.pos.end(), {v[0], v[1], v[2]});
-        m.nrm.insert(m.nrm.end(), {0.0f, 0.0f, 1.0f});
-        m.col.insert(m.col.end(), {COL[0], COL[1], COL[2]});
-    }
-    m.indices = {0, 1, 2, 0, 2, 3};
-}
-
 } // namespace
 
 void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
@@ -118,15 +103,10 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
 
     vkMakeBuffer(m_dev, m_pdev, m_vpUbuf, m_vpMem, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, viewProj.m);
     const auto binds = meshBinds();
-    vkMakeDslPool(m_dev, binds, (uint32_t)nInstances + 1, m_dsl, m_pool);
+    vkMakeDslPool(m_dev, binds, (uint32_t)nInstances, m_dsl, m_pool);
     m_pl = vkMakePipelineLayout(m_dev, m_dsl);
     m_pipe = makeGraphicsPipeline(m_dev, m_rp, mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
-                                  mesh_frag_spv_len / 4, m_pl);
-
-    Mesh ground;
-    buildGroundMesh(ground);
-    const GpuMeshRef groundRef = addMesh(ground);
-    addInstance(groundRef.geom);
+                                   mesh_frag_spv_len / 4, m_pl);
 }
 
 Renderer::GpuMeshRef Renderer::addMesh(const Mesh& mesh) {
