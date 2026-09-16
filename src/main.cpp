@@ -2,6 +2,7 @@
 
 #include <GLFW/glfw3.h>
 
+#include "api.hpp"
 #include "app/geometry.hpp"
 #include "app/rigid.hpp"
 #include "app/ui.hpp"
@@ -12,6 +13,7 @@
 #include "vk/vkapp.hpp"
 #include <cmath>
 #include <cstdio>
+#include <entt/entt.hpp>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
@@ -29,16 +31,6 @@ constexpr float kBallRadius = 1.5f;
 constexpr float kBallY0 = 12.0f;
 constexpr int kNCapsules = 50;
 
-struct Soft {
-    Mesh mesh;
-    std::vector<sim::Constraint> cons;
-    bool pinned = false;
-};
-
-Soft makeSoft(Mesh mesh, std::vector<sim::Constraint> cons, bool pinned) {
-    return {std::move(mesh), std::move(cons), pinned};
-}
-
 V4 quatAxisAngle(V3 axis, float angle) {
     V3 a = vNorm(axis);
     const float s = std::sin(0.5f * angle);
@@ -50,23 +42,24 @@ V4 quatMul(V4 a, V4 b) {
             a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
 }
 
-void scatterCapsules(RigidScene& rigid, std::vector<CapsuleCollider>& colliders, int n) {
+void scatterCapsules(RigidScene& rigid, std::vector<RigidBody>& bodies, int n) {
     std::mt19937 rng(12345); // NOLINT(bugprone-random-generator-seed)
     std::uniform_real_distribution<float> rnd(0.0f, 1.0f);
-    colliders.reserve(n);
+    bodies.reserve(n);
     for (int i = 0; i < n; ++i) {
         const float px = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
         const float py = 4.5f + 3.5f * rnd(rng);
         const float pz = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
         const V4 rot = quatMul(quatAxisAngle({0, 1, 0}, rnd(rng) * 2.0f * kPi),
                                quatAxisAngle({1, 0, 0}, (rnd(rng) * 2.0f - 1.0f) * 0.9f));
-        const CapsuleCollider c(kCapsule, {px, py, pz}, rot);
-        rigid.addCapsule(c);
-        colliders.push_back(c);
+        RigidBody b;
+        b.collider = {kCapsule, {px, py, pz}, rot};
+        rigid.addRigidBody(b);
+        bodies.push_back(std::move(b));
     }
 }
 
-int pinnedMask(const std::vector<Soft>& softs, bool held) {
+int pinnedMask(const std::vector<SoftBody>& softs, bool held) {
     if (!held)
         return 0;
     int mask = 0;
@@ -75,6 +68,8 @@ int pinnedMask(const std::vector<Soft>& softs, bool held) {
             mask |= 1 << i;
     return mask;
 }
+
+void update(entt::registry&) {}
 
 Mat4 poseToMat4(const CapsulePose& p) {
     const float q[4] = {p.quat.x, p.quat.y, p.quat.z, p.quat.w};
@@ -106,16 +101,16 @@ int main() {
 
     RigidScene rigid;
     rigid.init();
-    std::vector<CapsuleCollider> colliders;
-    scatterCapsules(rigid, colliders, kNCapsules);
+    std::vector<RigidBody> bodies;
+    scatterCapsules(rigid, bodies, kNCapsules);
 
     const Mesh clothMesh = makeClothMesh(kCW, kCH, kClothSpan, kClothY0);
     const Mesh ballMesh = makeBallMesh(kBallRadius, kBallY0, kBallSubdiv);
-    std::vector<Soft> softs;
+    std::vector<SoftBody> softs;
     const int clothIdx = (int)softs.size();
-    softs.push_back(makeSoft(clothMesh, makeClothCons(kCW, kCH, kClothSpan), true));
+    softs.push_back(SoftBody{clothMesh, makeClothCons(kCW, kCH, kClothSpan), {}, true});
     const int ballIdx = (int)softs.size();
-    softs.push_back(makeSoft(ballMesh, makeBallCons(ballMesh), false));
+    softs.push_back(SoftBody{ballMesh, makeBallCons(ballMesh), {}, false});
     const int allBodies = (1 << (int)softs.size()) - 1;
 
     int frames = 0;
@@ -144,14 +139,16 @@ int main() {
 
     SoftSim sim;
     sim.init(app.device(), app.pdev());
-    for (const CapsuleCollider& c : colliders)
-        sim.addCapsule(c);
-    for (const Soft& s : softs) {
+    for (const RigidBody& b : bodies)
+        sim.addCapsule(b.collider);
+    for (const SoftBody& s : softs) {
         const Renderer::GpuMeshRef ref = renderer.addMesh(s.mesh);
         renderer.addInstance(ref.geom);
         sim.addSoftBody(s.mesh, s.cons, ref.rw);
     }
     sim.build();
+
+    entt::registry registry;
 
     auto resetAll = [&] {
         frames = 0;
@@ -185,6 +182,7 @@ int main() {
     std::printf("3dsim: vulkan+imgui | GPU soft-body sim | R to reset | esc/close to quit\n");
 
     while (!app.windowShouldClose()) {
+        update(registry);
         if (app.keyIsDown(GLFW_KEY_R))
             resetAll();
 

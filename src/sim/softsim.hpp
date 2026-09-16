@@ -1,6 +1,7 @@
 #pragma once
 #include <vulkan/vulkan.h>
 
+#include "api.hpp"
 #include "capsule.hpp"
 #include "gpuverts.hpp"
 #include "mesh.hpp"
@@ -13,7 +14,7 @@
 class SoftSim {
 public:
     void init(VkDevice dev, VkPhysicalDevice pdev);
-    void addCapsule(const CapsuleCollider& collider);
+    void addCapsule(const Collider& collider);
     void addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw);
     void build();
     void shutdown();

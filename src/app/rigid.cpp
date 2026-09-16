@@ -50,16 +50,16 @@ void RigidScene::init() {
     m_phys->OptimizeBroadPhase();
 }
 
-void RigidScene::addCapsule(const CapsuleCollider& collider) {
+void RigidScene::addRigidBody(const RigidBody& body) {
     auto& bi = m_phys->GetBodyInterface();
-    const CapsuleParams& params = collider.params();
-    const V3 pos = collider.position();
-    const V4 quat = collider.orientation();
+    const CapsuleParams& params = body.collider.params;
+    const V3 pos = body.collider.position;
+    const V4 quat = body.collider.orientation;
     JPH::BodyCreationSettings cs(new JPH::CapsuleShape(params.halfLen, params.radius), JPH::RVec3(pos.x, pos.y, pos.z),
                                  jQuat(quat), JPH::EMotionType::Dynamic, 1);
-    cs.mFriction = 0.7f;
-    cs.mRestitution = 0.05f;
-    cs.mLinearDamping = 0.05f;
+    cs.mFriction = body.friction;
+    cs.mRestitution = body.restitution;
+    cs.mLinearDamping = body.damping;
     const JPH::BodyID id = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
     m_bodies.push_back({id, params});
 }

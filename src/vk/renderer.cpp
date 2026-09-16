@@ -106,7 +106,7 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     vkMakeDslPool(m_dev, binds, (uint32_t)nInstances, m_dsl, m_pool);
     m_pl = vkMakePipelineLayout(m_dev, m_dsl);
     m_pipe = makeGraphicsPipeline(m_dev, m_rp, mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
-                                   mesh_frag_spv_len / 4, m_pl);
+                                  mesh_frag_spv_len / 4, m_pl);
 }
 
 Renderer::GpuMeshRef Renderer::addMesh(const Mesh& mesh) {

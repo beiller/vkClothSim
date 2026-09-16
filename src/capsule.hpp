@@ -26,17 +26,3 @@ static_assert(sizeof(CapsuleGPU) == 48);
 inline constexpr float kCapsuleRadius = 0.5f;
 inline constexpr float kCapsuleHalfLen = 0.9f;
 inline constexpr CapsuleParams kCapsule{kCapsuleHalfLen, kCapsuleRadius};
-
-class CapsuleCollider {
-public:
-    CapsuleCollider(CapsuleParams params, V3 position, V4 orientation)
-        : m_params(params), m_position(position), m_orientation(orientation) {}
-    const CapsuleParams& params() const { return m_params; }
-    V3 position() const { return m_position; }
-    V4 orientation() const { return m_orientation; }
-
-private:
-    CapsuleParams m_params;
-    V3 m_position;
-    V4 m_orientation;
-};

@@ -68,6 +68,7 @@ target_include_directories(vksim PRIVATE
     ${GEN_DIR}
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
+    ${CMAKE_SOURCE_DIR}/lib/entt/single_include
     ${CMAKE_SOURCE_DIR}/src)
 
 

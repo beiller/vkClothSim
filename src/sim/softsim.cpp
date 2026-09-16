@@ -43,8 +43,8 @@ void SoftSim::init(VkDevice dev, VkPhysicalDevice pdev) {
     m_pdev = pdev;
 }
 
-void SoftSim::addCapsule(const CapsuleCollider& collider) {
-    m_colliders.push_back(collider.params());
+void SoftSim::addCapsule(const Collider& collider) {
+    m_colliders.push_back(collider.params);
 }
 
 void SoftSim::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw) {
