@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "capsule.hpp"
 #include "mesh.hpp"
 #include "sim/params.hpp"
@@ -6,6 +7,11 @@
 namespace sim {
 struct Constraint;
 }
+
+struct Timer {
+    float time = 0.0f;
+    std::function<void()> onExpire;
+};
 
 struct Collider {
     CapsuleParams params;

@@ -11,6 +11,7 @@
 #include "sim/softsim.hpp"
 #include "vk/renderer.hpp"
 #include "vk/vkapp.hpp"
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <entt/entt.hpp>
@@ -23,7 +24,7 @@
 namespace {
 
 constexpr int kCW = 64, kCH = 64;
-constexpr int kHoldFrames = 150;
+constexpr float kHoldTime = 3.0f;
 constexpr float kClothSpan = 8.0f;
 constexpr float kClothY0 = 10.0f;
 constexpr int kBallSubdiv = 2;
@@ -69,7 +70,20 @@ int pinnedMask(const std::vector<SoftBody>& softs, bool held) {
     return mask;
 }
 
-void update(entt::registry&) {}
+void update(entt::registry &registry, float dt) {
+    auto view = registry.view<Timer>();
+    std::vector<entt::entity> expired;
+    for(auto [entity, timer]: view.each()) {
+        timer.time -= dt;
+        if (timer.time <= 0.0f)
+            expired.push_back(entity);
+    }
+    for(entt::entity e: expired) {
+        if(auto timer = registry.try_get<Timer>(e); timer && timer->onExpire)
+            timer->onExpire();
+        registry.remove<Timer>(e);
+    }
+}
 
 Mat4 poseToMat4(const CapsulePose& p) {
     const float q[4] = {p.quat.x, p.quat.y, p.quat.z, p.quat.w};
@@ -113,7 +127,6 @@ int main() {
     softs.push_back(SoftBody{ballMesh, makeBallCons(ballMesh), {}, false});
     const int allBodies = (1 << (int)softs.size()) - 1;
 
-    int frames = 0;
     bool held = true;
 
     const Mat4 view = lookAt({0.0f, 9.0f, 14.0f}, {0.0f, 3.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
@@ -150,9 +163,18 @@ int main() {
 
     entt::registry registry;
 
-    auto resetAll = [&] {
-        frames = 0;
+    const entt::entity holdTimer = registry.create();
+    auto armHoldTimer = [&] {
         held = true;
+        if(auto timer = registry.try_get<Timer>(holdTimer))
+            timer->time = kHoldTime;
+        else
+            registry.emplace<Timer>(holdTimer, kHoldTime, [&held] { held = false; });
+    };
+    armHoldTimer();
+
+    auto resetAll = [&] {
+        armHoldTimer();
         sim.reset(allBodies);
     };
 
@@ -181,14 +203,14 @@ int main() {
     UIState ui;
     std::printf("3dsim: vulkan+imgui | GPU soft-body sim | R to reset | esc/close to quit\n");
 
+    auto lastFrame = std::chrono::steady_clock::now();
     while (!app.windowShouldClose()) {
-        update(registry);
+        const auto nowFrame = std::chrono::steady_clock::now();
+        const float dt = std::chrono::duration<float>(nowFrame - lastFrame).count();
+        lastFrame = nowFrame;
+        update(registry, dt);
         if (app.keyIsDown(GLFW_KEY_R))
             resetAll();
-
-        ++frames;
-        if (frames >= kHoldFrames)
-            held = false;
 
         rigid.setVelocitySteps(ui.joltIters);
         rigid.step();
