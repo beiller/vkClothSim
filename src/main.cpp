@@ -129,13 +129,14 @@ int main() {
 
     bool held = true;
 
-    const Mat4 view = lookAt({0.0f, 9.0f, 14.0f}, {0.0f, 3.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
-    auto makeVP = [view](VkExtent2D ext) {
-        return mul4(perspective(50.0f, (float)ext.width / (float)ext.height, 0.1f, 300.0f), view);
+    Camera camera;
+    camera.position = {0.0f, 9.0f, 14.0f};
+    camera.rotation = quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2f(6.0f, 14.0f));
+    auto makeVP = [&camera](VkExtent2D ext) {
+        return camera.viewProj((float)ext.width / (float)ext.height);
     };
     const VkExtent2D initExt = app.extent();
     const Mat4 vp = makeVP(initExt);
-    VkExtent2D lastExt = initExt;
 
     const int nInstances = (int)softs.size() + kNCapsules + 1;
     Renderer renderer;
@@ -221,15 +222,12 @@ int main() {
 
         app.pollEvents();
         const VkExtent2D ext = app.extent();
-        if (ext.width != lastExt.width || ext.height != lastExt.height) {
-            lastExt = ext;
-            renderer.setViewProj(makeVP(ext));
-        }
+        renderer.setViewProj(makeVP(ext));
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         bool clothReset = false, ballReset = false;
-        drawOverlay(ui, held && softs[clothIdx].pinned, clothReset, ballReset);
+        drawOverlay(ui, camera, held && softs[clothIdx].pinned, clothReset, ballReset);
         if (clothReset)
             resetAll();
         if (ballReset)

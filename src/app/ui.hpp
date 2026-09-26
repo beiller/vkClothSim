@@ -1,4 +1,5 @@
 #pragma once
+#include "api.hpp"
 #include "sim/params.hpp"
 #include <imgui.h>
 
@@ -10,4 +11,4 @@ struct UIState {
     bool showDemo = false;
 };
 
-void drawOverlay(UIState& ui, bool clothPinned, bool& clothReset, bool& ballReset);
+void drawOverlay(UIState& ui, Camera& cam, bool clothPinned, bool& clothReset, bool& ballReset);

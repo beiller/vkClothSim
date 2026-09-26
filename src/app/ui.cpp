@@ -1,10 +1,10 @@
 #include "app/ui.hpp"
 
-void drawOverlay(UIState& ui, bool clothPinned, bool& clothReset, bool& ballReset) {
+void drawOverlay(UIState& ui, Camera& cam, bool clothPinned, bool& clothReset, bool& ballReset) {
     clothReset = false;
     ballReset = false;
     ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(320, 410), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(320, 490), ImGuiCond_Always);
     ImGui::Begin("3dsim");
     ImGui::ColorEdit3("background", ui.bgColor);
     ImGui::Text("%.1f fps", ImGui::GetIO().Framerate);
@@ -21,6 +21,10 @@ void drawOverlay(UIState& ui, bool clothPinned, bool& clothReset, bool& ballRese
     ImGui::SliderInt("cloth", &ui.clothSteps, 1, 32);
     ImGui::SeparatorText("jolt iterations");
     ImGui::SliderInt("velocity", &ui.joltIters, 1, 64);
+    ImGui::SeparatorText("camera");
+    ImGui::SliderFloat("fov", &cam.fovDeg, 10.0f, 120.0f, "%.0f");
+    ImGui::SliderFloat("near", &cam.nearP, 0.01f, 5.0f, "%.3f");
+    ImGui::SliderFloat("far", &cam.farP, 10.0f, 1000.0f, "%.0f");
     if (ImGui::Button("reset params"))
         ui.sim = SimParams{};
     if (ImGui::Button("reset ball"))
