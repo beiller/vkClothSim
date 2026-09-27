@@ -75,10 +75,3 @@ struct PinHold {
     float holdTime;
     float time = 0.0f;
 };
-
-inline entt::entity findNamed(entt::registry& reg, const std::string& name) {
-    for (auto [entity, n] : reg.view<Name>().each())
-        if (n.id == name)
-            return entity;
-    return entt::null;
-}

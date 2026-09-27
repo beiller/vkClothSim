@@ -1,6 +1,7 @@
 #include "demo.hpp"
 
 #include "app/rigid.hpp"
+#include "assets.hpp"
 #include "capsule.hpp"
 #include "systems.hpp"
 #include "vk/vkapp.hpp"
@@ -362,7 +363,13 @@ void createDemoWorld(World& w) {
         spawnSoftBody(w, makeClothMesh(kCW, kCH, kClothSpan, kClothY0), makeClothCons(kCW, kCH, kClothSpan), 1);
     w.reg.emplace<Name>(cloth, "cloth");
     w.reg.emplace<PinHold>(cloth, kClothHoldTime);
-    w.reg.emplace<Material>(cloth, V3{0.25f, 0.45f, 0.78f}, 0.0f, 0.8f);
+    w.reg.emplace<Material>(cloth, V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.8f);
+    TextureData plaid;
+    if (!loadTexture(exeDir() + "/../assets/cloth_albedo.png", plaid))
+        loadTexture("assets/cloth_albedo.png", plaid);
+    if (!plaid.rgba.empty())
+        w.renderer.setTexture(w.reg.get<Renderable>(cloth).inst, 0,
+                              w.renderer.addTexture(plaid.rgba.data(), (uint32_t)plaid.w, (uint32_t)plaid.h));
     const Mesh ballMesh = makeBallMesh(kBallRadius, kBallY0, kBallSubdiv);
     const entt::entity ball = spawnSoftBody(w, ballMesh, makeBallCons(ballMesh), 0);
     w.reg.emplace<Name>(ball, "ball");

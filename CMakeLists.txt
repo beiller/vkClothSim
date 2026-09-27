@@ -61,6 +61,7 @@ add_executable(vksim
     src/demo.cpp
     src/systems.cpp
     src/app/rigid.cpp
+    src/assets.cpp
     src/sim/softsim.cpp
     src/vk/vkapp.cpp
     src/vk/renderer.cpp
@@ -72,6 +73,7 @@ target_include_directories(vksim PRIVATE
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/lib/entt/single_include
+    ${CMAKE_SOURCE_DIR}/lib/stb
     ${CMAKE_SOURCE_DIR}/src)
 
 

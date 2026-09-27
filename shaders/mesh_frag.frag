@@ -7,6 +7,9 @@ layout(location = 0) out vec4 outColor;
 
 layout(binding = 3) uniform UBO { mat4 viewProj; vec3 camPos; } ubo;
 layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; } modelU;
+layout(binding = 6) uniform sampler2D albedoTex;
+layout(binding = 7) uniform sampler2D roughTex;
+layout(binding = 8) uniform sampler2D metalTex;
 
 const float PI = 3.14159265359;
 
@@ -38,19 +41,19 @@ void main() {
     float NoH = max(dot(N, H), 0.0);
     float VoH = max(dot(V, H), 0.0);
 
-    vec3 albedo = modelU.baseColor;
-
-    float a = clamp(modelU.roughness, 0.04, 1.0);
+    vec3 albedo = modelU.baseColor * texture(albedoTex, vUv).rgb;
+    float metal = modelU.metallic * texture(metalTex, vUv).r;
+    float a = clamp(modelU.roughness * texture(roughTex, vUv).r, 0.04, 1.0);
     a = a * a;
-    vec3 F0 = mix(vec3(0.04), albedo, modelU.metallic);
+    vec3 F0 = mix(vec3(0.04), albedo, metal);
     vec3 F = fSchlick(F0, VoH);
     vec3 spec = dGGX(NoH, a) * vSmith(NoV, NoL, a) * F;
-    vec3 kd = (1.0 - F) * (1.0 - modelU.metallic);
+    vec3 kd = (1.0 - F) * (1.0 - metal);
     vec3 diff = kd * albedo / PI;
 
     vec3 lightCol = vec3(1.0, 0.97, 0.92) * 3.0;
     vec3 color = (diff + spec) * lightCol * NoL;
-    color += albedo * 0.12 * (1.0 - modelU.metallic);
+    color += albedo * 0.12 * (1.0 - metal);
 
     outColor = vec4(color, 1.0);
 }

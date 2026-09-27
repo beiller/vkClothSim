@@ -19,6 +19,17 @@ struct ModelUbo {
 };
 static_assert(sizeof(ModelUbo) == 96, "ModelUbo must match the shader std430 layout");
 
+ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float roughness) {
+    ModelUbo mb{};
+    std::memcpy(mb.model, model.m, 64);
+    mb.baseColor[0] = baseColor.x;
+    mb.baseColor[1] = baseColor.y;
+    mb.baseColor[2] = baseColor.z;
+    mb.metallic = metallic;
+    mb.roughness = roughness;
+    return mb;
+}
+
 std::vector<VkDescriptorSetLayoutBinding> meshBinds() {
     return {
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
@@ -26,6 +37,9 @@ std::vector<VkDescriptorSetLayoutBinding> meshBinds() {
         {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT},
         {4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT},
         {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     };
 }
 
@@ -128,6 +142,10 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     m_pipe = makeGraphicsPipeline(m_dev, app.sceneRenderPass(), mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
                                   mesh_frag_spv_len / 4, m_pl, true);
 
+    const uint8_t white[4] = {255, 255, 255, 255};
+    vkMakeImage2D(m_dev, m_pdev, 1, 1, white, m_white.img, m_white.mem, m_white.view);
+    vkMakeSampler(m_dev, VK_SAMPLER_ADDRESS_MODE_REPEAT, m_texSampler);
+
     vkMakeBuffer(m_dev, m_pdev, m_tmUbuf, m_tmMem, 16, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
     const auto tmBinds = tonemapBinds();
     vkMakeDslPool(m_dev, tmBinds, 2, m_tmDsl, m_tmPool);
@@ -157,13 +175,7 @@ int Renderer::addInstance(int geom) {
     InstancedMesh inst;
     inst.geom = geom;
     inst.model = mat4Identity();
-    ModelUbo modelInit{};
-    std::memcpy(modelInit.model, inst.model.m, 64);
-    modelInit.baseColor[0] = inst.baseColor.x;
-    modelInit.baseColor[1] = inst.baseColor.y;
-    modelInit.baseColor[2] = inst.baseColor.z;
-    modelInit.metallic = inst.metallic;
-    modelInit.roughness = inst.roughness;
+    const ModelUbo modelInit = packModel(inst.model, inst.baseColor, inst.metallic, inst.roughness);
     vkMakeBuffer(m_dev, m_pdev, inst.modelUbuf, inst.modelMem, sizeof(ModelUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                  &modelInit);
     const VkDeviceSize attrSize = (VkDeviceSize)12 * g.vtxCount;
@@ -174,7 +186,11 @@ int Renderer::addInstance(int geom) {
                                               {g.uv, 0, (VkDeviceSize)8 * g.vtxCount}};
     vkMakeSet(m_dev, m_pool, m_dsl, meshBinds(), inst.set, bi);
     m_insts.push_back(inst);
-    return (int)m_insts.size() - 1;
+    const int id = (int)m_insts.size() - 1;
+    setTexture(id, 0, -1);
+    setTexture(id, 1, -1);
+    setTexture(id, 2, -1);
+    return id;
 }
 
 void Renderer::setModel(int inst, const Mat4& model) {
@@ -185,6 +201,30 @@ void Renderer::setMaterial(int inst, const V3& baseColor, float metallic, float 
     m_insts[inst].baseColor = baseColor;
     m_insts[inst].metallic = metallic;
     m_insts[inst].roughness = roughness;
+}
+
+int Renderer::addTexture(const void* rgba, uint32_t w, uint32_t h) {
+    GpuTexture t;
+    vkMakeImage2D(m_dev, m_pdev, w, h, rgba, t.img, t.mem, t.view);
+    m_texs.push_back(t);
+    return (int)m_texs.size() - 1;
+}
+
+void Renderer::setTexture(int inst, int channel, int texId) {
+    const bool hasTex = texId >= 0 && (size_t)texId < m_texs.size();
+    const GpuTexture& t = hasTex ? m_texs[texId] : m_white;
+    VkDescriptorImageInfo ii;
+    ii.sampler = m_texSampler;
+    ii.imageView = t.view;
+    ii.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkWriteDescriptorSet w{};
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = m_insts[inst].set;
+    w.dstBinding = 6 + channel;
+    w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.pImageInfo = &ii;
+    vkUpdateDescriptorSets(m_dev, 1, &w, 0, nullptr);
 }
 
 void Renderer::setViewProj(const Mat4& vp, const V3& camPos) {
@@ -235,13 +275,7 @@ void Renderer::rebuildTonemapSet(VkApp& app) {
 void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui,
                     float exposure) {
     for (auto& inst : m_insts) {
-        ModelUbo mb{};
-        std::memcpy(mb.model, inst.model.m, 64);
-        mb.baseColor[0] = inst.baseColor.x;
-        mb.baseColor[1] = inst.baseColor.y;
-        mb.baseColor[2] = inst.baseColor.z;
-        mb.metallic = inst.metallic;
-        mb.roughness = inst.roughness;
+        const ModelUbo mb = packModel(inst.model, inst.baseColor, inst.metallic, inst.roughness);
         vkWriteBuffer(m_dev, inst.modelMem, &mb, sizeof(ModelUbo));
     }
     const VkExtent2D ext = app.extent();
@@ -316,6 +350,11 @@ void Renderer::shutdown() {
         vkFreeBuffer(m_dev, g.uv, g.uvMem);
         vkFreeBuffer(m_dev, g.ibuf, g.ibmem);
     }
+    for (auto& t : m_texs)
+        vkFreeImage2D(m_dev, t.img, t.mem, t.view);
+    vkFreeImage2D(m_dev, m_white.img, m_white.mem, m_white.view);
+    if (m_texSampler)
+        vkDestroySampler(m_dev, m_texSampler, nullptr);
     if (m_pool)
         vkDestroyDescriptorPool(m_dev, m_pool, nullptr);
     if (m_dsl)

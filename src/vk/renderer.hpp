@@ -21,6 +21,8 @@ public:
     int addInstance(int geom);
     void setModel(int inst, const Mat4& model);
     void setMaterial(int inst, const V3& baseColor, float metallic, float roughness);
+    int addTexture(const void* rgba, uint32_t w, uint32_t h);
+    void setTexture(int inst, int channel, int texId);
     void setViewProj(const Mat4& vp, const V3& camPos);
     void shutdown();
     void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui, float exposure);
@@ -33,6 +35,12 @@ private:
         VkDeviceMemory ibmem = VK_NULL_HANDLE;
         uint32_t idxCount = 0;
         uint32_t vtxCount = 0;
+    };
+
+    struct GpuTexture {
+        VkImage img = VK_NULL_HANDLE;
+        VkDeviceMemory mem = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
     };
 
     struct InstancedMesh {
@@ -71,4 +79,7 @@ private:
 
     std::vector<GpuMesh> m_geoms;
     std::vector<InstancedMesh> m_insts;
+    std::vector<GpuTexture> m_texs;
+    GpuTexture m_white;
+    VkSampler m_texSampler = VK_NULL_HANDLE;
 };
