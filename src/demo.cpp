@@ -1,17 +1,48 @@
-#pragma once
+#include "demo.hpp"
+
+#include "app/rigid.hpp"
 #include "capsule.hpp"
-#include "mesh.hpp"
-#include "sim/sim.hpp"
+#include "systems.hpp"
+#include "vk/vkapp.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <imgui.h>
 #include <map>
+#include <random>
 
-inline Mesh makeClothMesh(int CW, int CH, float span, float y0) {
+namespace {
+
+constexpr int kCW = 64, kCH = 64;
+constexpr float kClothSpan = 8.0f;
+constexpr float kClothY0 = 10.0f;
+constexpr int kBallSubdiv = 2;
+constexpr float kBallRadius = 1.5f;
+constexpr float kBallY0 = 12.0f;
+constexpr int kNCapsules = 50;
+constexpr int kNSoftBodies = 2;
+constexpr float kClothHoldTime = 3.0f;
+
+constexpr int kCapPhiSegs = 20;
+constexpr int kCapYRows = 32;
+constexpr uint32_t kCapVPC = (uint32_t)(kCapYRows + 1) * kCapPhiSegs;
+
+RigidBody scatteredBody(std::mt19937& rng, std::uniform_real_distribution<float>& rnd) {
+    const float px = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
+    const float py = 4.5f + 3.5f * rnd(rng);
+    const float pz = (rnd(rng) * 2.0f - 1.0f) * 2.0f;
+    const V4 rot = quatMul(quatAxisAngle({0, 1, 0}, rnd(rng) * 2.0f * kPi),
+                           quatAxisAngle({1, 0, 0}, (rnd(rng) * 2.0f - 1.0f) * 0.9f));
+    return {kCapsule, {px, py, pz}, rot};
+}
+
+Mesh makeClothMesh(int CW, int CH, float span, float y0) {
     Mesh out;
     const int CN = CW * CH;
     out.pos.assign((size_t)3 * CN, 0.0f);
     out.nrm.assign((size_t)3 * CN, 0.0f);
     out.col.assign((size_t)3 * CN, 0.0f);
+    out.uv.assign((size_t)2 * CN, 0.0f);
     const V3 clothCol{0.25f, 0.45f, 0.78f};
     for (int gy = 0; gy < CH; ++gy)
         for (int gx = 0; gx < CW; ++gx) {
@@ -21,6 +52,8 @@ inline Mesh makeClothMesh(int CW, int CH, float span, float y0) {
             vStore(out.pos.data(), i, {x, y0, z});
             out.nrm[3 * i + 1] = 1.0f;
             vStore(out.col.data(), i, clothCol);
+            out.uv[2 * i] = (float)gx / (float)(CW - 1);
+            out.uv[2 * i + 1] = (float)gy / (float)(CH - 1);
         }
     for (int gy = 0; gy < CH - 1; ++gy)
         for (int gx = 0; gx < CW - 1; ++gx) {
@@ -35,7 +68,7 @@ inline Mesh makeClothMesh(int CW, int CH, float span, float y0) {
     return out;
 }
 
-inline std::vector<sim::Constraint> makeClothCons(int CW, int CH, float span) {
+std::vector<sim::Constraint> makeClothCons(int CW, int CH, float span) {
     std::vector<sim::Constraint> cons;
     const int CN = CW * CH;
     const float spacing = span / (float)(CW - 1);
@@ -59,7 +92,7 @@ struct IcoSphere {
     std::vector<uint32_t> tris;
 };
 
-inline IcoSphere makeIcosphere(int subdiv) {
+IcoSphere makeIcosphere(int subdiv) {
     const float t = (1.0f + std::sqrt(5.0f)) * 0.5f;
     std::vector<V3> verts{{-1, t, 0},  {1, t, 0},  {-1, -t, 0}, {1, -t, 0}, {0, -1, t},  {0, 1, t},
                           {0, -1, -t}, {0, 1, -t}, {t, 0, -1},  {t, 0, 1},  {-t, 0, -1}, {-t, 0, 1}};
@@ -95,7 +128,7 @@ inline IcoSphere makeIcosphere(int subdiv) {
     return {verts, tris};
 }
 
-inline void addBallEdges(const Mesh& mesh, std::vector<sim::Constraint>& cons, const std::vector<uint32_t>& tris) {
+void addBallEdges(const Mesh& mesh, std::vector<sim::Constraint>& cons, const std::vector<uint32_t>& tris) {
     const float* pos = mesh.pos.data();
     std::map<uint64_t, bool> seen;
     for (size_t f = 0; f < tris.size(); f += 3) {
@@ -112,7 +145,7 @@ inline void addBallEdges(const Mesh& mesh, std::vector<sim::Constraint>& cons, c
     }
 }
 
-inline void addAntipodalTies(const Mesh& mesh, std::vector<sim::Constraint>& cons) {
+void addAntipodalTies(const Mesh& mesh, std::vector<sim::Constraint>& cons) {
     const int n = mesh.vertexCount();
     const float* pos = mesh.pos.data();
     V3 c{0, 0, 0};
@@ -140,34 +173,38 @@ inline void addAntipodalTies(const Mesh& mesh, std::vector<sim::Constraint>& con
     }
 }
 
-inline Mesh makeBallMesh(float radius, float y0, int subdiv = 3) {
+Mesh makeBallMesh(float radius, float y0, int subdiv = 3) {
     IcoSphere ico = makeIcosphere(subdiv);
     const int n = (int)ico.verts.size();
     Mesh out;
     out.pos.assign((size_t)3 * n, 0.0f);
     out.nrm.assign((size_t)3 * n, 0.0f);
     out.col.assign((size_t)3 * n, 0.0f);
+    out.uv.assign((size_t)2 * n, 0.0f);
     out.indices = ico.tris;
     const V3 center{0, y0, 0};
-    const V3 ballCol{0.85f, 0.35f, 0.25f};
+    std::mt19937 rng(42); // NOLINT(bugprone-random-generator-seed)
+    std::uniform_real_distribution<float> rnd(0.0f, 1.0f);
     for (int i = 0; i < n; ++i) {
         const V3 dir = ico.verts[i];
         const V3 p = vAdd(center, vScale(dir, radius));
         vStore(out.pos.data(), i, p);
         vStore(out.nrm.data(), i, dir);
-        vStore(out.col.data(), i, ballCol);
+        vStore(out.col.data(), i, {rnd(rng), rnd(rng), rnd(rng)});
+        out.uv[2 * i] = 0.5f + std::atan2f(dir.z, dir.x) / (2.0f * kPi);
+        out.uv[2 * i + 1] = 0.5f + std::asinf(dir.y) / kPi;
     }
     return out;
 }
 
-inline std::vector<sim::Constraint> makeBallCons(const Mesh& mesh) {
+std::vector<sim::Constraint> makeBallCons(const Mesh& mesh) {
     std::vector<sim::Constraint> cons;
     addBallEdges(mesh, cons, mesh.indices);
     addAntipodalTies(mesh, cons);
     return cons;
 }
 
-inline Mesh makeGroundMesh() {
+Mesh makeGroundMesh() {
     Mesh m;
     const float G = 55.0f;
     const V3 corners[4] = {{-G, 0.0f, -G}, {G, 0.0f, -G}, {G, 0.0f, G}, {-G, 0.0f, G}};
@@ -176,24 +213,28 @@ inline Mesh makeGroundMesh() {
     m.pos.assign(3 * 4, 0.0f);
     m.nrm.assign(3 * 4, 0.0f);
     m.col.assign(3 * 4, 0.0f);
+    m.uv.assign(2 * 4, 0.0f);
     for (int i = 0; i < 4; ++i) {
         vStore(m.pos.data(), i, corners[i]);
         vStore(m.nrm.data(), i, up);
         vStore(m.col.data(), i, groundCol);
+        m.uv[2 * i] = (corners[i].x + G) / (2.0f * G);
+        m.uv[2 * i + 1] = (corners[i].z + G) / (2.0f * G);
     }
     m.indices = {0, 1, 2, 0, 2, 3};
     return m;
 }
 
-inline Mesh makeCapsuleMesh(int nCaps) {
+Mesh makeCapsuleMesh(const CapsuleParams& shape, int nCaps) {
     Mesh m;
     const size_t vcount = (size_t)nCaps * kCapVPC;
     m.pos.assign(3 * vcount, 0.0f);
     m.nrm.assign(3 * vcount, 0.0f);
     m.col.assign(3 * vcount, 0.0f);
+    m.uv.assign(2 * vcount, 0.0f);
     const int S = kCapPhiSegs, M = kCapYRows;
     const int VPC = (int)kCapVPC;
-    const float R = kCapsule.radius, H = kCapsule.halfLen;
+    const float R = shape.radius, H = shape.halfLen;
     const float top = H + R, bot = -H - R, twoPi = 2.0f * kPi;
     const V3 capCol{0.85f, 0.35f, 0.30f};
     for (int ci = 0; ci < nCaps; ++ci) {
@@ -220,6 +261,8 @@ inline Mesh makeCapsuleMesh(int nCaps) {
                 vStore(m.pos.data(), v, {r * cp, y, r * sp});
                 vStore(m.nrm.data(), v, {cp, -dr, sp});
                 vStore(m.col.data(), v, capCol);
+                m.uv[2 * v] = (float)j / S;
+                m.uv[2 * v + 1] = (float)i / M;
             }
         }
         for (int i = 0; i < M; ++i)
@@ -238,4 +281,77 @@ inline Mesh makeCapsuleMesh(int nCaps) {
             }
     }
     return m;
+}
+
+void drawDemoUi(World& w) {
+    ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(320, 700), ImGuiCond_Always);
+    ImGui::Begin("3dsim");
+    ImGui::ColorEdit3("background", w.ui.bgColor);
+    ImGui::Text("%.1f fps", ImGui::GetIO().Framerate);
+    ImGui::Text("sim: GPU (cloth + ball)");
+    for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
+        const char* label = "soft body";
+        if (const auto* n = w.reg.try_get<Name>(entity))
+            label = n->id.c_str();
+        ImGui::PushID((int)entity);
+        if (ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::SliderFloat("mass", &sb.params.mass, 0.1f, 10.0f, "%.2f");
+            ImGui::SliderFloat("damping", &sb.params.damping, 0.90f, 1.00f, "%.3f");
+            ImGui::SliderInt("passes", &sb.params.passes, 1, 16);
+            ImGui::SliderFloat("stiffness", &sb.params.stiffness, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("tension", &sb.params.tension, 0.5f, 1.5f, "%.2f");
+            ImGui::SliderFloat("friction", &sb.params.friction, 0.0f, 50.0f, "%.2f");
+            ImGui::SliderInt("steps", &sb.steps, 1, 32);
+        }
+        ImGui::PopID();
+    }
+    ImGui::SeparatorText("jolt iterations");
+    ImGui::SliderInt("velocity", &w.ui.joltIters, 1, 64);
+    ImGui::SeparatorText("camera");
+    ImGui::SliderFloat("fov", &w.camera.fovDeg, 10.0f, 120.0f, "%.0f");
+    ImGui::SliderFloat("near", &w.camera.nearP, 0.01f, 5.0f, "%.3f");
+    ImGui::SliderFloat("far", &w.camera.farP, 10.0f, 1000.0f, "%.0f");
+    if (ImGui::Button("reset params"))
+        for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
+            sb.params = SimParams{};
+            sb.steps = kDefaultSteps;
+        }
+    if (ImGui::Button("reset (R)"))
+        resetSofts(w);
+    if (ImGui::Button("demo window"))
+        w.ui.showDemo = true;
+    ImGui::End();
+    if (w.ui.showDemo)
+        ImGui::ShowDemoWindow(&w.ui.showDemo);
+}
+
+} // namespace
+
+void createDemoWorld(World& w) {
+    w.camera.position = {0.0f, 9.0f, 14.0f};
+    w.camera.rotation = quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2f(6.0f, 14.0f));
+    w.drawUi = drawDemoUi;
+
+    const VkExtent2D ext = w.app->extent();
+    w.rigid.init();
+    w.sim.init(w.app->device(), w.app->pdev());
+    w.renderer.init(*w.app, kNCapsules + kNSoftBodies + 1, w.camera.viewProj((float)ext.width / (float)ext.height));
+
+    spawnStaticMesh(w, makeGroundMesh(), Transform{});
+    const int capGeom = w.renderer.addMesh(makeCapsuleMesh(kCapsule, 1)).geom;
+    std::mt19937 rng(12345); // NOLINT(bugprone-random-generator-seed)
+    std::uniform_real_distribution<float> rnd(0.0f, 1.0f);
+    for (int i = 0; i < kNCapsules; ++i)
+        spawnCapsule(w, scatteredBody(rng, rnd), capGeom);
+
+    const entt::entity cloth =
+        spawnSoftBody(w, makeClothMesh(kCW, kCH, kClothSpan, kClothY0), makeClothCons(kCW, kCH, kClothSpan), 1);
+    w.reg.emplace<Name>(cloth, "cloth");
+    w.reg.emplace<PinHold>(cloth, kClothHoldTime);
+    const Mesh ballMesh = makeBallMesh(kBallRadius, kBallY0, kBallSubdiv);
+    const entt::entity ball = spawnSoftBody(w, ballMesh, makeBallCons(ballMesh), 0);
+    w.reg.emplace<Name>(ball, "ball");
+    w.reg.get<SoftBodyData>(ball).params.mass = 2.0f;
+    w.sim.build();
 }

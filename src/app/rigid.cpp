@@ -50,18 +50,15 @@ void RigidScene::init() {
     m_phys->OptimizeBroadPhase();
 }
 
-void RigidScene::addRigidBody(const RigidBody& body) {
+JPH::BodyID RigidScene::addRigidBody(const RigidBody& body) {
     auto& bi = m_phys->GetBodyInterface();
-    const CapsuleParams& params = body.collider.params;
-    const V3 pos = body.collider.position;
-    const V4 quat = body.collider.orientation;
-    JPH::BodyCreationSettings cs(new JPH::CapsuleShape(params.halfLen, params.radius), JPH::RVec3(pos.x, pos.y, pos.z),
-                                 jQuat(quat), JPH::EMotionType::Dynamic, 1);
-    cs.mFriction = body.friction;
-    cs.mRestitution = body.restitution;
-    cs.mLinearDamping = body.damping;
-    const JPH::BodyID id = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
-    m_bodies.push_back({id, params});
+    JPH::BodyCreationSettings cs(new JPH::CapsuleShape(body.shape.halfLen, body.shape.radius),
+                                 JPH::RVec3(body.position.x, body.position.y, body.position.z), jQuat(body.orientation),
+                                 JPH::EMotionType::Dynamic, 1);
+    cs.mFriction = body.props.friction;
+    cs.mRestitution = body.props.restitution;
+    cs.mLinearDamping = body.props.damping;
+    return bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
 }
 
 void RigidScene::step() {
@@ -73,18 +70,10 @@ void RigidScene::setVelocitySteps(int n) {
     m_phys->SetPhysicsSettings(m_settings);
 }
 
-std::vector<CapsulePose> RigidScene::capsulePose() const {
-    std::vector<CapsulePose> out(m_bodies.size());
-    if (!m_phys)
-        return out;
-    const JPH::BodyLockInterface& li = m_phys->GetBodyLockInterface();
-    for (size_t i = 0; i < m_bodies.size(); ++i) {
-        JPH::BodyLockRead lock(li, m_bodies[i].id);
-        const JPH::Body& b = lock.GetBody();
-        JPH::Vec3 p = b.GetPosition();
-        JPH::Quat q = b.GetRotation();
-        out[i].pos = {p.GetX(), p.GetY(), p.GetZ()};
-        out[i].quat = {q.GetX(), q.GetY(), q.GetZ(), q.GetW()};
-    }
-    return out;
+Transform RigidScene::pose(JPH::BodyID id) const {
+    JPH::BodyLockRead lock(m_phys->GetBodyLockInterface(), id);
+    const JPH::Body& b = lock.GetBody();
+    const JPH::Vec3 p = b.GetPosition();
+    const JPH::Quat q = b.GetRotation();
+    return {{p.GetX(), p.GetY(), p.GetZ()}, {q.GetX(), q.GetY(), q.GetZ(), q.GetW()}};
 }

@@ -8,3 +8,5 @@ struct SimParams {
     float tension = 1.0f;
     float friction = 2.0f;
 };
+
+inline constexpr int kDefaultSteps = 3;

@@ -6,6 +6,7 @@ struct Mesh {
     std::vector<float> pos;
     std::vector<float> nrm;
     std::vector<float> col;
+    std::vector<float> uv;
     std::vector<uint32_t> indices;
     int vertexCount() const { return (int)(pos.size() / 3); }
 };

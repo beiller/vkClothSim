@@ -1,36 +1,42 @@
 #pragma once
 #include <vulkan/vulkan.h>
 
-#include "api.hpp"
 #include "capsule.hpp"
+#include "ecs.hpp"
 #include "gpuverts.hpp"
 #include "mesh.hpp"
 #include "sim/params.hpp"
 #include "sim/phys.hpp"
 #include "sim/sim.hpp"
-#include <span>
 #include <vector>
 
 class SoftSim {
 public:
     void init(VkDevice dev, VkPhysicalDevice pdev);
-    void addCapsule(const Collider& collider);
-    void addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw);
+    int addCapsule(const CapsuleParams& params);
+    void setCapsulePose(int slot, const Transform& pose);
+    int addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw);
     void build();
     void shutdown();
-    void syncColliders(std::span<const CapsulePose> poses);
-    void record(VkCommandBuffer cmd, const SimParams& p, int steps, int pinnedMask);
-    void reset(int mask);
+    void setPinned(int softId, int pinned);
+    void setParams(int softId, const SimParams& params, int steps);
+    void record(VkCommandBuffer cmd);
+    void resetSoft(int softId);
 
 private:
     struct GpuBody {
+        int pinned = 0;
+        SimParams params;
+        int steps = kDefaultSteps;
         sim::SoftBody soft;
         VkBuffer pos = VK_NULL_HANDLE, nrm = VK_NULL_HANDLE, prev = VK_NULL_HANDLE, sub0 = VK_NULL_HANDLE;
         VkBuffer contactN = VK_NULL_HANDLE, contactL = VK_NULL_HANDLE;
         VkBuffer entries = VK_NULL_HANDLE, entryStart = VK_NULL_HANDLE, colorVerts = VK_NULL_HANDLE;
         VkBuffer tris = VK_NULL_HANDLE, triStart = VK_NULL_HANDLE, triList = VK_NULL_HANDLE;
+        VkBuffer paramsBuf = VK_NULL_HANDLE;
         VkDeviceMemory posMem = VK_NULL_HANDLE, nrmMem = VK_NULL_HANDLE, prevMem = VK_NULL_HANDLE,
                        sub0Mem = VK_NULL_HANDLE;
+        VkDeviceMemory paramsMem = VK_NULL_HANDLE;
         VkDeviceMemory contactNMem = VK_NULL_HANDLE, contactLMem = VK_NULL_HANDLE;
         VkDeviceMemory entriesMem = VK_NULL_HANDLE, entryStartMem = VK_NULL_HANDLE, colorVertsMem = VK_NULL_HANDLE;
         VkDeviceMemory trisMem = VK_NULL_HANDLE, triStartMem = VK_NULL_HANDLE, triListMem = VK_NULL_HANDLE;
@@ -52,8 +58,6 @@ private:
     VkDescriptorSetLayout m_softDsl = VK_NULL_HANDLE;
     VkDescriptorPool m_softPool = VK_NULL_HANDLE;
     VkPipelineLayout m_softPl = VK_NULL_HANDLE;
-    VkBuffer m_physParams = VK_NULL_HANDLE;
-    VkDeviceMemory m_physParamsMem = VK_NULL_HANDLE;
     VkBuffer m_capsInstances = VK_NULL_HANDLE;
     VkDeviceMemory m_capsInstancesMem = VK_NULL_HANDLE;
 };

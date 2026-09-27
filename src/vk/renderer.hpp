@@ -26,8 +26,9 @@ public:
 
 private:
     struct GpuMesh {
-        VkBuffer pos = VK_NULL_HANDLE, nrm = VK_NULL_HANDLE, col = VK_NULL_HANDLE;
-        VkDeviceMemory posMem = VK_NULL_HANDLE, nrmMem = VK_NULL_HANDLE, colMem = VK_NULL_HANDLE;
+        VkBuffer pos = VK_NULL_HANDLE, nrm = VK_NULL_HANDLE, col = VK_NULL_HANDLE, uv = VK_NULL_HANDLE;
+        VkDeviceMemory posMem = VK_NULL_HANDLE, nrmMem = VK_NULL_HANDLE, colMem = VK_NULL_HANDLE,
+                       uvMem = VK_NULL_HANDLE;
         VkBuffer ibuf = VK_NULL_HANDLE;
         VkDeviceMemory ibmem = VK_NULL_HANDLE;
         uint32_t idxCount = 0;

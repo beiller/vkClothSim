@@ -2,18 +2,9 @@
 #include "math.hpp"
 #include <cstdint>
 
-inline constexpr int kCapPhiSegs = 20;
-inline constexpr int kCapYRows = 32;
-inline constexpr uint32_t kCapVPC = (uint32_t)(kCapYRows + 1) * kCapPhiSegs;
-
 struct CapsuleParams {
     float halfLen;
     float radius;
-};
-
-struct CapsulePose {
-    V3 pos;
-    V4 quat;
 };
 
 struct CapsuleGPU {

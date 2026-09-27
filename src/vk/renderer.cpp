@@ -15,6 +15,7 @@ std::vector<VkDescriptorSetLayoutBinding> meshBinds() {
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
     };
 }
 
@@ -118,6 +119,7 @@ Renderer::GpuMeshRef Renderer::addMesh(const Mesh& mesh) {
     vkMakeBuffer(m_dev, m_pdev, g.pos, g.posMem, attrSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.pos.data());
     vkMakeBuffer(m_dev, m_pdev, g.nrm, g.nrmMem, attrSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.nrm.data());
     vkMakeBuffer(m_dev, m_pdev, g.col, g.colMem, attrSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.col.data());
+    vkMakeBuffer(m_dev, m_pdev, g.uv, g.uvMem, (VkDeviceSize)8 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.uv.data());
     vkMakeBuffer(m_dev, m_pdev, g.ibuf, g.ibmem, (VkDeviceSize)g.idxCount * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                  mesh.indices.data());
     m_geoms.push_back(g);
@@ -131,8 +133,9 @@ int Renderer::addInstance(int geom) {
     inst.model = mat4Identity();
     vkMakeBuffer(m_dev, m_pdev, inst.modelUbuf, inst.modelMem, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, inst.model.m);
     const VkDeviceSize attrSize = (VkDeviceSize)12 * g.vtxCount;
-    std::vector<VkDescriptorBufferInfo> bi = {
-        {g.pos, 0, attrSize}, {g.nrm, 0, attrSize}, {g.col, 0, attrSize}, {m_vpUbuf, 0, 64}, {inst.modelUbuf, 0, 64}};
+    std::vector<VkDescriptorBufferInfo> bi = {{g.pos, 0, attrSize},    {g.nrm, 0, attrSize},
+                                              {g.col, 0, attrSize},    {m_vpUbuf, 0, 64},
+                                              {inst.modelUbuf, 0, 64}, {g.uv, 0, (VkDeviceSize)8 * g.vtxCount}};
     vkMakeSet(m_dev, m_pool, m_dsl, meshBinds(), inst.set, bi);
     m_insts.push_back(inst);
     return (int)m_insts.size() - 1;
@@ -189,6 +192,7 @@ void Renderer::shutdown() {
         vkFreeBuffer(m_dev, g.pos, g.posMem);
         vkFreeBuffer(m_dev, g.nrm, g.nrmMem);
         vkFreeBuffer(m_dev, g.col, g.colMem);
+        vkFreeBuffer(m_dev, g.uv, g.uvMem);
         vkFreeBuffer(m_dev, g.ibuf, g.ibmem);
     }
     if (m_pool)

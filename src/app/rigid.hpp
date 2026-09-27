@@ -8,24 +8,26 @@
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
-#include "api.hpp"
-#include <vector>
+#include "capsule.hpp"
+#include "ecs.hpp"
+#include "math.hpp"
+
+struct RigidBody {
+    CapsuleParams shape;
+    V3 position{0, 0, 0};
+    V4 orientation{0, 0, 0, 1};
+    RigidBodyProps props;
+};
 
 class RigidScene {
 public:
     void init();
-    void addRigidBody(const RigidBody& body);
+    JPH::BodyID addRigidBody(const RigidBody& body);
     void step();
     void setVelocitySteps(int n);
-    std::vector<CapsulePose> capsulePose() const;
+    Transform pose(JPH::BodyID id) const;
 
 private:
-    struct Body {
-        JPH::BodyID id;
-        CapsuleParams params;
-    };
-
-    std::vector<Body> m_bodies;
     JPH::PhysicsSettings m_settings;
     JPH::PhysicsSystem* m_phys = nullptr;
     JPH::JobSystemThreadPool* m_job = nullptr;
