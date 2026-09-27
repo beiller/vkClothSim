@@ -64,5 +64,10 @@ void stepSoft(World& w, VkCommandBuffer cmd) {
 void draw(World& w, VkCommandBuffer cmd, uint32_t fb, const float bg[3], ImDrawData* imgui) {
     for (auto [entity, rend, t] : w.reg.view<Renderable, Transform>().each())
         w.renderer.setModel(rend.inst, t.toMat4());
-    w.renderer.draw(cmd, *w.app, fb, bg, imgui);
+    for (auto [entity, rend] : w.reg.view<Renderable>().each()) {
+        const auto* mat = w.reg.try_get<Material>(entity);
+        w.renderer.setMaterial(rend.inst, mat ? mat->baseColor : V3{1.0f, 1.0f, 1.0f}, mat ? mat->metallic : 0.0f,
+                               mat ? mat->roughness : 0.5f);
+    }
+    w.renderer.draw(cmd, *w.app, fb, bg, imgui, w.ui.exposure);
 }

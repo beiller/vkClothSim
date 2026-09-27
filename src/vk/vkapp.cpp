@@ -112,36 +112,76 @@ bool VkApp::init(int width, int height, const char* title) {
     m_fmt = fmts[0];
     m_scfmt = m_fmt.format;
 
-    VkAttachmentDescription att[2]{};
-    att[0].format = m_fmt.format;
-    att[0].samples = VK_SAMPLE_COUNT_1_BIT;
-    att[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    att[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    att[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    att[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    att[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    att[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    att[1].format = VK_FORMAT_D32_SFLOAT;
-    att[1].samples = VK_SAMPLE_COUNT_1_BIT;
-    att[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    att[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    att[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    att[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    att[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    VkAttachmentReference cr[2] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                   {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}};
-    VkSubpassDescription sp{};
-    sp.colorAttachmentCount = 1;
-    sp.pColorAttachments = &cr[0];
-    sp.pDepthStencilAttachment = &cr[1];
-    VkRenderPassCreateInfo rpc{};
-    rpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    rpc.attachmentCount = 2;
-    rpc.pAttachments = att;
-    rpc.subpassCount = 1;
-    rpc.pSubpasses = &sp;
-    VK(vkCreateRenderPass(m_dev, &rpc, nullptr, &m_rp));
+    VkAttachmentDescription satt[2]{};
+    satt[0].format = m_hdrFmt;
+    satt[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    satt[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    satt[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    satt[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    satt[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    satt[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    satt[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    satt[1].format = VK_FORMAT_D32_SFLOAT;
+    satt[1].samples = VK_SAMPLE_COUNT_1_BIT;
+    satt[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    satt[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    satt[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    satt[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    satt[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    satt[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    VkAttachmentReference scr[2] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                                    {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}};
+    VkSubpassDescription ssp{};
+    ssp.colorAttachmentCount = 1;
+    ssp.pColorAttachments = &scr[0];
+    ssp.pDepthStencilAttachment = &scr[1];
+    VkRenderPassCreateInfo srpc{};
+    srpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    srpc.attachmentCount = 2;
+    srpc.pAttachments = satt;
+    srpc.subpassCount = 1;
+    srpc.pSubpasses = &ssp;
+    VK(vkCreateRenderPass(m_dev, &srpc, nullptr, &m_rpScene));
+
+    VkAttachmentDescription batt[1]{};
+    batt[0].format = m_fmt.format;
+    batt[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    batt[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    batt[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    batt[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    batt[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    batt[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    batt[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    VkAttachmentReference bcr[1] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+    VkSubpassDescription bsp{};
+    bsp.colorAttachmentCount = 1;
+    bsp.pColorAttachments = &bcr[0];
+    VkRenderPassCreateInfo brpc{};
+    brpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    brpc.attachmentCount = 1;
+    brpc.pAttachments = batt;
+    brpc.subpassCount = 1;
+    brpc.pSubpasses = &bsp;
+    VK(vkCreateRenderPass(m_dev, &brpc, nullptr, &m_rp));
+
+    VkSamplerCreateInfo sci{};
+    sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sci.magFilter = VK_FILTER_LINEAR;
+    sci.minFilter = VK_FILTER_LINEAR;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.mipLodBias = 0.0f;
+    sci.anisotropyEnable = VK_FALSE;
+    sci.maxAnisotropy = 1.0f;
+    sci.compareEnable = VK_FALSE;
+    sci.compareOp = VK_COMPARE_OP_ALWAYS;
+    sci.minLod = 0.0f;
+    sci.maxLod = 0.0f;
+    sci.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    sci.unnormalizedCoordinates = VK_FALSE;
+    VK(vkCreateSampler(m_dev, &sci, nullptr, &m_hdrSampler));
 
     recreateSwapchain();
 
@@ -166,6 +206,8 @@ void VkApp::shutdown() {
     VK(vkDeviceWaitIdle(m_dev));
     destroySwapchainResources();
     vkDestroyRenderPass(m_dev, m_rp, nullptr);
+    vkDestroyRenderPass(m_dev, m_rpScene, nullptr);
+    vkDestroySampler(m_dev, m_hdrSampler, nullptr);
     vkDestroyFence(m_dev, m_fence, nullptr);
     vkDestroyCommandPool(m_dev, m_pool, nullptr);
     vkDestroyDevice(m_dev, nullptr);
@@ -271,6 +313,18 @@ void VkApp::recreateSwapchain() {
     vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, m_images.data());
 
     createDepth(m_extent);
+    createHDR(m_extent);
+
+    VkImageView satts[2] = {m_hdrView, m_depthView};
+    VkFramebufferCreateInfo sfci{};
+    sfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    sfci.renderPass = m_rpScene;
+    sfci.attachmentCount = 2;
+    sfci.pAttachments = satts;
+    sfci.width = m_extent.width;
+    sfci.height = m_extent.height;
+    sfci.layers = 1;
+    VK(vkCreateFramebuffer(m_dev, &sfci, nullptr, &m_sceneFb));
 
     m_views.resize(icnt);
     m_fbs.resize(icnt);
@@ -282,11 +336,11 @@ void VkApp::recreateSwapchain() {
         vci.format = m_fmt.format;
         vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         VK(vkCreateImageView(m_dev, &vci, nullptr, &m_views[i]));
-        VkImageView fatts[2] = {m_views[i], m_depthView};
+        VkImageView fatts[1] = {m_views[i]};
         VkFramebufferCreateInfo fci{};
         fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         fci.renderPass = m_rp;
-        fci.attachmentCount = 2;
+        fci.attachmentCount = 1;
         fci.pAttachments = fatts;
         fci.width = m_extent.width;
         fci.height = m_extent.height;
@@ -298,6 +352,8 @@ void VkApp::recreateSwapchain() {
 void VkApp::destroySwapchainResources() {
     for (auto* fb : m_fbs)
         vkDestroyFramebuffer(m_dev, fb, nullptr);
+    if (m_sceneFb)
+        vkDestroyFramebuffer(m_dev, m_sceneFb, nullptr);
     for (auto* v : m_views)
         vkDestroyImageView(m_dev, v, nullptr);
     if (m_sc)
@@ -305,12 +361,19 @@ void VkApp::destroySwapchainResources() {
     vkDestroyImageView(m_dev, m_depthView, nullptr);
     vkDestroyImage(m_dev, m_depth, nullptr);
     vkFreeMemory(m_dev, m_depthMem, nullptr);
+    vkDestroyImageView(m_dev, m_hdrView, nullptr);
+    vkDestroyImage(m_dev, m_hdr, nullptr);
+    vkFreeMemory(m_dev, m_hdrMem, nullptr);
     m_fbs.clear();
     m_views.clear();
     m_sc = VK_NULL_HANDLE;
     m_depth = VK_NULL_HANDLE;
     m_depthMem = VK_NULL_HANDLE;
     m_depthView = VK_NULL_HANDLE;
+    m_sceneFb = VK_NULL_HANDLE;
+    m_hdr = VK_NULL_HANDLE;
+    m_hdrMem = VK_NULL_HANDLE;
+    m_hdrView = VK_NULL_HANDLE;
 }
 
 void VkApp::createDepth(VkExtent2D ext) {
@@ -342,4 +405,35 @@ void VkApp::createDepth(VkExtent2D ext) {
     vci.format = VK_FORMAT_D32_SFLOAT;
     vci.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
     VK(vkCreateImageView(m_dev, &vci, nullptr, &m_depthView));
+}
+
+void VkApp::createHDR(VkExtent2D ext) {
+    VkImageCreateInfo dci{};
+    dci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    dci.imageType = VK_IMAGE_TYPE_2D;
+    dci.extent = {ext.width, ext.height, 1};
+    dci.mipLevels = 1;
+    dci.arrayLayers = 1;
+    dci.format = m_hdrFmt;
+    dci.tiling = VK_IMAGE_TILING_OPTIMAL;
+    dci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    dci.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    dci.samples = VK_SAMPLE_COUNT_1_BIT;
+    dci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VK(vkCreateImage(m_dev, &dci, nullptr, &m_hdr));
+    VkMemoryRequirements mr;
+    vkGetImageMemoryRequirements(m_dev, m_hdr, &mr);
+    VkMemoryAllocateInfo maa{};
+    maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    maa.allocationSize = mr.size;
+    maa.memoryTypeIndex = vkFindMemoryType(m_pdev, mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK(vkAllocateMemory(m_dev, &maa, nullptr, &m_hdrMem));
+    VK(vkBindImageMemory(m_dev, m_hdr, m_hdrMem, 0));
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = m_hdr;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = m_hdrFmt;
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VK(vkCreateImageView(m_dev, &vci, nullptr, &m_hdrView));
 }

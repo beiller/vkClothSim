@@ -45,7 +45,10 @@ clang-tidy -p build --header-filter='3dsim/src/' $DBFILES
 SHADERS=$(find shaders -name '*.vert' -o -name '*.frag' -o -name '*.comp')
 
 echo "== glsl ($(echo $SHADERS | wc -w) shaders) =="
-# shellcheck disable=SC2086
-glslangValidator --target-env vulkan1.1 $SHADERS
+# Validate each shader on its own: passing several files makes glslang link them into one
+# pipeline, which fails once a stage has more than one entry point (e.g. two .vert files).
+for s in $SHADERS; do
+    glslangValidator --target-env vulkan1.1 "$s"
+done
 
 echo "== ok =="

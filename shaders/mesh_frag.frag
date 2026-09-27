@@ -1,35 +1,56 @@
 #version 450
 
 layout(location = 0) in vec3 vN;
-layout(location = 1) in vec3 vCol;
-layout(location = 2) in vec2 vUv;
+layout(location = 1) in vec2 vUv;
+layout(location = 2) in vec3 vWorldPos;
 layout(location = 0) out vec4 outColor;
 
-float hash21(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+layout(binding = 3) uniform UBO { mat4 viewProj; vec3 camPos; } ubo;
+layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; } modelU;
+
+const float PI = 3.14159265359;
+
+float dGGX(float NoH, float a) {
+    float a2 = a * a;
+    float d = NoH * NoH * (a2 - 1.0) + 1.0;
+    return a2 / (PI * d * d);
 }
 
-vec2 grad2(float a) {
-    return vec2(cos(a), sin(a));
+float vSmith(float NoV, float NoL, float a) {
+    float a2 = a * a;
+    float gv = NoL * sqrt(NoV * NoV * (1.0 - a2) + a2);
+    float gl = NoV * sqrt(NoL * NoL * (1.0 - a2) + a2);
+    return 0.5 / max(gv + gl, 1e-4);
 }
 
-float perlin(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    vec2 P = vec2(8.0);
-    float g00 = dot(grad2(6.2831853 * hash21(mod(i, P))), f);
-    float g10 = dot(grad2(6.2831853 * hash21(mod(i + vec2(1.0, 0.0), P))), f - vec2(1.0, 0.0));
-    float g01 = dot(grad2(6.2831853 * hash21(mod(i + vec2(0.0, 1.0), P))), f - vec2(0.0, 1.0));
-    float g11 = dot(grad2(6.2831853 * hash21(mod(i + vec2(1.0, 1.0), P))), f - vec2(1.0, 1.0));
-    return mix(mix(g00, g10, u.x), mix(g01, g11, u.x), u.y) * 0.5 + 0.5;
+vec3 fSchlick(vec3 F0, float VoH) {
+    return F0 + (1.0 - F0) * pow(1.0 - VoH, 5.0);
 }
 
 void main() {
-    vec3 n = normalize(vN);
+    vec3 N = normalize(vN);
+    vec3 V = normalize(ubo.camPos - vWorldPos);
     vec3 L = normalize(vec3(0.4, 0.8, 0.3));
-    float d = abs(dot(n, L));
-    float nz = perlin(vUv * 8.0);
-    vec3 col = vCol * (0.28 + 0.9 * d) * (0.55 + 0.9 * nz) + 0.05;
-    outColor = vec4(col, 1.0);
+    vec3 H = normalize(V + L);
+
+    float NoL = max(dot(N, L), 0.0);
+    float NoV = max(dot(N, V), 0.0) + 1e-4;
+    float NoH = max(dot(N, H), 0.0);
+    float VoH = max(dot(V, H), 0.0);
+
+    vec3 albedo = modelU.baseColor;
+
+    float a = clamp(modelU.roughness, 0.04, 1.0);
+    a = a * a;
+    vec3 F0 = mix(vec3(0.04), albedo, modelU.metallic);
+    vec3 F = fSchlick(F0, VoH);
+    vec3 spec = dGGX(NoH, a) * vSmith(NoV, NoL, a) * F;
+    vec3 kd = (1.0 - F) * (1.0 - modelU.metallic);
+    vec3 diff = kd * albedo / PI;
+
+    vec3 lightCol = vec3(1.0, 0.97, 0.92) * 3.0;
+    vec3 color = (diff + spec) * lightCol * NoL;
+    color += albedo * 0.12 * (1.0 - modelU.metallic);
+
+    outColor = vec4(color, 1.0);
 }

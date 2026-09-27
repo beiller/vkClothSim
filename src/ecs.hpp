@@ -61,6 +61,12 @@ struct Renderable {
     int inst = -1;
 };
 
+struct Material {
+    V3 baseColor{1.0f, 1.0f, 1.0f};
+    float metallic = 0.0f;
+    float roughness = 0.5f;
+};
+
 struct Name {
     std::string id;
 };

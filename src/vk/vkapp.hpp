@@ -21,8 +21,14 @@ public:
     VkQueue queue() const { return m_queue; }
     uint32_t queueFamily() const { return m_qf; }
     VkRenderPass renderPass() const { return m_rp; }
+    VkRenderPass sceneRenderPass() const { return m_rpScene; }
     VkSwapchainKHR swapchain() const { return m_sc; }
     VkFramebuffer frameBuffer(uint32_t i) const { return m_fbs[i]; }
+    VkFramebuffer sceneFramebuffer() const { return m_sceneFb; }
+    VkImageView hdrView() const { return m_hdrView; }
+    VkSampler hdrSampler() const { return m_hdrSampler; }
+    VkImage hdrImage() const { return m_hdr; }
+    VkFormat hdrFormat() const { return m_hdrFmt; }
     VkFormat swapchainFormat() const { return m_scfmt; }
     VkExtent2D extent() const { return m_extent; }
     uint32_t imageCount() const { return (uint32_t)m_images.size(); }
@@ -34,6 +40,7 @@ public:
 
 private:
     void createDepth(VkExtent2D ext);
+    void createHDR(VkExtent2D ext);
     void recreateSwapchain();
     void destroySwapchainResources();
 
@@ -48,10 +55,17 @@ private:
     std::vector<VkImage> m_images;
     std::vector<VkImageView> m_views;
     VkRenderPass m_rp = VK_NULL_HANDLE;
+    VkRenderPass m_rpScene = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> m_fbs;
+    VkFramebuffer m_sceneFb = VK_NULL_HANDLE;
     VkImage m_depth = VK_NULL_HANDLE;
     VkDeviceMemory m_depthMem = VK_NULL_HANDLE;
     VkImageView m_depthView = VK_NULL_HANDLE;
+    VkImage m_hdr = VK_NULL_HANDLE;
+    VkDeviceMemory m_hdrMem = VK_NULL_HANDLE;
+    VkImageView m_hdrView = VK_NULL_HANDLE;
+    VkSampler m_hdrSampler = VK_NULL_HANDLE;
+    VkFormat m_hdrFmt = VK_FORMAT_R16G16B16A16_SFLOAT;
     VkFormat m_scfmt = VK_FORMAT_UNDEFINED;
     VkSurfaceFormatKHR m_fmt{};
     VkExtent2D m_extent{};

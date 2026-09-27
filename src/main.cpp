@@ -65,7 +65,7 @@ int main() {
         app.submit(simCmd);
 
         app.pollEvents();
-        w.renderer.setViewProj(makeVP(app.extent()));
+        w.renderer.setViewProj(makeVP(app.extent()), w.camera.position);
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
