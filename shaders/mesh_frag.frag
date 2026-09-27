@@ -10,6 +10,9 @@ layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; 
 layout(binding = 6) uniform sampler2D albedoTex;
 layout(binding = 7) uniform sampler2D roughTex;
 layout(binding = 8) uniform sampler2D metalTex;
+layout(binding = 9) uniform samplerCube envPrefilter;
+layout(binding = 10) uniform samplerCube envIrradiance;
+layout(binding = 11) uniform sampler2D brdfLtc;
 
 const float PI = 3.14159265359;
 
@@ -33,27 +36,34 @@ vec3 fSchlick(vec3 F0, float VoH) {
 void main() {
     vec3 N = normalize(vN);
     vec3 V = normalize(ubo.camPos - vWorldPos);
-    vec3 L = normalize(vec3(0.4, 0.8, 0.3));
-    vec3 H = normalize(V + L);
-
-    float NoL = max(dot(N, L), 0.0);
     float NoV = max(dot(N, V), 0.0) + 1e-4;
-    float NoH = max(dot(N, H), 0.0);
-    float VoH = max(dot(V, H), 0.0);
 
     vec3 albedo = modelU.baseColor * texture(albedoTex, vUv).rgb;
     float metal = modelU.metallic * texture(metalTex, vUv).r;
-    float a = clamp(modelU.roughness * texture(roughTex, vUv).r, 0.04, 1.0);
-    a = a * a;
+    float rough = clamp(modelU.roughness * texture(roughTex, vUv).r, 0.04, 1.0);
+    float a = rough * rough;
     vec3 F0 = mix(vec3(0.04), albedo, metal);
+
+    vec3 R = reflect(-V, N);
+    vec3 irr = texture(envIrradiance, N).rgb;
+    vec3 prefilt = textureLod(envPrefilter, R, rough * 8.0).rgb;
+    vec2 ltc = texture(brdfLtc, vec2(NoV, rough)).xy;
+    vec3 specF = F0 * ltc.x + ltc.y;
+    vec3 indirectDiffuse = irr * albedo * (1.0 - metal);
+    vec3 indirectSpecular = prefilt * specF;
+
+    vec3 L = normalize(vec3(0.4, 0.8, 0.3));
+    vec3 H = normalize(V + L);
+    float NoL = max(dot(N, L), 0.0);
+    float NoH = max(dot(N, H), 0.0);
+    float VoH = max(dot(V, H), 0.0);
     vec3 F = fSchlick(F0, VoH);
     vec3 spec = dGGX(NoH, a) * vSmith(NoV, NoL, a) * F;
     vec3 kd = (1.0 - F) * (1.0 - metal);
     vec3 diff = kd * albedo / PI;
 
-    vec3 lightCol = vec3(1.0, 0.97, 0.92) * 3.0;
-    vec3 color = (diff + spec) * lightCol * NoL;
-    color += albedo * 0.12 * (1.0 - metal);
+    vec3 lightCol = vec3(1.0, 0.97, 0.92) * 1.5;
+    vec3 color = (diff + spec) * lightCol * NoL + indirectDiffuse + indirectSpecular;
 
     outColor = vec4(color, 1.0);
 }

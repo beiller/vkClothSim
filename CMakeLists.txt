@@ -14,6 +14,7 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 add_subdirectory(lib/glfw)
 
 find_package(Vulkan REQUIRED)
+find_package(ZLIB REQUIRED)
 find_program(GLSLC glslc REQUIRED)
 find_program(XXD xxd REQUIRED)
 
@@ -37,6 +38,10 @@ spirv(mesh_frag ${CMAKE_SOURCE_DIR}/shaders/mesh_frag.frag)
 spirv(tonemap_vert ${CMAKE_SOURCE_DIR}/shaders/tonemap.vert)
 spirv(tonemap_frag ${CMAKE_SOURCE_DIR}/shaders/tonemap.frag)
 spirv(softbody ${CMAKE_SOURCE_DIR}/shaders/softbody.comp)
+spirv(env_cube ${CMAKE_SOURCE_DIR}/shaders/env_cube.comp)
+spirv(env_prefilter ${CMAKE_SOURCE_DIR}/shaders/env_prefilter.comp)
+spirv(env_irradiance ${CMAKE_SOURCE_DIR}/shaders/env_irradiance.comp)
+spirv(env_brdf ${CMAKE_SOURCE_DIR}/shaders/env_brdf.comp)
 
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/lib/imgui)
 set(IMGUI_SOURCES
@@ -65,8 +70,9 @@ add_executable(vksim
     src/sim/softsim.cpp
     src/vk/vkapp.cpp
     src/vk/renderer.cpp
+    ${CMAKE_SOURCE_DIR}/lib/tinyexr/tinyexr.cc
     ${IMGUI_SOURCES})
-target_link_libraries(vksim PRIVATE glfw Vulkan::Vulkan Jolt::Jolt)
+target_link_libraries(vksim PRIVATE glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB)
 target_compile_features(vksim PRIVATE cxx_std_23)
 target_include_directories(vksim PRIVATE
     ${GEN_DIR}
@@ -74,6 +80,7 @@ target_include_directories(vksim PRIVATE
     ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/lib/entt/single_include
     ${CMAKE_SOURCE_DIR}/lib/stb
+    ${CMAKE_SOURCE_DIR}/lib/tinyexr
     ${CMAKE_SOURCE_DIR}/src)
 
 

@@ -1,0 +1,63 @@
+#version 450
+precision highp float;
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform samplerCube env;
+layout(binding = 1, rgba16f) uniform writeonly image2DArray outImage;
+layout(push_constant) uniform PC { int size; } pc;
+
+const float PI = 3.14159265358979323846;
+const float TWO_PI = 6.283185307179586;
+
+vec3 faceDir(int face, vec2 uv) {
+    vec3 d = vec3(uv, 1.0);
+    if (face == 0)
+        d = vec3(1.0, -uv.x, -uv.y);
+    else if (face == 1)
+        d = vec3(-1.0, uv.x, -uv.y);
+    else if (face == 2)
+        d = vec3(uv.x, 1.0, uv.y);
+    else if (face == 3)
+        d = vec3(uv.x, -1.0, -uv.y);
+    else if (face == 4)
+        d = vec3(uv.x, -uv.y, 1.0);
+    else
+        d = vec3(-uv.x, -uv.y, -1.0);
+    return normalize(d);
+}
+
+vec2 rand2(ivec2 p) {
+    uint x = uint(p.x) * 1973u + uint(p.y) * 9277u + 31u;
+    uint y = uint(p.x) * 9277u + uint(p.y) * 1973u + 67u;
+    x = (x << (x >> 5)) ^ x * 2654435761u;
+    x ^= x >> 12;
+    y = (y << (y >> 5)) ^ y * 2654435761u;
+    y ^= y >> 12;
+    return vec2(float(x), float(y)) / 4294967295.0;
+}
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    int face = int(gl_GlobalInvocationID.z);
+    if (pos.x >= pc.size || pos.y >= pc.size)
+        return;
+    vec2 uv = (2.0 * (vec2(pos) + 0.5) / float(pc.size)) - 1.0;
+    vec3 N = faceDir(face, uv);
+    vec3 up = abs(N.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 T = normalize(cross(up, N));
+    vec3 B = cross(N, T);
+
+    vec3 color = vec3(0.0);
+    const int SAMPLES = 32;
+    for (int i = 0; i < SAMPLES; ++i) {
+        vec2 u = rand2(ivec2(pos) + ivec2(i, face));
+        float phi = TWO_PI * u.x;
+        float cosTheta = 1.0 - u.y;
+        float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+        vec3 local = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+        vec3 dir = normalize(T * local.x + B * local.y + N * local.z);
+        color += textureLod(env, dir, 0.0).rgb * max(dot(N, dir), 0.0);
+    }
+    color = color / float(SAMPLES) / PI;
+    imageStore(outImage, ivec3(pos.x, pos.y, face), vec4(color, 1.0));
+}

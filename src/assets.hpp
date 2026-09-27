@@ -9,5 +9,12 @@ struct TextureData {
     int h = 0;
 };
 
+struct HdrData {
+    std::vector<float> rgb;
+    int w = 0;
+    int h = 0;
+};
+
 std::string exeDir();
 bool loadTexture(const std::string& path, TextureData& out);
+bool loadHdr(const std::string& path, HdrData& out);

@@ -376,4 +376,10 @@ void createDemoWorld(World& w) {
     w.reg.get<SoftBodyData>(ball).params.mass = 2.0f;
     w.reg.emplace<Material>(ball, V3{0.22f, 0.62f, 0.60f}, 0.0f, 0.4f);
     w.sim.build();
+
+    HdrData hdr;
+    if (!loadHdr(exeDir() + "/../assets/fly-studio-03_1K.exr", hdr))
+        loadHdr("assets/fly-studio-03_1K.exr", hdr);
+    if (!hdr.rgb.empty())
+        w.renderer.setEnvironment(*w.app, hdr.rgb.data(), (uint32_t)hdr.w, (uint32_t)hdr.h);
 }

@@ -1,5 +1,9 @@
 #include "vk/renderer.hpp"
 
+#include "env_brdf_spv.hpp"
+#include "env_cube_spv.hpp"
+#include "env_irradiance_spv.hpp"
+#include "env_prefilter_spv.hpp"
 #include "mesh_frag_spv.hpp"
 #include "mesh_vert_spv.hpp"
 #include "tonemap_frag_spv.hpp"
@@ -40,6 +44,9 @@ std::vector<VkDescriptorSetLayoutBinding> meshBinds() {
         {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {9, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     };
 }
 
@@ -190,6 +197,8 @@ int Renderer::addInstance(int geom) {
     setTexture(id, 0, -1);
     setTexture(id, 1, -1);
     setTexture(id, 2, -1);
+    if (m_envReady)
+        writeEnvSet(inst.set);
     return id;
 }
 
@@ -234,6 +243,173 @@ void Renderer::setViewProj(const Mat4& vp, const V3& camPos) {
     data[17] = camPos.y;
     data[18] = camPos.z;
     vkWriteBuffer(m_dev, m_vpMem, data, 80);
+}
+
+void Renderer::makeComputePass(const void* spv, uint32_t len, const std::vector<VkDescriptorSetLayoutBinding>& binds,
+                               uint32_t pcSize, EnvPass& out) {
+    vkMakeDslPool(m_dev, binds, 1, out.dsl, out.pool);
+    out.pl = pcSize > 0 ? vkMakePipelineLayoutPC(m_dev, out.dsl, VK_SHADER_STAGE_COMPUTE_BIT, pcSize)
+                        : vkMakePipelineLayout(m_dev, out.dsl);
+    VkShaderModule cm = vkMakeModule(m_dev, spv, len);
+    VkPipelineShaderStageCreateInfo cs{};
+    cs.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cs.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    cs.module = cm;
+    cs.pName = "main";
+    VkComputePipelineCreateInfo cpc{};
+    cpc.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpc.stage = cs;
+    cpc.layout = out.pl;
+    VK(vkCreateComputePipelines(m_dev, VK_NULL_HANDLE, 1, &cpc, nullptr, &out.pipe));
+    vkDestroyShaderModule(m_dev, cm, nullptr);
+    VkDescriptorSetAllocateInfo sa{};
+    sa.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    sa.descriptorPool = out.pool;
+    sa.descriptorSetCount = 1;
+    sa.pSetLayouts = &out.dsl;
+    VK(vkAllocateDescriptorSets(m_dev, &sa, &out.set));
+}
+
+void Renderer::writeEnvSet(VkDescriptorSet set) {
+    VkWriteDescriptorSet w[3]{};
+    for (auto& entry : w) {
+        entry.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        entry.dstSet = set;
+        entry.descriptorCount = 1;
+        entry.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    }
+    w[0].dstBinding = 9;
+    w[0].pImageInfo = &m_envSpecInfo;
+    w[1].dstBinding = 10;
+    w[1].pImageInfo = &m_envIrrInfo;
+    w[2].dstBinding = 11;
+    w[2].pImageInfo = &m_envLtcInfo;
+    vkUpdateDescriptorSets(m_dev, 3, w, 0, nullptr);
+}
+
+void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h) {
+    if (m_envReady)
+        return;
+    const uint32_t cubeSize = 256;
+    const uint32_t mips = 9;
+    m_envCubeSize = cubeSize;
+    m_envMips = mips;
+
+    vkMakeImage2DF32(m_dev, m_pdev, w, h, rgb, m_envEq.img, m_envEq.mem, m_envEq.view);
+    vkMakeCubeImage(m_dev, m_pdev, cubeSize, mips, m_envPre.img, m_envPre.mem, m_envPre.view);
+    vkMakeCubeImage(m_dev, m_pdev, cubeSize, 1, m_envIrr.img, m_envIrr.mem, m_envIrr.view);
+    vkMakeImage2DEmpty(m_dev, m_pdev, 256, 256, VK_FORMAT_R32G32_SFLOAT, m_envLtc.img, m_envLtc.mem, m_envLtc.view);
+    m_envPreMips.resize(mips);
+    for (uint32_t m = 0; m < mips; ++m)
+        vkMakeCubeMipArrayView(m_dev, m_envPre.img, m, m_envPreMips[m]);
+    vkMakeCubeMipArrayView(m_dev, m_envIrr.img, 0, m_envIrrArr);
+
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(m_pdev, &props);
+    const float maxAniso = props.limits.maxSamplerAnisotropy;
+    vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false, 0.0f, 1.0f,
+                    m_eqSampler);
+    vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, true,
+                    (float)(mips - 1), maxAniso, m_cubeSampler);
+    vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false, 0.0f,
+                    1.0f, m_ltcSampler);
+
+    m_envSpecInfo = {m_cubeSampler, m_envPre.view, VK_IMAGE_LAYOUT_GENERAL};
+    m_envIrrInfo = {m_cubeSampler, m_envIrr.view, VK_IMAGE_LAYOUT_GENERAL};
+    m_envLtcInfo = {m_ltcSampler, m_envLtc.view, VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo eqInfo{m_eqSampler, m_envEq.view, VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo preSam{m_cubeSampler, m_envPre.view, VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo preImg{VK_NULL_HANDLE, m_envPreMips[0], VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo irrImg{VK_NULL_HANDLE, m_envIrrArr, VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo ltcImg{VK_NULL_HANDLE, m_envLtc.view, VK_IMAGE_LAYOUT_GENERAL};
+
+    const std::vector<VkDescriptorSetLayoutBinding> cubeBinds = {
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+    };
+    const std::vector<VkDescriptorSetLayoutBinding> brdfBinds = {
+        {0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+    };
+    makeComputePass(env_cube_spv, env_cube_spv_len / 4, cubeBinds, 4, m_pcCube);
+    makeComputePass(env_prefilter_spv, env_prefilter_spv_len / 4, cubeBinds, 8, m_pcPref);
+    makeComputePass(env_irradiance_spv, env_irradiance_spv_len / 4, cubeBinds, 4, m_pcIrr);
+    makeComputePass(env_brdf_spv, env_brdf_spv_len / 4, brdfBinds, 0, m_pcBrdf);
+
+    auto writeImg = [&](VkDescriptorSet set, uint32_t binding, VkDescriptorType type, const VkDescriptorImageInfo& ii) {
+        VkWriteDescriptorSet wr{};
+        wr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        wr.dstSet = set;
+        wr.dstBinding = binding;
+        wr.descriptorCount = 1;
+        wr.descriptorType = type;
+        wr.pImageInfo = &ii;
+        vkUpdateDescriptorSets(m_dev, 1, &wr, 0, nullptr);
+    };
+    writeImg(m_pcCube.set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, eqInfo);
+    writeImg(m_pcCube.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, preImg);
+    writeImg(m_pcPref.set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, preSam);
+    writeImg(m_pcPref.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, preImg);
+    writeImg(m_pcIrr.set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, preSam);
+    writeImg(m_pcIrr.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, irrImg);
+    writeImg(m_pcBrdf.set, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, ltcImg);
+
+    VkCommandBuffer cmd = app.beginCommands();
+    auto imgBar = [&](VkImage img, uint32_t lvl) {
+        VkImageMemoryBarrier b{};
+        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b.image = img;
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, lvl, 0, 6};
+        b.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                             nullptr, 0, nullptr, 1, &b);
+    };
+    const uint32_t groups = (cubeSize + 7) / 8;
+    const int pcSize = (int)cubeSize;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcCube.pipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcCube.pl, 0, 1, &m_pcCube.set, 0, nullptr);
+    vkCmdPushConstants(cmd, m_pcCube.pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &pcSize);
+    vkCmdDispatch(cmd, groups, groups, 6);
+    imgBar(m_envPre.img, mips);
+
+    for (uint32_t mip = 1; mip < mips; ++mip) {
+        const uint32_t size = cubeSize >> mip;
+        const VkDescriptorImageInfo mi{VK_NULL_HANDLE, m_envPreMips[mip], VK_IMAGE_LAYOUT_GENERAL};
+        VkWriteDescriptorSet wr{};
+        wr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        wr.dstSet = m_pcPref.set;
+        wr.dstBinding = 1;
+        wr.descriptorCount = 1;
+        wr.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        wr.pImageInfo = &mi;
+        vkUpdateDescriptorSets(m_dev, 1, &wr, 0, nullptr);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcPref.pipe);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcPref.pl, 0, 1, &m_pcPref.set, 0, nullptr);
+        const int pcPref[2] = {(int)mip, (int)size};
+        vkCmdPushConstants(cmd, m_pcPref.pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, 8, pcPref);
+        vkCmdDispatch(cmd, (size + 7) / 8, (size + 7) / 8, 6);
+        imgBar(m_envPre.img, mips);
+    }
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcIrr.pipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcIrr.pl, 0, 1, &m_pcIrr.set, 0, nullptr);
+    vkCmdPushConstants(cmd, m_pcIrr.pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &pcSize);
+    vkCmdDispatch(cmd, groups, groups, 6);
+    imgBar(m_envIrr.img, 1);
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcBrdf.pipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcBrdf.pl, 0, 1, &m_pcBrdf.set, 0, nullptr);
+    vkCmdDispatch(cmd, 16, 16, 1);
+    app.submit(cmd);
+
+    m_envReady = true;
+    for (auto& inst : m_insts)
+        writeEnvSet(inst.set);
 }
 
 void Renderer::drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const InstancedMesh& inst) {
@@ -355,6 +531,32 @@ void Renderer::shutdown() {
     vkFreeImage2D(m_dev, m_white.img, m_white.mem, m_white.view);
     if (m_texSampler)
         vkDestroySampler(m_dev, m_texSampler, nullptr);
+    if (m_envReady) {
+        for (const auto& p : {m_pcCube, m_pcPref, m_pcIrr, m_pcBrdf}) {
+            if (p.pool)
+                vkDestroyDescriptorPool(m_dev, p.pool, nullptr);
+            if (p.dsl)
+                vkDestroyDescriptorSetLayout(m_dev, p.dsl, nullptr);
+            if (p.pl)
+                vkDestroyPipelineLayout(m_dev, p.pl, nullptr);
+            if (p.pipe)
+                vkDestroyPipeline(m_dev, p.pipe, nullptr);
+        }
+        vkFreeImage2D(m_dev, m_envEq.img, m_envEq.mem, m_envEq.view);
+        vkFreeImage2D(m_dev, m_envPre.img, m_envPre.mem, m_envPre.view);
+        vkFreeImage2D(m_dev, m_envIrr.img, m_envIrr.mem, m_envIrr.view);
+        vkFreeImage2D(m_dev, m_envLtc.img, m_envLtc.mem, m_envLtc.view);
+        for (VkImageView v : m_envPreMips)
+            vkDestroyImageView(m_dev, v, nullptr);
+        if (m_envIrrArr)
+            vkDestroyImageView(m_dev, m_envIrrArr, nullptr);
+        if (m_eqSampler)
+            vkDestroySampler(m_dev, m_eqSampler, nullptr);
+        if (m_cubeSampler)
+            vkDestroySampler(m_dev, m_cubeSampler, nullptr);
+        if (m_ltcSampler)
+            vkDestroySampler(m_dev, m_ltcSampler, nullptr);
+    }
     if (m_pool)
         vkDestroyDescriptorPool(m_dev, m_pool, nullptr);
     if (m_dsl)

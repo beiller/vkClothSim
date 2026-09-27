@@ -1,0 +1,61 @@
+#version 450
+precision highp float;
+
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(binding = 0, rg32f) uniform writeonly image2D outLTC;
+
+const float PI = 3.14159265358979323846;
+const float TWO_PI = 6.283185307179586;
+
+vec2 rand2(ivec2 p) {
+    uint x = uint(p.x) * 1973u + uint(p.y) * 9277u + 31u;
+    uint y = uint(p.x) * 9277u + uint(p.y) * 1973u + 67u;
+    x = (x << (x >> 5)) ^ x * 2654435761u;
+    x ^= x >> 12;
+    y = (y << (y >> 5)) ^ y * 2654435761u;
+    y ^= y >> 12;
+    return vec2(float(x), float(y)) / 4294967295.0;
+}
+
+void main() {
+    ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+    if (pos.x >= 256 || pos.y >= 256)
+        return;
+    float NoV = (float(pos.x) + 0.5) / 256.0;
+    float roughness = (float(pos.y) + 0.5) / 256.0;
+    vec3 N = vec3(0.0, 0.0, 1.0);
+    vec3 V = normalize(vec3(0.0, sqrt(1.0 - NoV * NoV), NoV));
+    float a = roughness;
+    float a2 = a * a;
+    float alpha = a2 * a2;
+    vec3 T = normalize(cross(vec3(0.0, 1.0, 0.0), N));
+    vec3 B = cross(N, T);
+
+    float A = 0.0;
+    float Bc = 0.0;
+    const int SAMPLES = 128;
+    for (int i = 0; i < SAMPLES; ++i) {
+        vec2 u = rand2(ivec2(pos) + ivec2(i, 0));
+        float cosTheta = sqrt((1.0 - u.x) / (u.x * (alpha - 1.0) + 1.0));
+        float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+        float phi = TWO_PI * u.y;
+        vec3 Hl = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+        vec3 H = normalize(T * Hl.x + B * Hl.y + N * Hl.z);
+        vec3 L = normalize(2.0 * dot(N, H) * H - V);
+        float NoL = max(dot(N, L), 0.0);
+        if (NoL <= 0.0)
+            continue;
+        float NoH = max(dot(N, H), 0.0);
+        float VoH = max(dot(V, H), 0.0);
+        float gv = NoL * sqrt(NoV * NoV * (1.0 - alpha) + alpha);
+        float gl = NoV * sqrt(NoL * NoL * (1.0 - alpha) + alpha);
+        float g = 0.5 / max(gv + gl, 1e-4);
+        float P = pow(1.0 - VoH, 5.0);
+        float w = g * NoH / NoL;
+        A += w * (1.0 - P);
+        Bc += w * P;
+    }
+    A /= float(SAMPLES);
+    Bc /= float(SAMPLES);
+    imageStore(outLTC, ivec2(pos.x, pos.y), vec4(A, Bc, 0.0, 1.0));
+}

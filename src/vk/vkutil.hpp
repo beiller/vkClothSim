@@ -141,6 +141,135 @@ inline void vkFreeImage2D(VkDevice dev, VkImage img, VkDeviceMemory mem, VkImage
     }
 }
 
+inline void vkMakeSamplerEx(VkDevice dev, VkSamplerAddressMode addrU, VkSamplerAddressMode addrV, bool linearMip,
+                            float maxLod, float maxAniso, VkSampler& out) {
+    VkSamplerCreateInfo s{};
+    s.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    s.magFilter = VK_FILTER_LINEAR;
+    s.minFilter = VK_FILTER_LINEAR;
+    s.mipmapMode = linearMip ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    s.addressModeU = addrU;
+    s.addressModeV = addrV;
+    s.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    s.anisotropyEnable = maxAniso > 1.0f;
+    s.maxAnisotropy = maxAniso;
+    s.compareEnable = VK_FALSE;
+    s.minLod = 0.0f;
+    s.maxLod = maxLod;
+    s.unnormalizedCoordinates = VK_FALSE;
+    VK(vkCreateSampler(dev, &s, nullptr, &out));
+}
+
+inline void vkMakeImage2DF32(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint32_t h, const float* rgb,
+                             VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = VK_FORMAT_R32G32B32_SFLOAT;
+    ici.extent = {w, h, 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_LINEAR;
+    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    ici.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VK(vkCreateImage(dev, &ici, nullptr, &img));
+    VkMemoryRequirements mr;
+    vkGetImageMemoryRequirements(dev, img, &mr);
+    VkMemoryAllocateInfo maa{};
+    maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    maa.allocationSize = mr.size;
+    maa.memoryTypeIndex =
+        vkFindMemoryType(pdev, mr, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VK(vkAllocateMemory(dev, &maa, nullptr, &mem));
+    VK(vkBindImageMemory(dev, img, mem, 0));
+    if (rgb) {
+        void* p;
+        VK(vkMapMemory(dev, mem, 0, (VkDeviceSize)w * h * 12, 0, &p));
+        std::memcpy(p, rgb, (size_t)w * h * 12);
+        vkUnmapMemory(dev, mem);
+    }
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = img;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = VK_FORMAT_R32G32B32_SFLOAT;
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VK(vkCreateImageView(dev, &vci, nullptr, &view));
+}
+
+inline void vkMakeCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, uint32_t mipLevels, VkImage& img,
+                            VkDeviceMemory& mem, VkImageView& cubeView) {
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    ici.extent = {size, size, 1};
+    ici.mipLevels = mipLevels;
+    ici.arrayLayers = 6;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+    ici.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VK(vkCreateImage(dev, &ici, nullptr, &img));
+    VkMemoryRequirements mr;
+    vkGetImageMemoryRequirements(dev, img, &mr);
+    VkMemoryAllocateInfo maa{};
+    maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    maa.allocationSize = mr.size;
+    maa.memoryTypeIndex = vkFindMemoryType(pdev, mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK(vkAllocateMemory(dev, &maa, nullptr, &mem));
+    VK(vkBindImageMemory(dev, img, mem, 0));
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = img;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+    vci.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mipLevels, 0, 6};
+    VK(vkCreateImageView(dev, &vci, nullptr, &cubeView));
+}
+
+inline void vkMakeCubeMipArrayView(VkDevice dev, VkImage img, uint32_t mip, VkImageView& view) {
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = img;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    vci.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, 0, 6};
+    VK(vkCreateImageView(dev, &vci, nullptr, &view));
+}
+
+inline void vkMakeImage2DEmpty(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint32_t h, VkFormat fmt, VkImage& img,
+                               VkDeviceMemory& mem, VkImageView& view) {
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = fmt;
+    ici.extent = {w, h, 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+    ici.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VK(vkCreateImage(dev, &ici, nullptr, &img));
+    VkMemoryRequirements mr;
+    vkGetImageMemoryRequirements(dev, img, &mr);
+    VkMemoryAllocateInfo maa{};
+    maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    maa.allocationSize = mr.size;
+    maa.memoryTypeIndex = vkFindMemoryType(pdev, mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK(vkAllocateMemory(dev, &maa, nullptr, &mem));
+    VK(vkBindImageMemory(dev, img, mem, 0));
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = img;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = fmt;
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VK(vkCreateImageView(dev, &vci, nullptr, &view));
+}
+
 inline void vkMakeDslPool(VkDevice dev, const std::vector<VkDescriptorSetLayoutBinding>& binds, uint32_t maxSets,
                           VkDescriptorSetLayout& dsl, VkDescriptorPool& pool) {
     VkDescriptorSetLayoutCreateInfo dslc{};
@@ -191,6 +320,20 @@ inline VkPipelineLayout vkMakePipelineLayout(VkDevice dev, VkDescriptorSetLayout
     plc.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     plc.setLayoutCount = 1;
     plc.pSetLayouts = &dsl;
+    VkPipelineLayout pl;
+    VK(vkCreatePipelineLayout(dev, &plc, nullptr, &pl));
+    return pl;
+}
+
+inline VkPipelineLayout vkMakePipelineLayoutPC(VkDevice dev, VkDescriptorSetLayout dsl, VkShaderStageFlags stages,
+                                               uint32_t size) {
+    VkPushConstantRange range{stages, 0, size};
+    VkPipelineLayoutCreateInfo plc{};
+    plc.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plc.setLayoutCount = 1;
+    plc.pSetLayouts = &dsl;
+    plc.pushConstantRangeCount = 1;
+    plc.pPushConstantRanges = &range;
     VkPipelineLayout pl;
     VK(vkCreatePipelineLayout(dev, &plc, nullptr, &pl));
     return pl;
