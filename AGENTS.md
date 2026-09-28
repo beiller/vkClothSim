@@ -31,9 +31,21 @@ Keep all output concise: minimize text and avoid long summaries or logs.
 cmake -S . -B build -Wno-dev        # re-run after editing any shader (SPIR-V is baked here)
 cmake --build build -j
 ./build/vksim                        # the app
-./build/vksim --shot s.ppm [--steps N]   # settle N steps, render one frame, write PPM, exit
 ```
 
+## Screenshot
+
+Capture the app window (needs `import`/ImageMagick + `xprop`; works even when the window is behind others).
+
+```sh
+setsid ./build/vksim >/tmp/vksim.log 2>&1 < /dev/null & disown   # run detached so it keeps rendering
+sleep 6
+for id in $(xprop -root _NET_CLIENT_LIST | sed 's/.*# //'); do
+    n=$(xprop -id "$id" _NET_WM_NAME 2>/dev/null | sed 's/.*= //; s/"//g')
+    [ "$n" = "3dsim" ] && import -window "$id" shot.png
+done
+pkill -f build/vksim
+```
 
 # Desired Code State
 ## Verlet Integration

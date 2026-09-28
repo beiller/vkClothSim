@@ -291,7 +291,7 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     if (m_envReady)
         return;
     const uint32_t cubeSize = 256;
-    const uint32_t mips = 9;
+    const uint32_t mips = 5;
     m_envCubeSize = cubeSize;
     m_envMips = mips;
 

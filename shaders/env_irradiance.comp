@@ -12,9 +12,9 @@ const float TWO_PI = 6.283185307179586;
 vec3 faceDir(int face, vec2 uv) {
     vec3 d = vec3(uv, 1.0);
     if (face == 0)
-        d = vec3(1.0, -uv.x, -uv.y);
+        d = vec3(1.0, -uv.y, -uv.x);
     else if (face == 1)
-        d = vec3(-1.0, uv.x, -uv.y);
+        d = vec3(-1.0, -uv.y, uv.x);
     else if (face == 2)
         d = vec3(uv.x, 1.0, uv.y);
     else if (face == 3)
@@ -24,16 +24,6 @@ vec3 faceDir(int face, vec2 uv) {
     else
         d = vec3(-uv.x, -uv.y, -1.0);
     return normalize(d);
-}
-
-vec2 rand2(ivec2 p) {
-    uint x = uint(p.x) * 1973u + uint(p.y) * 9277u + 31u;
-    uint y = uint(p.x) * 9277u + uint(p.y) * 1973u + 67u;
-    x = (x << (x >> 5)) ^ x * 2654435761u;
-    x ^= x >> 12;
-    y = (y << (y >> 5)) ^ y * 2654435761u;
-    y ^= y >> 12;
-    return vec2(float(x), float(y)) / 4294967295.0;
 }
 
 void main() {
@@ -48,16 +38,16 @@ void main() {
     vec3 B = cross(N, T);
 
     vec3 color = vec3(0.0);
-    const int SAMPLES = 32;
+    const int SAMPLES = 1024;
+    const int GRID = 32;
     for (int i = 0; i < SAMPLES; ++i) {
-        vec2 u = rand2(ivec2(pos) + ivec2(i, face));
+        vec2 u = (vec2(float(uint(i) % GRID), float(uint(i) / GRID)) + vec2(0.5)) / float(GRID);
         float phi = TWO_PI * u.x;
-        float cosTheta = 1.0 - u.y;
-        float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
-        vec3 local = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
-        vec3 dir = normalize(T * local.x + B * local.y + N * local.z);
-        color += textureLod(env, dir, 0.0).rgb * max(dot(N, dir), 0.0);
+        float r = sqrt(u.y);
+        vec3 local = normalize(vec3(cos(phi) * r, sin(phi) * r, sqrt(max(0.0, 1.0 - r * r))));
+        vec3 dir = T * local.x + B * local.y + N * local.z;
+        color += textureLod(env, dir, 0.0).rgb;
     }
-    color = color / float(SAMPLES) / PI;
+    color = color * PI / float(SAMPLES);
     imageStore(outImage, ivec3(pos.x, pos.y, face), vec4(color, 1.0));
 }

@@ -6,15 +6,14 @@ layout(binding = 0) uniform samplerCube env;
 layout(binding = 1, rgba16f) uniform writeonly image2DArray outImage;
 layout(push_constant) uniform PC { int mip; int size; } pc;
 
-const float PI = 3.14159265358979323846;
 const float TWO_PI = 6.283185307179586;
 
 vec3 faceDir(int face, vec2 uv) {
     vec3 d = vec3(uv, 1.0);
     if (face == 0)
-        d = vec3(1.0, -uv.x, -uv.y);
+        d = vec3(1.0, -uv.y, -uv.x);
     else if (face == 1)
-        d = vec3(-1.0, uv.x, -uv.y);
+        d = vec3(-1.0, -uv.y, uv.x);
     else if (face == 2)
         d = vec3(uv.x, 1.0, uv.y);
     else if (face == 3)
@@ -26,29 +25,6 @@ vec3 faceDir(int face, vec2 uv) {
     return normalize(d);
 }
 
-vec3 getDir(vec3 normal, vec2 uv) {
-    vec3 up = abs(normal.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-    vec3 tangent = normalize(cross(up, normal));
-    vec3 bitangent = cross(normal, tangent);
-    return normalize(tangent * uv.x + bitangent * uv.y + normal);
-}
-
-vec2 rand2(ivec2 p) {
-    uint x = uint(p.x) * 1973u + uint(p.y) * 9277u + 31u;
-    uint y = uint(p.x) * 9277u + uint(p.y) * 1973u + 67u;
-    x = (x << (x >> 5)) ^ x * 2654435761u;
-    x ^= x >> 12;
-    y = (y << (y >> 5)) ^ y * 2654435761u;
-    y ^= y >> 12;
-    return vec2(float(x), float(y)) / 4294967295.0;
-}
-
-vec2 sampleDisk(float radius, uint salt) {
-    vec2 v = rand2(ivec2(gl_GlobalInvocationID.xy) + ivec2(int(salt), 0));
-    float a = TWO_PI * v.x;
-    return vec2(cos(a) * radius, sin(a) * radius);
-}
-
 void main() {
     ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
     int face = int(gl_GlobalInvocationID.z);
@@ -56,23 +32,28 @@ void main() {
         return;
     vec2 uv = (2.0 * (vec2(pos) + 0.5) / float(pc.size)) - 1.0;
     vec3 normal = faceDir(face, uv);
-    vec3 tangDir = normalize(getDir(normal, sampleDisk(0.25, 1u)));
-    float roughness = 1.0 / float(pc.size);
-    vec3 L = getDir(normal, sampleDisk(roughness, 2u));
-    float NdotL = max(dot(normal, L), 0.0);
-    if (NdotL <= 0.0)
-        return;
+    vec3 up = abs(normal.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 T = normalize(cross(up, normal));
+    vec3 B = cross(normal, T);
+    float roughness = float(pc.mip) / 4.0;
     float a = roughness;
-    float a2 = a * a;
-    float alpha = a2 * a2;
-    float cosTheta = NdotL;
-    float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
-    float denom = cosTheta * cosTheta * (1.0 - alpha) + alpha;
-    float gTerm = 0.5 / max(denom, 1e-7);
-    float cosAlphaTheta = sqrt(alpha + (1.0 - alpha) * cosTheta * cosTheta);
-    float pdf = (cosAlphaTheta * sinTheta) / (PI * cosTheta * sinTheta * sinTheta);
-    vec3 color = textureLod(env, L, float(pc.mip - 1)).rgb;
-    color *= NdotL * gTerm / pdf;
-    color /= 4.0 * max(dot(normal, tangDir), 0.0) * NdotL * sinTheta;
-    imageStore(outImage, ivec3(pos.x, pos.y, face), vec4(color, 1.0));
+    float alpha = a * a;
+    const int SAMPLES = 4096;
+    const int GRID = 64;
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < SAMPLES; ++i) {
+        vec2 u = (vec2(float(uint(i) % GRID), float(uint(i) / GRID)) + vec2(0.5)) / float(GRID);
+        float cosTheta = sqrt((1.0 - u.x) / (u.x * (alpha - 1.0) + 1.0));
+        float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+        float phi = TWO_PI * u.y;
+        vec3 H = normalize(T * (cos(phi) * sinTheta) + B * (sin(phi) * sinTheta) + normal * cosTheta);
+        float NoH = max(dot(normal, H), 0.0);
+        vec3 L = normalize(2.0 * NoH * H - normal);
+        float NoL = max(dot(normal, L), 0.0);
+        if (NoL <= 0.0)
+            continue;
+        sum += textureLod(env, L, float(pc.mip - 1)).rgb * (0.5 * NoL * NoL);
+    }
+    sum /= float(SAMPLES);
+    imageStore(outImage, ivec3(pos.x, pos.y, face), vec4(sum, 1.0));
 }

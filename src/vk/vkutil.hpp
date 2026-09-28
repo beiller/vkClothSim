@@ -184,9 +184,20 @@ inline void vkMakeImage2DF32(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, ui
     VK(vkAllocateMemory(dev, &maa, nullptr, &mem));
     VK(vkBindImageMemory(dev, img, mem, 0));
     if (rgb) {
+        VkImageSubresource sub{};
+        sub.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        sub.mipLevel = 0;
+        sub.arrayLayer = 0;
+        VkSubresourceLayout layout{};
+        vkGetImageSubresourceLayout(dev, img, &sub, &layout);
+        const VkDeviceSize rowBytes = (VkDeviceSize)w * 12;
+        const VkDeviceSize rowPitch = layout.rowPitch;
         void* p;
-        VK(vkMapMemory(dev, mem, 0, (VkDeviceSize)w * h * 12, 0, &p));
-        std::memcpy(p, rgb, (size_t)w * h * 12);
+        VK(vkMapMemory(dev, mem, 0, mr.size, 0, &p));
+        char* dst = static_cast<char*>(p);
+        const char* src = reinterpret_cast<const char*>(rgb);
+        for (uint32_t y = 0; y < h; ++y)
+            std::memcpy(dst + (size_t)y * rowPitch, src + (size_t)y * rowBytes, (size_t)rowBytes);
         vkUnmapMemory(dev, mem);
     }
     VkImageViewCreateInfo vci{};

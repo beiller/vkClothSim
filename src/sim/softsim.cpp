@@ -75,8 +75,9 @@ int SoftSim::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& c
 }
 
 void SoftSim::build() {
-    vkMakeBuffer(m_dev, m_pdev, m_capsInstances, m_capsInstancesMem, 48 * (VkDeviceSize)m_colliders.size(),
-                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    const VkDeviceSize nCaps = std::max<uint32_t>(1, (uint32_t)m_colliders.size());
+    vkMakeBuffer(m_dev, m_pdev, m_capsInstances, m_capsInstancesMem, 48 * nCaps, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                 nullptr);
     const auto binds = softBinds();
     auto maxSets = (uint32_t)m_body.size();
     if (maxSets == 0)

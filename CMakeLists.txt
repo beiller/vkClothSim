@@ -64,6 +64,7 @@ include(${PHYSICS_REPO_ROOT}/Jolt/Jolt.cmake)
 add_executable(vksim
     src/main.cpp
     src/demo.cpp
+    src/hdri.cpp
     src/systems.cpp
     src/app/rigid.cpp
     src/assets.cpp

@@ -3,23 +3,28 @@
 #include <GLFW/glfw3.h>
 
 #include "demo.hpp"
+#include "hdri.hpp"
 #include "systems.hpp"
 #include "vk/vkapp.hpp"
 #include "world.hpp"
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
-int main() {
+int main(int argc, char** argv) {
     VkApp app;
     if (!app.init(900, 900, "3dsim"))
         return 1;
 
     World w;
     w.app = &app;
-    createDemoWorld(w);
+    if (argc > 1 && std::strcmp(argv[1], "--hdri") == 0)
+        createHdriWorld(w);
+    else
+        createDemoWorld(w);
     auto makeVP = [&w](VkExtent2D ext) {
         return w.camera.viewProj((float)ext.width / (float)ext.height);
     };

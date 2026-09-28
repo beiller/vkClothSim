@@ -8,9 +8,9 @@ layout(push_constant) uniform PC { int size; } pc;
 vec3 faceDir(int face, vec2 uv) {
     vec3 d = vec3(uv, 1.0);
     if (face == 0)
-        d = vec3(1.0, -uv.x, -uv.y);
+        d = vec3(1.0, -uv.y, -uv.x);
     else if (face == 1)
-        d = vec3(-1.0, uv.x, -uv.y);
+        d = vec3(-1.0, -uv.y, uv.x);
     else if (face == 2)
         d = vec3(uv.x, 1.0, uv.y);
     else if (face == 3)

@@ -41,15 +41,14 @@ void main() {
     vec3 albedo = modelU.baseColor * texture(albedoTex, vUv).rgb;
     float metal = modelU.metallic * texture(metalTex, vUv).r;
     float rough = clamp(modelU.roughness * texture(roughTex, vUv).r, 0.04, 1.0);
-    float a = rough * rough;
+    float a = rough;
     vec3 F0 = mix(vec3(0.04), albedo, metal);
 
     vec3 R = reflect(-V, N);
     vec3 irr = texture(envIrradiance, N).rgb;
-    vec3 prefilt = textureLod(envPrefilter, R, rough * 8.0).rgb;
-    vec2 ltc = texture(brdfLtc, vec2(NoV, rough)).xy;
-    vec3 specF = F0 * ltc.x + ltc.y;
-    vec3 indirectDiffuse = irr * albedo * (1.0 - metal);
+    vec3 prefilt = textureLod(envPrefilter, R, rough * 4.0).rgb;
+    vec3 specF = fSchlick(F0, 1.0 - NoV);
+    vec3 indirectDiffuse = irr * albedo * (1.0 - metal) / PI;
     vec3 indirectSpecular = prefilt * specF;
 
     vec3 L = normalize(vec3(0.4, 0.8, 0.3));

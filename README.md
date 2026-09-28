@@ -10,7 +10,6 @@ Jolt rigid-body physics with a GPU soft-body simulation (Vulkan compute). The cl
 cmake -S . -B build -Wno-dev
 cmake --build build -j
 ./build/vksim                          # interactive
-./build/vksim --shot s.ppm --steps N   # settle N steps, render one frame, write PPM
 ```
 
 Re-run the `cmake -S .` step after editing a shader — SPIR-V is baked in at configure time.
