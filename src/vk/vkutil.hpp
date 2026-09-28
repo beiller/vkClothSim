@@ -285,37 +285,6 @@ inline void vkMakeCubeMipArrayView(VkDevice dev, VkImage img, uint32_t mip, VkIm
     VK(vkCreateImageView(dev, &vci, nullptr, &view));
 }
 
-inline void vkMakeImage2DEmpty(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint32_t h, VkFormat fmt, VkImage& img,
-                               VkDeviceMemory& mem, VkImageView& view) {
-    VkImageCreateInfo ici{};
-    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = fmt;
-    ici.extent = {w, h, 1};
-    ici.mipLevels = 1;
-    ici.arrayLayers = 1;
-    ici.samples = VK_SAMPLE_COUNT_1_BIT;
-    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-    ici.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
-    VK(vkCreateImage(dev, &ici, nullptr, &img));
-    VkMemoryRequirements mr;
-    vkGetImageMemoryRequirements(dev, img, &mr);
-    VkMemoryAllocateInfo maa{};
-    maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    maa.allocationSize = mr.size;
-    maa.memoryTypeIndex = vkFindMemoryType(pdev, mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VK(vkAllocateMemory(dev, &maa, nullptr, &mem));
-    VK(vkBindImageMemory(dev, img, mem, 0));
-    VkImageViewCreateInfo vci{};
-    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = img;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = fmt;
-    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VK(vkCreateImageView(dev, &vci, nullptr, &view));
-}
-
 inline void vkMakeDslPool(VkDevice dev, const std::vector<VkDescriptorSetLayoutBinding>& binds, uint32_t maxSets,
                           VkDescriptorSetLayout& dsl, VkDescriptorPool& pool) {
     VkDescriptorSetLayoutCreateInfo dslc{};

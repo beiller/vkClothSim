@@ -3,6 +3,8 @@
 #include "app/rigid.hpp"
 #include "assets.hpp"
 #include "capsule.hpp"
+#include "meshgen.hpp"
+#include "scene_common.hpp"
 #include "systems.hpp"
 #include "vk/vkapp.hpp"
 #include <algorithm>
@@ -85,47 +87,6 @@ std::vector<sim::Constraint> makeClothCons(int CW, int CH, float span) {
     return cons;
 }
 
-struct IcoSphere {
-    std::vector<V3> verts;
-    std::vector<uint32_t> tris;
-};
-
-IcoSphere makeIcosphere(int subdiv) {
-    const float t = (1.0f + std::sqrt(5.0f)) * 0.5f;
-    std::vector<V3> verts{{-1, t, 0},  {1, t, 0},  {-1, -t, 0}, {1, -t, 0}, {0, -1, t},  {0, 1, t},
-                          {0, -1, -t}, {0, 1, -t}, {t, 0, -1},  {t, 0, 1},  {-t, 0, -1}, {-t, 0, 1}};
-    for (auto& v : verts)
-        v = vScale(v, 1.0f / vLen(v));
-    std::vector<uint32_t> tris{0, 11, 5,  0, 5,  1, 0, 1, 7, 0, 7,  10, 0, 10, 11, 1, 5, 9, 5, 11,
-                               4, 11, 10, 2, 10, 7, 6, 7, 1, 8, 3,  9,  4, 3,  4,  2, 3, 2, 6, 3,
-                               6, 8,  3,  8, 9,  4, 9, 5, 2, 4, 11, 6,  2, 10, 8,  6, 7, 9, 8, 1};
-    for (int s = 0; s < subdiv; ++s) {
-        std::map<uint64_t, uint32_t> mid;
-        auto midOf = [&](uint32_t a, uint32_t b) {
-            const uint64_t key = (a < b) ? ((uint64_t)a << 32) | b : ((uint64_t)b << 32) | a;
-            auto it = mid.find(key);
-            if (it != mid.end())
-                return it->second;
-            V3 m = vScale(vAdd(verts[a], verts[b]), 0.5f);
-            m = vScale(m, 1.0f / vLen(m));
-            auto idx = (uint32_t)verts.size();
-            verts.push_back(m);
-            mid[key] = idx;
-            return idx;
-        };
-        std::vector<uint32_t> next;
-        next.reserve(tris.size() * 4);
-        for (size_t f = 0; f < tris.size(); f += 3) {
-            const uint32_t a = tris[f], b = tris[f + 1], c = tris[f + 2];
-            const uint32_t ab = midOf(a, b), bc = midOf(b, c), ca = midOf(c, a);
-            for (uint32_t v : {a, ab, ca, b, bc, ab, c, ca, bc, ab, bc, ca})
-                next.push_back(v);
-        }
-        tris = std::move(next);
-    }
-    return {verts, tris};
-}
-
 void addBallEdges(const Mesh& mesh, std::vector<sim::Constraint>& cons, const std::vector<uint32_t>& tris) {
     const float* pos = mesh.pos.data();
     std::map<uint64_t, bool> seen;
@@ -171,49 +132,11 @@ void addAntipodalTies(const Mesh& mesh, std::vector<sim::Constraint>& cons) {
     }
 }
 
-Mesh makeBallMesh(float radius, float y0, int subdiv = 3) {
-    IcoSphere ico = makeIcosphere(subdiv);
-    const int n = (int)ico.verts.size();
-    Mesh out;
-    out.pos.assign((size_t)3 * n, 0.0f);
-    out.nrm.assign((size_t)3 * n, 0.0f);
-    out.uv.assign((size_t)2 * n, 0.0f);
-    out.indices = ico.tris;
-    const V3 center{0, y0, 0};
-    for (int i = 0; i < n; ++i) {
-        const V3 dir = ico.verts[i];
-        const V3 p = vAdd(center, vScale(dir, radius));
-        vStore(out.pos.data(), i, p);
-        vStore(out.nrm.data(), i, dir);
-        out.uv[2 * i] = 0.5f + std::atan2f(dir.z, dir.x) / (2.0f * kPi);
-        out.uv[2 * i + 1] = 0.5f + std::asinf(dir.y) / kPi;
-    }
-    return out;
-}
-
 std::vector<sim::Constraint> makeBallCons(const Mesh& mesh) {
     std::vector<sim::Constraint> cons;
     addBallEdges(mesh, cons, mesh.indices);
     addAntipodalTies(mesh, cons);
     return cons;
-}
-
-Mesh makeGroundMesh() {
-    Mesh m;
-    const float G = 55.0f;
-    const V3 corners[4] = {{-G, 0.0f, -G}, {G, 0.0f, -G}, {G, 0.0f, G}, {-G, 0.0f, G}};
-    const V3 up{0.0f, 1.0f, 0.0f};
-    m.pos.assign(3 * 4, 0.0f);
-    m.nrm.assign(3 * 4, 0.0f);
-    m.uv.assign(2 * 4, 0.0f);
-    for (int i = 0; i < 4; ++i) {
-        vStore(m.pos.data(), i, corners[i]);
-        vStore(m.nrm.data(), i, up);
-        m.uv[2 * i] = (corners[i].x + G) / (2.0f * G);
-        m.uv[2 * i + 1] = (corners[i].z + G) / (2.0f * G);
-    }
-    m.indices = {0, 1, 2, 0, 2, 3};
-    return m;
 }
 
 Mesh makeCapsuleMesh(const CapsuleParams& shape, int nCaps) {
@@ -300,23 +223,8 @@ void drawDemoUi(World& w) {
     ImGui::SliderFloat("fov", &w.camera.fovDeg, 10.0f, 120.0f, "%.0f");
     ImGui::SliderFloat("near", &w.camera.nearP, 0.01f, 5.0f, "%.3f");
     ImGui::SliderFloat("far", &w.camera.farP, 10.0f, 1000.0f, "%.0f");
-    ImGui::SeparatorText("tone");
-    ImGui::SliderFloat("exposure", &w.ui.exposure, 0.1f, 3.0f, "%.2f");
-    ImGui::SliderFloat("hdri intensity", &w.ui.envIntensity, 0.0f, 3.0f, "%.2f");
-    ImGui::SeparatorText("point light");
-    ImGui::SliderFloat("on", &w.ui.light.on, 0.0f, 1.0f, "%.0f");
-    ImGui::DragFloat3("pos", &w.ui.light.pos.x, 0.1f);
-    ImGui::ColorEdit3("color", &w.ui.light.color.x);
-    ImGui::SliderFloat("intensity", &w.ui.light.intensity, 0.0f, 100.0f, "%.1f");
-    ImGui::SliderFloat("radius", &w.ui.light.radius, 0.0f, 2.0f, "%.2f");
-    ImGui::SliderFloat("shadow near", &w.ui.light.shadowNear, 0.001f, 1.0f, "%.3f");
-    ImGui::SliderFloat("shadow far", &w.ui.light.shadowFar, 1.0f, 100.0f, "%.1f");
-    ImGui::SeparatorText("shadow bias");
-    ImGui::SliderFloat("normal", &w.ui.light.shadowNormalBias, 0.0f, 1.0f, "%.3f");
-    ImGui::SliderFloat("base", &w.ui.light.shadowBiasBase, 0.0f, 2.0f, "%.3f");
-    ImGui::SliderFloat("slope", &w.ui.light.shadowBiasSlope, 0.0f, 4.0f, "%.3f");
-    ImGui::SliderFloat("search", &w.ui.light.shadowSearchScale, 0.5f, 16.0f, "%.2f");
-    ImGui::SliderFloat("max radius", &w.ui.light.shadowMaxRadius, 1.0f, 64.0f, "%.1f");
+    drawToneSection(w);
+    drawLightSection(w);
     ImGui::SeparatorText("materials");
     std::map<std::string, std::vector<entt::entity>> matByName;
     for (auto [entity, mat] : w.reg.view<Material>().each()) {
@@ -364,7 +272,7 @@ void createDemoWorld(World& w) {
     w.sim.init(w.app->device(), w.app->pdev());
     w.renderer.init(*w.app, kNCapsules + kNSoftBodies + 1, w.camera.viewProj((float)ext.width / (float)ext.height));
 
-    const entt::entity ground = spawnStaticMesh(w, makeGroundMesh(), Transform{});
+    const entt::entity ground = spawnStaticMesh(w, makeGroundMesh(55.0f), Transform{});
     w.reg.emplace<Name>(ground, "ground");
     w.reg.emplace<Material>(ground, V3{0.19f, 0.21f, 0.17f}, 0.0f, 0.85f);
     const int capGeom = w.renderer.addMesh(makeCapsuleMesh(kCapsule, 1)).geom;
@@ -387,16 +295,12 @@ void createDemoWorld(World& w) {
     if (!plaid.rgba.empty())
         w.renderer.setTexture(w.reg.get<Renderable>(cloth).inst, 0,
                               w.renderer.addTexture(plaid.rgba.data(), (uint32_t)plaid.w, (uint32_t)plaid.h));
-    const Mesh ballMesh = makeBallMesh(kBallRadius, kBallY0, kBallSubdiv);
+    const Mesh ballMesh = makeSphereMesh(kBallSubdiv, kBallRadius, V3{0.0f, kBallY0, 0.0f});
     const entt::entity ball = spawnSoftBody(w, ballMesh, makeBallCons(ballMesh), 0);
     w.reg.emplace<Name>(ball, "ball");
     w.reg.get<SoftBodyData>(ball).params.mass = 2.0f;
     w.reg.emplace<Material>(ball, V3{0.22f, 0.62f, 0.60f}, 0.0f, 0.4f);
     w.sim.build();
 
-    HdrData hdr;
-    if (!loadHdr(exeDir() + "/../assets/fly-studio-03_1K.exr", hdr))
-        loadHdr("assets/fly-studio-03_1K.exr", hdr);
-    if (!hdr.rgb.empty())
-        w.renderer.setEnvironment(*w.app, hdr.rgb.data(), (uint32_t)hdr.w, (uint32_t)hdr.h);
+    applyEnvHdr(w);
 }

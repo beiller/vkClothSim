@@ -68,7 +68,7 @@ private:
 
     static void drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const InstancedMesh& inst);
     void rebuildTonemapSet(VkApp& app);
-    void writeViewUbo(const Mat4* vpOverride = nullptr, const V3* camOverride = nullptr);
+    void writeViewUbo();
     void initShadow(VkApp& app);
     void renderShadowCube(VkCommandBuffer cmd);
     void makeComputePass(const void* spv, uint32_t len, const std::vector<VkDescriptorSetLayoutBinding>& binds,
@@ -101,12 +101,12 @@ private:
     GpuTexture m_white;
     VkSampler m_texSampler = VK_NULL_HANDLE;
 
-    GpuTexture m_envEq, m_envPre, m_envIrr, m_envLtc;
+    GpuTexture m_envEq, m_envPre, m_envIrr;
     std::vector<VkImageView> m_envPreMips;
     VkImageView m_envIrrArr = VK_NULL_HANDLE;
-    VkSampler m_eqSampler = VK_NULL_HANDLE, m_cubeSampler = VK_NULL_HANDLE, m_ltcSampler = VK_NULL_HANDLE;
-    EnvPass m_pcCube, m_pcPref, m_pcIrr, m_pcBrdf;
-    VkDescriptorImageInfo m_envSpecInfo{}, m_envIrrInfo{}, m_envLtcInfo{};
+    VkSampler m_eqSampler = VK_NULL_HANDLE, m_cubeSampler = VK_NULL_HANDLE;
+    EnvPass m_pcCube, m_pcPref, m_pcIrr;
+    VkDescriptorImageInfo m_envSpecInfo{}, m_envIrrInfo{};
     uint32_t m_envCubeSize = 0, m_envMips = 0;
     bool m_envReady = false;
 

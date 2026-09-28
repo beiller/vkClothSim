@@ -28,7 +28,6 @@ layout(binding = 7) uniform sampler2D roughTex;
 layout(binding = 8) uniform sampler2D metalTex;
 layout(binding = 9) uniform samplerCube envPrefilter;
 layout(binding = 10) uniform samplerCube envIrradiance;
-layout(binding = 11) uniform sampler2D brdfLtc;
 layout(binding = 12) uniform samplerCube shadowCube;
 
 const float PI = 3.14159265359;

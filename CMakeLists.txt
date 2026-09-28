@@ -43,7 +43,6 @@ spirv(softbody ${CMAKE_SOURCE_DIR}/shaders/softbody.comp)
 spirv(env_cube ${CMAKE_SOURCE_DIR}/shaders/env_cube.comp)
 spirv(env_prefilter ${CMAKE_SOURCE_DIR}/shaders/env_prefilter.comp)
 spirv(env_irradiance ${CMAKE_SOURCE_DIR}/shaders/env_irradiance.comp)
-spirv(env_brdf ${CMAKE_SOURCE_DIR}/shaders/env_brdf.comp)
 
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/lib/imgui)
 set(IMGUI_SOURCES

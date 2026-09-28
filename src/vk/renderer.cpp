@@ -1,6 +1,5 @@
 #include "vk/renderer.hpp"
 
-#include "env_brdf_spv.hpp"
 #include "env_cube_spv.hpp"
 #include "env_irradiance_spv.hpp"
 #include "env_prefilter_spv.hpp"
@@ -69,7 +68,6 @@ std::vector<VkDescriptorSetLayoutBinding> meshBinds() {
         {8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {9, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     };
 }
@@ -273,27 +271,22 @@ void Renderer::setTexture(int inst, int channel, int texId) {
 void Renderer::setViewProj(const Mat4& vp, const V3& camPos) {
     m_viewProj = vp;
     m_camPos = camPos;
-    writeViewUbo();
 }
 
 void Renderer::setLight(const PointLight& light) {
     m_light = light;
-    writeViewUbo();
 }
 
 void Renderer::setEnvIntensity(float intensity) {
     m_envIntensity = intensity;
-    writeViewUbo();
 }
 
-void Renderer::writeViewUbo(const Mat4* vpOverride, const V3* camOverride) {
+void Renderer::writeViewUbo() {
     ViewUbo u{};
-    const Mat4& vp = vpOverride ? *vpOverride : m_viewProj;
-    const V3& cam = camOverride ? *camOverride : m_camPos;
-    std::memcpy(u.viewProj, vp.m, 64);
-    u.camPos[0] = cam.x;
-    u.camPos[1] = cam.y;
-    u.camPos[2] = cam.z;
+    std::memcpy(u.viewProj, m_viewProj.m, 64);
+    u.camPos[0] = m_camPos.x;
+    u.camPos[1] = m_camPos.y;
+    u.camPos[2] = m_camPos.z;
     u.lightPos[0] = m_light.pos.x;
     u.lightPos[1] = m_light.pos.y;
     u.lightPos[2] = m_light.pos.z;
@@ -340,7 +333,7 @@ void Renderer::makeComputePass(const void* spv, uint32_t len, const std::vector<
 }
 
 void Renderer::writeEnvSet(VkDescriptorSet set) {
-    VkWriteDescriptorSet w[3]{};
+    VkWriteDescriptorSet w[2]{};
     for (auto& entry : w) {
         entry.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         entry.dstSet = set;
@@ -351,9 +344,7 @@ void Renderer::writeEnvSet(VkDescriptorSet set) {
     w[0].pImageInfo = &m_envSpecInfo;
     w[1].dstBinding = 10;
     w[1].pImageInfo = &m_envIrrInfo;
-    w[2].dstBinding = 11;
-    w[2].pImageInfo = &m_envLtcInfo;
-    vkUpdateDescriptorSets(m_dev, 3, w, 0, nullptr);
+    vkUpdateDescriptorSets(m_dev, 2, w, 0, nullptr);
 }
 
 void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h) {
@@ -367,7 +358,6 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     vkMakeImage2DF32(m_dev, m_pdev, w, h, rgb, m_envEq.img, m_envEq.mem, m_envEq.view);
     vkMakeCubeImage(m_dev, m_pdev, cubeSize, mips, m_envPre.img, m_envPre.mem, m_envPre.view);
     vkMakeCubeImage(m_dev, m_pdev, cubeSize, 1, m_envIrr.img, m_envIrr.mem, m_envIrr.view);
-    vkMakeImage2DEmpty(m_dev, m_pdev, 256, 256, VK_FORMAT_R32G32_SFLOAT, m_envLtc.img, m_envLtc.mem, m_envLtc.view);
     m_envPreMips.resize(mips);
     for (uint32_t m = 0; m < mips; ++m)
         vkMakeCubeMipArrayView(m_dev, m_envPre.img, m, m_envPreMips[m]);
@@ -380,29 +370,21 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
                     m_eqSampler);
     vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, true,
                     (float)(mips - 1), maxAniso, m_cubeSampler);
-    vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false, 0.0f,
-                    1.0f, m_ltcSampler);
 
     m_envSpecInfo = {m_cubeSampler, m_envPre.view, VK_IMAGE_LAYOUT_GENERAL};
     m_envIrrInfo = {m_cubeSampler, m_envIrr.view, VK_IMAGE_LAYOUT_GENERAL};
-    m_envLtcInfo = {m_ltcSampler, m_envLtc.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo eqInfo{m_eqSampler, m_envEq.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo preSam{m_cubeSampler, m_envPre.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo preImg{VK_NULL_HANDLE, m_envPreMips[0], VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo irrImg{VK_NULL_HANDLE, m_envIrrArr, VK_IMAGE_LAYOUT_GENERAL};
-    const VkDescriptorImageInfo ltcImg{VK_NULL_HANDLE, m_envLtc.view, VK_IMAGE_LAYOUT_GENERAL};
 
     const std::vector<VkDescriptorSetLayoutBinding> cubeBinds = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
     };
-    const std::vector<VkDescriptorSetLayoutBinding> brdfBinds = {
-        {0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
-    };
     makeComputePass(env_cube_spv, env_cube_spv_len / 4, cubeBinds, 4, m_pcCube);
     makeComputePass(env_prefilter_spv, env_prefilter_spv_len / 4, cubeBinds, 8, m_pcPref);
     makeComputePass(env_irradiance_spv, env_irradiance_spv_len / 4, cubeBinds, 4, m_pcIrr);
-    makeComputePass(env_brdf_spv, env_brdf_spv_len / 4, brdfBinds, 0, m_pcBrdf);
 
     auto writeImg = [&](VkDescriptorSet set, uint32_t binding, VkDescriptorType type, const VkDescriptorImageInfo& ii) {
         VkWriteDescriptorSet wr{};
@@ -420,7 +402,6 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     writeImg(m_pcPref.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, preImg);
     writeImg(m_pcIrr.set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, preSam);
     writeImg(m_pcIrr.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, irrImg);
-    writeImg(m_pcBrdf.set, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, ltcImg);
 
     VkCommandBuffer cmd = app.beginCommands();
     auto imgBar = [&](VkImage img, uint32_t lvl) {
@@ -470,10 +451,6 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     vkCmdPushConstants(cmd, m_pcIrr.pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &pcSize);
     vkCmdDispatch(cmd, groups, groups, 6);
     imgBar(m_envIrr.img, 1);
-
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcBrdf.pipe);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcBrdf.pl, 0, 1, &m_pcBrdf.set, 0, nullptr);
-    vkCmdDispatch(cmd, 16, 16, 1);
     app.submit(cmd);
 
     m_envReady = true;
@@ -608,7 +585,6 @@ void Renderer::renderShadowCube(VkCommandBuffer cmd) {
             drawInstance(cmd, m_shadowPl, m_geoms[inst.geom], inst);
         vkCmdEndRenderPass(cmd);
     }
-    writeViewUbo();
 
     VkImageMemoryBarrier imb{};
     imb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -719,6 +695,7 @@ void Renderer::rebuildTonemapSet(VkApp& app) {
 
 void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui,
                     float exposure) {
+    writeViewUbo();
     for (auto& inst : m_insts) {
         const ModelUbo mb = packModel(inst.model, inst.baseColor, inst.metallic, inst.roughness);
         vkWriteBuffer(m_dev, inst.modelMem, &mb, sizeof(ModelUbo));
@@ -803,7 +780,7 @@ void Renderer::shutdown() {
     if (m_texSampler)
         vkDestroySampler(m_dev, m_texSampler, nullptr);
     if (m_envReady) {
-        for (const auto& p : {m_pcCube, m_pcPref, m_pcIrr, m_pcBrdf}) {
+        for (const auto& p : {m_pcCube, m_pcPref, m_pcIrr}) {
             if (p.pool)
                 vkDestroyDescriptorPool(m_dev, p.pool, nullptr);
             if (p.dsl)
@@ -816,7 +793,6 @@ void Renderer::shutdown() {
         vkFreeImage2D(m_dev, m_envEq.img, m_envEq.mem, m_envEq.view);
         vkFreeImage2D(m_dev, m_envPre.img, m_envPre.mem, m_envPre.view);
         vkFreeImage2D(m_dev, m_envIrr.img, m_envIrr.mem, m_envIrr.view);
-        vkFreeImage2D(m_dev, m_envLtc.img, m_envLtc.mem, m_envLtc.view);
         for (VkImageView v : m_envPreMips)
             vkDestroyImageView(m_dev, v, nullptr);
         if (m_envIrrArr)
@@ -825,8 +801,6 @@ void Renderer::shutdown() {
             vkDestroySampler(m_dev, m_eqSampler, nullptr);
         if (m_cubeSampler)
             vkDestroySampler(m_dev, m_cubeSampler, nullptr);
-        if (m_ltcSampler)
-            vkDestroySampler(m_dev, m_ltcSampler, nullptr);
     }
     if (m_pool)
         vkDestroyDescriptorPool(m_dev, m_pool, nullptr);
