@@ -5,7 +5,7 @@ layout(binding = 1) buffer Nrm { float p[]; } nrmB;
 layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; } modelU;
 layout(binding = 5) buffer Uv { float p[]; } uvB;
 
-layout(push_constant) uniform PushVP { mat4 viewProj; } pc;
+layout(push_constant) uniform PushVP { mat4 viewProj; vec4 lightPosBias; } pc;
 
 layout(location = 0) out vec3 vN;
 layout(location = 1) out vec2 vUv;

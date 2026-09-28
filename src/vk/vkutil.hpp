@@ -264,8 +264,43 @@ inline void vkMakeDepthCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t s
     VK(vkBindImageMemory(dev, img, mem, 0));
 }
 
+inline void vkMakeCubeArrayImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, uint32_t arrayLayers, VkFormat fmt,
+                                 VkImage& img, VkDeviceMemory& mem) {
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = fmt;
+    ici.extent = {size, size, 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = arrayLayers;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    ici.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VK(vkCreateImage(dev, &ici, nullptr, &img));
+    VkMemoryRequirements mr;
+    vkGetImageMemoryRequirements(dev, img, &mr);
+    VkMemoryAllocateInfo maa{};
+    maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    maa.allocationSize = mr.size;
+    maa.memoryTypeIndex = vkFindMemoryType(pdev, mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK(vkAllocateMemory(dev, &maa, nullptr, &mem));
+    VK(vkBindImageMemory(dev, img, mem, 0));
+}
+
+inline void vkMakeCubeArrayView(VkDevice dev, VkImage img, VkFormat fmt, VkImageAspectFlags aspect, uint32_t baseLayer,
+                                uint32_t layerCount, VkImageView& view) {
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = img;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
+    vci.format = fmt;
+    vci.subresourceRange = {aspect, 0, 1, baseLayer, layerCount};
+    VK(vkCreateImageView(dev, &vci, nullptr, &view));
+}
+
 inline void vkMakeCubeFaceView(VkDevice dev, VkImage img, VkFormat fmt, VkImageAspectFlags aspect, uint32_t face,
-                               VkImageView& view) {
+                                VkImageView& view) {
     VkImageViewCreateInfo vci{};
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = img;

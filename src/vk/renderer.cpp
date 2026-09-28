@@ -27,23 +27,34 @@ static_assert(sizeof(ModelUbo) == 96, "ModelUbo must match the shader std430 lay
 struct ViewUbo {
     float viewProj[16];
     float camPos[3];
-    float pad0;
-    float lightPos[3];
-    float lightIntensity;
-    float lightColor[3];
-    float lightRadius;
-    float lightOn;
     float envIntensity;
+    float shadowTexels;
+    float pad[2];
+};
+static_assert(sizeof(ViewUbo) == 92, "ViewUbo must match the shader std430 layout");
+
+struct LightGPU {
+    float pos[3];
+    float intensity;
+    float color[3];
+    float radius;
+    float on;
     float shadowNear;
     float shadowFar;
     float shadowNormalBias;
-    float shadowBiasBase;
-    float shadowBiasSlope;
-    float shadowSearchScale;
-    float shadowMaxRadius;
-    float pad[3];
+    float biasBase;
+    float biasSlope;
+    float searchScale;
+    float maxRadius;
 };
-static_assert(sizeof(ViewUbo) == 160, "ViewUbo must match the shader std430 layout");
+static_assert(sizeof(LightGPU) == 64, "LightGPU must match the shader std430 layout");
+
+struct LightsUbo {
+    int count;
+    float pad[3];
+    LightGPU lights[Renderer::kMaxLights];
+};
+static_assert(sizeof(LightsUbo) == 16 + Renderer::kMaxLights * 64, "LightsUbo must match the shader std430 layout");
 
 ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float roughness) {
     ModelUbo mb{};
@@ -69,6 +80,7 @@ std::vector<VkDescriptorSetLayoutBinding> meshBinds() {
         {9, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {13, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     };
 }
 
@@ -166,6 +178,7 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     ViewUbo vpInit{};
     std::memcpy(vpInit.viewProj, viewProj.m, 64);
     vkMakeBuffer(m_dev, m_pdev, m_vpUbuf, m_vpMem, sizeof(ViewUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &vpInit);
+    vkMakeBuffer(m_dev, m_pdev, m_lightsUbuf, m_lightsMem, sizeof(LightsUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
     const auto binds = meshBinds();
     vkMakeDslPool(m_dev, binds, (uint32_t)nInstances, m_dsl, m_pool);
     m_pl = vkMakePipelineLayout(m_dev, m_dsl);
@@ -221,14 +234,21 @@ int Renderer::addInstance(int geom) {
     setTexture(id, 0, -1);
     setTexture(id, 1, -1);
     setTexture(id, 2, -1);
-    VkWriteDescriptorSet sw{};
-    sw.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    sw.dstSet = inst.set;
-    sw.dstBinding = 12;
-    sw.descriptorCount = 1;
-    sw.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    sw.pImageInfo = &m_shadowInfo;
-    vkUpdateDescriptorSets(m_dev, 1, &sw, 0, nullptr);
+    VkDescriptorBufferInfo lb{m_lightsUbuf, 0, sizeof(LightsUbo)};
+    VkWriteDescriptorSet sw[2]{};
+    sw[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    sw[0].dstSet = inst.set;
+    sw[0].dstBinding = 12;
+    sw[0].descriptorCount = 1;
+    sw[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    sw[0].pImageInfo = &m_shadowInfo;
+    sw[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    sw[1].dstSet = inst.set;
+    sw[1].dstBinding = 13;
+    sw[1].descriptorCount = 1;
+    sw[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    sw[1].pBufferInfo = &lb;
+    vkUpdateDescriptorSets(m_dev, 2, sw, 0, nullptr);
     if (m_envReady)
         writeEnvSet(inst.set);
     return id;
@@ -287,27 +307,36 @@ void Renderer::writeViewUbo() {
     u.camPos[0] = m_camPos.x;
     u.camPos[1] = m_camPos.y;
     u.camPos[2] = m_camPos.z;
-    if (!m_lights.empty()) {
-        const Light& L = m_lights.front();
-        u.lightPos[0] = L.pos.x;
-        u.lightPos[1] = L.pos.y;
-        u.lightPos[2] = L.pos.z;
-        u.lightIntensity = L.p.intensity;
-        u.lightColor[0] = L.p.color.x;
-        u.lightColor[1] = L.p.color.y;
-        u.lightColor[2] = L.p.color.z;
-        u.lightRadius = L.p.radius;
-        u.lightOn = L.p.on;
-        u.shadowNear = L.p.shadowNear;
-        u.shadowFar = L.p.shadowFar;
-        u.shadowNormalBias = L.p.shadowNormalBias;
-        u.shadowBiasBase = L.p.shadowBiasBase;
-        u.shadowBiasSlope = L.p.shadowBiasSlope;
-        u.shadowSearchScale = L.p.shadowSearchScale;
-        u.shadowMaxRadius = L.p.shadowMaxRadius;
-    }
     u.envIntensity = m_envIntensity;
+    u.shadowTexels = (float)m_shadowSize;
     vkWriteBuffer(m_dev, m_vpMem, &u, sizeof(ViewUbo));
+}
+
+void Renderer::writeLights() {
+    LightsUbo u{};
+    const int n = (int)std::min(m_lights.size(), (size_t)kMaxLights);
+    u.count = n;
+    for (int i = 0; i < n; ++i) {
+        const Light& L = m_lights[i];
+        LightGPU& g = u.lights[i];
+        g.pos[0] = L.pos.x;
+        g.pos[1] = L.pos.y;
+        g.pos[2] = L.pos.z;
+        g.intensity = L.p.intensity;
+        g.color[0] = L.p.color.x;
+        g.color[1] = L.p.color.y;
+        g.color[2] = L.p.color.z;
+        g.radius = L.p.radius;
+        g.on = L.p.on;
+        g.shadowNear = L.p.shadowNear;
+        g.shadowFar = L.p.shadowFar;
+        g.shadowNormalBias = L.p.shadowNormalBias;
+        g.biasBase = L.p.shadowBiasBase;
+        g.biasSlope = L.p.shadowBiasSlope;
+        g.searchScale = L.p.shadowSearchScale;
+        g.maxRadius = L.p.shadowMaxRadius;
+    }
+    vkWriteBuffer(m_dev, m_lightsMem, &u, sizeof(LightsUbo));
 }
 
 void Renderer::makeComputePass(const void* spv, uint32_t len, const std::vector<VkDescriptorSetLayoutBinding>& binds,
@@ -462,17 +491,19 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
 }
 
 void Renderer::initShadow(VkApp& app) {
-    vkMakeCubeImage(m_dev, m_pdev, m_shadowSize, 1, m_shadowCube, m_shadowCubeMem, m_shadowCubeView, VK_FORMAT_R32_SFLOAT);
+    const uint32_t nLayers = kMaxLights * 6;
+    vkMakeCubeArrayImage(m_dev, m_pdev, m_shadowSize, nLayers, VK_FORMAT_R32_SFLOAT, m_shadowCube, m_shadowCubeMem);
     vkMakeDepthCubeImage(m_dev, m_pdev, m_shadowSize, m_shadowDepth, m_shadowDepthMem);
-    for (uint32_t f = 0; f < 6; ++f) {
-        vkMakeCubeFaceView(m_dev, m_shadowCube, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, f, m_shadowColorFace[f]);
+    for (uint32_t l = 0; l < nLayers; ++l)
+        vkMakeCubeFaceView(m_dev, m_shadowCube, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, l, m_shadowColorFace[l]);
+    for (uint32_t f = 0; f < 6; ++f)
         vkMakeCubeFaceView(m_dev, m_shadowDepth, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT, f, m_shadowDepthFace[f]);
-    }
+    vkMakeCubeArrayView(m_dev, m_shadowCube, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 0, nLayers, m_shadowSampleView);
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(m_pdev, &props);
     vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false, 0.0f, 1.0f,
-                    m_shadowSampler);
-    m_shadowInfo = {m_shadowSampler, m_shadowCubeView, VK_IMAGE_LAYOUT_GENERAL};
+                     m_shadowSampler);
+    m_shadowInfo = {m_shadowSampler, m_shadowSampleView, VK_IMAGE_LAYOUT_GENERAL};
 
     VkAttachmentDescription att[2]{};
     att[0].format = VK_FORMAT_R32_SFLOAT;
@@ -505,35 +536,36 @@ void Renderer::initShadow(VkApp& app) {
     rpc.pSubpasses = &sub;
     VK(vkCreateRenderPass(m_dev, &rpc, nullptr, &m_shadowRp));
 
-    for (uint32_t f = 0; f < 6; ++f) {
-        VkImageView atts[2] = {m_shadowColorFace[f], m_shadowDepthFace[f]};
-        VkFramebufferCreateInfo fbi{};
-        fbi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        fbi.renderPass = m_shadowRp;
-        fbi.attachmentCount = 2;
-        fbi.pAttachments = atts;
-        fbi.width = m_shadowSize;
-        fbi.height = m_shadowSize;
-        fbi.layers = 1;
-        VK(vkCreateFramebuffer(m_dev, &fbi, nullptr, &m_shadowFb[f]));
-    }
+    for (uint32_t i = 0; i < kMaxLights; ++i)
+        for (uint32_t f = 0; f < 6; ++f) {
+            VkImageView atts[2] = {m_shadowColorFace[i * 6 + f], m_shadowDepthFace[f]};
+            VkFramebufferCreateInfo fbi{};
+            fbi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fbi.renderPass = m_shadowRp;
+            fbi.attachmentCount = 2;
+            fbi.pAttachments = atts;
+            fbi.width = m_shadowSize;
+            fbi.height = m_shadowSize;
+            fbi.layers = 1;
+            VK(vkCreateFramebuffer(m_dev, &fbi, nullptr, &m_shadowFb[i * 6 + f]));
+        }
 
-    m_shadowPl = vkMakePipelineLayoutPC(m_dev, m_dsl, VK_SHADER_STAGE_VERTEX_BIT, 64);
+    m_shadowPl = vkMakePipelineLayoutPC(m_dev, m_dsl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 80);
     m_shadowPipe = makeGraphicsPipeline(m_dev, m_shadowRp, shadow_vert_spv, shadow_vert_spv_len / 4, shadow_frag_spv,
                                         shadow_frag_spv_len / 4, m_shadowPl, true, false);
 
     VkCommandBuffer cmd = app.beginCommands();
-    VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6};
+    VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, nLayers};
     const float farD = m_shadowRange + 1.0f;
     VkClearColorValue clear{{farD, farD, farD, 1.0f}};
     vkCmdClearColorImage(cmd, m_shadowCube, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
     app.submit(cmd);
 }
 
-void Renderer::renderShadowCube(VkCommandBuffer cmd) {
-    if (m_lights.empty() || m_lights.front().p.on < 0.5f)
+void Renderer::renderShadowCubes(VkCommandBuffer cmd) {
+    const uint32_t n = (uint32_t)std::min(m_lights.size(), (size_t)kMaxLights);
+    if (n == 0)
         return;
-    const Light& L = m_lights.front();
     struct Face {
         V3 right, up, back;
     };
@@ -545,55 +577,73 @@ void Renderer::renderShadowCube(VkCommandBuffer cmd) {
         {{-1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
         {{1, 0, 0}, {0, 1, 0}, {0, 0, -1}},
     };
-    const float shadowNear = std::max(L.p.shadowNear, 0.001f);
-    const float shadowFar = std::max(L.p.shadowFar, shadowNear + 0.01f);
-    const Mat4 proj = perspective(90.0f, 1.0f, shadowNear, shadowFar);
+    struct Pc {
+        float viewProj[16];
+        float lightPosBias[4];
+    };
     VkViewport vp{0.0f, (float)m_shadowSize, (float)m_shadowSize, -(float)m_shadowSize, 0.0f, 1.0f};
     VkRect2D sc{0, 0, m_shadowSize, m_shadowSize};
-    const float farD = shadowFar + 1.0f;
 
-    for (uint32_t f = 0; f < 6; ++f) {
-        const Face& fc = faces[f];
-        Mat4 view{};
-        view.m[0] = fc.right.x;
-        view.m[1] = fc.up.x;
-        view.m[2] = fc.back.x;
-        view.m[4] = fc.right.y;
-        view.m[5] = fc.up.y;
-        view.m[6] = fc.back.y;
-        view.m[8] = fc.right.z;
-        view.m[9] = fc.up.z;
-        view.m[10] = fc.back.z;
-        view.m[12] = -vDot(fc.right, L.pos);
-        view.m[13] = -vDot(fc.up, L.pos);
-        view.m[14] = -vDot(fc.back, L.pos);
-        view.m[15] = 1.0f;
-        const Mat4 vpLight = mul4(proj, view);
+    for (uint32_t i = 0; i < n; ++i) {
+        const Light& L = m_lights[i];
+        if (L.p.on < 0.5f)
+            continue;
+        const float shadowNear = std::max(L.p.shadowNear, 0.001f);
+        const float shadowFar = std::max(L.p.shadowFar, shadowNear + 0.01f);
+        const Mat4 proj = perspective(90.0f, 1.0f, shadowNear, shadowFar);
+        const float farD = shadowFar + 1.0f;
 
-        VkClearValue cv[2]{};
-        cv[0].color = {farD, 0.0f, 0.0f, 1.0f};
-        cv[1].depthStencil = {1.0f, 0};
-        VkRenderPassBeginInfo rpb{};
-        rpb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpb.renderPass = m_shadowRp;
-        rpb.framebuffer = m_shadowFb[f];
-        rpb.renderArea = {{0, 0}, {m_shadowSize, m_shadowSize}};
-        rpb.clearValueCount = 2;
-        rpb.pClearValues = cv;
-        vkCmdBeginRenderPass(cmd, &rpb, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdSetViewport(cmd, 0, 1, &vp);
-        vkCmdSetScissor(cmd, 0, 1, &sc);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipe);
-        vkCmdPushConstants(cmd, m_shadowPl, VK_SHADER_STAGE_VERTEX_BIT, 0, 64, vpLight.m);
-        for (const auto& inst : m_insts)
-            drawInstance(cmd, m_shadowPl, m_geoms[inst.geom], inst);
-        vkCmdEndRenderPass(cmd);
+        for (uint32_t f = 0; f < 6; ++f) {
+            const Face& fc = faces[f];
+            Mat4 view{};
+            view.m[0] = fc.right.x;
+            view.m[1] = fc.up.x;
+            view.m[2] = fc.back.x;
+            view.m[4] = fc.right.y;
+            view.m[5] = fc.up.y;
+            view.m[6] = fc.back.y;
+            view.m[8] = fc.right.z;
+            view.m[9] = fc.up.z;
+            view.m[10] = fc.back.z;
+            view.m[12] = -vDot(fc.right, L.pos);
+            view.m[13] = -vDot(fc.up, L.pos);
+            view.m[14] = -vDot(fc.back, L.pos);
+            view.m[15] = 1.0f;
+            const Mat4 vpLight = mul4(proj, view);
+
+            Pc pc{};
+            std::memcpy(pc.viewProj, vpLight.m, 64);
+            pc.lightPosBias[0] = L.pos.x;
+            pc.lightPosBias[1] = L.pos.y;
+            pc.lightPosBias[2] = L.pos.z;
+            pc.lightPosBias[3] = L.p.shadowNormalBias;
+
+            VkClearValue cv[2]{};
+            cv[0].color = {farD, 0.0f, 0.0f, 1.0f};
+            cv[1].depthStencil = {1.0f, 0};
+            VkRenderPassBeginInfo rpb{};
+            rpb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            rpb.renderPass = m_shadowRp;
+            rpb.framebuffer = m_shadowFb[i * 6 + f];
+            rpb.renderArea = {{0, 0}, {m_shadowSize, m_shadowSize}};
+            rpb.clearValueCount = 2;
+            rpb.pClearValues = cv;
+            vkCmdBeginRenderPass(cmd, &rpb, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdSetViewport(cmd, 0, 1, &vp);
+            vkCmdSetScissor(cmd, 0, 1, &sc);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipe);
+            vkCmdPushConstants(cmd, m_shadowPl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(Pc),
+                               &pc);
+            for (const auto& inst : m_insts)
+                drawInstance(cmd, m_shadowPl, m_geoms[inst.geom], inst);
+            vkCmdEndRenderPass(cmd);
+        }
     }
 
     VkImageMemoryBarrier imb{};
     imb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     imb.image = m_shadowCube;
-    imb.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6};
+    imb.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, n * 6};
     imb.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     imb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     imb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -601,7 +651,7 @@ void Renderer::renderShadowCube(VkCommandBuffer cmd) {
     imb.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
     imb.newLayout = VK_IMAGE_LAYOUT_GENERAL;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
-                          nullptr, 0, nullptr, 1, &imb);
+                         nullptr, 0, nullptr, 1, &imb);
 }
 
 static void writePgm(const char* path, uint32_t w, uint32_t h, const float* dist, float far) {
@@ -701,6 +751,7 @@ void Renderer::rebuildTonemapSet(VkApp& app) {
 void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui,
                     float exposure) {
     writeViewUbo();
+    writeLights();
     for (auto& inst : m_insts) {
         const ModelUbo mb = packModel(inst.model, inst.baseColor, inst.metallic, inst.roughness);
         vkWriteBuffer(m_dev, inst.modelMem, &mb, sizeof(ModelUbo));
@@ -709,7 +760,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg
     VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
     VkRect2D sc{0, 0, ext.width, ext.height};
 
-    renderShadowCube(cmd);
+    renderShadowCubes(cmd);
 
     VkClearValue scv[2]{};
     scv[0].color = {bg[0], bg[1], bg[2], 1.0f};
@@ -825,11 +876,13 @@ void Renderer::shutdown() {
         vkDestroyPipeline(m_dev, m_tmPipe, nullptr);
     vkFreeBuffer(m_dev, m_tmUbuf, m_tmMem);
     vkFreeBuffer(m_dev, m_vpUbuf, m_vpMem);
-    for (uint32_t f = 0; f < 6; ++f) {
-        vkDestroyFramebuffer(m_dev, m_shadowFb[f], nullptr);
-        vkDestroyImageView(m_dev, m_shadowColorFace[f], nullptr);
-        vkDestroyImageView(m_dev, m_shadowDepthFace[f], nullptr);
+    for (uint32_t l = 0; l < kMaxLights * 6; ++l) {
+        vkDestroyFramebuffer(m_dev, m_shadowFb[l], nullptr);
+        vkDestroyImageView(m_dev, m_shadowColorFace[l], nullptr);
     }
+    for (uint32_t f = 0; f < 6; ++f)
+        vkDestroyImageView(m_dev, m_shadowDepthFace[f], nullptr);
+    vkFreeBuffer(m_dev, m_lightsUbuf, m_lightsMem);
     if (m_shadowPipe)
         vkDestroyPipeline(m_dev, m_shadowPipe, nullptr);
     if (m_shadowPl)
@@ -838,8 +891,8 @@ void Renderer::shutdown() {
         vkDestroyRenderPass(m_dev, m_shadowRp, nullptr);
     if (m_shadowSampler)
         vkDestroySampler(m_dev, m_shadowSampler, nullptr);
-    if (m_shadowCubeView)
-        vkDestroyImageView(m_dev, m_shadowCubeView, nullptr);
+    if (m_shadowSampleView)
+        vkDestroyImageView(m_dev, m_shadowSampleView, nullptr);
     if (m_shadowCube) {
         vkDestroyImage(m_dev, m_shadowCube, nullptr);
         vkFreeMemory(m_dev, m_shadowCubeMem, nullptr);

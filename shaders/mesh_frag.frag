@@ -8,19 +8,9 @@ layout(location = 0) out vec4 outColor;
 layout(binding = 3) uniform UBO {
     mat4 viewProj;
     vec3 camPos;
-    vec3 lightPos;
-    float lightIntensity;
-    vec3 lightColor;
-    float lightRadius;
-    float lightOn;
     float envIntensity;
-    float shadowNear;
-    float shadowFar;
-    float shadowNormalBias;
-    float shadowBiasBase;
-    float shadowBiasSlope;
-    float shadowSearchScale;
-    float shadowMaxRadius;
+    float shadowTexels;
+    float pad[2];
 } ubo;
 layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; } modelU;
 layout(binding = 6) uniform sampler2D albedoTex;
@@ -28,7 +18,19 @@ layout(binding = 7) uniform sampler2D roughTex;
 layout(binding = 8) uniform sampler2D metalTex;
 layout(binding = 9) uniform samplerCube envPrefilter;
 layout(binding = 10) uniform samplerCube envIrradiance;
-layout(binding = 12) uniform samplerCube shadowCube;
+layout(binding = 12) uniform samplerCubeArray shadowCube;
+
+const int MAX_LIGHTS = 8;
+struct Light {
+    vec4 posIntensity;
+    vec4 colorRadius;
+    vec4 onNearFar;
+    vec4 biasParams;
+};
+layout(binding = 13) uniform Lights {
+    int count;
+    Light lights[MAX_LIGHTS];
+} lts;
 
 const float PI = 3.14159265359;
 
@@ -49,10 +51,8 @@ vec3 fSchlick(vec3 F0, float VoH) {
     return F0 + (1.0 - F0) * pow(1.0 - VoH, 5.0);
 }
 
-const float SHADOW_TEXELS = 1024.0;
-
-float shadowSample(vec3 dir, float dist, float bias) {
-    return step(dist - bias, texture(shadowCube, dir).r);
+float shadowSample(vec3 dir, float dist, float bias, int idx) {
+    return step(dist - bias, texture(shadowCube, vec4(dir, idx)).r);
 }
 
 vec3 shadowTangent(vec3 N, vec3 L) {
@@ -79,30 +79,30 @@ const vec2 POISSON[16] = {
     vec2(0.5, -0.4)
 };
 
-float pcfShadow(vec3 N, vec3 L, float dist, float bias, float radius) {
+float pcfShadow(vec3 N, vec3 L, float dist, float bias, float radius, int idx) {
     vec3 t = shadowTangent(N, L);
     vec3 b = cross(L, t);
-    float texel = PI / (2.0 * SHADOW_TEXELS);
+    float texel = PI / (2.0 * ubo.shadowTexels);
     float sum = 0.0;
     for (int i = 0; i < 16; ++i) {
         vec3 dir = normalize(L + (t * POISSON[i].x + b * POISSON[i].y) * texel * radius);
-        sum += shadowSample(dir, dist, bias);
+        sum += shadowSample(dir, dist, bias, idx);
     }
     return sum / 16.0;
 }
 
-float pcssShadow(vec3 N, vec3 L, float NoL, float dist) {
-    if (dist > ubo.shadowFar || dist < ubo.shadowNear)
+float pcssShadow(vec3 N, vec3 L, float NoL, float dist, Light li, int idx) {
+    if (dist > li.onNearFar.z || dist < li.onNearFar.y)
         return 1.0;
-    float bias = ubo.shadowBiasBase + ubo.shadowBiasSlope * (1.0 - NoL);
+    float bias = li.biasParams.x + li.biasParams.y * (1.0 - NoL);
     vec3 t = shadowTangent(N, L);
     vec3 b = cross(L, t);
-    float texel = PI / (2.0 * SHADOW_TEXELS);
+    float texel = PI / (2.0 * ubo.shadowTexels);
     float sum = 0.0;
     int count = 0;
     for (int y = -2; y <= 2; ++y)
         for (int x = -2; x <= 2; ++x) {
-            float d = texture(shadowCube, normalize(L + (t * float(x) + b * float(y)) * texel * ubo.shadowSearchScale)).r;
+            float d = texture(shadowCube, vec4(normalize(L + (t * float(x) + b * float(y)) * texel * li.biasParams.z), idx)).r;
             if (d < dist) {
                 sum += d;
                 ++count;
@@ -111,10 +111,10 @@ float pcssShadow(vec3 N, vec3 L, float NoL, float dist) {
     if (count == 0)
         return 1.0;
     float avg = sum / float(count);
-    float penumbra = (ubo.lightRadius * (dist - avg) / max(avg * dist, 1e-4)) / texel;
-    float scale = SHADOW_TEXELS / 256.0;
-    float radius = clamp(penumbra, (1.0 + ubo.lightRadius * 3.0) * scale, ubo.shadowMaxRadius * scale);
-    return pcfShadow(N, L, dist, bias, radius);
+    float penumbra = (li.colorRadius.w * (dist - avg) / max(avg * dist, 1e-4)) / texel;
+    float scale = ubo.shadowTexels / 256.0;
+    float radius = clamp(penumbra, (1.0 + li.colorRadius.w * 3.0) * scale, li.biasParams.w * scale);
+    return pcfShadow(N, L, dist, bias, radius, idx);
 }
 
 void main() {
@@ -136,24 +136,29 @@ void main() {
     vec3 indirectSpecular = prefilt * specF * ubo.envIntensity;
 
     vec3 color = indirectDiffuse + indirectSpecular;
-    if (ubo.lightOn > 0.5) {
-        vec3 Ld = ubo.lightPos - vWorldPos;
+    for (int i = 0; i < MAX_LIGHTS; ++i) {
+        if (i >= lts.count)
+            break;
+        Light li = lts.lights[i];
+        if (li.onNearFar.x < 0.5)
+            continue;
+        vec3 Ld = li.posIntensity.xyz - vWorldPos;
         float d2 = dot(Ld, Ld);
         float dist = sqrt(d2);
         vec3 L = Ld / max(dist, 1e-4);
         float NoL = max(dot(N, L), 0.0);
-        if (NoL > 0.0) {
-            vec3 H = normalize(V + L);
-            float NoH = max(dot(N, H), 0.0);
-            float VoH = max(dot(V, H), 0.0);
-            vec3 F = fSchlick(F0, VoH);
-            vec3 spec = dGGX(NoH, a) * vSmith(NoV, NoL, a) * F / max(4.0 * NoL * NoH, 1e-4);
-            vec3 kd = (1.0 - F) * (1.0 - metal);
-            vec3 diff = kd * albedo / PI;
-            float shadow = pcssShadow(N, L, NoL, dist);
-            vec3 radiance = ubo.lightColor * ubo.lightIntensity / max(d2, 1e-3);
-            color += radiance * NoL * (spec + diff) * shadow;
-        }
+        if (NoL <= 0.0)
+            continue;
+        vec3 H = normalize(V + L);
+        float NoH = max(dot(N, H), 0.0);
+        float VoH = max(dot(V, H), 0.0);
+        vec3 F = fSchlick(F0, VoH);
+        vec3 spec = dGGX(NoH, a) * vSmith(NoV, NoL, a) * F / max(4.0 * NoL * NoH, 1e-4);
+        vec3 kd = (1.0 - F) * (1.0 - metal);
+        vec3 diff = kd * albedo / PI;
+        float shadow = pcssShadow(N, L, NoL, dist, li, i);
+        vec3 radiance = li.colorRadius.xyz * li.posIntensity.w / max(d2, 1e-3);
+        color += radiance * NoL * (spec + diff) * shadow;
     }
 
     outColor = vec4(color, 1.0);

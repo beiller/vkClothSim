@@ -40,6 +40,9 @@ void createShadowTestWorld(World& w) {
     w.camera.rotation = quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2f(2.0f, 11.0f));
     w.drawUi = drawShadowUi;
     spawnLight(w, V3{5.0f, 7.0f, 3.0f}, PointLight{V3{1.0f, 0.97f, 0.92f}, 300.0f, 0.5f, 1.0f}, "key light");
+    spawnLight(w, V3{-6.0f, 5.0f, -3.0f}, PointLight{V3{0.35f, 0.55f, 1.0f}, 180.0f, 0.4f, 1.0f}, "cool fill");
+    spawnLight(w, V3{-3.0f, 4.0f, 6.0f}, PointLight{V3{1.0f, 0.55f, 0.25f}, 140.0f, 0.35f, 1.0f}, "warm fill");
+    spawnLight(w, V3{1.0f, 9.0f, -5.0f}, PointLight{V3{0.4f, 1.0f, 0.5f}, 110.0f, 0.3f, 1.0f}, "green accent");
     w.ui.envIntensity = 0.0f;
 
     const VkExtent2D ext = w.app->extent();

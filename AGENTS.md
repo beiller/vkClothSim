@@ -66,6 +66,7 @@ cmake -S . -B build -Wno-dev        # re-run after editing any shader (SPIR-V is
 cmake --build build -j
 ./build/vksim                        # default demo
 ./build/vksim --hdri                 # HDRI sphere test
+DRI_PRIME=1 ./build/vksim            # force AMD iGPU (RADV) instead of the 4090
 ```
 
 ## Screenshot

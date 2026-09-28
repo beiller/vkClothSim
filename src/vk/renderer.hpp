@@ -21,6 +21,8 @@ public:
         PointLight p;
     };
 
+    static constexpr int kMaxLights = 8;
+
     void init(VkApp& app, int nInstances, const Mat4& viewProj);
     GpuMeshRef addMesh(const Mesh& mesh);
     int addInstance(int geom);
@@ -74,8 +76,9 @@ private:
     static void drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const InstancedMesh& inst);
     void rebuildTonemapSet(VkApp& app);
     void writeViewUbo();
+    void writeLights();
     void initShadow(VkApp& app);
-    void renderShadowCube(VkCommandBuffer cmd);
+    void renderShadowCubes(VkCommandBuffer cmd);
     void makeComputePass(const void* spv, uint32_t len, const std::vector<VkDescriptorSetLayoutBinding>& binds,
                          uint32_t pcSize, EnvPass& out);
     void writeEnvSet(VkDescriptorSet set);
@@ -119,15 +122,19 @@ private:
     V3 m_camPos{0, 0, 0};
     std::vector<Light> m_lights;
     float m_envIntensity = 1.0f;
+    VkBuffer m_lightsUbuf = VK_NULL_HANDLE;
+    VkDeviceMemory m_lightsMem = VK_NULL_HANDLE;
     VkImage m_shadowCube = VK_NULL_HANDLE, m_shadowDepth = VK_NULL_HANDLE;
     VkDeviceMemory m_shadowCubeMem = VK_NULL_HANDLE, m_shadowDepthMem = VK_NULL_HANDLE;
-    VkImageView m_shadowCubeView = VK_NULL_HANDLE, m_shadowColorFace[6] = {}, m_shadowDepthFace[6] = {};
-    VkFramebuffer m_shadowFb[6] = {};
+    VkImageView m_shadowSampleView = VK_NULL_HANDLE;
+    VkImageView m_shadowColorFace[kMaxLights * 6] = {};
+    VkImageView m_shadowDepthFace[6] = {};
+    VkFramebuffer m_shadowFb[kMaxLights * 6] = {};
     VkRenderPass m_shadowRp = VK_NULL_HANDLE;
     VkPipeline m_shadowPipe = VK_NULL_HANDLE;
     VkPipelineLayout m_shadowPl = VK_NULL_HANDLE;
     VkSampler m_shadowSampler = VK_NULL_HANDLE;
     VkDescriptorImageInfo m_shadowInfo{};
-    uint32_t m_shadowSize = 1024;
+    uint32_t m_shadowSize = 256;
     float m_shadowRange = 30.0f;
 };
