@@ -25,6 +25,9 @@ public:
     void setTexture(int inst, int channel, int texId);
     void setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h);
     void setViewProj(const Mat4& vp, const V3& camPos);
+    void setLight(const PointLight& light);
+    void setEnvIntensity(float intensity);
+    void dumpShadowMap(VkApp& app, const char* prefix);
     void shutdown();
     void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui, float exposure);
 
@@ -65,6 +68,9 @@ private:
 
     static void drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const InstancedMesh& inst);
     void rebuildTonemapSet(VkApp& app);
+    void writeViewUbo(const Mat4* vpOverride = nullptr, const V3* camOverride = nullptr);
+    void initShadow(VkApp& app);
+    void renderShadowCube(VkCommandBuffer cmd);
     void makeComputePass(const void* spv, uint32_t len, const std::vector<VkDescriptorSetLayoutBinding>& binds,
                          uint32_t pcSize, EnvPass& out);
     void writeEnvSet(VkDescriptorSet set);
@@ -103,4 +109,20 @@ private:
     VkDescriptorImageInfo m_envSpecInfo{}, m_envIrrInfo{}, m_envLtcInfo{};
     uint32_t m_envCubeSize = 0, m_envMips = 0;
     bool m_envReady = false;
+
+    Mat4 m_viewProj{};
+    V3 m_camPos{0, 0, 0};
+    PointLight m_light;
+    float m_envIntensity = 1.0f;
+    VkImage m_shadowCube = VK_NULL_HANDLE, m_shadowDepth = VK_NULL_HANDLE;
+    VkDeviceMemory m_shadowCubeMem = VK_NULL_HANDLE, m_shadowDepthMem = VK_NULL_HANDLE;
+    VkImageView m_shadowCubeView = VK_NULL_HANDLE, m_shadowColorFace[6] = {}, m_shadowDepthFace[6] = {};
+    VkFramebuffer m_shadowFb[6] = {};
+    VkRenderPass m_shadowRp = VK_NULL_HANDLE;
+    VkPipeline m_shadowPipe = VK_NULL_HANDLE;
+    VkPipelineLayout m_shadowPl = VK_NULL_HANDLE;
+    VkSampler m_shadowSampler = VK_NULL_HANDLE;
+    VkDescriptorImageInfo m_shadowInfo{};
+    uint32_t m_shadowSize = 1024;
+    float m_shadowRange = 30.0f;
 };

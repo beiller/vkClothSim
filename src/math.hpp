@@ -10,6 +10,21 @@ struct V3 {
     float x, y, z;
 };
 
+struct PointLight {
+    V3 pos{0.0f, 3.0f, 0.0f};
+    V3 color{1.0f, 0.97f, 0.92f};
+    float intensity = 25.0f;
+    float radius = 0.25f;
+    float on = 1.0f;
+    float shadowNear = 0.01f;
+    float shadowFar = 30.0f;
+    float shadowNormalBias = 0.05f;
+    float shadowBiasBase = 0.3f;
+    float shadowBiasSlope = 0.3f;
+    float shadowSearchScale = 2.0f;
+    float shadowMaxRadius = 16.0f;
+};
+
 struct V4 {
     float x, y, z, w;
 };

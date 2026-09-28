@@ -69,5 +69,7 @@ void draw(World& w, VkCommandBuffer cmd, uint32_t fb, const float bg[3], ImDrawD
         w.renderer.setMaterial(rend.inst, mat ? mat->baseColor : V3{1.0f, 1.0f, 1.0f}, mat ? mat->metallic : 0.0f,
                                mat ? mat->roughness : 0.5f);
     }
+    w.renderer.setLight(w.ui.light);
+    w.renderer.setEnvIntensity(w.ui.envIntensity);
     w.renderer.draw(cmd, *w.app, fb, bg, imgui, w.ui.exposure);
 }

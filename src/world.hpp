@@ -13,6 +13,8 @@ struct UIState {
     float bgColor[3] = {0.10f, 0.11f, 0.15f};
     float exposure = 1.0f;
     bool showDemo = false;
+    PointLight light;
+    float envIntensity = 1.0f;
 };
 
 struct World {

@@ -35,6 +35,8 @@ endfunction()
 
 spirv(mesh_vert ${CMAKE_SOURCE_DIR}/shaders/mesh_vert.vert)
 spirv(mesh_frag ${CMAKE_SOURCE_DIR}/shaders/mesh_frag.frag)
+spirv(shadow_vert ${CMAKE_SOURCE_DIR}/shaders/shadow.vert)
+spirv(shadow_frag ${CMAKE_SOURCE_DIR}/shaders/shadow.frag)
 spirv(tonemap_vert ${CMAKE_SOURCE_DIR}/shaders/tonemap.vert)
 spirv(tonemap_frag ${CMAKE_SOURCE_DIR}/shaders/tonemap.frag)
 spirv(softbody ${CMAKE_SOURCE_DIR}/shaders/softbody.comp)
@@ -65,6 +67,7 @@ add_executable(vksim
     src/main.cpp
     src/demo.cpp
     src/hdri.cpp
+    src/shadowtest.cpp
     src/systems.cpp
     src/app/rigid.cpp
     src/assets.cpp

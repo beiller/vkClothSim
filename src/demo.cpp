@@ -202,7 +202,7 @@ Mesh makeGroundMesh() {
     Mesh m;
     const float G = 55.0f;
     const V3 corners[4] = {{-G, 0.0f, -G}, {G, 0.0f, -G}, {G, 0.0f, G}, {-G, 0.0f, G}};
-    const V3 up{0.0f, 0.0f, 1.0f};
+    const V3 up{0.0f, 1.0f, 0.0f};
     m.pos.assign(3 * 4, 0.0f);
     m.nrm.assign(3 * 4, 0.0f);
     m.uv.assign(2 * 4, 0.0f);
@@ -273,7 +273,7 @@ Mesh makeCapsuleMesh(const CapsuleParams& shape, int nCaps) {
 
 void drawDemoUi(World& w) {
     ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(320, 700), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(320, 800), ImGuiCond_Always);
     ImGui::Begin("3dsim");
     ImGui::ColorEdit3("background", w.ui.bgColor);
     ImGui::Text("%.1f fps", ImGui::GetIO().Framerate);
@@ -302,6 +302,21 @@ void drawDemoUi(World& w) {
     ImGui::SliderFloat("far", &w.camera.farP, 10.0f, 1000.0f, "%.0f");
     ImGui::SeparatorText("tone");
     ImGui::SliderFloat("exposure", &w.ui.exposure, 0.1f, 3.0f, "%.2f");
+    ImGui::SliderFloat("hdri intensity", &w.ui.envIntensity, 0.0f, 3.0f, "%.2f");
+    ImGui::SeparatorText("point light");
+    ImGui::SliderFloat("on", &w.ui.light.on, 0.0f, 1.0f, "%.0f");
+    ImGui::DragFloat3("pos", &w.ui.light.pos.x, 0.1f);
+    ImGui::ColorEdit3("color", &w.ui.light.color.x);
+    ImGui::SliderFloat("intensity", &w.ui.light.intensity, 0.0f, 100.0f, "%.1f");
+    ImGui::SliderFloat("radius", &w.ui.light.radius, 0.0f, 2.0f, "%.2f");
+    ImGui::SliderFloat("shadow near", &w.ui.light.shadowNear, 0.001f, 1.0f, "%.3f");
+    ImGui::SliderFloat("shadow far", &w.ui.light.shadowFar, 1.0f, 100.0f, "%.1f");
+    ImGui::SeparatorText("shadow bias");
+    ImGui::SliderFloat("normal", &w.ui.light.shadowNormalBias, 0.0f, 1.0f, "%.3f");
+    ImGui::SliderFloat("base", &w.ui.light.shadowBiasBase, 0.0f, 2.0f, "%.3f");
+    ImGui::SliderFloat("slope", &w.ui.light.shadowBiasSlope, 0.0f, 4.0f, "%.3f");
+    ImGui::SliderFloat("search", &w.ui.light.shadowSearchScale, 0.5f, 16.0f, "%.2f");
+    ImGui::SliderFloat("max radius", &w.ui.light.shadowMaxRadius, 1.0f, 64.0f, "%.1f");
     ImGui::SeparatorText("materials");
     std::map<std::string, std::vector<entt::entity>> matByName;
     for (auto [entity, mat] : w.reg.view<Material>().each()) {
@@ -341,6 +356,8 @@ void createDemoWorld(World& w) {
     w.camera.position = {0.0f, 9.0f, 14.0f};
     w.camera.rotation = quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2f(6.0f, 14.0f));
     w.drawUi = drawDemoUi;
+    w.ui.light = {V3{0.0f, 12.0f, 0.0f}, V3{1.0f, 0.95f, 0.90f}, 120.0f, 0.5f, 1.0f, 0.01f, 30.0f};
+    w.ui.envIntensity = 0.0f;
 
     const VkExtent2D ext = w.app->extent();
     w.rigid.init();

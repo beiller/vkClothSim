@@ -210,17 +210,18 @@ inline void vkMakeImage2DF32(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, ui
 }
 
 inline void vkMakeCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, uint32_t mipLevels, VkImage& img,
-                            VkDeviceMemory& mem, VkImageView& cubeView) {
+                            VkDeviceMemory& mem, VkImageView& cubeView,
+                            VkFormat fmt = VK_FORMAT_R16G16B16A16_SFLOAT) {
     VkImageCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    ici.format = fmt;
     ici.extent = {size, size, 1};
     ici.mipLevels = mipLevels;
     ici.arrayLayers = 6;
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
     ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     ici.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
     VK(vkCreateImage(dev, &ici, nullptr, &img));
     VkMemoryRequirements mr;
@@ -235,9 +236,43 @@ inline void vkMakeCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, 
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = img;
     vci.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
-    vci.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    vci.format = fmt;
     vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mipLevels, 0, 6};
     VK(vkCreateImageView(dev, &vci, nullptr, &cubeView));
+}
+
+inline void vkMakeDepthCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, VkImage& img, VkDeviceMemory& mem) {
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = VK_FORMAT_D32_SFLOAT;
+    ici.extent = {size, size, 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 6;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VK(vkCreateImage(dev, &ici, nullptr, &img));
+    VkMemoryRequirements mr;
+    vkGetImageMemoryRequirements(dev, img, &mr);
+    VkMemoryAllocateInfo maa{};
+    maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    maa.allocationSize = mr.size;
+    maa.memoryTypeIndex = vkFindMemoryType(pdev, mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK(vkAllocateMemory(dev, &maa, nullptr, &mem));
+    VK(vkBindImageMemory(dev, img, mem, 0));
+}
+
+inline void vkMakeCubeFaceView(VkDevice dev, VkImage img, VkFormat fmt, VkImageAspectFlags aspect, uint32_t face,
+                               VkImageView& view) {
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = img;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = fmt;
+    vci.subresourceRange = {aspect, 0, 1, face, 1};
+    VK(vkCreateImageView(dev, &vci, nullptr, &view));
 }
 
 inline void vkMakeCubeMipArrayView(VkDevice dev, VkImage img, uint32_t mip, VkImageView& view) {
