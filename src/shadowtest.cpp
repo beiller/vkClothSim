@@ -39,7 +39,7 @@ void createShadowTestWorld(World& w) {
     w.camera.position = {0.0f, 4.0f, 11.0f};
     w.camera.rotation = quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2f(2.0f, 11.0f));
     w.drawUi = drawShadowUi;
-    w.ui.light = {V3{5.0f, 7.0f, 3.0f}, V3{1.0f, 0.97f, 0.92f}, 300.0f, 0.5f, 1.0f};
+    spawnLight(w, V3{5.0f, 7.0f, 3.0f}, PointLight{V3{1.0f, 0.97f, 0.92f}, 300.0f, 0.5f, 1.0f}, "key light");
     w.ui.envIntensity = 0.0f;
 
     const VkExtent2D ext = w.app->extent();

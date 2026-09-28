@@ -16,6 +16,11 @@ public:
         MeshGpu rw;
     };
 
+    struct Light {
+        V3 pos{0.0f, 0.0f, 0.0f};
+        PointLight p;
+    };
+
     void init(VkApp& app, int nInstances, const Mat4& viewProj);
     GpuMeshRef addMesh(const Mesh& mesh);
     int addInstance(int geom);
@@ -25,7 +30,7 @@ public:
     void setTexture(int inst, int channel, int texId);
     void setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h);
     void setViewProj(const Mat4& vp, const V3& camPos);
-    void setLight(const PointLight& light);
+    void setLights(const std::vector<Light>& lights);
     void setEnvIntensity(float intensity);
     void dumpShadowMap(VkApp& app, const char* prefix);
     void shutdown();
@@ -112,7 +117,7 @@ private:
 
     Mat4 m_viewProj{};
     V3 m_camPos{0, 0, 0};
-    PointLight m_light;
+    std::vector<Light> m_lights;
     float m_envIntensity = 1.0f;
     VkImage m_shadowCube = VK_NULL_HANDLE, m_shadowDepth = VK_NULL_HANDLE;
     VkDeviceMemory m_shadowCubeMem = VK_NULL_HANDLE, m_shadowDepthMem = VK_NULL_HANDLE;

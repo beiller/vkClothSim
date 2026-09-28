@@ -25,6 +25,14 @@ entt::entity spawnStaticMesh(World& w, const Mesh& mesh, const Transform& t) {
     return e;
 }
 
+entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char* name) {
+    entt::entity e = w.reg.create();
+    w.reg.emplace<Transform>(e, pos, V4{0.0f, 0.0f, 0.0f, 1.0f});
+    w.reg.emplace<PointLight>(e, p);
+    w.reg.emplace<Name>(e, name);
+    return e;
+}
+
 void stepPinHolds(World& w, float dt) {
     for (auto [entity, hold, sb] : w.reg.view<PinHold, SoftBodyData>().each()) {
         hold.time += dt;
@@ -69,7 +77,10 @@ void draw(World& w, VkCommandBuffer cmd, uint32_t fb, const float bg[3], ImDrawD
         w.renderer.setMaterial(rend.inst, mat ? mat->baseColor : V3{1.0f, 1.0f, 1.0f}, mat ? mat->metallic : 0.0f,
                                mat ? mat->roughness : 0.5f);
     }
-    w.renderer.setLight(w.ui.light);
+    std::vector<Renderer::Light> lights;
+    for (auto [entity, t, p] : w.reg.view<Transform, PointLight>().each())
+        lights.push_back({t.pos, p});
+    w.renderer.setLights(lights);
     w.renderer.setEnvIntensity(w.ui.envIntensity);
     w.renderer.draw(cmd, *w.app, fb, bg, imgui, w.ui.exposure);
 }

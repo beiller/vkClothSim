@@ -11,7 +11,6 @@ struct V3 {
 };
 
 struct PointLight {
-    V3 pos{0.0f, 3.0f, 0.0f};
     V3 color{1.0f, 0.97f, 0.92f};
     float intensity = 25.0f;
     float radius = 0.25f;

@@ -264,7 +264,7 @@ void createDemoWorld(World& w) {
     w.camera.position = {0.0f, 9.0f, 14.0f};
     w.camera.rotation = quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2f(6.0f, 14.0f));
     w.drawUi = drawDemoUi;
-    w.ui.light = {V3{0.0f, 12.0f, 0.0f}, V3{1.0f, 0.95f, 0.90f}, 120.0f, 0.5f, 1.0f, 0.01f, 30.0f};
+    spawnLight(w, V3{0.0f, 12.0f, 0.0f}, PointLight{V3{1.0f, 0.95f, 0.90f}, 120.0f, 0.5f, 1.0f, 0.01f, 30.0f}, "key light");
     w.ui.envIntensity = 0.0f;
 
     const VkExtent2D ext = w.app->extent();

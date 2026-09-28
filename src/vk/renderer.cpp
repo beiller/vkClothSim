@@ -273,8 +273,8 @@ void Renderer::setViewProj(const Mat4& vp, const V3& camPos) {
     m_camPos = camPos;
 }
 
-void Renderer::setLight(const PointLight& light) {
-    m_light = light;
+void Renderer::setLights(const std::vector<Light>& lights) {
+    m_lights = lights;
 }
 
 void Renderer::setEnvIntensity(float intensity) {
@@ -287,23 +287,26 @@ void Renderer::writeViewUbo() {
     u.camPos[0] = m_camPos.x;
     u.camPos[1] = m_camPos.y;
     u.camPos[2] = m_camPos.z;
-    u.lightPos[0] = m_light.pos.x;
-    u.lightPos[1] = m_light.pos.y;
-    u.lightPos[2] = m_light.pos.z;
-    u.lightIntensity = m_light.intensity;
-    u.lightColor[0] = m_light.color.x;
-    u.lightColor[1] = m_light.color.y;
-    u.lightColor[2] = m_light.color.z;
-    u.lightRadius = m_light.radius;
-    u.lightOn = m_light.on;
+    if (!m_lights.empty()) {
+        const Light& L = m_lights.front();
+        u.lightPos[0] = L.pos.x;
+        u.lightPos[1] = L.pos.y;
+        u.lightPos[2] = L.pos.z;
+        u.lightIntensity = L.p.intensity;
+        u.lightColor[0] = L.p.color.x;
+        u.lightColor[1] = L.p.color.y;
+        u.lightColor[2] = L.p.color.z;
+        u.lightRadius = L.p.radius;
+        u.lightOn = L.p.on;
+        u.shadowNear = L.p.shadowNear;
+        u.shadowFar = L.p.shadowFar;
+        u.shadowNormalBias = L.p.shadowNormalBias;
+        u.shadowBiasBase = L.p.shadowBiasBase;
+        u.shadowBiasSlope = L.p.shadowBiasSlope;
+        u.shadowSearchScale = L.p.shadowSearchScale;
+        u.shadowMaxRadius = L.p.shadowMaxRadius;
+    }
     u.envIntensity = m_envIntensity;
-    u.shadowNear = m_light.shadowNear;
-    u.shadowFar = m_light.shadowFar;
-    u.shadowNormalBias = m_light.shadowNormalBias;
-    u.shadowBiasBase = m_light.shadowBiasBase;
-    u.shadowBiasSlope = m_light.shadowBiasSlope;
-    u.shadowSearchScale = m_light.shadowSearchScale;
-    u.shadowMaxRadius = m_light.shadowMaxRadius;
     vkWriteBuffer(m_dev, m_vpMem, &u, sizeof(ViewUbo));
 }
 
@@ -528,8 +531,9 @@ void Renderer::initShadow(VkApp& app) {
 }
 
 void Renderer::renderShadowCube(VkCommandBuffer cmd) {
-    if (m_light.on < 0.5f)
+    if (m_lights.empty() || m_lights.front().p.on < 0.5f)
         return;
+    const Light& L = m_lights.front();
     struct Face {
         V3 right, up, back;
     };
@@ -541,8 +545,8 @@ void Renderer::renderShadowCube(VkCommandBuffer cmd) {
         {{-1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
         {{1, 0, 0}, {0, 1, 0}, {0, 0, -1}},
     };
-    const float shadowNear = std::max(m_light.shadowNear, 0.001f);
-    const float shadowFar = std::max(m_light.shadowFar, shadowNear + 0.01f);
+    const float shadowNear = std::max(L.p.shadowNear, 0.001f);
+    const float shadowFar = std::max(L.p.shadowFar, shadowNear + 0.01f);
     const Mat4 proj = perspective(90.0f, 1.0f, shadowNear, shadowFar);
     VkViewport vp{0.0f, (float)m_shadowSize, (float)m_shadowSize, -(float)m_shadowSize, 0.0f, 1.0f};
     VkRect2D sc{0, 0, m_shadowSize, m_shadowSize};
@@ -560,9 +564,9 @@ void Renderer::renderShadowCube(VkCommandBuffer cmd) {
         view.m[8] = fc.right.z;
         view.m[9] = fc.up.z;
         view.m[10] = fc.back.z;
-        view.m[12] = -vDot(fc.right, m_light.pos);
-        view.m[13] = -vDot(fc.up, m_light.pos);
-        view.m[14] = -vDot(fc.back, m_light.pos);
+        view.m[12] = -vDot(fc.right, L.pos);
+        view.m[13] = -vDot(fc.up, L.pos);
+        view.m[14] = -vDot(fc.back, L.pos);
         view.m[15] = 1.0f;
         const Mat4 vpLight = mul4(proj, view);
 
@@ -646,7 +650,8 @@ void Renderer::dumpShadowMap(VkApp& app, const char* prefix) {
 
     float* data;
     VK(vkMapMemory(m_dev, stagingMem, 0, totalBytes, 0, (void**)&data));
-    const float far = m_light.shadowFar > 0.01f ? m_light.shadowFar : m_shadowRange;
+    const float lightFar = m_lights.empty() ? 0.0f : m_lights.front().p.shadowFar;
+    const float far = lightFar > 0.01f ? lightFar : m_shadowRange;
     char path[512];
     for (uint32_t f = 0; f < 6; ++f) {
         std::snprintf(path, sizeof(path), "%s_face%u.pgm", prefix, f);

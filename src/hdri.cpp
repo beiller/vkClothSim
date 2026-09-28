@@ -36,7 +36,7 @@ void createHdriWorld(World& w) {
     w.camera.position = {0.0f, 0.0f, 6.0f};
     w.camera.rotation = V4{0.0f, 0.0f, 0.0f, 1.0f};
     w.drawUi = drawHdriUi;
-    w.ui.light = {V3{2.0f, 2.0f, 3.0f}, V3{1.0f, 1.0f, 1.0f}, 20.0f, 0.15f, 1.0f};
+    spawnLight(w, V3{2.0f, 2.0f, 3.0f}, PointLight{V3{1.0f, 1.0f, 1.0f}, 20.0f, 0.15f, 1.0f}, "light");
 
     const VkExtent2D ext = w.app->extent();
     w.rigid.init();
