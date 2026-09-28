@@ -2,85 +2,88 @@
 
 DO NOT ALTER THIS FILE via coding agent
 
-A Jolt physics simulation, with a GPU soft-body simulation bolted on top that runs on the
-GPU and uses capsules as colliders. The soft bodies (the cloth + the ball) both run on the
-GPU. The compute shader is passed just two things per body — its **vertices** and its
-**joints** (two-point distance constraints) — plus the Jolt capsules (as colliders). The
-capsules from Jolt are passed to the sim, which runs on the GPU.
+Jolt rigid-body sim with a GPU soft-body layer (cloth + ball) using Jolt capsules as colliders.
+Soft-body bodies are passed to the GPU as vertices + two-point joints; Jolt capsules are passed as colliders.
 
-Use separation of concerns
-- Rendering
-- Cloth / Soft Body Sim
-- Jolt physics loop
+Keep the three layers loosely coupled:
+- rendering: `src/vk`
+- soft-body sim: `src/sim`, `shaders/softbody.comp`
+- rigid/Jolt sim: `src/app`, `src/systems.cpp`
 
-Inter-communication between those channels.
+`src/main.cpp` is glue only. Design for future command queues / separate threads.
 
-The code should be architechted so there is minimal coupling between the pieces listed, they may one day, but not today, be refactored into separate threads and have queued up commands.
+Conventions:
+- minimal comments
+- descriptive names
+- concise output
+- reconfigure CMake after shader edits
 
-Move the code in this direction given the opportunity. 
+## Current layout
 
-Minimize the use of comments and remove them when you see them unless absolutely required, which is almost never.
+- `src/main.cpp`: app loop, ImGui, scene selection (`--hdri` or default demo)
+- `src/world.hpp`: shared `World` state
+- `src/demo.cpp`: default cloth/ball/capsule demo
+- `src/hdri.cpp`: HDRI sphere test scene
+- `src/systems.cpp`: sim step, collider sync, resets
+- `src/app/rigid.cpp`: Jolt rigid step
+- `src/sim/softsim.cpp`: GPU soft-body dispatch
+- `src/vk/vkapp.cpp`: GLFW/Vulkan app, swapchain, render pass
+- `src/vk/renderer.cpp`: scene rendering, environment/IBL, UI
+- `src/vk/vkutil.hpp`: Vulkan helpers; equirect upload must honor `rowPitch`
+- `shaders/`:
+  - `mesh_*`: PBR/IBL mesh shading
+  - `softbody.comp`: GPU soft-body integration/constraints
+  - `env_cube.comp`: equirect -> cubemap
+  - `env_prefilter.comp`: rough specular prefilter
+  - `env_irradiance.comp`: irradiance / ambient diffuse
+  - `env_brdf.comp`: BRDF LUT pass, currently unused by `mesh_frag.frag`
+  - `tonemap_*`: HDR tonemap / sRGB post pass
+- `assets/fly-studio-03_1K.exr`: HDRI used by `--hdri` and demo
 
-Use discriptive variables names and function names.
+## HDRI process
 
-Keep all output concise: minimize text and avoid long summaries or logs.
+- Load `.exr` on CPU with TinyEXR into a 32-bit float equirect buffer.
+- Upload as a 2D image with row-pitch-aware copies.
+- `env_cube.comp`: equirect -> cubemap mip 0.
+- `env_prefilter.comp`: GGX-filtered specular mips for roughness.
+- `env_irradiance.comp`: cosine-weighted diffuse irradiance cubemap.
+- `mesh_frag.frag`: split-sum IBL using irradiance for diffuse and prefiltered cubemap for specular.
+
+## Render loop
+
+Per frame, `main.cpp` drives the layers in order:
+- Jolt: `stepRigid()` advances rigid bodies at fixed `kFrameDt` and writes poses back to ECS `Transform`.
+- Collider sync: `syncColliders()` copies capsule poses into the GPU capsule buffer used by the soft-body sim.
+- Soft body: `stepSoft()` records and submits `softbody.comp` substeps, updating the same GPU position/normal buffers later read by the mesh renderer.
+- Camera: `renderer.setViewProj()` updates the view/projection and camera-position UBO.
+- Scene render: `Renderer::draw()` updates per-instance model/material UBOs, draws meshes into an HDR scene target with depth, tonemaps to the swapchain image, and renders ImGui on top.
+- Present: the swapchain image is presented.
 
 ## Build & run
 
 ```sh
 cmake -S . -B build -Wno-dev        # re-run after editing any shader (SPIR-V is baked here)
 cmake --build build -j
-./build/vksim                        # the app
+./build/vksim                        # default demo
+./build/vksim --hdri                 # HDRI sphere test
 ```
 
 ## Screenshot
 
-Capture the app window (needs `import`/ImageMagick + `xprop`; works even when the window is behind others).
+Capture the app window (needs `import`/ImageMagick + `xprop`).
 
 ```sh
-setsid ./build/vksim >/tmp/vksim.log 2>&1 < /dev/null & disown   # run detached so it keeps rendering
+setsid ./build/vksim >/tmp/vksim.log 2>&1 < /dev/null & disown
 sleep 6
-for id in $(xprop -root _NET_CLIENT_LIST | sed 's/.*# //'); do
+for id in $(xprop -root _NET_CLIENT_LIST | sed 's/.*# //' | tr -d ','); do
     n=$(xprop -id "$id" _NET_WM_NAME 2>/dev/null | sed 's/.*= //; s/"//g')
-    [ "$n" = "3dsim" ] && import -window "$id" shot.png
+    [ "$n" = "3dsim" ] && import -window "$id" /tmp/shot.png
 done
-pkill -f build/vksim
+pkill -x vksim
 ```
 
-# Desired Code State
-## Verlet Integration
+## Desired sim direction
 
-Core Verlet approach (the "simple but works" baseline)
-
-Representation: cloth as a grid of point masses (positions + previous positions, no explicit velocity — that's the Verlet trick). Store as a big buffer/texture: position, prevPosition per particle.
-Integration step (per particle, fully parallel):
-newPos = pos + (pos - prevPos) * damping + acceleration * dt²
-This is "Position Verlet" — velocity is implicit in the position delta, which makes it trivially parallelizable and very stable.
-Constraint satisfaction (the hard part on GPU): each particle is connected to neighbors (structural, shear, bend springs) via distance constraints. You resolve these by iterating: for each constraint, push the two particles apart/together to satisfy the target distance.
-Problem: neighboring particles read/write each other's positions — a race condition if done naively in parallel.
-Solution: graph coloring or checkerboard/Jacobi-style updates. Classic trick: split constraints into independent sets (e.g., all "red" edges, then all "black" edges) so no two constraints in the same pass touch the same particle. Run several Jacobi/Gauss-Seidel-like iteration passes (8–20 typically) per frame for stiffness.
-Collision handling: sphere/plane/SDF collisions resolved as extra position corrections, self-collision optionally via spatial hashing on GPU.
-Normals + render: recompute normals from the position buffer, feed into vertex shader.
-
-This is basically the NVIDIA "GPU Gems"-style / PositionBasedDynamics (PBD) approach — and this is important: modern state-of-the-art-but-simple is not really "Verlet with distance constraints" anymore, it's Position Based Dynamics (PBD) or XPBD.
-
-What's considered current best-practice-but-still-simple: XPBD
-
-XPBD (Extended Position Based Dynamics, Müller et al. 2016) is the natural evolution: same Verlet integration backbone, but constraints are solved with a compliance parameter so stiffness is independent of iteration count and substep count — this fixes PBD's classic problem where stiffness changes if you change the solver iteration count or timestep.
-Typical modern pipeline:
-Verlet/semi-implicit integration for predicted positions
-Multiple substeps (not just constraint iterations) — substepping is the modern trick that replaced "many constraint iterations" because it's more stable and physically consistent
-Gauss-Seidel or Jacobi constraint solve with compliance (alpha) terms, run on GPU via graph-colored constraint groups
-Velocity update derived from position deltas after solving
-This is what you'll see in Unity/Unreal cloth-ish demos, Nvidia Flex/PhysX cloth, and most modern GPU cloth research since ~2017.
-
-## Graph coloring and GPU scheduling:
-Your constraint graph (edges between particles) usually isn't as clean as a regular checkerboard, so it's really graph coloring in general: assign each constraint a color such that constraints sharing a particle never share a color. For a cloth grid with structural + shear + bend springs, you typically need more than 2 colors (often 4–8) since each particle can be touched by many constraints. 
-
-Why this matters for GPU specifically
-
-Each color group becomes one dispatch (one compute shader invocation over that group's constraints).
-Within a dispatch, every thread can safely read and write particle positions with no atomics needed, because the coloring guarantees no two threads in that dispatch touch the same particle.
-You pay a synchronization cost between color groups (each color = a separate dispatch + memory barrier), but you gain full parallelism within each group.
-
-So concretely for your XPBD cloth: at setup time (once, on CPU, since your mesh topology is fixed), you'd build the constraint list and greedily assign each constraint a color, then group constraint indices by color into separate buffers. At runtime, you dispatch one compute pass per color, each pass safely updating all its particles in parallel.
+- Position-based Verlet / PBD / XPBD style
+- graph-colored constraint groups; one dispatch per color
+- prefer substeps over high iteration counts
