@@ -197,6 +197,7 @@ Mesh makeCapsuleMesh(const CapsuleParams& shape, int nCaps) {
 void drawDemoUi(World& w) {
     ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(320, 800), ImGuiCond_Always);
+    ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
     ImGui::Begin("3dsim");
     ImGui::ColorEdit3("background", w.ui.bgColor);
     ImGui::Text("%.1f fps", ImGui::GetIO().Framerate);

@@ -102,6 +102,12 @@ inline Mat4 perspective(float fovyDeg, float aspect, float nearP, float farP) {
     return r;
 }
 
+struct XrEyeData {
+    V3 pos{0, 0, 0};
+    V4 quat{0, 0, 0, 1};
+    float tanL = 1.0f, tanR = 1.0f, tanU = 0.58f, tanD = 0.58f;
+};
+
 inline void quatToMat3(const float q[4], float m[9]) {
     float x = q[0], y = q[1], z = q[2], w = q[3];
     m[0] = 1.0f - 2.0f * (y * y + z * z);
@@ -113,4 +119,44 @@ inline void quatToMat3(const float q[4], float m[9]) {
     m[6] = 2.0f * (x * z + y * w);
     m[7] = 2.0f * (y * z - x * w);
     m[8] = 1.0f - 2.0f * (x * x + y * y);
+}
+
+inline Mat4 viewFromPose(const V3& pos, const V4& q) {
+    const float qq[4] = {q.x, q.y, q.z, q.w};
+    float rot[9];
+    quatToMat3(qq, rot);
+    const V3 right{rot[0], rot[1], rot[2]};
+    const V3 up{rot[3], rot[4], rot[5]};
+    const V3 back{rot[6], rot[7], rot[8]};
+    Mat4 r{};
+    r.m[0] = right.x;
+    r.m[1] = up.x;
+    r.m[2] = back.x;
+    r.m[4] = right.y;
+    r.m[5] = up.y;
+    r.m[6] = back.y;
+    r.m[8] = right.z;
+    r.m[9] = up.z;
+    r.m[10] = back.z;
+    r.m[12] = -vDot(right, pos);
+    r.m[13] = -vDot(up, pos);
+    r.m[14] = -vDot(back, pos);
+    r.m[15] = 1.0f;
+    return r;
+}
+
+// signed tangents (OpenXR convention: angleLeft/angleDown negative)
+// matches Godot OpenXRUtil::XrMatrix4x4f_CreateProjection with GRAPHICS_OPENGL
+inline Mat4 projFov(float tl, float tr, float tu, float td, float nearP, float farP) {
+    const float w = tr - tl;
+    const float h = tu - td;
+    Mat4 r{};
+    r.m[0] = 2.0f / w;
+    r.m[5] = 2.0f / h;
+    r.m[8] = (tr + tl) / w;
+    r.m[9] = (tu + td) / h;
+    r.m[10] = (farP + nearP) / (nearP - farP);
+    r.m[11] = -1.0f;
+    r.m[14] = 2.0f * farP * nearP / (nearP - farP);
+    return r;
 }

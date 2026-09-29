@@ -2,7 +2,7 @@
 
 layout(location = 0) out vec4 outColor;
 layout(binding = 0) uniform sampler2D hdr;
-layout(binding = 1) uniform TBO { vec2 extent; float exposure; } tbo;
+layout(binding = 1) uniform TBO { vec4 region; float exposure; } tbo;
 
 vec3 aces(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
@@ -14,7 +14,7 @@ vec3 toSrgb(vec3 c) {
 }
 
 void main() {
-    vec2 uv = gl_FragCoord.xy / tbo.extent;
+    vec2 uv = (gl_FragCoord.xy - tbo.region.xy) / tbo.region.zw;
     vec3 c = aces(texture(hdr, uv).rgb * tbo.exposure);
     outColor = vec4(toSrgb(c), 1.0);
 }

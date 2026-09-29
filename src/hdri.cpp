@@ -14,6 +14,7 @@ namespace {
 void drawHdriUi(World& w) {
     ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(320, 680), ImGuiCond_Always);
+    ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
     ImGui::Begin("hdri");
     for (auto [entity, mat] : w.reg.view<Material>().each()) {
         const auto* name = w.reg.try_get<Name>(entity);
@@ -25,6 +26,11 @@ void drawHdriUi(World& w) {
     }
     ImGui::SeparatorText("camera");
     ImGui::SliderFloat("fov", &w.camera.fovDeg, 10.0f, 120.0f, "%.0f");
+#ifdef WITH_OPENXR
+    ImGui::SeparatorText("vr");
+    ImGui::DragFloat3("rig offset", w.ui.vrRigOffset, 0.05f);
+    ImGui::Checkbox("scene cam pose", &w.ui.vrSceneCamPose);
+#endif
     drawToneSection(w);
     drawLightSection(w);
     ImGui::End();
@@ -43,7 +49,9 @@ void createHdriWorld(World& w) {
     w.sim.init(w.app->device(), w.app->pdev());
     w.renderer.init(*w.app, 1, w.camera.viewProj((float)ext.width / (float)ext.height));
 
-    const entt::entity sphere = spawnStaticMesh(w, makeSphereMesh(4, 2.0f), Transform{});
+    Transform st{};
+    st.pos = V3{0.0f, 0.0f, 0.0f};
+    const entt::entity sphere = spawnStaticMesh(w, makeSphereMesh(4, 2.0f), st);
     w.reg.emplace<Name>(sphere, "sphere");
     w.reg.emplace<Material>(sphere, V3{0.25f, 0.25f, 0.25f}, 0.0f, 1.0f);
     w.sim.build();

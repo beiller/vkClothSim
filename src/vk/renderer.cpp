@@ -12,6 +12,7 @@
 #include "vk/vkapp.hpp"
 #include "vk/vkutil.hpp"
 #include <imgui_impl_vulkan.h>
+#include <cstdlib>
 
 namespace {
 
@@ -189,12 +190,32 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     vkMakeImage2D(m_dev, m_pdev, 1, 1, white, m_white.img, m_white.mem, m_white.view);
     vkMakeSampler(m_dev, VK_SAMPLER_ADDRESS_MODE_REPEAT, m_texSampler);
 
-    vkMakeBuffer(m_dev, m_pdev, m_tmUbuf, m_tmMem, 16, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
+    vkMakeBuffer(m_dev, m_pdev, m_tmUbuf, m_tmMem, 32, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
     const auto tmBinds = tonemapBinds();
     vkMakeDslPool(m_dev, tmBinds, 2, m_tmDsl, m_tmPool);
     m_tmPl = vkMakePipelineLayout(m_dev, m_tmDsl);
     m_tmPipe = makeGraphicsPipeline(m_dev, app.renderPass(), tonemap_vert_spv, tonemap_vert_spv_len / 4,
-                                   tonemap_frag_spv, tonemap_frag_spv_len / 4, m_tmPl, false);
+                                    tonemap_frag_spv, tonemap_frag_spv_len / 4, m_tmPl, false);
+    VkAttachmentDescription nca{};
+    nca.format = app.swapchainFormat();
+    nca.samples = VK_SAMPLE_COUNT_1_BIT;
+    nca.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    nca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    nca.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    nca.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    nca.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    nca.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    VkAttachmentReference ncr{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription ncs{};
+    ncs.colorAttachmentCount = 1;
+    ncs.pColorAttachments = &ncr;
+    VkRenderPassCreateInfo nrpc{};
+    nrpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    nrpc.attachmentCount = 1;
+    nrpc.pAttachments = &nca;
+    nrpc.subpassCount = 1;
+    nrpc.pSubpasses = &ncs;
+    VK(vkCreateRenderPass(m_dev, &nrpc, nullptr, &m_noClearRp));
     rebuildTonemapSet(app);
     initShadow(app);
 }
@@ -301,15 +322,66 @@ void Renderer::setEnvIntensity(float intensity) {
     m_envIntensity = intensity;
 }
 
-void Renderer::writeViewUbo() {
+void Renderer::writeViewUbo(const Mat4& vp, const V3& cam) {
     ViewUbo u{};
-    std::memcpy(u.viewProj, m_viewProj.m, 64);
-    u.camPos[0] = m_camPos.x;
-    u.camPos[1] = m_camPos.y;
-    u.camPos[2] = m_camPos.z;
+    std::memcpy(u.viewProj, vp.m, 64);
+    u.camPos[0] = cam.x;
+    u.camPos[1] = cam.y;
+    u.camPos[2] = cam.z;
     u.envIntensity = m_envIntensity;
     u.shadowTexels = (float)m_shadowSize;
     vkWriteBuffer(m_dev, m_vpMem, &u, sizeof(ViewUbo));
+}
+
+void Renderer::prepBuffers() {
+    writeLights();
+    for (auto& inst : m_insts) {
+        const ModelUbo mb = packModel(inst.model, inst.baseColor, inst.metallic, inst.roughness);
+        vkWriteBuffer(m_dev, inst.modelMem, &mb, sizeof(ModelUbo));
+    }
+}
+
+void Renderer::renderScenePass(VkCommandBuffer cmd, VkApp& app, const float bg[3]) {
+    const VkExtent2D ext = app.extent();
+    VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
+    VkRect2D sc{0, 0, ext.width, ext.height};
+    VkClearValue scv[2]{};
+    scv[0].color = {bg[0], bg[1], bg[2], 1.0f};
+    scv[1].depthStencil = {1.0f, 0};
+    VkRenderPassBeginInfo spb{};
+    spb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    spb.renderPass = app.sceneRenderPass();
+    spb.framebuffer = app.sceneFramebuffer();
+    spb.renderArea = {{0, 0}, ext};
+    spb.clearValueCount = 2;
+    spb.pClearValues = scv;
+    vkCmdBeginRenderPass(cmd, &spb, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdSetViewport(cmd, 0, 1, &vpt);
+    vkCmdSetScissor(cmd, 0, 1, &sc);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipe);
+    for (const auto& inst : m_insts)
+        drawInstance(cmd, m_pl, m_geoms[inst.geom], inst);
+    vkCmdEndRenderPass(cmd);
+}
+
+void Renderer::hdrBarrier(VkCommandBuffer cmd, VkApp& app) {
+    VkImageMemoryBarrier imb{};
+    imb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    imb.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    imb.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imb.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    imb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    imb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    imb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    imb.image = app.hdrImage();
+    imb.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                         0, nullptr, 0, nullptr, 1, &imb);
+}
+
+void Renderer::writeTonemapUbo(float ox, float oy, float sx, float sy) {
+    const float tm[8] = {ox, oy, sx, sy, m_exposure, 0.0f, 0.0f, 0.0f};
+    vkWriteBuffer(m_dev, m_tmMem, tm, 32);
 }
 
 void Renderer::writeLights() {
@@ -720,84 +792,58 @@ void Renderer::drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuM
 
 void Renderer::rebuildTonemapSet(VkApp& app) {
     vkResetDescriptorPool(m_dev, m_tmPool, 0);
+    VkDescriptorSet sets[2]{};
+    const uint32_t n = m_xrReady ? 2 : 1;
+    VkDescriptorSetLayout layouts[2] = {m_tmDsl, m_tmDsl}; // pSetLayouts must have n entries
     VkDescriptorSetAllocateInfo sai{};
     sai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     sai.descriptorPool = m_tmPool;
-    sai.descriptorSetCount = 1;
-    sai.pSetLayouts = &m_tmDsl;
-    VK(vkAllocateDescriptorSets(m_dev, &sai, &m_tmSet));
+    sai.descriptorSetCount = n;
+    sai.pSetLayouts = layouts;
+    VK(vkAllocateDescriptorSets(m_dev, &sai, sets));
+    m_tmSet = sets[0];
+    m_xrSet = m_xrReady ? sets[1] : VK_NULL_HANDLE;
     VkDescriptorImageInfo ii;
     ii.sampler = app.hdrSampler();
     ii.imageView = app.hdrView();
     ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkDescriptorBufferInfo bi{m_tmUbuf, 0, 16};
-    VkWriteDescriptorSet w[2]{};
-    w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    w[0].dstSet = m_tmSet;
-    w[0].dstBinding = 0;
-    w[0].descriptorCount = 1;
-    w[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    w[0].pImageInfo = &ii;
-    w[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    w[1].dstSet = m_tmSet;
-    w[1].dstBinding = 1;
-    w[1].descriptorCount = 1;
-    w[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    w[1].pBufferInfo = &bi;
-    vkUpdateDescriptorSets(m_dev, 2, w, 0, nullptr);
+    VkDescriptorBufferInfo bi{m_tmUbuf, 0, 32};
+    VkDescriptorBufferInfo xbi{m_xrTmUbuf, 0, 32};
+    VkWriteDescriptorSet w[4]{};
+    for (int s = 0; s < 2; ++s) {
+        w[2 * s].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w[2 * s].dstSet = sets[s];
+        w[2 * s].dstBinding = 0;
+        w[2 * s].descriptorCount = 1;
+        w[2 * s].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w[2 * s].pImageInfo = &ii;
+        w[2 * s + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w[2 * s + 1].dstSet = sets[s];
+        w[2 * s + 1].dstBinding = 1;
+        w[2 * s + 1].descriptorCount = 1;
+        w[2 * s + 1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        w[2 * s + 1].pBufferInfo = &bi;
+    }
+    if (m_xrReady)
+        w[3].pBufferInfo = &xbi;
+    vkUpdateDescriptorSets(m_dev, 2 * n, w, 0, nullptr);
     m_tmSrcView = app.hdrView();
 }
 
 void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui,
                     float exposure) {
-    writeViewUbo();
-    writeLights();
-    for (auto& inst : m_insts) {
-        const ModelUbo mb = packModel(inst.model, inst.baseColor, inst.metallic, inst.roughness);
-        vkWriteBuffer(m_dev, inst.modelMem, &mb, sizeof(ModelUbo));
-    }
+    m_exposure = exposure;
+    writeViewUbo(m_viewProj, m_camPos);
+    prepBuffers();
     const VkExtent2D ext = app.extent();
-    VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
-    VkRect2D sc{0, 0, ext.width, ext.height};
-
     renderShadowCubes(cmd);
-
-    VkClearValue scv[2]{};
-    scv[0].color = {bg[0], bg[1], bg[2], 1.0f};
-    scv[1].depthStencil = {1.0f, 0};
-    VkRenderPassBeginInfo spb{};
-    spb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    spb.renderPass = app.sceneRenderPass();
-    spb.framebuffer = app.sceneFramebuffer();
-    spb.renderArea = {{0, 0}, ext};
-    spb.clearValueCount = 2;
-    spb.pClearValues = scv;
-    vkCmdBeginRenderPass(cmd, &spb, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdSetViewport(cmd, 0, 1, &vpt);
-    vkCmdSetScissor(cmd, 0, 1, &sc);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipe);
-    for (const auto& inst : m_insts)
-        drawInstance(cmd, m_pl, m_geoms[inst.geom], inst);
-    vkCmdEndRenderPass(cmd);
-
-    VkImageMemoryBarrier imb{};
-    imb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    imb.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    imb.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    imb.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    imb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    imb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    imb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    imb.image = app.hdrImage();
-    imb.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
-                         0, nullptr, 0, nullptr, 1, &imb);
-
+    renderScenePass(cmd, app, bg);
+    hdrBarrier(cmd, app);
     if (app.hdrView() != m_tmSrcView)
         rebuildTonemapSet(app);
-    const float tm[4] = {(float)ext.width, (float)ext.height, exposure, 0.0f};
-    vkWriteBuffer(m_dev, m_tmMem, tm, 16);
-
+    writeTonemapUbo(0.0f, 0.0f, (float)ext.width, (float)ext.height);
+    VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
+    VkRect2D sc{0, 0, ext.width, ext.height};
     VkClearValue bcv[1]{};
     bcv[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
     VkRenderPassBeginInfo bpb{};
@@ -817,6 +863,193 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg
         ImGui_ImplVulkan_RenderDrawData(imgui, cmd);
     vkCmdEndRenderPass(cmd);
     app.submit(cmd);
+}
+
+Mat4 Renderer::eyeVP(int eye) const {
+    const XrEyeData& e = m_vrEyes[eye];
+    const Mat4 proj = projFov(e.tanL, e.tanR, e.tanU, e.tanD, 0.1f, 300.0f);
+    return mul4(proj, viewFromPose(e.pos, e.quat));
+}
+
+// letterbox the eye image (its own aspect) into the eye's half of the window
+VkRect2D Renderer::eyeRegion(int eye, VkExtent2D ext) const {
+    if (getenv("VR_FULLVIEW"))
+        return {0, 0, ext.width, ext.height};
+    const XrEyeData& e = m_vrEyes[eye];
+    const float aspect = (e.tanR - e.tanL) / (e.tanU - e.tanD);
+    const uint32_t halfW = ext.width / 2;
+    float rw, rh;
+    if (aspect > (float)halfW / (float)ext.height) {
+        rw = (float)halfW;
+        rh = rw / aspect;
+    } else {
+        rh = (float)ext.height;
+        rw = rh * aspect;
+    }
+    const float ox = eye * (float)halfW + ((float)halfW - rw) * 0.5f;
+    const float oy = ((float)ext.height - rh) * 0.5f;
+    return {(int)ox, (int)oy, (uint32_t)rw, (uint32_t)rh};
+}
+
+void Renderer::setVrEyes(const XrEyeData* eyes, int nEyes) {
+    m_vrEyesN = std::clamp(nEyes, 1, 2);
+    for (int i = 0; i < m_vrEyesN; ++i)
+        m_vrEyes[i] = eyes[i];
+}
+
+void Renderer::ensureNoClearFbs(VkApp& app) {
+    const VkExtent2D ext = app.extent();
+    if (m_noClearFbs.size() == app.imageCount() && m_noClearExt.width == ext.width && m_noClearExt.height == ext.height)
+        return;
+    for (auto* fb : m_noClearFbs)
+        vkDestroyFramebuffer(m_dev, fb, nullptr);
+    m_noClearFbs.clear();
+    m_noClearFbs.resize(app.imageCount());
+    for (uint32_t i = 0; i < app.imageCount(); ++i) {
+        const VkImageView att = app.view(i);
+        VkFramebufferCreateInfo fci{};
+        fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fci.renderPass = m_noClearRp;
+        fci.attachmentCount = 1;
+        fci.pAttachments = &att;
+        fci.width = ext.width;
+        fci.height = ext.height;
+        fci.layers = 1;
+        VK(vkCreateFramebuffer(m_dev, &fci, nullptr, &m_noClearFbs[i]));
+    }
+    m_noClearExt = ext;
+}
+
+void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui,
+                      float exposure, const uint32_t* xrImg, int nXr) {
+    m_exposure = exposure;
+    prepBuffers();
+    const VkExtent2D ext = app.extent();
+    renderShadowCubes(cmd);
+    ensureNoClearFbs(app);
+    VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
+    VkRect2D full{0, 0, ext.width, ext.height};
+    VkClearValue bcv[1]{};
+    bcv[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
+    for (int eye = 0; eye < m_vrEyesN; ++eye) {
+        // the view + tonemap UBOs are single-slot host buffers, so each eye is
+        // its own fence-waited submit to avoid the next eye clobbering this one
+        writeViewUbo(eyeVP(eye), m_vrEyes[eye].pos);
+        renderScenePass(cmd, app, bg);
+        hdrBarrier(cmd, app);
+        if (app.hdrView() != m_tmSrcView)
+            rebuildTonemapSet(app);
+        const VkRect2D r = eyeRegion(eye, ext);
+        writeTonemapUbo((float)r.offset.x, (float)r.offset.y, (float)r.extent.width, (float)r.extent.height);
+        const bool first = eye == 0;
+        const bool last = eye == m_vrEyesN - 1;
+        VkRenderPassBeginInfo bpb{};
+        bpb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        bpb.renderPass = first ? app.renderPass() : m_noClearRp;
+        bpb.framebuffer = first ? app.frameBuffer(fb) : m_noClearFbs[fb];
+        bpb.renderArea = {{0, 0}, ext};
+        bpb.clearValueCount = 1;
+        bpb.pClearValues = bcv;
+        vkCmdBeginRenderPass(cmd, &bpb, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdSetViewport(cmd, 0, 1, &vpt);
+        vkCmdSetScissor(cmd, 0, 1, &r);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPipe);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPl, 0, 1, &m_tmSet, 0, nullptr);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+        if (last && imgui && imgui->CmdLists.Size > 0) {
+            vkCmdSetScissor(cmd, 0, 1, &full);
+            ImGui_ImplVulkan_RenderDrawData(imgui, cmd);
+        }
+        vkCmdEndRenderPass(cmd);
+        if (xrImg && eye < nXr)
+            drawXrEye(cmd, app, eye, xrImg[eye]);
+        app.submit(cmd);
+        if (!last)
+            cmd = app.beginCommands();
+    }
+}
+
+void Renderer::initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vector<std::vector<VkImage>>& images,
+                            const VkExtent2D* exts) {
+    m_xrFmt = fmt;
+    VkAttachmentDescription att{};
+    att.format = fmt;
+    att.samples = VK_SAMPLE_COUNT_1_BIT;
+    att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    att.finalLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription sub{};
+    sub.colorAttachmentCount = 1;
+    sub.pColorAttachments = &ref;
+    VkRenderPassCreateInfo rpc{};
+    rpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    rpc.attachmentCount = 1;
+    rpc.pAttachments = &att;
+    rpc.subpassCount = 1;
+    rpc.pSubpasses = &sub;
+    VK(vkCreateRenderPass(m_dev, &rpc, nullptr, &m_xrRp));
+    m_xrPipe = makeGraphicsPipeline(m_dev, m_xrRp, tonemap_vert_spv, tonemap_vert_spv_len / 4, tonemap_frag_spv,
+                                    tonemap_frag_spv_len / 4, m_tmPl, false);
+    vkMakeBuffer(m_dev, m_pdev, m_xrTmUbuf, m_xrTmMem, 32, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
+    m_xrViews.resize(nEyes);
+    m_xrFbs.resize(nEyes);
+    for (int i = 0; i < nEyes; ++i) {
+        m_xrExt[i] = exts[i];
+        m_xrViews[i].resize(images[i].size());
+        m_xrFbs[i].resize(images[i].size());
+        for (size_t k = 0; k < images[i].size(); ++k) {
+            VkImageViewCreateInfo vci{};
+            vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            vci.image = images[i][k];
+            vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            vci.format = fmt;
+            vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            VK(vkCreateImageView(m_dev, &vci, nullptr, &m_xrViews[i][k]));
+            VkFramebufferCreateInfo fci{};
+            fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fci.renderPass = m_xrRp;
+            fci.attachmentCount = 1;
+            fci.pAttachments = &m_xrViews[i][k];
+            fci.width = exts[i].width;
+            fci.height = exts[i].height;
+            fci.layers = 1;
+            VK(vkCreateFramebuffer(m_dev, &fci, nullptr, &m_xrFbs[i][k]));
+        }
+    }
+    m_xrReady = true;
+    rebuildTonemapSet(app);
+}
+
+void Renderer::drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx) {
+    if (!m_xrReady)
+        return;
+    if (app.hdrView() != m_tmSrcView)
+        rebuildTonemapSet(app);
+    const uint32_t w = m_xrExt[eye].width, h = m_xrExt[eye].height;
+    const float tm[8] = {0.0f, 0.0f, (float)w, (float)h, m_exposure, 0.0f, 0.0f, 0.0f};
+    vkWriteBuffer(m_dev, m_xrTmMem, tm, 32);
+    VkClearValue cv[1]{};
+    cv[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
+    VkRenderPassBeginInfo rpb{};
+    rpb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpb.renderPass = m_xrRp;
+    rpb.framebuffer = m_xrFbs[eye][imgIdx];
+    rpb.renderArea = {{0, 0}, {w, h}};
+    rpb.clearValueCount = 1;
+    rpb.pClearValues = cv;
+    vkCmdBeginRenderPass(cmd, &rpb, VK_SUBPASS_CONTENTS_INLINE);
+    VkViewport vp{0, (float)h, (float)w, -(float)h, 0, 1};
+    VkRect2D sc{0, 0, w, h};
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    vkCmdSetScissor(cmd, 0, 1, &sc);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_xrPipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPl, 0, 1, &m_xrSet, 0, nullptr);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+    vkCmdEndRenderPass(cmd);
 }
 
 void Renderer::shutdown() {
@@ -866,6 +1099,23 @@ void Renderer::shutdown() {
         vkDestroyPipelineLayout(m_dev, m_pl, nullptr);
     if (m_pipe)
         vkDestroyPipeline(m_dev, m_pipe, nullptr);
+    for (auto* fb : m_noClearFbs)
+        vkDestroyFramebuffer(m_dev, fb, nullptr);
+    if (m_noClearRp)
+        vkDestroyRenderPass(m_dev, m_noClearRp, nullptr);
+    if (m_xrReady) {
+        for (auto& eye : m_xrFbs)
+            for (auto* fb : eye)
+                vkDestroyFramebuffer(m_dev, fb, nullptr);
+        for (auto& eye : m_xrViews)
+            for (auto* v : eye)
+                vkDestroyImageView(m_dev, v, nullptr);
+        if (m_xrPipe)
+            vkDestroyPipeline(m_dev, m_xrPipe, nullptr);
+        if (m_xrRp)
+            vkDestroyRenderPass(m_dev, m_xrRp, nullptr);
+        vkFreeBuffer(m_dev, m_xrTmUbuf, m_xrTmMem);
+    }
     if (m_tmPool)
         vkDestroyDescriptorPool(m_dev, m_tmPool, nullptr);
     if (m_tmDsl)

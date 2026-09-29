@@ -14,6 +14,7 @@ namespace {
 void drawShadowUi(World& w) {
     ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(320, 720), ImGuiCond_Always);
+    ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
     ImGui::Begin("shadow test");
     for (auto [entity, mat] : w.reg.view<Material>().each()) {
         const auto* name = w.reg.try_get<Name>(entity);

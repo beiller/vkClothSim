@@ -7,7 +7,14 @@
 
 class VkApp {
 public:
-    bool init(int width, int height, const char* title);
+    // phase 1: window + instance + surface + physical device (no VkDevice yet)
+    bool initInstance(int width, int height, const char* title);
+    // phase 2: device-dependent resources (swapchain, render passes, pool, fence)
+    bool initDevice(VkDevice dev);
+    // create the VkDevice with our queue + extensions (used when no OpenXR device)
+    VkDevice makeDevice();
+    // queue + extensions for a VkDeviceCreateInfo; OpenXR uses this for xrCreateVulkanDeviceKHR
+    const VkDeviceCreateInfo& deviceCreateInfo() const { return m_dci; }
     void shutdown();
 
     bool windowShouldClose() const;
@@ -24,6 +31,7 @@ public:
     VkRenderPass sceneRenderPass() const { return m_rpScene; }
     VkSwapchainKHR swapchain() const { return m_sc; }
     VkFramebuffer frameBuffer(uint32_t i) const { return m_fbs[i]; }
+    VkImageView view(uint32_t i) const { return m_views[i]; }
     VkFramebuffer sceneFramebuffer() const { return m_sceneFb; }
     VkImageView hdrView() const { return m_hdrView; }
     VkSampler hdrSampler() const { return m_hdrSampler; }
@@ -51,6 +59,10 @@ private:
     VkDevice m_dev = VK_NULL_HANDLE;
     VkQueue m_queue = VK_NULL_HANDLE;
     uint32_t m_qf = 0;
+    float m_qprio = 1.0f;
+    VkDeviceQueueCreateInfo m_qci{};
+    const char* m_devExt[3] = {"VK_KHR_swapchain", "VK_KHR_external_memory_fd", "VK_KHR_external_semaphore_fd"};
+    VkDeviceCreateInfo m_dci{};
     VkSwapchainKHR m_sc = VK_NULL_HANDLE;
     std::vector<VkImage> m_images;
     std::vector<VkImageView> m_views;

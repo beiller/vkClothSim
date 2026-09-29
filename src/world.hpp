@@ -6,6 +6,10 @@
 #include <entt/entt.hpp>
 #include <functional>
 
+#ifdef WITH_OPENXR
+#include "xr/xr.hpp"
+#endif
+
 class VkApp;
 
 struct UIState {
@@ -14,6 +18,8 @@ struct UIState {
     float exposure = 1.0f;
     bool showDemo = false;
     float envIntensity = 1.0f;
+    float vrRigOffset[3] = {0.0f, 0.0f, 0.0f};
+    bool vrSceneCamPose = false;
 };
 
 struct World {
@@ -23,6 +29,10 @@ struct World {
     SoftSim sim;
     Renderer renderer;
     Camera camera;
+#ifdef WITH_OPENXR
+    Xr xr;
+    entt::entity vrCam = entt::null;
+#endif
     UIState ui;
     std::function<void(World&)> drawUi;
 };

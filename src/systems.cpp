@@ -33,6 +33,29 @@ entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char
     return e;
 }
 
+entt::entity spawnVrCamera(World& w, const char* name) {
+    entt::entity e = w.reg.create();
+    w.reg.emplace<Transform>(e, V3{0.0f, 1.6f, 3.0f}, V4{0.0f, 0.0f, 0.0f, 1.0f});
+    w.reg.emplace<VrCamera>(e);
+    w.reg.emplace<Name>(e, name);
+    return e;
+}
+
+#ifdef WITH_OPENXR
+void syncVrCamera(World& w, const XrFrameData& fr) {
+    for (auto [e, t, vr] : w.reg.view<Transform, VrCamera>().each()) {
+        if (fr.havePose && fr.nEyes > 0) {
+            const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
+            t.pos = vAdd(mid, vr.rigPos);
+            t.quat = fr.eye[0].quat;
+        } else {
+            t.pos = vAdd(V3{0.0f, 1.6f, 3.0f}, vr.rigPos);
+            t.quat = V4{0.0f, 0.0f, 0.0f, 1.0f};
+        }
+    }
+}
+#endif
+
 void stepPinHolds(World& w, float dt) {
     for (auto [entity, hold, sb] : w.reg.view<PinHold, SoftBodyData>().each()) {
         hold.time += dt;
@@ -69,7 +92,7 @@ void stepSoft(World& w, VkCommandBuffer cmd) {
     w.sim.record(cmd);
 }
 
-void draw(World& w, VkCommandBuffer cmd, uint32_t fb, const float bg[3], ImDrawData* imgui) {
+void syncSceneToRenderer(World& w) {
     for (auto [entity, rend, t] : w.reg.view<Renderable, Transform>().each())
         w.renderer.setModel(rend.inst, t.toMat4());
     for (auto [entity, rend] : w.reg.view<Renderable>().each()) {
@@ -82,5 +105,9 @@ void draw(World& w, VkCommandBuffer cmd, uint32_t fb, const float bg[3], ImDrawD
         lights.push_back({t.pos, p});
     w.renderer.setLights(lights);
     w.renderer.setEnvIntensity(w.ui.envIntensity);
+}
+
+void draw(World& w, VkCommandBuffer cmd, uint32_t fb, const float bg[3], ImDrawData* imgui) {
+    syncSceneToRenderer(w);
     w.renderer.draw(cmd, *w.app, fb, bg, imgui, w.ui.exposure);
 }

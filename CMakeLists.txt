@@ -18,7 +18,7 @@ find_package(ZLIB REQUIRED)
 find_program(GLSLC glslc REQUIRED)
 find_program(XXD xxd REQUIRED)
 
-option(WITH_OPENXR ON "OpenXR support (dlopen libopenxr.so.1, --xr)")
+option(WITH_OPENXR ON "OpenXR support (dlopen libopenxr.so.1, --vr)")
 
 set(GEN_DIR ${CMAKE_BINARY_DIR}/gen)
 file(MAKE_DIRECTORY ${GEN_DIR})
@@ -65,7 +65,7 @@ set(JPH_USE_CPU_COMPUTE OFF)
 include(${PHYSICS_REPO_ROOT}/Jolt/Jolt.cmake)
 
 if(WITH_OPENXR)
-    set(XR_SOURCES src/xr/openxr_loader.cpp)
+    set(XR_SOURCES src/xr/openxr_loader.cpp src/xr/xr.cpp)
     set(XR_DEFINES WITH_OPENXR)
     set(XR_INCLUDES ${CMAKE_SOURCE_DIR}/lib/openxr)
     set(XR_LIBS dl)

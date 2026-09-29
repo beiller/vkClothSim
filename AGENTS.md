@@ -2,6 +2,8 @@
 
 DO NOT ALTER THIS FILE via coding agent (unless explicit permission is granted)
 
+Bias towards action, use minimal thinking!
+
 Jolt rigid-body sim with a GPU soft-body layer (cloth + ball) using Jolt capsules as colliders.
 Soft-body bodies are passed to the GPU as vertices + two-point joints; Jolt capsules are passed as colliders.
 

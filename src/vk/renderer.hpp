@@ -38,6 +38,15 @@ public:
     void shutdown();
     void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui, float exposure);
 
+    // VR: per-eye scene render + side-by-side window debug view + headset swapchain
+    void initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vector<std::vector<VkImage>>& images,
+                      const VkExtent2D* exts);
+    void setVrEyes(const XrEyeData* eyes, int nEyes);
+    // xrImg[i] is the acquired swapchain image index for eye i (headet); nullptr = window only
+    void drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui, float exposure,
+                const uint32_t* xrImg, int nXr);
+    void drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx);
+
 private:
     struct GpuMesh {
         VkBuffer pos = VK_NULL_HANDLE, nrm = VK_NULL_HANDLE, uv = VK_NULL_HANDLE;
@@ -75,8 +84,15 @@ private:
 
     static void drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const InstancedMesh& inst);
     void rebuildTonemapSet(VkApp& app);
-    void writeViewUbo();
+    void writeViewUbo(const Mat4& vp, const V3& cam);
     void writeLights();
+    void prepBuffers();
+    void renderScenePass(VkCommandBuffer cmd, VkApp& app, const float bg[3]);
+    void hdrBarrier(VkCommandBuffer cmd, VkApp& app);
+    void writeTonemapUbo(float ox, float oy, float sx, float sy);
+    void ensureNoClearFbs(VkApp& app);
+    Mat4 eyeVP(int eye) const;
+    VkRect2D eyeRegion(int eye, VkExtent2D ext) const;
     void initShadow(VkApp& app);
     void renderShadowCubes(VkCommandBuffer cmd);
     void makeComputePass(const void* spv, uint32_t len, const std::vector<VkDescriptorSetLayoutBinding>& binds,
@@ -122,8 +138,27 @@ private:
     V3 m_camPos{0, 0, 0};
     std::vector<Light> m_lights;
     float m_envIntensity = 1.0f;
+    float m_exposure = 1.0f;
     VkBuffer m_lightsUbuf = VK_NULL_HANDLE;
     VkDeviceMemory m_lightsMem = VK_NULL_HANDLE;
+
+    // VR state
+    XrEyeData m_vrEyes[2]{};
+    int m_vrEyesN = 0;
+    VkRenderPass m_noClearRp = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer> m_noClearFbs;
+    VkExtent2D m_noClearExt{};
+    // headset swapchain target
+    bool m_xrReady = false;
+    VkFormat m_xrFmt = VK_FORMAT_UNDEFINED;
+    VkRenderPass m_xrRp = VK_NULL_HANDLE;
+    VkPipeline m_xrPipe = VK_NULL_HANDLE;
+    VkBuffer m_xrTmUbuf = VK_NULL_HANDLE;
+    VkDeviceMemory m_xrTmMem = VK_NULL_HANDLE;
+    VkDescriptorSet m_xrSet = VK_NULL_HANDLE;
+    std::vector<std::vector<VkImageView>> m_xrViews;
+    std::vector<std::vector<VkFramebuffer>> m_xrFbs;
+    VkExtent2D m_xrExt[2]{};
     VkImage m_shadowCube = VK_NULL_HANDLE, m_shadowDepth = VK_NULL_HANDLE;
     VkDeviceMemory m_shadowCubeMem = VK_NULL_HANDLE, m_shadowDepthMem = VK_NULL_HANDLE;
     VkImageView m_shadowSampleView = VK_NULL_HANDLE;

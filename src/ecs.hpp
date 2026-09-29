@@ -75,3 +75,7 @@ struct PinHold {
     float holdTime;
     float time = 0.0f;
 };
+
+struct VrCamera {
+    V3 rigPos{0, 0, 0};
+};

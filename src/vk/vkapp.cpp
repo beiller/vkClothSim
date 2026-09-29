@@ -1,6 +1,7 @@
 #include "vk/vkapp.hpp"
 
 #include "vk/vkutil.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -18,7 +19,7 @@ void checkResult(VkResult r, const char* what) {
 
 } // namespace
 
-bool VkApp::init(int width, int height, const char* title) {
+bool VkApp::initInstance(int width, int height, const char* title) {
     if (!glfwInit()) {
         std::fprintf(stderr, "glfwInit failed\n");
         return false;
@@ -34,6 +35,17 @@ bool VkApp::init(int width, int height, const char* title) {
 
     uint32_t n = 0;
     const char** req = glfwGetRequiredInstanceExtensions(&n);
+    std::vector<const char*> exts(req, req + n);
+    uint32_t ne = 0;
+    vkEnumerateInstanceExtensionProperties(nullptr, &ne, nullptr);
+    std::vector<VkExtensionProperties> iexts(ne);
+    if (ne > 0)
+        vkEnumerateInstanceExtensionProperties(nullptr, &ne, iexts.data());
+    const char* want[] = {"VK_KHR_external_memory_capabilities", "VK_KHR_external_semaphore_capabilities"};
+    for (const char* w : want)
+        if (std::any_of(iexts.begin(), iexts.end(),
+                        [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
+            exts.push_back(w);
     std::vector<const char*> layers;
     if (std::getenv("VK_VALIDATE")) {
         uint32_t nl = 0;
@@ -51,8 +63,8 @@ bool VkApp::init(int width, int height, const char* title) {
     VkInstanceCreateInfo ic{};
     ic.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ic.pApplicationInfo = &app;
-    ic.enabledExtensionCount = n;
-    ic.ppEnabledExtensionNames = req;
+    ic.enabledExtensionCount = (uint32_t)exts.size();
+    ic.ppEnabledExtensionNames = exts.data();
     ic.enabledLayerCount = (uint32_t)layers.size();
     ic.ppEnabledLayerNames = layers.data();
     VK(vkCreateInstance(&ic, nullptr, &m_inst));
@@ -89,20 +101,26 @@ bool VkApp::init(int width, int height, const char* title) {
         return false;
     }
 
-    const char* devExt = "VK_KHR_swapchain";
-    float prio = 1.0f;
-    VkDeviceQueueCreateInfo qci{};
-    qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    qci.queueFamilyIndex = m_qf;
-    qci.queueCount = 1;
-    qci.pQueuePriorities = &prio;
-    VkDeviceCreateInfo dci{};
-    dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    dci.queueCreateInfoCount = 1;
-    dci.pQueueCreateInfos = &qci;
-    dci.enabledExtensionCount = 1;
-    dci.ppEnabledExtensionNames = &devExt;
-    VK(vkCreateDevice(m_pdev, &dci, nullptr, &m_dev));
+    // queue + extensions, shared by makeDevice() (plain) and xrCreateVulkanDeviceKHR (OpenXR)
+    m_qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    m_qci.queueFamilyIndex = m_qf;
+    m_qci.queueCount = 1;
+    m_qci.pQueuePriorities = &m_qprio;
+    m_dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    m_dci.queueCreateInfoCount = 1;
+    m_dci.pQueueCreateInfos = &m_qci;
+    m_dci.enabledExtensionCount = 3;
+    m_dci.ppEnabledExtensionNames = m_devExt;
+    return true;
+}
+
+VkDevice VkApp::makeDevice() {
+    VK(vkCreateDevice(m_pdev, &m_dci, nullptr, &m_dev));
+    return m_dev;
+}
+
+bool VkApp::initDevice(VkDevice dev) {
+    m_dev = dev;
     vkGetDeviceQueue(m_dev, m_qf, 0, &m_queue);
 
     uint32_t nf = 0;
