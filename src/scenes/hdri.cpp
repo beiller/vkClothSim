@@ -1,8 +1,8 @@
-#include "hdri.hpp"
+#include "scenes/hdri.hpp"
 
 #include "assets.hpp"
 #include "meshgen.hpp"
-#include "scene_common.hpp"
+#include "scenes/scene_common.hpp"
 #include "systems.hpp"
 #include "vk/vkapp.hpp"
 #include <cmath>
@@ -30,6 +30,7 @@ void drawHdriUi(World& w) {
     ImGui::SeparatorText("vr");
     ImGui::DragFloat3("rig offset", w.ui.vrRigOffset, 0.05f);
     ImGui::Checkbox("scene cam pose", &w.ui.vrSceneCamPose);
+    ImGui::TextDisabled("no headset: virtual head, LMB drag = look, WASD/QE = move, shift = fast");
 #endif
     drawToneSection(w);
     drawLightSection(w);

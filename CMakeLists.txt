@@ -73,9 +73,10 @@ endif()
 
 add_executable(vksim
     src/main.cpp
-    src/demo.cpp
-    src/hdri.cpp
-    src/shadowtest.cpp
+    src/scenes/demo.cpp
+    src/scenes/hdri.cpp
+    src/scenes/hierarchy.cpp
+    src/scenes/shadowtest.cpp
     src/systems.cpp
     src/app/rigid.cpp
     src/assets.cpp

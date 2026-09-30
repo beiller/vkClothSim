@@ -1,8 +1,8 @@
-#include "shadowtest.hpp"
+#include "scenes/shadowtest.hpp"
 
 #include "assets.hpp"
 #include "meshgen.hpp"
-#include "scene_common.hpp"
+#include "scenes/scene_common.hpp"
 #include "systems.hpp"
 #include "vk/vkapp.hpp"
 #include <cmath>

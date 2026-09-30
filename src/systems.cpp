@@ -1,5 +1,7 @@
 #include "systems.hpp"
 
+#include <unordered_map>
+
 entt::entity spawnCapsule(World& w, const RigidBody& body, int geom) {
     entt::entity e = w.reg.create();
     w.reg.emplace<Transform>(e, body.position, body.orientation);
@@ -79,9 +81,63 @@ void stepRigid(World& w) {
         t = w.rigid.pose(dyn.id);
 }
 
+void stepAnimation(World& w, float dt) {
+    w.reg.view<Animation, Transform>().each([&](auto, Animation& a, Transform& t) {
+        a.fn(t, dt);
+    });
+}
+
+void resolveWorldTransforms(World& w) {
+    auto& reg = w.reg;
+    struct Node {
+        entt::entity e;
+        Transform local;
+        entt::entity parent;
+    };
+    std::vector<Node> nodes;
+    for (auto [e, t] : reg.view<Transform>().each()) {
+        entt::entity parent = entt::null;
+        if (const auto* p = reg.try_get<Parent>(e))
+            parent = p->e;
+        nodes.push_back({e, t, parent});
+    }
+    const int n = (int)nodes.size();
+    if (n == 0)
+        return;
+    std::unordered_map<entt::entity, int> idx;
+    idx.reserve(n);
+    for (int i = 0; i < n; ++i)
+        idx[nodes[i].e] = i;
+    std::vector<Transform> world(n);
+    std::vector<char> done(n, 0);
+    for (int i = 0; i < n; ++i)
+        if (nodes[i].parent == entt::null) {
+            world[i] = nodes[i].local;
+            done[i] = 1;
+        }
+    for (int pass = 0; pass < n; ++pass) {
+        bool any = false;
+        for (int i = 0; i < n; ++i) {
+            if (done[i])
+                continue;
+            auto it = idx.find(nodes[i].parent);
+            if (it != idx.end() && done[it->second]) {
+                world[i] = transformCompose(world[it->second], nodes[i].local);
+                done[i] = 1;
+                any = true;
+            }
+        }
+        if (!any)
+            break;
+    }
+    for (int i = 0; i < n; ++i)
+        if (done[i])
+            reg.emplace_or_replace<WorldTransform>(nodes[i].e, world[i]);
+}
+
 void syncColliders(World& w) {
-    for (auto [entity, col, t] : w.reg.view<CapsuleCollider, Transform>().each())
-        w.sim.setCapsulePose(col.slot, t);
+    for (auto [entity, col, wt] : w.reg.view<CapsuleCollider, WorldTransform>().each())
+        w.sim.setCapsulePose(col.slot, wt);
 }
 
 void stepSoft(World& w, VkCommandBuffer cmd) {
@@ -93,16 +149,16 @@ void stepSoft(World& w, VkCommandBuffer cmd) {
 }
 
 void syncSceneToRenderer(World& w) {
-    for (auto [entity, rend, t] : w.reg.view<Renderable, Transform>().each())
-        w.renderer.setModel(rend.inst, t.toMat4());
+    for (auto [entity, rend, wt] : w.reg.view<Renderable, WorldTransform>().each())
+        w.renderer.setModel(rend.inst, wt.toMat4());
     for (auto [entity, rend] : w.reg.view<Renderable>().each()) {
         const auto* mat = w.reg.try_get<Material>(entity);
         w.renderer.setMaterial(rend.inst, mat ? mat->baseColor : V3{1.0f, 1.0f, 1.0f}, mat ? mat->metallic : 0.0f,
                                mat ? mat->roughness : 0.5f);
     }
     std::vector<Renderer::Light> lights;
-    for (auto [entity, t, p] : w.reg.view<Transform, PointLight>().each())
-        lights.push_back({t.pos, p});
+    for (auto [entity, wt, p] : w.reg.view<WorldTransform, PointLight>().each())
+        lights.push_back({wt.pos, p});
     w.renderer.setLights(lights);
     w.renderer.setEnvIntensity(w.ui.envIntensity);
 }

@@ -17,6 +17,10 @@ entt::entity spawnVrCamera(World& w, const char* name);
 void stepPinHolds(World& w, float dt);
 void resetSofts(World& w);
 void stepRigid(World& w);
+// run the scene's per-frame animation callback (local Transform writes)
+void stepAnimation(World& w, float dt);
+// compose each entity's Transform through its Parent chain into a WorldTransform
+void resolveWorldTransforms(World& w);
 void syncColliders(World& w);
 void stepSoft(World& w, VkCommandBuffer cmd);
 // copy ECS transforms/materials/lights/env into the renderer; call before any render

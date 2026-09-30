@@ -47,6 +47,9 @@ inline V3 vNorm(V3 a) {
     float l = vLen(a);
     return vScale(a, 1.0f / l);
 }
+inline V3 vCross(V3 a, V3 b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
 inline V4 quatAxisAngle(V3 axis, float angle) {
     V3 a = vNorm(axis);
     const float s = std::sin(0.5f * angle);
@@ -55,6 +58,20 @@ inline V4 quatAxisAngle(V3 axis, float angle) {
 inline V4 quatMul(V4 a, V4 b) {
     return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
             a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
+}
+// inverse of a unit quaternion
+inline V4 quatInv(V4 q) {
+    return {-q.x, -q.y, -q.z, q.w};
+}
+// shortest-arc unit quaternion rotating `from` onto `to` (both should be normalized)
+inline V4 quatFromTo(const V3& from, const V3& to) {
+    const V3 c = vCross(from, to);
+    const float d = vDot(from, to);
+    if (d < -0.9999f)
+        return V4{1.0f, 0.0f, 0.0f, 0.0f};
+    V4 q{c.x, c.y, c.z, d + 1.0f};
+    const float l = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    return {q.x / l, q.y / l, q.z / l, q.w / l};
 }
 inline V3 vAt(const float* p, int i) {
     const int o = 3 * i;
@@ -119,6 +136,14 @@ inline void quatToMat3(const float q[4], float m[9]) {
     m[6] = 2.0f * (x * z + y * w);
     m[7] = 2.0f * (y * z - x * w);
     m[8] = 1.0f - 2.0f * (x * x + y * y);
+}
+
+inline V3 quatRotate(const V4& q, V3 v) {
+    const float qq[4] = {q.x, q.y, q.z, q.w};
+    float m[9];
+    quatToMat3(qq, m);
+    return {m[0] * v.x + m[1] * v.y + m[2] * v.z, m[3] * v.x + m[4] * v.y + m[5] * v.z,
+            m[6] * v.x + m[7] * v.y + m[8] * v.z};
 }
 
 inline Mat4 viewFromPose(const V3& pos, const V4& q) {

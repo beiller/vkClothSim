@@ -6,6 +6,7 @@
 #include "math.hpp"
 #include "sim/params.hpp"
 #include <entt/entt.hpp>
+#include <functional>
 #include <string>
 
 struct Transform {
@@ -32,6 +33,26 @@ struct Transform {
         m.m[15] = 1.0f;
         return m;
     }
+};
+
+// resolved world-space pose; same Transform class, written by the resolve system
+struct WorldTransform : Transform {};
+
+// hierarchy link: this entity is a child of e
+struct Parent {
+    entt::entity e;
+};
+
+inline Transform transformCompose(const Transform& parent, const Transform& local) {
+    Transform r;
+    r.quat = quatMul(parent.quat, local.quat);
+    r.pos = vAdd(parent.pos, quatRotate(parent.quat, local.pos));
+    return r;
+}
+
+// per-entity animation of its own Transform; attached to the entity, invoked by stepAnimation
+struct Animation {
+    std::function<void(Transform&, float dt)> fn;
 };
 
 struct RigidBodyProps {

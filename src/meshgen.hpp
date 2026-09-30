@@ -1,4 +1,5 @@
 #pragma once
+#include "capsule.hpp"
 #include "math.hpp"
 #include "mesh.hpp"
 #include <cmath>
@@ -79,5 +80,64 @@ inline Mesh makeGroundMesh(float span) {
         m.uv[2 * i + 1] = (corners[i].z + span) / (2.0f * span);
     }
     m.indices = {0, 1, 2, 0, 2, 3};
+    return m;
+}
+
+constexpr int kCapPhiSegs = 20;
+constexpr int kCapYRows = 32;
+constexpr uint32_t kCapVPC = (uint32_t)(kCapYRows + 1) * kCapPhiSegs;
+
+inline Mesh makeCapsuleMesh(const CapsuleParams& shape, int nCaps) {
+    Mesh m;
+    const size_t vcount = (size_t)nCaps * kCapVPC;
+    m.pos.assign(3 * vcount, 0.0f);
+    m.nrm.assign(3 * vcount, 0.0f);
+    m.uv.assign(2 * vcount, 0.0f);
+    const int S = kCapPhiSegs, M = kCapYRows;
+    const int VPC = (int)kCapVPC;
+    const float R = shape.radius, H = shape.halfLen;
+    const float top = H + R, bot = -H - R, twoPi = 2.0f * kPi;
+    for (int ci = 0; ci < nCaps; ++ci) {
+        const uint32_t capBase = (uint32_t)ci * VPC;
+        for (int i = 0; i <= M; ++i) {
+            const float y = top - (float)i / M * (top - bot);
+            float dy = 0.0f;
+            if (y >= H)
+                dy = y - H;
+            else if (y <= -H)
+                dy = y + H;
+            float r, dr;
+            if (dy == 0.0f) {
+                r = R;
+                dr = 0.0f;
+            } else {
+                r = std::sqrt(std::max(0.0f, R * R - dy * dy));
+                dr = (r > 1e-5f) ? -dy / r : 0.0f;
+            }
+            for (int j = 0; j < S; ++j) {
+                const float phi = (float)j / S * twoPi;
+                const float cp = std::cos(phi), sp = std::sin(phi);
+                const int v = (int)(capBase + (size_t)i * S + (size_t)j);
+                vStore(m.pos.data(), v, {r * cp, y, r * sp});
+                vStore(m.nrm.data(), v, {cp, -dr, sp});
+                m.uv[2 * v] = (float)j / S;
+                m.uv[2 * v + 1] = (float)i / M;
+            }
+        }
+        for (int i = 0; i < M; ++i)
+            for (int j = 0; j < S; ++j) {
+                const auto jn = (uint32_t)((j + 1) % S);
+                const uint32_t a = capBase + (uint32_t)i * S + (uint32_t)j;
+                const uint32_t b = capBase + (uint32_t)i * S + jn;
+                const uint32_t c = capBase + (uint32_t)(i + 1) * S + (uint32_t)j;
+                const uint32_t d = capBase + (uint32_t)(i + 1) * S + jn;
+                m.indices.push_back(a);
+                m.indices.push_back(b);
+                m.indices.push_back(d);
+                m.indices.push_back(a);
+                m.indices.push_back(d);
+                m.indices.push_back(c);
+            }
+    }
     return m;
 }

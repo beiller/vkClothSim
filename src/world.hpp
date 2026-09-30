@@ -12,6 +12,12 @@
 
 class VkApp;
 
+struct VirtHead {
+    V3 pos{0, 0, 0};
+    V4 quat{0, 0, 0, 1};
+    bool init = false;
+};
+
 struct UIState {
     int joltIters = 10;
     float bgColor[3] = {0.10f, 0.11f, 0.15f};
@@ -20,6 +26,7 @@ struct UIState {
     float envIntensity = 1.0f;
     float vrRigOffset[3] = {0.0f, 0.0f, 0.0f};
     bool vrSceneCamPose = false;
+    VirtHead virtHead;
 };
 
 struct World {

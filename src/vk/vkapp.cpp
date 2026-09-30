@@ -323,7 +323,23 @@ void VkApp::recreateSwapchain() {
     scc.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     scc.preTransform = caps.currentTransform;
     scc.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    scc.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    // FIFO = vsync; NO_VSYNC picks the fastest uncapped mode the surface supports
+    VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    if (std::getenv("NO_VSYNC")) {
+        uint32_t nModes = 0;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(m_pdev, m_surface, &nModes, nullptr);
+        std::vector<VkPresentModeKHR> modes(nModes);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(m_pdev, m_surface, &nModes, modes.data());
+        const VkPresentModeKHR prefs[] = {VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR,
+                                          VK_PRESENT_MODE_FIFO_RELAXED_KHR};
+        for (VkPresentModeKHR p : prefs)
+            if (std::find(modes.begin(), modes.end(), p) != modes.end()) {
+                presentMode = p;
+                break;
+            }
+        std::printf("3dsim: NO_VSYNC -> present mode %d (%d supported)\n", (int)presentMode, (int)nModes);
+    }
+    scc.presentMode = presentMode;
     scc.clipped = VK_TRUE;
     VK(vkCreateSwapchainKHR(m_dev, &scc, nullptr, &m_sc));
     vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, nullptr);
