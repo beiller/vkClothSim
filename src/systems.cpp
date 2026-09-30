@@ -11,6 +11,15 @@ entt::entity spawnCapsule(World& w, const RigidBody& body, int geom) {
     return e;
 }
 
+entt::entity spawnStaticBody(World& w, const RigidBody& body, int geom) {
+    entt::entity e = w.reg.create();
+    w.reg.emplace<Transform>(e, body.position, body.orientation);
+    w.reg.emplace<RigidStatic>(e, w.rigid.addStaticBody(body));
+    w.reg.emplace<CapsuleCollider>(e, w.sim.addCapsule(body.shape));
+    w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
+    return e;
+}
+
 entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, int pinned) {
     entt::entity e = w.reg.create();
     const Renderer::GpuMeshRef ref = w.renderer.addMesh(mesh);
@@ -79,6 +88,11 @@ void stepRigid(World& w) {
     w.rigid.step();
     for (auto [entity, dyn, t] : w.reg.view<RigidDynamics, Transform>().each())
         t = w.rigid.pose(dyn.id);
+}
+
+void stepStaticRigid(World& w) {
+    for (auto [entity, st, t] : w.reg.view<RigidStatic, Transform>().each())
+        w.rigid.setStaticPose(st.id, t);
 }
 
 void stepAnimation(World& w, float dt) {

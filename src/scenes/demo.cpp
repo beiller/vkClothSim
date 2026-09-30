@@ -24,6 +24,7 @@ constexpr float kBallRadius = 1.5f;
 constexpr float kBallY0 = 12.0f;
 constexpr int kNCapsules = 50;
 constexpr int kNSoftBodies = 2;
+constexpr int kNStaticBodies = 1;
 constexpr float kClothHoldTime = 3.0f;
 
 RigidBody scatteredBody(std::mt19937& rng, std::uniform_real_distribution<float>& rnd) {
@@ -213,7 +214,8 @@ void createDemoWorld(World& w) {
     const VkExtent2D ext = w.app->extent();
     w.rigid.init();
     w.sim.init(w.app->device(), w.app->pdev());
-    w.renderer.init(*w.app, kNCapsules + kNSoftBodies + 1, w.camera.viewProj((float)ext.width / (float)ext.height));
+    w.renderer.init(*w.app, kNCapsules + kNSoftBodies + 1 + kNStaticBodies,
+                    w.camera.viewProj((float)ext.width / (float)ext.height));
 
     const entt::entity ground = spawnStaticMesh(w, makeGroundMesh(55.0f), Transform{});
     w.reg.emplace<Name>(ground, "ground");
@@ -226,6 +228,13 @@ void createDemoWorld(World& w) {
         w.reg.emplace<Name>(cap, "capsule");
         w.reg.emplace<Material>(cap, V3{0.85f, 0.35f, 0.30f}, 0.9f, 0.25f);
     }
+
+    // user-controlled static obstacle: hold F, then WASD/QE to move (camera pauses while grabbed)
+    const RigidBody staticBody{kCapsule, {7.0f, 4.0f, 0.0f}, V4{0.0f, 0.0f, 0.0f, 1.0f}};
+    const int staticGeom = w.renderer.addMesh(makeCapsuleMesh(kCapsule, 1)).geom;
+    const entt::entity staticEnt = spawnStaticBody(w, staticBody, staticGeom);
+    w.reg.emplace<Name>(staticEnt, "static body");
+    w.reg.emplace<Material>(staticEnt, V3{0.9f, 0.75f, 0.2f}, 0.2f, 0.4f);
 
     const entt::entity cloth =
         spawnSoftBody(w, makeClothMesh(kCW, kCH, kClothSpan, kClothY0), makeClothCons(kCW, kCH, kClothSpan), 1);

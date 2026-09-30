@@ -23,6 +23,8 @@ class RigidScene {
 public:
     void init();
     JPH::BodyID addRigidBody(const RigidBody& body);
+    JPH::BodyID addStaticBody(const RigidBody& body);
+    void setStaticPose(JPH::BodyID id, const Transform& t);
     void step();
     void setVelocitySteps(int n);
     Transform pose(JPH::BodyID id) const;

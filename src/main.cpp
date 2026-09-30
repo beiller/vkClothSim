@@ -20,6 +20,58 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
+// Shared fly-cam control: LMB-drag to look (yaw world-Y, pitch local-X), WASD/QE to move along
+// the view, shift to sprint. Drives whichever camera is active (scene cam or virtual head).
+static void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, double& prevCX, double& prevCY) {
+    ImGuiIO& io = ImGui::GetIO();
+    double cx, cy;
+    glfwGetCursorPos(app.glfwWindow(), &cx, &cy);
+    if (glfwGetMouseButton(app.glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS && !io.WantCaptureMouse) {
+        const float sens = 0.0025f;
+        const float dx = (float)(cx - prevCX);
+        const float dy = (float)(cy - prevCY);
+        quat = quatMul(quatAxisAngle({0, 1, 0}, -dx * sens),
+                       quatMul(quat, quatAxisAngle({1, 0, 0}, -dy * sens)));
+    }
+    prevCX = cx;
+    prevCY = cy;
+    const float qf[4] = {quat.x, quat.y, quat.z, quat.w};
+    float rotm[9];
+    quatToMat3(qf, rotm);
+    const V3 right{rotm[0], rotm[1], rotm[2]};
+    const V3 back{rotm[6], rotm[7], rotm[8]};
+    V3 mv{0, 0, 0};
+    if (!io.WantCaptureKeyboard) {
+        if (app.keyIsDown(GLFW_KEY_W)) mv = vAdd(mv, vScale(back, -1.0f));
+        if (app.keyIsDown(GLFW_KEY_S)) mv = vAdd(mv, back);
+        if (app.keyIsDown(GLFW_KEY_D)) mv = vAdd(mv, right);
+        if (app.keyIsDown(GLFW_KEY_A)) mv = vAdd(mv, vScale(right, -1.0f));
+        if (app.keyIsDown(GLFW_KEY_E)) mv = vAdd(mv, V3{0, 1, 0});
+        if (app.keyIsDown(GLFW_KEY_Q)) mv = vAdd(mv, V3{0, -1, 0});
+    }
+    if (vLen(mv) > 0.0f)
+        pos = vAdd(pos, vScale(vNorm(mv), (app.keyIsDown(GLFW_KEY_LEFT_SHIFT) ? 6.0f : 2.0f) * dt));
+}
+
+// Hold F to move the user-controlled static body in world space (camera pauses while grabbed).
+static void moveStaticBodies(World& w, float dt, VkApp& app) {
+    V3 mv{0, 0, 0};
+    if (app.keyIsDown(GLFW_KEY_W)) mv = vAdd(mv, V3{0, 0, -1});
+    if (app.keyIsDown(GLFW_KEY_S)) mv = vAdd(mv, V3{0, 0, 1});
+    if (app.keyIsDown(GLFW_KEY_A)) mv = vAdd(mv, V3{-1, 0, 0});
+    if (app.keyIsDown(GLFW_KEY_D)) mv = vAdd(mv, V3{1, 0, 0});
+    if (app.keyIsDown(GLFW_KEY_E)) mv = vAdd(mv, V3{0, 1, 0});
+    if (app.keyIsDown(GLFW_KEY_Q)) mv = vAdd(mv, V3{0, -1, 0});
+    if (vLen(mv) <= 0.0f)
+        return;
+    const float speed = app.keyIsDown(GLFW_KEY_LEFT_SHIFT) ? 6.0f : 2.0f;
+    const V3 d = vScale(vNorm(mv), speed * dt);
+    for (auto [e, st, t] : w.reg.view<RigidStatic, Transform>().each()) {
+        (void)st;
+        t.pos = vAdd(t.pos, d);
+    }
+}
+
 int main(int argc, char** argv) {
     VkApp app;
     if (!app.initInstance(900, 900, "3dsim"))
@@ -141,6 +193,12 @@ int main(int argc, char** argv) {
         app.submit(simCmd);
 
         app.pollEvents();
+        const bool grabBody = app.keyIsDown(GLFW_KEY_F);
+        if (!vr && !grabBody)
+            applyMoveLook(dt, w.camera.position, w.camera.rotation, app, prevCX, prevCY);
+        if (grabBody)
+            moveStaticBodies(w, dt, app);
+        stepStaticRigid(w);
 #ifdef WITH_OPENXR
         const XrFrameData fr = vr ? w.xr.poll() : XrFrameData{};
         if (vr) {
@@ -180,36 +238,11 @@ int main(int argc, char** argv) {
                     vh.quat = w.camera.rotation;
                     vh.init = true;
                 }
+                applyMoveLook(dt, vh.pos, vh.quat, app, prevCX, prevCY);
                 const float qf[4] = {vh.quat.x, vh.quat.y, vh.quat.z, vh.quat.w};
                 float rotm[9];
                 quatToMat3(qf, rotm);
                 const V3 right{rotm[0], rotm[1], rotm[2]};
-                const V3 back{rotm[6], rotm[7], rotm[8]};
-                ImGuiIO& io = ImGui::GetIO();
-                double cx, cy;
-                glfwGetCursorPos(app.glfwWindow(), &cx, &cy);
-                if (vh.init && !io.WantCaptureMouse &&
-                    glfwGetMouseButton(app.glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
-                    const float sens = 0.0025f;
-                    const float dx = (float)(cx - prevCX);
-                    const float dy = (float)(cy - prevCY);
-                    // yaw: world-Y premultiply; pitch: local-X postmultiply (keeps the horizon level)
-                    vh.quat = quatMul(quatAxisAngle({0, 1, 0}, -dx * sens),
-                                      quatMul(vh.quat, quatAxisAngle({1, 0, 0}, -dy * sens)));
-                }
-                prevCX = cx;
-                prevCY = cy;
-                V3 mv{0, 0, 0};
-                if (!io.WantCaptureKeyboard) {
-                    if (app.keyIsDown(GLFW_KEY_W)) mv = vAdd(mv, vScale(back, -1.0f));
-                    if (app.keyIsDown(GLFW_KEY_S)) mv = vAdd(mv, back);
-                    if (app.keyIsDown(GLFW_KEY_D)) mv = vAdd(mv, right);
-                    if (app.keyIsDown(GLFW_KEY_A)) mv = vAdd(mv, vScale(right, -1.0f));
-                    if (app.keyIsDown(GLFW_KEY_E)) mv = vAdd(mv, V3{0, 1, 0});
-                    if (app.keyIsDown(GLFW_KEY_Q)) mv = vAdd(mv, V3{0, -1, 0});
-                }
-                if (vLen(mv) > 0.0f)
-                    vh.pos = vAdd(vh.pos, vScale(vNorm(mv), (app.keyIsDown(GLFW_KEY_LEFT_SHIFT) ? 6.0f : 2.0f) * dt));
                 const V3 head = vAdd(vh.pos, rig);
                 for (int i = 0; i < 2; ++i) {
                     eyes[i].pos = vAdd(head, vScale(right, i == 0 ? -0.032f : 0.032f));

@@ -70,6 +70,11 @@ struct RigidDynamics {
     JPH::BodyID id;
 };
 
+// user-driven rigid body: its Jolt pose is written from the ECS Transform each frame (the Transform is the source of truth)
+struct RigidStatic {
+    JPH::BodyID id;
+};
+
 struct SoftBodyData {
     int softId = -1;
     int pinned = 0;

@@ -61,6 +61,19 @@ JPH::BodyID RigidScene::addRigidBody(const RigidBody& body) {
     return bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
 }
 
+JPH::BodyID RigidScene::addStaticBody(const RigidBody& body) {
+    auto& bi = m_phys->GetBodyInterface();
+    JPH::BodyCreationSettings cs(new JPH::CapsuleShape(body.shape.halfLen, body.shape.radius),
+                                 JPH::RVec3(body.position.x, body.position.y, body.position.z), jQuat(body.orientation),
+                                 JPH::EMotionType::Static, 1);
+    return bi.CreateAndAddBody(cs, JPH::EActivation::DontActivate);
+}
+
+void RigidScene::setStaticPose(JPH::BodyID id, const Transform& t) {
+    auto& bi = m_phys->GetBodyInterface();
+    bi.SetPositionAndRotation(id, JPH::RVec3(t.pos.x, t.pos.y, t.pos.z), jQuat(t.quat), JPH::EActivation::DontActivate);
+}
+
 void RigidScene::step() {
     m_phys->Update(kFrameDt, 1, m_temp, m_job);
 }
