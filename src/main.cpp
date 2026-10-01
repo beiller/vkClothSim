@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
                 "3dsim: no OpenXR session, using virtual head (LMB drag = look, WASD/QE = move, shift = fast)\n");
     }
     auto makeVP = [&w](VkExtent2D ext) {
-        return w.camera.viewProj((float)ext.width / (float)ext.height);
+        return cameraViewProj(w, w.cam, (float)ext.width / (float)ext.height);
     };
 
     ImGui::CreateContext();
@@ -100,7 +100,6 @@ int main(int argc, char** argv) {
 
     auto lastFrame = std::chrono::steady_clock::now();
     bool dumpWasDown = false;
-    double prevCX = 0.0, prevCY = 0.0;
     int frame = 0;
     float fpsAccum = 0.0f;
     int fpsFrames = 0;
@@ -123,20 +122,22 @@ int main(int argc, char** argv) {
         w.rigid.setVelocitySteps(w.ui.joltIters);
         stepRigid(w);
         stepAnimation(w, dt);
+
+        app.pollEvents();
+        if (w.xr)
+            w.xrFrame = w.xr->poll();
+        stepFlyCamera(w, dt);
+        if (w.xr)
+            stepXr(w);
+
         resolveWorldTransforms(w);
         syncColliders(w);
         VkCommandBuffer simCmd = app.beginCommands();
         stepSoft(w, simCmd);
         app.submit(simCmd);
 
-        app.pollEvents();
-        if (w.xr) {
-            w.xrFrame = w.xr->poll();
-            stepXr(w, dt);
-        } else
-            applyMoveLook(dt, w.camera.position, w.camera.rotation, app, prevCX, prevCY);
         stepStaticRigid(w);
-        w.renderer.setViewProj(makeVP(app.extent()), w.camera.position);
+        w.renderer.setViewProj(makeVP(app.extent()), w.reg.get<Transform>(w.cam).pos);
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();

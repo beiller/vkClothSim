@@ -83,6 +83,13 @@ struct SoftBodyData {
     int steps = kDefaultSteps;
 };
 
+// viewer camera: pose lives in the entity's Transform, projection params here
+struct Camera {
+    float fovDeg = 50.0f;
+    float nearP = 0.1f;
+    float farP = 300.0f;
+};
+
 struct Renderable {
     int mesh = -1;
     int inst = -1;

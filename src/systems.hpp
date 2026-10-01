@@ -14,6 +14,8 @@ entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Co
 entt::entity spawnStaticMesh(World& w, const Mesh& mesh, const Transform& t);
 entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char* name);
 entt::entity spawnVrCamera(World& w, const char* name);
+entt::entity spawnCamera(World& w, const V3& pos, const V4& quat, float fovDeg);
+Mat4 cameraViewProj(World& w, entt::entity cam, float aspect);
 
 void stepPinHolds(World& w, float dt);
 void resetSofts(World& w);
@@ -29,8 +31,9 @@ void stepSoft(World& w, VkCommandBuffer cmd);
 // copy ECS transforms/materials/lights/env into the renderer; call before any render
 void syncSceneToRenderer(World& w);
 void draw(World& w, VkCommandBuffer cmd, uint32_t fb, const float bg[3], ImDrawData* imgui);
-// XR head pose -> VrCamera Transform, or virtual head (mouse/keyboard) when the session is not
-// running; then synthesize the per-eye poses (eye-rig placement, virtual lens FOVs) -> setVrEyes
-void stepXr(World& w, float dt);
-// LMB-drag to look, WASD/QE to move along the view, shift to sprint
-void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, double& prevCX, double& prevCY);
+// mouse/keyboard move/look on the camera entity (fly camera, or the virtual head when the XR
+// session is not running); skipped while a headset pose is active
+void stepFlyCamera(World& w, float dt);
+// XR head pose -> VrCamera Transform; then synthesize the per-eye poses (headset pose + eye-rig
+// placement, or the camera entity with virtual lens FOVs) -> setVrEyes
+void stepXr(World& w);

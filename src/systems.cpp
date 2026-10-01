@@ -70,7 +70,23 @@ entt::entity spawnVrCamera(World& w, const char* name) {
     return head;
 }
 
-void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, double& prevCX, double& prevCY) {
+entt::entity spawnCamera(World& w, const V3& pos, const V4& quat, float fovDeg) {
+    entt::entity e = w.reg.create();
+    w.reg.emplace<Transform>(e, pos, quat);
+    Camera c;
+    c.fovDeg = fovDeg;
+    w.reg.emplace<Camera>(e, c);
+    w.cam = e;
+    return e;
+}
+
+Mat4 cameraViewProj(World& w, entt::entity cam, float aspect) {
+    const Transform& t = w.reg.get<Transform>(cam);
+    const Camera& c = w.reg.get<Camera>(cam);
+    return mul4(perspective(c.fovDeg, aspect, c.nearP, c.farP), viewFromPose(t.pos, t.quat));
+}
+
+static void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, double& prevCX, double& prevCY) {
     ImGuiIO& io = ImGui::GetIO();
     double cx, cy;
     glfwGetCursorPos(app.glfwWindow(), &cx, &cy);
@@ -106,8 +122,19 @@ void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, double& prevCX, doub
         pos = vAdd(pos, vScale(vNorm(mv), (app.keyIsDown(GLFW_KEY_LEFT_SHIFT) ? 6.0f : 2.0f) * dt));
 }
 
-void stepXr(World& w, float dt) {
+void stepFlyCamera(World& w, float dt) {
+    // the camera entity is the fly camera, or the virtual head while the XR session is not running
+    if (w.xrFrame.havePose && w.xrFrame.nEyes > 0)
+        return;
+    static double prevCX = 0.0, prevCY = 0.0;
+    w.reg.view<Transform, Camera>().each(
+        [&](auto, auto& t, auto&) { applyMoveLook(dt, t.pos, t.quat, *w.app, prevCX, prevCY); });
+}
+
+void stepXr(World& w) {
     const XrFrame& fr = w.xrFrame;
+    XrEyeData eyes[2]{};
+    int n = 2;
     if (fr.havePose && fr.nEyes > 0) {
         // head tracks the XR pose (LOCAL ref space, relative to session start)
         const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
@@ -115,33 +142,20 @@ void stepXr(World& w, float dt) {
             t.pos = mid;
             t.quat = fr.eye[0].quat;
         }
-    } else {
-        // no session: virtual head driven by mouse/keyboard
-        VirtHead& vh = w.ui.virtHead;
-        if (!vh.init) {
-            vh.pos = w.camera.position;
-            vh.quat = w.camera.rotation;
-            vh.init = true;
-        }
-        static double prevCX = 0.0, prevCY = 0.0;
-        applyMoveLook(dt, vh.pos, vh.quat, *w.app, prevCX, prevCY);
-    }
-    XrEyeData eyes[2]{};
-    int n = 2;
-    if (fr.havePose && fr.nEyes > 0) {
         // the player rig (X/Y/Z anchor + eye height) places the head in the scene
         n = fr.nEyes;
         V3 rigPos{0, 0, 0};
         if (w.eyeRig != entt::null)
-            if (const auto* wt = w.reg.try_get<WorldTransform>(w.eyeRig))
-                rigPos = wt->pos;
+            rigPos = transformCompose(w.reg.get<Transform>(w.playerRig), w.reg.get<Transform>(w.eyeRig)).pos;
         for (int i = 0; i < n; ++i) {
             eyes[i] = fr.eye[i];
             eyes[i].pos = vAdd(eyes[i].pos, rigPos);
         }
     } else {
-        const V3 head = w.ui.virtHead.pos;
-        const V4 q = w.ui.virtHead.quat;
+        // no session: virtual head = the camera entity, with Quest 3 lens tangents
+        const Transform& t = w.reg.get<Transform>(w.cam);
+        const V3 head = t.pos;
+        const V4 q = t.quat;
         const float qf[4] = {q.x, q.y, q.z, q.w};
         float rotm[9];
         quatToMat3(qf, rotm);
@@ -149,7 +163,6 @@ void stepXr(World& w, float dt) {
         for (int i = 0; i < 2; ++i) {
             eyes[i].pos = vAdd(head, vScale(right, i == 0 ? -0.032f : 0.032f));
             eyes[i].quat = q;
-            // Quest 3 lens tangents for the window debug view
             eyes[i].tanL = -std::tan(54.0f * kPi / 180.0f);
             eyes[i].tanR = std::tan(40.0f * kPi / 180.0f);
             eyes[i].tanU = std::tan(44.0f * kPi / 180.0f);
