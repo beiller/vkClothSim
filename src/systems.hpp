@@ -29,8 +29,8 @@ void stepSoft(World& w, VkCommandBuffer cmd);
 // copy ECS transforms/materials/lights/env into the renderer; call before any render
 void syncSceneToRenderer(World& w);
 void draw(World& w, VkCommandBuffer cmd, uint32_t fb, const float bg[3], ImDrawData* imgui);
-
-#ifdef WITH_OPENXR
-// point the VrCamera entity's Transform at the XR head pose (+ its rig offset)
-void syncVrCamera(World& w, const XrFrameData& fr);
-#endif
+// XR head pose -> VrCamera Transform, or virtual head (mouse/keyboard) when the session is not
+// running; then synthesize the per-eye poses (eye-rig placement, virtual lens FOVs) -> setVrEyes
+void stepXr(World& w, float dt);
+// LMB-drag to look, WASD/QE to move along the view, shift to sprint
+void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, double& prevCX, double& prevCY);

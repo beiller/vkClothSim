@@ -1,5 +1,7 @@
 #include "systems.hpp"
 
+#include "vk/vkapp.hpp"
+#include <cmath>
 #include <unordered_map>
 
 entt::entity spawnCapsule(World& w, const RigidBody& body, int geom) {
@@ -62,30 +64,100 @@ entt::entity spawnVrCamera(World& w, const char* name) {
     w.reg.emplace<Parent>(head, eye);
     w.reg.emplace<VrCamera>(head);
     w.reg.emplace<Name>(head, name);
-#ifdef WITH_OPENXR
     w.playerRig = rig;
     w.eyeRig = eye;
     w.vrCam = head;
-#endif
     return head;
 }
 
-#ifdef WITH_OPENXR
-void syncVrCamera(World& w, const XrFrameData& fr) {
-    // the head tracks the OpenXR pose (LOCAL ref space, relative to session start); the player
-    // X/Y/Z + eye height come from the parent rig, composed by resolveWorldTransforms
-    for (auto [e, t] : w.reg.view<Transform, VrCamera>().each()) {
-        if (fr.havePose && fr.nEyes > 0) {
-            const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
+void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, double& prevCX, double& prevCY) {
+    ImGuiIO& io = ImGui::GetIO();
+    double cx, cy;
+    glfwGetCursorPos(app.glfwWindow(), &cx, &cy);
+    if (glfwGetMouseButton(app.glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS && !io.WantCaptureMouse) {
+        const float sens = 0.0025f;
+        const float dx = (float)(cx - prevCX);
+        const float dy = (float)(cy - prevCY);
+        quat = quatMul(quatAxisAngle({0, 1, 0}, -dx * sens), quatMul(quat, quatAxisAngle({1, 0, 0}, -dy * sens)));
+    }
+    prevCX = cx;
+    prevCY = cy;
+    const float qf[4] = {quat.x, quat.y, quat.z, quat.w};
+    float rotm[9];
+    quatToMat3(qf, rotm);
+    const V3 right{rotm[0], rotm[1], rotm[2]};
+    const V3 back{rotm[6], rotm[7], rotm[8]};
+    V3 mv{0, 0, 0};
+    if (!io.WantCaptureKeyboard) {
+        if (app.keyIsDown(GLFW_KEY_W))
+            mv = vAdd(mv, vScale(back, -1.0f));
+        if (app.keyIsDown(GLFW_KEY_S))
+            mv = vAdd(mv, back);
+        if (app.keyIsDown(GLFW_KEY_D))
+            mv = vAdd(mv, right);
+        if (app.keyIsDown(GLFW_KEY_A))
+            mv = vAdd(mv, vScale(right, -1.0f));
+        if (app.keyIsDown(GLFW_KEY_E))
+            mv = vAdd(mv, V3{0, 1, 0});
+        if (app.keyIsDown(GLFW_KEY_Q))
+            mv = vAdd(mv, V3{0, -1, 0});
+    }
+    if (vLen(mv) > 0.0f)
+        pos = vAdd(pos, vScale(vNorm(mv), (app.keyIsDown(GLFW_KEY_LEFT_SHIFT) ? 6.0f : 2.0f) * dt));
+}
+
+void stepXr(World& w, float dt) {
+    const XrFrame& fr = w.xrFrame;
+    if (fr.havePose && fr.nEyes > 0) {
+        // head tracks the XR pose (LOCAL ref space, relative to session start)
+        const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
+        for (auto [entity, t] : w.reg.view<Transform, VrCamera>().each()) {
             t.pos = mid;
             t.quat = fr.eye[0].quat;
-        } else {
-            t.pos = V3{0, 0, 0};
-            t.quat = V4{0, 0, 0, 1};
+        }
+    } else {
+        // no session: virtual head driven by mouse/keyboard
+        VirtHead& vh = w.ui.virtHead;
+        if (!vh.init) {
+            vh.pos = w.camera.position;
+            vh.quat = w.camera.rotation;
+            vh.init = true;
+        }
+        static double prevCX = 0.0, prevCY = 0.0;
+        applyMoveLook(dt, vh.pos, vh.quat, *w.app, prevCX, prevCY);
+    }
+    XrEyeData eyes[2]{};
+    int n = 2;
+    if (fr.havePose && fr.nEyes > 0) {
+        // the player rig (X/Y/Z anchor + eye height) places the head in the scene
+        n = fr.nEyes;
+        V3 rigPos{0, 0, 0};
+        if (w.eyeRig != entt::null)
+            if (const auto* wt = w.reg.try_get<WorldTransform>(w.eyeRig))
+                rigPos = wt->pos;
+        for (int i = 0; i < n; ++i) {
+            eyes[i] = fr.eye[i];
+            eyes[i].pos = vAdd(eyes[i].pos, rigPos);
+        }
+    } else {
+        const V3 head = w.ui.virtHead.pos;
+        const V4 q = w.ui.virtHead.quat;
+        const float qf[4] = {q.x, q.y, q.z, q.w};
+        float rotm[9];
+        quatToMat3(qf, rotm);
+        const V3 right{rotm[0], rotm[1], rotm[2]};
+        for (int i = 0; i < 2; ++i) {
+            eyes[i].pos = vAdd(head, vScale(right, i == 0 ? -0.032f : 0.032f));
+            eyes[i].quat = q;
+            // Quest 3 lens tangents for the window debug view
+            eyes[i].tanL = -std::tan(54.0f * kPi / 180.0f);
+            eyes[i].tanR = std::tan(40.0f * kPi / 180.0f);
+            eyes[i].tanU = std::tan(44.0f * kPi / 180.0f);
+            eyes[i].tanD = -std::tan(55.0f * kPi / 180.0f);
         }
     }
+    w.renderer.setVrEyes(eyes, n);
 }
-#endif
 
 void stepPinHolds(World& w, float dt) {
     for (auto [entity, hold, sb] : w.reg.view<PinHold, SoftBodyData>().each()) {
@@ -116,9 +188,7 @@ void stepStaticRigid(World& w) {
 }
 
 void stepAnimation(World& w, float dt) {
-    w.reg.view<Animation, Transform>().each([&](auto, Animation& a, Transform& t) {
-        a.fn(t, dt);
-    });
+    w.reg.view<Animation, Transform>().each([&](auto, Animation& a, Transform& t) { a.fn(t, dt); });
 }
 
 void resolveWorldTransforms(World& w) {

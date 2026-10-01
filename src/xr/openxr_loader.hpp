@@ -2,8 +2,9 @@
 #include "openxr.h"
 
 // dlopen/dlsym wrapper over the vendored OpenXR loader (lib/openxr/lib/libopenxr.so.1,
-// resolved relative to the executable). Loaded lazily so the windowed build works with
-// no HMD present; when the loader/runtime is absent load() fails and --vr falls back.
+// resolved relative to the executable). Loaded lazily so plain window mode works with no
+// HMD present; when the loader/runtime is absent load() fails and startup falls back to
+// window mode.
 
 // Every entry point we resolve, in one list, shared by the declarations below and
 // the dlsym loop in openxr_loader.cpp.
@@ -13,7 +14,7 @@
     X(xrGetSystem)                                                                                                     \
     X(xrGetInstanceProcAddr)                                                                                           \
     X(xrGetSystemProperties)                                                                                           \
-    X(xrEnumerateEnvironmentBlendModes)                                                                                 \
+    X(xrEnumerateEnvironmentBlendModes)                                                                                \
     X(xrPollEvent)                                                                                                     \
     X(xrCreateSession)                                                                                                 \
     X(xrRequestExitSession)                                                                                            \
@@ -43,12 +44,12 @@
     X(xrSuggestInteractionProfileBindings)                                                                             \
     X(xrSyncActions)                                                                                                   \
     X(xrEnumerateBoundSourcesForAction)                                                                                \
-    X(xrGetActionStateBoolean)                                                                                        \
-    X(xrGetActionStateVector2f)                                                                                       \
+    X(xrGetActionStateBoolean)                                                                                         \
+    X(xrGetActionStateVector2f)                                                                                        \
     X(xrCreateActionSpace)                                                                                             \
     X(xrStringToPath)                                                                                                  \
     X(xrPathToString)                                                                                                  \
-    X(xrGetCurrentInteractionProfile)                                                                                 \
+    X(xrGetCurrentInteractionProfile)                                                                                  \
     X(xrEnumerateInstanceExtensionProperties)
 
 struct XrLoader {

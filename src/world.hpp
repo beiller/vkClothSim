@@ -3,12 +3,10 @@
 #include "camera.hpp"
 #include "sim/softsim.hpp"
 #include "vk/renderer.hpp"
+#include "xr_backend.hpp"
 #include <entt/entt.hpp>
 #include <functional>
-
-#ifdef WITH_OPENXR
-#include "xr/xr.hpp"
-#endif
+#include <memory>
 
 class VkApp;
 
@@ -24,8 +22,6 @@ struct UIState {
     float exposure = 1.0f;
     bool showDemo = false;
     float envIntensity = 1.0f;
-    float vrRigOffset[3] = {0.0f, 0.0f, 0.0f};
-    bool vrSceneCamPose = false;
     VirtHead virtHead;
 };
 
@@ -36,12 +32,11 @@ struct World {
     SoftSim sim;
     Renderer renderer;
     Camera camera;
-#ifdef WITH_OPENXR
-    Xr xr;
-    entt::entity vrCam = entt::null;     // head (VrCamera): tracks the OpenXR pose
+    std::unique_ptr<IXrBackend> xr;
+    XrFrame xrFrame;
+    entt::entity vrCam = entt::null;     // head (VrCamera): tracks the XR head pose
     entt::entity playerRig = entt::null; // X/Y/Z player anchor (translation-only)
     entt::entity eyeRig = entt::null;    // eye-height empty (child of playerRig)
-#endif
     UIState ui;
     std::function<void(World&)> drawUi;
 };

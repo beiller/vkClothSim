@@ -9,9 +9,7 @@
 #include "systems.hpp"
 #include "vk/vkapp.hpp"
 #include "world.hpp"
-#ifdef WITH_OPENXR
 #include "xr/xr.hpp"
-#endif
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -20,39 +18,6 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
-// Shared fly-cam control: LMB-drag to look (yaw world-Y, pitch local-X), WASD/QE to move along
-// the view, shift to sprint. Drives whichever camera is active (scene cam or virtual head).
-static void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, double& prevCX, double& prevCY) {
-    ImGuiIO& io = ImGui::GetIO();
-    double cx, cy;
-    glfwGetCursorPos(app.glfwWindow(), &cx, &cy);
-    if (glfwGetMouseButton(app.glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS && !io.WantCaptureMouse) {
-        const float sens = 0.0025f;
-        const float dx = (float)(cx - prevCX);
-        const float dy = (float)(cy - prevCY);
-        quat = quatMul(quatAxisAngle({0, 1, 0}, -dx * sens),
-                       quatMul(quat, quatAxisAngle({1, 0, 0}, -dy * sens)));
-    }
-    prevCX = cx;
-    prevCY = cy;
-    const float qf[4] = {quat.x, quat.y, quat.z, quat.w};
-    float rotm[9];
-    quatToMat3(qf, rotm);
-    const V3 right{rotm[0], rotm[1], rotm[2]};
-    const V3 back{rotm[6], rotm[7], rotm[8]};
-    V3 mv{0, 0, 0};
-    if (!io.WantCaptureKeyboard) {
-        if (app.keyIsDown(GLFW_KEY_W)) mv = vAdd(mv, vScale(back, -1.0f));
-        if (app.keyIsDown(GLFW_KEY_S)) mv = vAdd(mv, back);
-        if (app.keyIsDown(GLFW_KEY_D)) mv = vAdd(mv, right);
-        if (app.keyIsDown(GLFW_KEY_A)) mv = vAdd(mv, vScale(right, -1.0f));
-        if (app.keyIsDown(GLFW_KEY_E)) mv = vAdd(mv, V3{0, 1, 0});
-        if (app.keyIsDown(GLFW_KEY_Q)) mv = vAdd(mv, V3{0, -1, 0});
-    }
-    if (vLen(mv) > 0.0f)
-        pos = vAdd(pos, vScale(vNorm(mv), (app.keyIsDown(GLFW_KEY_LEFT_SHIFT) ? 6.0f : 2.0f) * dt));
-}
-
 int main(int argc, char** argv) {
     VkApp app;
     if (!app.initInstance(900, 900, "3dsim"))
@@ -60,11 +25,7 @@ int main(int argc, char** argv) {
 
     World w;
     w.app = &app;
-    if (std::getenv("VR_SCENE_CAM"))
-        w.ui.vrSceneCamPose = true;
-    if (const char* ro = std::getenv("VR_RIG_OFFSET"))
-        std::sscanf(ro, "%f,%f,%f", &w.ui.vrRigOffset[0], &w.ui.vrRigOffset[1], &w.ui.vrRigOffset[2]);
-    bool wantHdri = false, wantShadow = false, wantHier = false, dumpFrames = false, wantVr = false;
+    bool wantHdri = false, wantShadow = false, wantHier = false, dumpFrames = false, wantNoVr = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hdri") == 0)
             wantHdri = true;
@@ -74,20 +35,17 @@ int main(int argc, char** argv) {
             wantHier = true;
         else if (std::strcmp(argv[i], "--dump") == 0)
             dumpFrames = true;
-        else if (std::strcmp(argv[i], "--vr") == 0)
-            wantVr = true;
+        else if (std::strcmp(argv[i], "--no-vr") == 0)
+            wantNoVr = true;
     }
-    // create the device before the scene: the sim/renderer allocate on it during setup
-#ifdef WITH_OPENXR
-    bool vr = wantVr;
-    bool haveXrDev = false;
-    if (vr && w.xr.createDevice(app))
-        haveXrDev = true;
-    app.initDevice(haveXrDev ? w.xr.device() : app.makeDevice());
-#else
-    bool vr = false;
-    app.initDevice(app.makeDevice());
-#endif
+    // VR: auto-detect the OpenXR runtime (creates the Vulkan device through it, so this must
+    // run before the scene); no runtime/HMD -> plain window mode. --no-vr skips detection.
+    if (!wantNoVr) {
+        w.xr = std::make_unique<Xr>();
+        if (!w.xr->createDevice(app))
+            w.xr.reset();
+    }
+    app.initDevice(w.xr ? w.xr->device() : app.makeDevice());
     if (wantHier)
         createHierarchyWorld(w);
     else if (wantHdri)
@@ -96,24 +54,21 @@ int main(int argc, char** argv) {
         createShadowTestWorld(w);
     else
         createDemoWorld(w);
-#ifdef WITH_OPENXR
-    w.vrCam = spawnVrCamera(w, "vr camera");
-    if (vr) {
-        if (haveXrDev && w.xr.init(app)) {
-            std::vector<std::vector<VkImage>> imgs(w.xr.eyeCount());
+    if (w.xr) {
+        w.vrCam = spawnVrCamera(w, "vr camera");
+        if (w.xr->init(app)) {
+            std::vector<std::vector<VkImage>> imgs(w.xr->eyeCount());
             VkExtent2D exts[2];
             for (int i = 0; i < 2; ++i) {
-                exts[i] = w.xr.extent(i < w.xr.eyeCount() ? i : 0);
-                if (i < w.xr.eyeCount())
-                    imgs[i] = w.xr.images(i);
+                exts[i] = w.xr->extent(i < w.xr->eyeCount() ? i : 0);
+                if (i < w.xr->eyeCount())
+                    imgs[i] = w.xr->images(i);
             }
-            w.renderer.initXrTarget(app, w.xr.format(), w.xr.eyeCount(), imgs, exts);
+            w.renderer.initXrTarget(app, w.xr->format(), w.xr->eyeCount(), imgs, exts);
         } else
-            std::printf("3dsim: no OpenXR session, using virtual head (LMB drag = look, WASD/QE = move, shift = fast)\n");
+            std::printf(
+                "3dsim: no OpenXR session, using virtual head (LMB drag = look, WASD/QE = move, shift = fast)\n");
     }
-#else
-    (void)wantVr;
-#endif
     auto makeVP = [&w](VkExtent2D ext) {
         return w.camera.viewProj((float)ext.width / (float)ext.height);
     };
@@ -140,7 +95,8 @@ int main(int argc, char** argv) {
     };
     ImGui_ImplVulkan_Init(&ii);
 
-    std::printf("3dsim: vulkan+imgui | GPU soft-body sim | R reset | S dump shadow map | --vr side-by-side VR | esc/close to quit\n");
+    std::printf("3dsim: vulkan+imgui | GPU soft-body sim | R reset | S dump shadow map | VR auto-detected, "
+                "--no-vr for plain window | esc/close to quit\n");
 
     auto lastFrame = std::chrono::steady_clock::now();
     bool dumpWasDown = false;
@@ -174,91 +130,11 @@ int main(int argc, char** argv) {
         app.submit(simCmd);
 
         app.pollEvents();
-        if (!vr)
+        if (w.xr) {
+            w.xrFrame = w.xr->poll();
+            stepXr(w, dt);
+        } else
             applyMoveLook(dt, w.camera.position, w.camera.rotation, app, prevCX, prevCY);
-#ifdef WITH_OPENXR
-        const XrFrameData fr = vr ? w.xr.poll() : XrFrameData{};
-        if (vr) {
-            syncVrCamera(w, fr);
-            // the player rig (X/Y/Z anchor + 1.6 eye height) resolved via the parent system; the
-            // OpenXR pose (LOCAL ref space) is relative to session start, so the rig places it
-            V3 rig{0, 0, 0};
-            V4 rigQuat{0, 0, 0, 1};
-            if (w.eyeRig != entt::null) {
-                const WorldTransform ewt = w.reg.get<WorldTransform>(w.eyeRig);
-                rig = ewt.pos;
-                rigQuat = ewt.quat;
-            }
-            const V3 rigOffset{w.ui.vrRigOffset[0], w.ui.vrRigOffset[1], w.ui.vrRigOffset[2]};
-            // the static body sticks to the right controller (both are in the local reference space)
-            if (fr.haveRightHand)
-                for (auto [e, st, t] : w.reg.view<RigidStatic, Transform>().each()) {
-                    t.pos = vAdd(fr.rightHandPos, rig);
-                    t.quat = fr.rightHandQuat;
-                }
-            // thumbstick locomotion: turn with left/right, walk forward/back relative to the rig's facing
-            if (fr.haveRightStick && w.playerRig != entt::null) {
-                constexpr float kMove = 2.0f; // m/s
-                constexpr float kTurn = 1.6f; // rad/s
-                Transform& rp = w.reg.get<Transform>(w.playerRig);
-                rp.quat = quatMul(quatAxisAngle(V3{0, 1, 0}, -fr.rightStickX * kTurn * dt), rp.quat);
-                const V3 fwd = quatRotate(rp.quat, V3{0, 0, -1}); // OpenXR forward is -Z
-                rp.pos = vAdd(rp.pos, vScale(fwd, fr.rightStickY * kMove * dt));
-            }
-            XrEyeData eyes[2]{};
-            int nEyes = 2;
-            const bool sceneCamPose = w.ui.vrSceneCamPose;
-            if (fr.havePose && fr.nEyes > 0 && !sceneCamPose) {
-                nEyes = fr.nEyes;
-                for (int i = 0; i < nEyes; ++i) {
-                    // composite the eye-rig world rotation (includes the player rig's yaw from
-                    // thumbstick turn) into each eye pose, else the view never rotates with the rig
-                    eyes[i] = fr.eye[i];
-                    eyes[i].quat = quatMul(rigQuat, fr.eye[i].quat);
-                    eyes[i].pos = vAdd(vAdd(quatRotate(rigQuat, fr.eye[i].pos), rig), rigOffset);
-                }
-            } else if (fr.havePose && fr.nEyes > 0) {
-                // debug: scene camera pose + headset FOV tangents (isolate projection vs pose)
-                nEyes = fr.nEyes;
-                const V3 head = vAdd(w.camera.position, rigOffset);
-                const V4 q = w.camera.rotation;
-                const float qf[4] = {q.x, q.y, q.z, q.w};
-                float rotm[9];
-                quatToMat3(qf, rotm);
-                const V3 right{rotm[0], rotm[1], rotm[2]};
-                for (int i = 0; i < nEyes; ++i) {
-                    eyes[i] = fr.eye[i]; // keep the headset tangents
-                    eyes[i].pos = vAdd(head, vScale(right, i == 0 ? -0.032f : 0.032f));
-                    eyes[i].quat = q;
-                }
-            } else {
-                // no headset: virtual head (LMB drag = look, WASD/QE = move) with Quest 3 lens tangents
-                VirtHead& vh = w.ui.virtHead;
-                if (!vh.init) {
-                    vh.pos = w.camera.position;
-                    vh.quat = w.camera.rotation;
-                    vh.init = true;
-                }
-                applyMoveLook(dt, vh.pos, vh.quat, app, prevCX, prevCY);
-                const float qf[4] = {vh.quat.x, vh.quat.y, vh.quat.z, vh.quat.w};
-                float rotm[9];
-                quatToMat3(qf, rotm);
-                const V3 right{rotm[0], rotm[1], rotm[2]};
-                const V3 head = vAdd(vh.pos, rigOffset);
-                for (int i = 0; i < 2; ++i) {
-                    eyes[i].pos = vAdd(head, vScale(right, i == 0 ? -0.032f : 0.032f));
-                    eyes[i].quat = vh.quat;
-                    eyes[i].tanL = -std::tan(54.0f * kPi / 180.0f);
-                    eyes[i].tanR = std::tan(40.0f * kPi / 180.0f);
-                    eyes[i].tanU = std::tan(44.0f * kPi / 180.0f);
-                    eyes[i].tanD = -std::tan(55.0f * kPi / 180.0f);
-                }
-            }
-            if (std::getenv("VR_FULLVIEW"))
-                nEyes = 1;
-            w.renderer.setVrEyes(eyes, nEyes);
-        }
-#endif
         stepStaticRigid(w);
         w.renderer.setViewProj(makeVP(app.extent()), w.camera.position);
         ImGui_ImplVulkan_NewFrame();
@@ -282,24 +158,21 @@ int main(int argc, char** argv) {
 
         const uint32_t idx = app.acquireNextImage();
         VkCommandBuffer cmd = app.beginCommands();
-#ifdef WITH_OPENXR
-        if (vr) {
+        if (w.xr) {
             syncSceneToRenderer(w);
             uint32_t imgIdx[2] = {0, 0};
-            if (fr.shouldRender)
-                for (int i = 0; i < w.xr.eyeCount(); ++i) {
-                    w.xr.acquireImage(i);
-                    imgIdx[i] = (uint32_t)w.xr.imageIndex(i);
+            if (w.xrFrame.shouldRender)
+                for (int i = 0; i < w.xr->eyeCount(); ++i) {
+                    w.xr->acquireImage(i);
+                    imgIdx[i] = (uint32_t)w.xr->imageIndex(i);
                 }
             w.renderer.drawVr(cmd, app, idx, w.ui.bgColor, ImGui::GetDrawData(), w.ui.exposure,
-                              fr.shouldRender ? imgIdx : nullptr, fr.shouldRender ? w.xr.eyeCount() : 0);
-            if (fr.shouldRender)
-                for (int i = 0; i < w.xr.eyeCount(); ++i)
-                    w.xr.releaseImage(i);
-            w.xr.endFrame(fr.shouldRender);
-        } else
-#endif
-        {
+                              w.xrFrame.shouldRender ? imgIdx : nullptr, w.xrFrame.shouldRender ? w.xr->eyeCount() : 0);
+            if (w.xrFrame.shouldRender)
+                for (int i = 0; i < w.xr->eyeCount(); ++i)
+                    w.xr->releaseImage(i);
+            w.xr->endFrame(w.xrFrame.shouldRender);
+        } else {
             draw(w, cmd, idx, w.ui.bgColor, ImGui::GetDrawData());
             const bool dumpDown = app.keyIsDown(GLFW_KEY_S);
             if (dumpDown && !dumpWasDown)
@@ -320,9 +193,8 @@ int main(int argc, char** argv) {
     ImGui::DestroyContext();
     w.sim.shutdown();
     w.renderer.shutdown();
-#ifdef WITH_OPENXR
-    w.xr.shutdown();
-#endif
+    if (w.xr)
+        w.xr->shutdown();
     app.shutdown();
     return 0;
 }

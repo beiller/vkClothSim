@@ -3,7 +3,7 @@
 
 #include "math.hpp"
 #include "xr/openxr_loader.hpp"
-
+#include "xr_backend.hpp"
 #include <vector>
 
 class VkApp;
@@ -37,7 +37,8 @@ struct XrVulkanGraphicsDeviceGetInfoKHR {
     XrSystemId systemId;
     VkInstance vulkanInstance;
 };
-using PFN_xrGetVulkanGraphicsDevice2KHR = XrResult (*)(XrInstance, const XrVulkanGraphicsDeviceGetInfoKHR*, VkPhysicalDevice*);
+using PFN_xrGetVulkanGraphicsDevice2KHR = XrResult (*)(XrInstance, const XrVulkanGraphicsDeviceGetInfoKHR*,
+                                                       VkPhysicalDevice*);
 struct XrVulkanInstanceCreateInfoKHR {
     XrStructureType type;
     const void* next;
@@ -47,7 +48,8 @@ struct XrVulkanInstanceCreateInfoKHR {
     const VkInstanceCreateInfo* vulkanCreateInfo;
     const VkAllocationCallbacks* vulkanAllocator;
 };
-using PFN_xrCreateVulkanInstanceKHR = XrResult (*)(XrInstance, const XrVulkanInstanceCreateInfoKHR*, VkInstance*, VkResult*);
+using PFN_xrCreateVulkanInstanceKHR = XrResult (*)(XrInstance, const XrVulkanInstanceCreateInfoKHR*, VkInstance*,
+                                                   VkResult*);
 struct XrVulkanDeviceCreateInfoKHR {
     XrStructureType type;
     const void* next;
@@ -60,51 +62,30 @@ struct XrVulkanDeviceCreateInfoKHR {
 };
 using PFN_xrCreateVulkanDeviceKHR = XrResult (*)(XrInstance, const XrVulkanDeviceCreateInfoKHR*, VkDevice*, VkResult*);
 
-// per-frame XR output: head + per-eye poses in the local-floor reference space
-struct XrFrameData {
-    bool running = false;
-    bool focused = false;
-    bool shouldRender = false;
-    bool havePose = false;
-    int nEyes = 0;
-    XrEyeData eye[2]{};
-    // right controller pose in the reference space (tracked via the actions system)
-    bool haveRightHand = false;
-    V3 rightHandPos{0, 0, 0};
-    V4 rightHandQuat{0, 0, 0, 1};
-    // right controller thumbstick (normalized -1..1) for locomotion
-    bool haveRightStick = false;
-    float rightStickX = 0.0f;
-    float rightStickY = 0.0f;
-};
-
-class Xr {
+class Xr : public IXrBackend {
 public:
     // phase 1: load loader, create OpenXR instance + Vulkan device (via xrCreateVulkanDeviceKHR)
     // so the compositor holds our pfn+device; must run before anything allocates on the device
-    bool createDevice(VkApp& app);
+    bool createDevice(VkApp& app) override;
     // phase 2: create session/swapchains (assumes createDevice succeeded)
-    bool init(VkApp& app);
-    void shutdown();
+    bool init(VkApp& app) override;
+    void shutdown() override;
 
     // per-frame: events + wait/begin frame + locate views
-    XrFrameData poll();
+    XrFrame poll() override;
     // must run once per poll() while the session is running
-    void endFrame(bool render);
+    void endFrame(bool render) override;
 
     // swapchain image lifecycle for direct headset rendering
-    void acquireImage(int eye);
-    void releaseImage(int eye);
-    int imageIndex(int eye) const;
+    void acquireImage(int eye) override;
+    void releaseImage(int eye) override;
+    int imageIndex(int eye) const override { return m_swaps[eye].cur; }
 
-    bool running() const { return m_running; }
-    bool focused() const { return m_focused; }
-    bool ready() const { return m_ready; }
-    int eyeCount() const { return m_eyeCount; }
-    VkDevice device() const { return m_dev; }
-    VkFormat format() const { return m_fmt; }
-    VkExtent2D extent(int eye) const { return m_swaps[eye].extent; }
-    const std::vector<VkImage>& images(int eye) const { return m_swaps[eye].images; }
+    int eyeCount() const override { return m_eyeCount; }
+    VkDevice device() const override { return m_dev; }
+    VkFormat format() const override { return m_fmt; }
+    VkExtent2D extent(int eye) const override { return m_swaps[eye].extent; }
+    const std::vector<VkImage>& images(int eye) const override { return m_swaps[eye].images; }
 
 private:
     struct Swap {
@@ -120,23 +101,14 @@ private:
     XrLoader m_loader;
     XrInstance m_inst = XR_NULL_HANDLE;
     VkInstance m_shadowInst = VK_NULL_HANDLE; // created via OpenXR so the runtime holds our vkGetInstanceProcAddr
-    VkDevice m_dev = VK_NULL_HANDLE;          // created via xrCreateVulkanDeviceKHR so the compositor uses instance-proc
+    VkDevice m_dev = VK_NULL_HANDLE; // created via xrCreateVulkanDeviceKHR so the compositor uses instance-proc
     XrSystemId m_system = XR_NULL_SYSTEM_ID;
     XrSession m_session = XR_NULL_HANDLE;
     XrSpace m_refSpace = XR_NULL_HANDLE;
-    // right-hand controller pose via the actions system
-    XrActionSet m_actionSet = XR_NULL_HANDLE;
-    XrAction m_poseAction = XR_NULL_HANDLE;
-    XrAction m_stickAction = XR_NULL_HANDLE;
-    XrSpace m_rightHandSpace = XR_NULL_HANDLE;
-    XrPath m_rightSubaction = 0;
-    int m_rightHandDbg = 0; // one-time/first-few-frames diagnostics for the controller
     XrEnvironmentBlendMode m_blend = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     VkFormat m_fmt = VK_FORMAT_UNDEFINED;
     int m_eyeCount = 0;
-    bool m_ready = false;
     bool m_running = false;
-    bool m_focused = false;
     XrSessionState m_state = XR_SESSION_STATE_UNKNOWN;
     XrFrameState m_fs{};
     XrView m_views[2]{};

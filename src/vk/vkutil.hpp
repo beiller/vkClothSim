@@ -210,8 +210,7 @@ inline void vkMakeImage2DF32(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, ui
 }
 
 inline void vkMakeCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, uint32_t mipLevels, VkImage& img,
-                            VkDeviceMemory& mem, VkImageView& cubeView,
-                            VkFormat fmt = VK_FORMAT_R16G16B16A16_SFLOAT) {
+                            VkDeviceMemory& mem, VkImageView& cubeView, VkFormat fmt = VK_FORMAT_R16G16B16A16_SFLOAT) {
     VkImageCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
@@ -241,7 +240,8 @@ inline void vkMakeCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, 
     VK(vkCreateImageView(dev, &vci, nullptr, &cubeView));
 }
 
-inline void vkMakeDepthCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, VkImage& img, VkDeviceMemory& mem) {
+inline void vkMakeDepthCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, VkImage& img,
+                                 VkDeviceMemory& mem) {
     VkImageCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
@@ -300,7 +300,7 @@ inline void vkMakeCubeArrayView(VkDevice dev, VkImage img, VkFormat fmt, VkImage
 }
 
 inline void vkMakeCubeFaceView(VkDevice dev, VkImage img, VkFormat fmt, VkImageAspectFlags aspect, uint32_t face,
-                                VkImageView& view) {
+                               VkImageView& view) {
     VkImageViewCreateInfo vci{};
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = img;

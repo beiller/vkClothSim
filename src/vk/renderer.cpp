@@ -11,8 +11,8 @@
 #include "tonemap_vert_spv.hpp"
 #include "vk/vkapp.hpp"
 #include "vk/vkutil.hpp"
-#include <imgui_impl_vulkan.h>
 #include <cstdlib>
+#include <imgui_impl_vulkan.h>
 
 namespace {
 
@@ -179,7 +179,8 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     ViewUbo vpInit{};
     std::memcpy(vpInit.viewProj, viewProj.m, 64);
     vkMakeBuffer(m_dev, m_pdev, m_vpUbuf, m_vpMem, sizeof(ViewUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &vpInit);
-    vkMakeBuffer(m_dev, m_pdev, m_lightsUbuf, m_lightsMem, sizeof(LightsUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
+    vkMakeBuffer(m_dev, m_pdev, m_lightsUbuf, m_lightsMem, sizeof(LightsUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                 nullptr);
     const auto binds = meshBinds();
     vkMakeDslPool(m_dev, binds, (uint32_t)nInstances, m_dsl, m_pool);
     m_pl = vkMakePipelineLayout(m_dev, m_dsl);
@@ -567,14 +568,17 @@ void Renderer::initShadow(VkApp& app) {
     vkMakeCubeArrayImage(m_dev, m_pdev, m_shadowSize, nLayers, VK_FORMAT_R32_SFLOAT, m_shadowCube, m_shadowCubeMem);
     vkMakeDepthCubeImage(m_dev, m_pdev, m_shadowSize, m_shadowDepth, m_shadowDepthMem);
     for (uint32_t l = 0; l < nLayers; ++l)
-        vkMakeCubeFaceView(m_dev, m_shadowCube, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, l, m_shadowColorFace[l]);
+        vkMakeCubeFaceView(m_dev, m_shadowCube, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, l,
+                           m_shadowColorFace[l]);
     for (uint32_t f = 0; f < 6; ++f)
-        vkMakeCubeFaceView(m_dev, m_shadowDepth, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT, f, m_shadowDepthFace[f]);
-    vkMakeCubeArrayView(m_dev, m_shadowCube, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 0, nLayers, m_shadowSampleView);
+        vkMakeCubeFaceView(m_dev, m_shadowDepth, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT, f,
+                           m_shadowDepthFace[f]);
+    vkMakeCubeArrayView(m_dev, m_shadowCube, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 0, nLayers,
+                        m_shadowSampleView);
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(m_pdev, &props);
-    vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false, 0.0f, 1.0f,
-                     m_shadowSampler);
+    vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false, 0.0f,
+                    1.0f, m_shadowSampler);
     m_shadowInfo = {m_shadowSampler, m_shadowSampleView, VK_IMAGE_LAYOUT_GENERAL};
 
     VkAttachmentDescription att[2]{};
@@ -642,12 +646,8 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd) {
         V3 right, up, back;
     };
     const Face faces[6] = {
-        {{0, 0, 1}, {0, 1, 0}, {1, 0, 0}},
-        {{0, 0, -1}, {0, 1, 0}, {-1, 0, 0}},
-        {{-1, 0, 0}, {0, 0, -1}, {0, 1, 0}},
-        {{-1, 0, 0}, {0, 0, 1}, {0, -1, 0}},
-        {{-1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
-        {{1, 0, 0}, {0, 1, 0}, {0, 0, -1}},
+        {{0, 0, 1}, {0, 1, 0}, {1, 0, 0}},   {{0, 0, -1}, {0, 1, 0}, {-1, 0, 0}}, {{-1, 0, 0}, {0, 0, -1}, {0, 1, 0}},
+        {{-1, 0, 0}, {0, 0, 1}, {0, -1, 0}}, {{-1, 0, 0}, {0, 1, 0}, {0, 0, 1}},  {{1, 0, 0}, {0, 1, 0}, {0, 0, -1}},
     };
     struct Pc {
         float viewProj[16];
@@ -704,8 +704,8 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd) {
             vkCmdSetViewport(cmd, 0, 1, &vp);
             vkCmdSetScissor(cmd, 0, 1, &sc);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipe);
-            vkCmdPushConstants(cmd, m_shadowPl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(Pc),
-                               &pc);
+            vkCmdPushConstants(cmd, m_shadowPl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                               sizeof(Pc), &pc);
             for (const auto& inst : m_insts)
                 drawInstance(cmd, m_shadowPl, m_geoms[inst.geom], inst);
             vkCmdEndRenderPass(cmd);
@@ -722,8 +722,8 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd) {
     imb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     imb.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
     imb.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
-                         nullptr, 0, nullptr, 1, &imb);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                         0, nullptr, 0, nullptr, 1, &imb);
 }
 
 static void writePgm(const char* path, uint32_t w, uint32_t h, const float* dist, float far) {
@@ -873,8 +873,6 @@ Mat4 Renderer::eyeVP(int eye) const {
 
 // letterbox the eye image (its own aspect) into the eye's half of the window
 VkRect2D Renderer::eyeRegion(int eye, VkExtent2D ext) const {
-    if (getenv("VR_FULLVIEW"))
-        return {0, 0, ext.width, ext.height};
     const XrEyeData& e = m_vrEyes[eye];
     const float aspect = (e.tanR - e.tanL) / (e.tanU - e.tanD);
     const uint32_t halfW = ext.width / 2;

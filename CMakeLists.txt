@@ -18,8 +18,6 @@ find_package(ZLIB REQUIRED)
 find_program(GLSLC glslc REQUIRED)
 find_program(XXD xxd REQUIRED)
 
-option(WITH_OPENXR ON "OpenXR support (dlopen libopenxr.so.1, --vr)")
-
 set(GEN_DIR ${CMAKE_BINARY_DIR}/gen)
 file(MAKE_DIRECTORY ${GEN_DIR})
 
@@ -64,12 +62,8 @@ set(JPH_USE_DX12 OFF)
 set(JPH_USE_CPU_COMPUTE OFF)
 include(${PHYSICS_REPO_ROOT}/Jolt/Jolt.cmake)
 
-if(WITH_OPENXR)
-    set(XR_SOURCES src/xr/openxr_loader.cpp src/xr/xr.cpp)
-    set(XR_DEFINES WITH_OPENXR)
-    set(XR_INCLUDES ${CMAKE_SOURCE_DIR}/lib/openxr)
-    set(XR_LIBS dl)
-endif()
+set(XR_SOURCES src/xr/openxr_loader.cpp src/xr/xr.cpp)
+set(XR_INCLUDES ${CMAKE_SOURCE_DIR}/lib/openxr)
 
 add_executable(vksim
     src/main.cpp
@@ -86,9 +80,8 @@ add_executable(vksim
     ${CMAKE_SOURCE_DIR}/lib/tinyexr/tinyexr.cc
     ${XR_SOURCES}
     ${IMGUI_SOURCES})
-target_link_libraries(vksim PRIVATE glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB ${XR_LIBS})
+target_link_libraries(vksim PRIVATE glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB dl)
 target_compile_features(vksim PRIVATE cxx_std_23)
-target_compile_definitions(vksim PRIVATE ${XR_DEFINES})
 target_include_directories(vksim PRIVATE
     ${GEN_DIR}
     ${IMGUI_DIR}

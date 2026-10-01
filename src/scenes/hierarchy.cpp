@@ -7,9 +7,9 @@
 #include "vk/vkapp.hpp"
 #include <cmath>
 #include <functional>
+#include <imgui.h>
 #include <memory>
 #include <random>
-#include <imgui.h>
 
 namespace {
 
@@ -72,7 +72,9 @@ void createHierarchyWorld(World& w) {
         return l > 1e-3f ? vScale(v, 1.0f / l) : V3{0.0f, 1.0f, 0.0f};
     };
     // segment length: capsule overhangs its joint so branch pieces connect
-    auto edgeLen = [](int depth) { return 1.5f * (kHalfLen[depth] + kRadius[depth]); };
+    auto edgeLen = [](int depth) {
+        return 1.5f * (kHalfLen[depth] + kRadius[depth]);
+    };
     // bend this generation away from its parent's direction (main branches bend most)
     auto spreadDir = [&](const V3& pdir, int depth) {
         const float ang = (1.05f - 0.12f * depth) * (0.75f + 0.5f * u01(rng));
@@ -83,12 +85,18 @@ void createHierarchyWorld(World& w) {
     };
     auto childCount = [](int depth) {
         switch (depth) {
-        case 0: return 1; // trunk
-        case 1: return 6; // main branches
-        case 2: return 3;
-        case 3: return 2;
-        case 4: return 1;
-        default: return 0;
+        case 0:
+            return 1; // trunk
+        case 1:
+            return 6; // main branches
+        case 2:
+            return 3;
+        case 3:
+            return 2;
+        case 4:
+            return 1;
+        default:
+            return 0;
         }
     };
 
@@ -99,38 +107,37 @@ void createHierarchyWorld(World& w) {
 
     int nodeCount = 0;
     // builds the tree in world space, then stores each node's local transform
-    std::function<void(entt::entity, V4, V3, V3, int)> addBranch =
-        [&](entt::entity parent, V4 parentWQ, V3 parentWPos, V3 parentDir, int depth) {
-            const V3 dir = depth <= 1 ? V3{0.0f, 1.0f, 0.0f} : spreadDir(parentDir, depth);
-            const V3 wpos = depth == 0 ? V3{0.0f, 1.0f, 0.0f} : vAdd(parentWPos, vScale(dir, edgeLen(depth)));
-            const V4 nodeWQ = quatFromTo({0.0f, 1.0f, 0.0f}, vNorm(dir));
-            const V3 localPos = depth == 0 ? wpos : quatRotate(quatInv(parentWQ), vSub(wpos, parentWPos));
-            const V4 localQuat = depth == 0 ? nodeWQ : quatMul(quatInv(parentWQ), nodeWQ);
+    std::function<void(entt::entity, V4, V3, V3, int)> addBranch = [&](entt::entity parent, V4 parentWQ, V3 parentWPos,
+                                                                       V3 parentDir, int depth) {
+        const V3 dir = depth <= 1 ? V3{0.0f, 1.0f, 0.0f} : spreadDir(parentDir, depth);
+        const V3 wpos = depth == 0 ? V3{0.0f, 1.0f, 0.0f} : vAdd(parentWPos, vScale(dir, edgeLen(depth)));
+        const V4 nodeWQ = quatFromTo({0.0f, 1.0f, 0.0f}, vNorm(dir));
+        const V3 localPos = depth == 0 ? wpos : quatRotate(quatInv(parentWQ), vSub(wpos, parentWPos));
+        const V4 localQuat = depth == 0 ? nodeWQ : quatMul(quatInv(parentWQ), nodeWQ);
 
-            entt::entity e = w.reg.create();
-            w.reg.emplace<Transform>(e, localPos, localQuat);
-            if (parent != entt::null)
-                w.reg.emplace<Parent>(e, parent);
-            w.reg.emplace<Renderable>(e, geomDepth[depth], w.renderer.addInstance(geomDepth[depth]));
-            w.reg.emplace<Material>(e, kDepthColor[depth], 0.1f, 0.6f);
-            const float amp = 0.02f + 0.02f * depth;  // tips sway more
-            const float phase = 0.35f * depth;        // outward lag -> bend travels to the tips
-            w.reg.emplace<Animation>(e,
-                                     [localPos, localQuat, amp, phase, windAxis, windFreq, windTime, isClock = depth == 0](
-                                         Transform& tr, float dt) {
-                                         if (isClock)
-                                             *windTime += dt;
-                                         const V4 sway = quatAxisAngle(windAxis, amp * std::sin(windFreq * (*windTime) + phase));
-                                         tr.pos = quatRotate(sway, localPos);
-                                         tr.quat = quatMul(sway, localQuat);
-                                     });
-            ++nodeCount;
-            if (depth >= kMaxDepth)
-                return;
-            const int n = childCount(depth);
-            for (int i = 0; i < n; ++i)
-                addBranch(e, nodeWQ, wpos, dir, depth + 1);
-        };
+        entt::entity e = w.reg.create();
+        w.reg.emplace<Transform>(e, localPos, localQuat);
+        if (parent != entt::null)
+            w.reg.emplace<Parent>(e, parent);
+        w.reg.emplace<Renderable>(e, geomDepth[depth], w.renderer.addInstance(geomDepth[depth]));
+        w.reg.emplace<Material>(e, kDepthColor[depth], 0.1f, 0.6f);
+        const float amp = 0.02f + 0.02f * depth; // tips sway more
+        const float phase = 0.35f * depth;       // outward lag -> bend travels to the tips
+        w.reg.emplace<Animation>(e, [localPos, localQuat, amp, phase, windAxis, windFreq, windTime,
+                                     isClock = depth == 0](Transform& tr, float dt) {
+            if (isClock)
+                *windTime += dt;
+            const V4 sway = quatAxisAngle(windAxis, amp * std::sin(windFreq * (*windTime) + phase));
+            tr.pos = quatRotate(sway, localPos);
+            tr.quat = quatMul(sway, localQuat);
+        });
+        ++nodeCount;
+        if (depth >= kMaxDepth)
+            return;
+        const int n = childCount(depth);
+        for (int i = 0; i < n; ++i)
+            addBranch(e, nodeWQ, wpos, dir, depth + 1);
+    };
 
     addBranch(entt::null, V4{0, 0, 0, 1}, V3{0, 0, 0}, V3{0, 1, 0}, 0);
 

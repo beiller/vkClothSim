@@ -26,12 +26,6 @@ void drawHdriUi(World& w) {
     }
     ImGui::SeparatorText("camera");
     ImGui::SliderFloat("fov", &w.camera.fovDeg, 10.0f, 120.0f, "%.0f");
-#ifdef WITH_OPENXR
-    ImGui::SeparatorText("vr");
-    ImGui::DragFloat3("rig offset", w.ui.vrRigOffset, 0.05f);
-    ImGui::Checkbox("scene cam pose", &w.ui.vrSceneCamPose);
-    ImGui::TextDisabled("no headset: virtual head, LMB drag = look, WASD/QE = move, shift = fast");
-#endif
     drawToneSection(w);
     drawLightSection(w);
     ImGui::End();
