@@ -90,3 +90,14 @@ pkill -x vksim
 - Position-based Verlet / PBD / XPBD style
 - graph-colored constraint groups; one dispatch per color
 - prefer substeps over high iteration counts
+
+
+## Canonical Reference
+
+Godot is a canonical reference as it uses many similar technologies to this project
+- Vulkan rendering
+- OpenXR VR integration
+- Lighting and shadow techniques
+
+The source code is available here: ~/src/godot4
+EG: openXR code is here: ~/src/godot4/modules/openxr
