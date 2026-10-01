@@ -38,11 +38,18 @@
     X(xrCreateActionSet)                                                                                               \
     X(xrDestroyActionSet)                                                                                              \
     X(xrCreateAction)                                                                                                  \
+    X(xrDestroyAction)                                                                                                 \
     X(xrAttachSessionActionSets)                                                                                       \
     X(xrSuggestInteractionProfileBindings)                                                                             \
     X(xrSyncActions)                                                                                                   \
     X(xrEnumerateBoundSourcesForAction)                                                                                \
-    X(xrGetActionStateBoolean)
+    X(xrGetActionStateBoolean)                                                                                        \
+    X(xrGetActionStateVector2f)                                                                                       \
+    X(xrCreateActionSpace)                                                                                             \
+    X(xrStringToPath)                                                                                                  \
+    X(xrPathToString)                                                                                                  \
+    X(xrGetCurrentInteractionProfile)                                                                                 \
+    X(xrEnumerateInstanceExtensionProperties)
 
 struct XrLoader {
     bool load();

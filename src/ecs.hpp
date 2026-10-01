@@ -102,6 +102,5 @@ struct PinHold {
     float time = 0.0f;
 };
 
-struct VrCamera {
-    V3 rigPos{0, 0, 0};
-};
+// marks the VR head entity (child of the eye-height rig); its Transform is driven by the OpenXR pose
+struct VrCamera {};

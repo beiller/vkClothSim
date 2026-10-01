@@ -229,9 +229,11 @@ void createDemoWorld(World& w) {
         w.reg.emplace<Material>(cap, V3{0.85f, 0.35f, 0.30f}, 0.9f, 0.25f);
     }
 
-    // user-controlled static obstacle: hold F, then WASD/QE to move (camera pauses while grabbed)
-    const RigidBody staticBody{kCapsule, {7.0f, 4.0f, 0.0f}, V4{0.0f, 0.0f, 0.0f, 1.0f}};
-    const int staticGeom = w.renderer.addMesh(makeCapsuleMesh(kCapsule, 1)).geom;
+    // right-controller "hand" prop: small capsule that sticks to the right hand in VR
+    const CapsuleParams kHandCapsule{0.07f, 0.035f};
+    // starts near the player's right hand (player rig is at world {0, 0, -5}); tracking snaps it to the controller
+    const RigidBody staticBody{kHandCapsule, {0.3f, 1.3f, -4.7f}, V4{0.0f, 0.0f, 0.0f, 1.0f}};
+    const int staticGeom = w.renderer.addMesh(makeCapsuleMesh(kHandCapsule, 1)).geom;
     const entt::entity staticEnt = spawnStaticBody(w, staticBody, staticGeom);
     w.reg.emplace<Name>(staticEnt, "static body");
     w.reg.emplace<Material>(staticEnt, V3{0.9f, 0.75f, 0.2f}, 0.2f, 0.4f);

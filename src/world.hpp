@@ -38,7 +38,9 @@ struct World {
     Camera camera;
 #ifdef WITH_OPENXR
     Xr xr;
-    entt::entity vrCam = entt::null;
+    entt::entity vrCam = entt::null;     // head (VrCamera): tracks the OpenXR pose
+    entt::entity playerRig = entt::null; // X/Y/Z player anchor (translation-only)
+    entt::entity eyeRig = entt::null;    // eye-height empty (child of playerRig)
 #endif
     UIState ui;
     std::function<void(World&)> drawUi;

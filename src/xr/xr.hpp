@@ -68,6 +68,14 @@ struct XrFrameData {
     bool havePose = false;
     int nEyes = 0;
     XrEyeData eye[2]{};
+    // right controller pose in the reference space (tracked via the actions system)
+    bool haveRightHand = false;
+    V3 rightHandPos{0, 0, 0};
+    V4 rightHandQuat{0, 0, 0, 1};
+    // right controller thumbstick (normalized -1..1) for locomotion
+    bool haveRightStick = false;
+    float rightStickX = 0.0f;
+    float rightStickY = 0.0f;
 };
 
 class Xr {
@@ -116,6 +124,13 @@ private:
     XrSystemId m_system = XR_NULL_SYSTEM_ID;
     XrSession m_session = XR_NULL_HANDLE;
     XrSpace m_refSpace = XR_NULL_HANDLE;
+    // right-hand controller pose via the actions system
+    XrActionSet m_actionSet = XR_NULL_HANDLE;
+    XrAction m_poseAction = XR_NULL_HANDLE;
+    XrAction m_stickAction = XR_NULL_HANDLE;
+    XrSpace m_rightHandSpace = XR_NULL_HANDLE;
+    XrPath m_rightSubaction = 0;
+    int m_rightHandDbg = 0; // one-time/first-few-frames diagnostics for the controller
     XrEnvironmentBlendMode m_blend = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     VkFormat m_fmt = VK_FORMAT_UNDEFINED;
     int m_eyeCount = 0;

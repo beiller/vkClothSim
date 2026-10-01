@@ -49,14 +49,30 @@ bool Xr::createDevice(VkApp& app) {
     ai.engineVersion = 1;
     // SteamVR's OpenXR runtime (2.18.x) rejects apiVersion 1.1; request 1.0
     ai.apiVersion = XR_API_VERSION_1_0;
-    static const char* kExt = "XR_KHR_vulkan_enable2";
+    static const char* kExts[] = {"XR_KHR_vulkan_enable2", "XR_EXT_hand_tracking"};
     XrInstanceCreateInfo ici{};
     ici.type = XR_TYPE_INSTANCE_CREATE_INFO;
     ici.applicationInfo = ai;
-    ici.enabledExtensionCount = 1;
-    ici.enabledExtensionNames = &kExt;
+    ici.enabledExtensionCount = 2;
+    ici.enabledExtensionNames = kExts;
     if (!xrok(m_loader.xrCreateInstance(&ici, &m_inst), "createInstance"))
         return false;
+
+    // diagnose: which instance extensions does the runtime support? (esp. hand_tracking)
+    {
+        uint32_t n = 0;
+        if (XR_SUCCEEDED(m_loader.xrEnumerateInstanceExtensionProperties(nullptr, 0, &n, nullptr)) && n > 0) {
+            std::vector<XrExtensionProperties> exts(n);
+            for (auto& e : exts)
+                e.type = XR_TYPE_EXTENSION_PROPERTIES;
+            uint32_t got = 0;
+            if (XR_SUCCEEDED(m_loader.xrEnumerateInstanceExtensionProperties(nullptr, n, &got, exts.data()))) {
+                std::fprintf(stderr, "xr: %u extensions: ", got);
+                for (uint32_t i = 0; i < got; ++i)
+                    std::fprintf(stderr, "%s%s", exts[i].extensionName, i + 1 < got ? ", " : "\n");
+            }
+        }
+    }
 
     XrSystemGetInfo sg{};
     sg.type = XR_TYPE_SYSTEM_GET_INFO;
@@ -238,6 +254,111 @@ bool Xr::init(VkApp& app) {
     if (!xrok(m_loader.xrCreateReferenceSpace(m_session, &rs, &m_refSpace), "createReferenceSpace"))
         return false;
 
+    // diagnose: what interaction profile is the runtime using for the right hand?
+    {
+        XrPath rh;
+        if (m_loader.xrStringToPath(m_inst, "/user/hand/right", &rh) == XR_SUCCESS && m_loader.xrGetCurrentInteractionProfile) {
+            XrInteractionProfileState ps{};
+            ps.type = XR_TYPE_INTERACTION_PROFILE_STATE;
+            XrResult pr = m_loader.xrGetCurrentInteractionProfile(m_session, rh, &ps);
+            if (XR_SUCCEEDED(pr)) {
+                char buf[256] = {};
+                uint32_t blen = sizeof(buf);
+                if (XR_SUCCEEDED(m_loader.xrPathToString(m_inst, ps.interactionProfile, sizeof(buf), &blen, buf)))
+                    std::fprintf(stderr, "xr: right-hand profile: %s\n", buf);
+            } else
+                std::fprintf(stderr, "xr: right-hand profile query res=%d\n", (int)pr);
+        }
+    }
+
+    // right-controller pose via the actions system (non-fatal: VR still works if it fails)
+    {
+        XrPath rightSub, profile, gripPose, stickSrc;
+        const bool okPaths =
+            m_loader.xrStringToPath(m_inst, "/user/hand/right", &rightSub) == XR_SUCCESS &&
+            m_loader.xrStringToPath(m_inst, "/interaction_profiles/oculus/touch_controller", &profile) == XR_SUCCESS &&
+            m_loader.xrStringToPath(m_inst, "/user/hand/right/input/grip/pose", &gripPose) == XR_SUCCESS &&
+            m_loader.xrStringToPath(m_inst, "/user/hand/right/input/thumbstick", &stickSrc) == XR_SUCCESS;
+        if (!okPaths) {
+            std::fprintf(stderr, "xr: right-hand paths unavailable\n");
+        } else {
+            XrActionSetCreateInfo asc{};
+            asc.type = XR_TYPE_ACTION_SET_CREATE_INFO;
+            std::snprintf(asc.actionSetName, sizeof(asc.actionSetName), "3dsim");
+            std::snprintf(asc.localizedActionSetName, sizeof(asc.localizedActionSetName), "3dsim");
+            if (xrok(m_loader.xrCreateActionSet(m_inst, &asc, &m_actionSet), "createActionSet")) {
+                if (std::getenv("XR_DIAG")) {
+                    // diagnose: which toplevel paths does the runtime accept for a POSE action?
+                    const char* cands[] = {"/user/controller", "/user/hand/right", "/user/hand/left", "/user/target/rigid"};
+                    for (const char* c : cands) {
+                        XrPath p;
+                        if (m_loader.xrStringToPath(m_inst, c, &p) != XR_SUCCESS) {
+                            std::fprintf(stderr, "xr: toplevel %-18s -> pathParse FAIL\n", c);
+                            continue;
+                        }
+                        XrActionCreateInfo tc{};
+                        tc.type = XR_TYPE_ACTION_CREATE_INFO;
+                        std::snprintf(tc.actionName, sizeof(tc.actionName), "diag");
+                        std::snprintf(tc.localizedActionName, sizeof(tc.localizedActionName), "diag");
+                        tc.actionType = XR_ACTION_TYPE_POSE_INPUT;
+                        tc.countSubactionPaths = 1;
+                        tc.subactionPaths = &p;
+                        XrAction ta = XR_NULL_HANDLE;
+                        XrResult r = m_loader.xrCreateAction(m_actionSet, &tc, &ta);
+                        std::fprintf(stderr, "xr: toplevel %-18s -> createAction %d\n", c, (int)r);
+                        if (XR_SUCCEEDED(r) && ta != XR_NULL_HANDLE)
+                            m_loader.xrDestroyAction(ta);
+                    }
+                }
+                // NOTE: action names must be short and plain here. This SteamVR/Moonlight runtime
+                // rejects "rightHandPose" from createAction with -21 (PATH_FORMAT_INVALID) even though
+                // the subaction path is valid (an identical path with name "diag" returns 0). Short
+                // names like "pose"/"stick" (matching Godot's action-map resource names) work.
+                XrActionCreateInfo ac{};
+                ac.type = XR_TYPE_ACTION_CREATE_INFO;
+                std::snprintf(ac.actionName, sizeof(ac.actionName), "pose");
+                std::snprintf(ac.localizedActionName, sizeof(ac.localizedActionName), "pose");
+                ac.actionType = XR_ACTION_TYPE_POSE_INPUT;
+                ac.countSubactionPaths = 1;
+                ac.subactionPaths = &rightSub;
+                if (xrok(m_loader.xrCreateAction(m_actionSet, &ac, &m_poseAction), "createAction")) {
+                    // thumbstick (vector2) for locomotion
+                    XrActionCreateInfo sc{};
+                    sc.type = XR_TYPE_ACTION_CREATE_INFO;
+                    std::snprintf(sc.actionName, sizeof(sc.actionName), "stick");
+                    std::snprintf(sc.localizedActionName, sizeof(sc.localizedActionName), "stick");
+                    sc.actionType = XR_ACTION_TYPE_VECTOR2F_INPUT;
+                    sc.countSubactionPaths = 1;
+                    sc.subactionPaths = &rightSub;
+                    xrok(m_loader.xrCreateAction(m_actionSet, &sc, &m_stickAction), "createStickAction");
+                    XrActionSuggestedBinding sb[2]{{m_poseAction, gripPose}, {m_stickAction, stickSrc}};
+                    XrInteractionProfileSuggestedBinding sbs{};
+                    sbs.type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING;
+                    sbs.interactionProfile = profile;
+                    sbs.countSuggestedBindings = (m_stickAction != XR_NULL_HANDLE) ? 2 : 1;
+                    sbs.suggestedBindings = sb;
+                    xrok(m_loader.xrSuggestInteractionProfileBindings(m_inst, &sbs), "suggestBindings");
+                    // attach BEFORE creating the action space: the runtime requires the action
+                    // set to be attached, otherwise createActionSpace fails with -46 (not attached).
+                    XrSessionActionSetsAttachInfo attach{};
+                    attach.type = XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO;
+                    attach.countActionSets = 1;
+                    attach.actionSets = &m_actionSet;
+                    if (xrok(m_loader.xrAttachSessionActionSets(m_session, &attach), "attachActionSets")) {
+                        XrActionSpaceCreateInfo asp{};
+                        asp.type = XR_TYPE_ACTION_SPACE_CREATE_INFO;
+                        asp.action = m_poseAction;
+                        asp.subactionPath = rightSub;
+                        asp.poseInActionSpace.position = {0.0f, 0.0f, 0.0f};
+                        asp.poseInActionSpace.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+                        if (xrok(m_loader.xrCreateActionSpace(m_session, &asp, &m_rightHandSpace), "createActionSpace"))
+                            m_rightSubaction = rightSub;
+                    }
+                }
+            }
+        }
+    }
+
     m_ready = true;
     std::printf("xr: %d eyes %ux%u format=%d blend=%d\n", m_eyeCount, m_swaps[0].extent.width, m_swaps[0].extent.height,
                 (int)m_fmt, (int)m_blend);
@@ -329,6 +450,52 @@ XrFrameData Xr::poll() {
         e.tanU = std::tan(v.fov.angleUp);
         e.tanD = std::tan(v.fov.angleDown);
     }
+    if (m_running) {
+        if (m_rightHandDbg == 0)
+            std::fprintf(stderr, "xr: right-hand setup: actionSet=%s space=%s locate=%s subaction=%llu\n",
+                         m_actionSet != XR_NULL_HANDLE ? "ok" : "NULL", m_rightHandSpace != XR_NULL_HANDLE ? "ok" : "NULL",
+                         m_loader.xrLocateSpace ? "ok" : "NULL", (unsigned long long)m_rightSubaction);
+        if (m_rightHandSpace != XR_NULL_HANDLE) {
+            XrActiveActionSet active{m_actionSet, m_rightSubaction};
+            XrActionsSyncInfo sync{};
+            sync.type = XR_TYPE_ACTIONS_SYNC_INFO;
+            sync.countActiveActionSets = 1;
+            sync.activeActionSets = &active;
+            m_loader.xrSyncActions(m_session, &sync);
+            XrSpaceLocation loc{};
+            loc.type = XR_TYPE_SPACE_LOCATION;
+            const XrResult lr = m_loader.xrLocateSpace(m_rightHandSpace, m_refSpace, m_fs.predictedDisplayTime, &loc);
+            const XrSpaceLocationFlags want = XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
+            if (XR_SUCCEEDED(lr) && (loc.locationFlags & want) == want) {
+                fr.haveRightHand = true;
+                fr.rightHandPos = {loc.pose.position.x, loc.pose.position.y, loc.pose.position.z};
+                fr.rightHandQuat = {loc.pose.orientation.x, loc.pose.orientation.y, loc.pose.orientation.z, loc.pose.orientation.w};
+                if (m_rightHandDbg < 5)
+                    std::fprintf(stderr, "xr: right-hand OK #%d pos=%.2f %.2f %.2f flags=%x\n", m_rightHandDbg, fr.rightHandPos.x,
+                                 fr.rightHandPos.y, fr.rightHandPos.z, (unsigned)loc.locationFlags);
+            } else if (m_rightHandDbg < 30) {
+                std::fprintf(stderr, "xr: right-hand miss #%d res=%d flags=%x (want %x)\n", m_rightHandDbg, (int)lr,
+                             (unsigned)loc.locationFlags, (unsigned)want);
+            }
+        }
+        // read the right-hand thumbstick (normalized -1..1) for locomotion
+        if (m_stickAction != XR_NULL_HANDLE && m_loader.xrGetActionStateVector2f) {
+            XrActionStateGetInfo si{};
+            si.type = XR_TYPE_ACTION_STATE_GET_INFO;
+            si.action = m_stickAction;
+            si.subactionPath = m_rightSubaction;
+            XrActionStateVector2f ss{};
+            ss.type = XR_TYPE_ACTION_STATE_VECTOR2F;
+            if (XR_SUCCEEDED(m_loader.xrGetActionStateVector2f(m_session, &si, &ss))) {
+                fr.haveRightStick = true;
+                fr.rightStickX = ss.currentState.x;
+                fr.rightStickY = ss.currentState.y;
+                if (m_rightHandDbg < 30 && (std::abs(ss.currentState.x) > 0.05f || std::abs(ss.currentState.y) > 0.05f))
+                    std::fprintf(stderr, "xr: stick #%d x=%.2f y=%.2f\n", m_rightHandDbg, ss.currentState.x, ss.currentState.y);
+            }
+        }
+        ++m_rightHandDbg;
+    }
     return fr;
 }
 
@@ -408,6 +575,10 @@ void Xr::shutdown() {
                 m_loader.xrDestroySwapchain(s.sc);
         if (m_refSpace != XR_NULL_HANDLE)
             m_loader.xrDestroySpace(m_refSpace);
+        if (m_rightHandSpace != XR_NULL_HANDLE)
+            m_loader.xrDestroySpace(m_rightHandSpace);
+        if (m_actionSet != XR_NULL_HANDLE)
+            m_loader.xrDestroyActionSet(m_actionSet);
         m_loader.xrDestroySession(m_session);
     }
     if (m_shadowInst != VK_NULL_HANDLE)

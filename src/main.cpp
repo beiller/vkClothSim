@@ -53,25 +53,6 @@ static void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, double& prevC
         pos = vAdd(pos, vScale(vNorm(mv), (app.keyIsDown(GLFW_KEY_LEFT_SHIFT) ? 6.0f : 2.0f) * dt));
 }
 
-// Hold F to move the user-controlled static body in world space (camera pauses while grabbed).
-static void moveStaticBodies(World& w, float dt, VkApp& app) {
-    V3 mv{0, 0, 0};
-    if (app.keyIsDown(GLFW_KEY_W)) mv = vAdd(mv, V3{0, 0, -1});
-    if (app.keyIsDown(GLFW_KEY_S)) mv = vAdd(mv, V3{0, 0, 1});
-    if (app.keyIsDown(GLFW_KEY_A)) mv = vAdd(mv, V3{-1, 0, 0});
-    if (app.keyIsDown(GLFW_KEY_D)) mv = vAdd(mv, V3{1, 0, 0});
-    if (app.keyIsDown(GLFW_KEY_E)) mv = vAdd(mv, V3{0, 1, 0});
-    if (app.keyIsDown(GLFW_KEY_Q)) mv = vAdd(mv, V3{0, -1, 0});
-    if (vLen(mv) <= 0.0f)
-        return;
-    const float speed = app.keyIsDown(GLFW_KEY_LEFT_SHIFT) ? 6.0f : 2.0f;
-    const V3 d = vScale(vNorm(mv), speed * dt);
-    for (auto [e, st, t] : w.reg.view<RigidStatic, Transform>().each()) {
-        (void)st;
-        t.pos = vAdd(t.pos, d);
-    }
-}
-
 int main(int argc, char** argv) {
     VkApp app;
     if (!app.initInstance(900, 900, "3dsim"))
@@ -193,33 +174,53 @@ int main(int argc, char** argv) {
         app.submit(simCmd);
 
         app.pollEvents();
-        const bool grabBody = app.keyIsDown(GLFW_KEY_F);
-        if (!vr && !grabBody)
+        if (!vr)
             applyMoveLook(dt, w.camera.position, w.camera.rotation, app, prevCX, prevCY);
-        if (grabBody)
-            moveStaticBodies(w, dt, app);
-        stepStaticRigid(w);
 #ifdef WITH_OPENXR
         const XrFrameData fr = vr ? w.xr.poll() : XrFrameData{};
         if (vr) {
             syncVrCamera(w, fr);
+            // the player rig (X/Y/Z anchor + 1.6 eye height) resolved via the parent system; the
+            // OpenXR pose (LOCAL ref space) is relative to session start, so the rig places it
             V3 rig{0, 0, 0};
-            if (w.vrCam != entt::null)
-                rig = w.reg.get<VrCamera>(w.vrCam).rigPos;
-            rig = vAdd(rig, V3{w.ui.vrRigOffset[0], w.ui.vrRigOffset[1], w.ui.vrRigOffset[2]});
+            V4 rigQuat{0, 0, 0, 1};
+            if (w.eyeRig != entt::null) {
+                const WorldTransform ewt = w.reg.get<WorldTransform>(w.eyeRig);
+                rig = ewt.pos;
+                rigQuat = ewt.quat;
+            }
+            const V3 rigOffset{w.ui.vrRigOffset[0], w.ui.vrRigOffset[1], w.ui.vrRigOffset[2]};
+            // the static body sticks to the right controller (both are in the local reference space)
+            if (fr.haveRightHand)
+                for (auto [e, st, t] : w.reg.view<RigidStatic, Transform>().each()) {
+                    t.pos = vAdd(fr.rightHandPos, rig);
+                    t.quat = fr.rightHandQuat;
+                }
+            // thumbstick locomotion: turn with left/right, walk forward/back relative to the rig's facing
+            if (fr.haveRightStick && w.playerRig != entt::null) {
+                constexpr float kMove = 2.0f; // m/s
+                constexpr float kTurn = 1.6f; // rad/s
+                Transform& rp = w.reg.get<Transform>(w.playerRig);
+                rp.quat = quatMul(quatAxisAngle(V3{0, 1, 0}, -fr.rightStickX * kTurn * dt), rp.quat);
+                const V3 fwd = quatRotate(rp.quat, V3{0, 0, -1}); // OpenXR forward is -Z
+                rp.pos = vAdd(rp.pos, vScale(fwd, fr.rightStickY * kMove * dt));
+            }
             XrEyeData eyes[2]{};
             int nEyes = 2;
             const bool sceneCamPose = w.ui.vrSceneCamPose;
             if (fr.havePose && fr.nEyes > 0 && !sceneCamPose) {
                 nEyes = fr.nEyes;
                 for (int i = 0; i < nEyes; ++i) {
+                    // composite the eye-rig world rotation (includes the player rig's yaw from
+                    // thumbstick turn) into each eye pose, else the view never rotates with the rig
                     eyes[i] = fr.eye[i];
-                    eyes[i].pos = vAdd(eyes[i].pos, rig);
+                    eyes[i].quat = quatMul(rigQuat, fr.eye[i].quat);
+                    eyes[i].pos = vAdd(vAdd(quatRotate(rigQuat, fr.eye[i].pos), rig), rigOffset);
                 }
             } else if (fr.havePose && fr.nEyes > 0) {
                 // debug: scene camera pose + headset FOV tangents (isolate projection vs pose)
                 nEyes = fr.nEyes;
-                const V3 head = vAdd(w.camera.position, rig);
+                const V3 head = vAdd(w.camera.position, rigOffset);
                 const V4 q = w.camera.rotation;
                 const float qf[4] = {q.x, q.y, q.z, q.w};
                 float rotm[9];
@@ -243,7 +244,7 @@ int main(int argc, char** argv) {
                 float rotm[9];
                 quatToMat3(qf, rotm);
                 const V3 right{rotm[0], rotm[1], rotm[2]};
-                const V3 head = vAdd(vh.pos, rig);
+                const V3 head = vAdd(vh.pos, rigOffset);
                 for (int i = 0; i < 2; ++i) {
                     eyes[i].pos = vAdd(head, vScale(right, i == 0 ? -0.032f : 0.032f));
                     eyes[i].quat = vh.quat;
@@ -258,6 +259,7 @@ int main(int argc, char** argv) {
             w.renderer.setVrEyes(eyes, nEyes);
         }
 #endif
+        stepStaticRigid(w);
         w.renderer.setViewProj(makeVP(app.extent()), w.camera.position);
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();

@@ -45,23 +45,43 @@ entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char
 }
 
 entt::entity spawnVrCamera(World& w, const char* name) {
-    entt::entity e = w.reg.create();
-    w.reg.emplace<Transform>(e, V3{0.0f, 1.6f, 3.0f}, V4{0.0f, 0.0f, 0.0f, 1.0f});
-    w.reg.emplace<VrCamera>(e);
-    w.reg.emplace<Name>(e, name);
-    return e;
+    // player rig: world X/Y/Z anchor the viewer stands at (translation-only; set back 5m)
+    const V3 kPlayerPos{0.0f, 0.0f, -5.0f};
+    // eye height above the rig (standing eye level)
+    const V3 kEyeHeight{0.0f, 1.6f, 0.0f};
+    entt::entity rig = w.reg.create();
+    w.reg.emplace<Transform>(rig, kPlayerPos, V4{0, 0, 0, 1});
+    w.reg.emplace<Name>(rig, "player rig");
+    entt::entity eye = w.reg.create();
+    w.reg.emplace<Transform>(eye, kEyeHeight, V4{0, 0, 0, 1});
+    w.reg.emplace<Parent>(eye, rig);
+    w.reg.emplace<Name>(eye, "eye height");
+    // head: tracks the OpenXR pose (position + rotation); the rig supplies the world placement
+    entt::entity head = w.reg.create();
+    w.reg.emplace<Transform>(head, V3{0, 0, 0}, V4{0, 0, 0, 1});
+    w.reg.emplace<Parent>(head, eye);
+    w.reg.emplace<VrCamera>(head);
+    w.reg.emplace<Name>(head, name);
+#ifdef WITH_OPENXR
+    w.playerRig = rig;
+    w.eyeRig = eye;
+    w.vrCam = head;
+#endif
+    return head;
 }
 
 #ifdef WITH_OPENXR
 void syncVrCamera(World& w, const XrFrameData& fr) {
-    for (auto [e, t, vr] : w.reg.view<Transform, VrCamera>().each()) {
+    // the head tracks the OpenXR pose (LOCAL ref space, relative to session start); the player
+    // X/Y/Z + eye height come from the parent rig, composed by resolveWorldTransforms
+    for (auto [e, t] : w.reg.view<Transform, VrCamera>().each()) {
         if (fr.havePose && fr.nEyes > 0) {
             const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
-            t.pos = vAdd(mid, vr.rigPos);
+            t.pos = mid;
             t.quat = fr.eye[0].quat;
         } else {
-            t.pos = vAdd(V3{0.0f, 1.6f, 3.0f}, vr.rigPos);
-            t.quat = V4{0.0f, 0.0f, 0.0f, 1.0f};
+            t.pos = V3{0, 0, 0};
+            t.quat = V4{0, 0, 0, 1};
         }
     }
 }
