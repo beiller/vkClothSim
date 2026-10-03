@@ -13,9 +13,16 @@ entt::entity spawnStaticBody(World& w, const RigidBody& body, int geom);
 entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, int pinned);
 entt::entity spawnStaticMesh(World& w, const Mesh& mesh, const Transform& t);
 entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char* name);
-entt::entity spawnVrCamera(World& w, const char* name);
-entt::entity spawnCamera(World& w, const V3& pos, const V4& quat, float fovDeg);
+// a plain camera entity (Transform + Camera). active = the window renders it; one by convention
+entt::entity spawnCamera(World& w, const V3& pos, const V4& quat, float fovDeg, bool active = true);
+// the active camera (entt::null if none)
+entt::entity findActiveCamera(const World& w);
+// compose an entity's Transform through its Parent chain (world space); valid before/after resolve
+Transform worldTransform(entt::registry& reg, entt::entity e);
 Mat4 cameraViewProj(World& w, entt::entity cam, float aspect);
+// player + eye-height rig under the head: the active camera is re-parented as the head and its
+// local pose becomes the headset pose (or the mouse/keyboard virtual head when no session runs)
+void spawnVrRig(World& w, entt::entity head);
 
 void stepPinHolds(World& w, float dt);
 void resetSofts(World& w);
@@ -31,9 +38,9 @@ void stepSoft(World& w, VkCommandBuffer cmd);
 // copy ECS transforms/materials/lights/env into the renderer; call before any render
 void syncSceneToRenderer(World& w);
 void draw(World& w, VkCommandBuffer cmd, uint32_t fb, const float bg[3], ImDrawData* imgui);
-// mouse/keyboard move/look on the camera entity (fly camera, or the virtual head when the XR
+// mouse/keyboard move/look on the active camera (fly camera, or the virtual head when the XR
 // session is not running); skipped while a headset pose is active
 void stepFlyCamera(World& w, float dt);
-// XR head pose -> VrCamera Transform; then synthesize the per-eye poses (headset pose + eye-rig
-// placement, or the camera entity with virtual lens FOVs) -> setVrEyes
+// headset pose -> active camera's local Transform; then synthesize the per-eye poses (headset
+// eyes + rig placement, or the active camera's world pose with virtual lens FOVs) -> setVrEyes
 void stepXr(World& w);

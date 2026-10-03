@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
     else
         createDemoWorld(w);
     if (w.xr) {
-        w.vrCam = spawnVrCamera(w, "vr camera");
+        spawnVrRig(w, findActiveCamera(w));
         if (w.xr->init(app)) {
             std::vector<std::vector<VkImage>> imgs(w.xr->eyeCount());
             VkExtent2D exts[2];
@@ -69,8 +69,9 @@ int main(int argc, char** argv) {
             std::printf(
                 "3dsim: no OpenXR session, using virtual head (LMB drag = look, WASD/QE = move, shift = fast)\n");
     }
-    auto makeVP = [&w](VkExtent2D ext) {
-        return cameraViewProj(w, w.cam, (float)ext.width / (float)ext.height);
+    const entt::entity cam = findActiveCamera(w);
+    auto makeVP = [cam, &w](VkExtent2D ext) {
+        return cameraViewProj(w, cam, (float)ext.width / (float)ext.height);
     };
 
     ImGui::CreateContext();
@@ -137,7 +138,7 @@ int main(int argc, char** argv) {
         app.submit(simCmd);
 
         stepStaticRigid(w);
-        w.renderer.setViewProj(makeVP(app.extent()), w.reg.get<Transform>(w.cam).pos);
+        w.renderer.setViewProj(makeVP(app.extent()), worldTransform(w.reg, cam).pos);
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();

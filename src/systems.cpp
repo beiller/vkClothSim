@@ -46,7 +46,7 @@ entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char
     return e;
 }
 
-entt::entity spawnVrCamera(World& w, const char* name) {
+void spawnVrRig(World& w, entt::entity head) {
     // player rig: world X/Y/Z anchor the viewer stands at (translation-only; set back 5m)
     const V3 kPlayerPos{0.0f, 0.0f, -5.0f};
     // eye height above the rig (standing eye level)
@@ -58,32 +58,47 @@ entt::entity spawnVrCamera(World& w, const char* name) {
     w.reg.emplace<Transform>(eye, kEyeHeight, V4{0, 0, 0, 1});
     w.reg.emplace<Parent>(eye, rig);
     w.reg.emplace<Name>(eye, "eye height");
-    // head: tracks the OpenXR pose (position + rotation); the rig supplies the world placement
-    entt::entity head = w.reg.create();
-    w.reg.emplace<Transform>(head, V3{0, 0, 0}, V4{0, 0, 0, 1});
-    w.reg.emplace<Parent>(head, eye);
-    w.reg.emplace<VrCamera>(head);
-    w.reg.emplace<Name>(head, name);
-    w.playerRig = rig;
-    w.eyeRig = eye;
-    w.vrCam = head;
-    return head;
+    // the active camera becomes the head: re-parent it under the eye so its pose is local
+    w.reg.emplace_or_replace<Parent>(head, eye);
+    w.reg.get<Transform>(head) = Transform{};
 }
 
-entt::entity spawnCamera(World& w, const V3& pos, const V4& quat, float fovDeg) {
+entt::entity spawnCamera(World& w, const V3& pos, const V4& quat, float fovDeg, bool active) {
     entt::entity e = w.reg.create();
     w.reg.emplace<Transform>(e, pos, quat);
     Camera c;
     c.fovDeg = fovDeg;
+    c.active = active;
     w.reg.emplace<Camera>(e, c);
-    w.cam = e;
     return e;
 }
 
+entt::entity findActiveCamera(const World& w) {
+    entt::entity cam = entt::null;
+    w.reg.view<Camera>().each([&](entt::entity e, const Camera& c) {
+        if (c.active)
+            cam = e;
+    });
+    return cam;
+}
+
+Transform worldTransform(entt::registry& reg, entt::entity e) {
+    Transform acc{};
+    bool have = false;
+    while (e != entt::null) {
+        const Transform& t = reg.get<Transform>(e);
+        acc = have ? transformCompose(t, acc) : t;
+        have = true;
+        const auto* p = reg.try_get<Parent>(e);
+        e = p ? p->e : entt::null;
+    }
+    return acc;
+}
+
 Mat4 cameraViewProj(World& w, entt::entity cam, float aspect) {
-    const Transform& t = w.reg.get<Transform>(cam);
+    const Transform wt = worldTransform(w.reg, cam);
     const Camera& c = w.reg.get<Camera>(cam);
-    return mul4(perspective(c.fovDeg, aspect, c.nearP, c.farP), viewFromPose(t.pos, t.quat));
+    return mul4(perspective(c.fovDeg, aspect, c.nearP, c.farP), viewFromPose(wt.pos, wt.quat));
 }
 
 static void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, double& prevCX, double& prevCY) {
@@ -123,39 +138,43 @@ static void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, double& prevC
 }
 
 void stepFlyCamera(World& w, float dt) {
-    // the camera entity is the fly camera, or the virtual head while the XR session is not running
+    // the active camera is the fly camera, or the virtual head while the XR session is not running
     if (w.xrFrame.havePose && w.xrFrame.nEyes > 0)
         return;
+    const entt::entity cam = findActiveCamera(w);
+    if (cam == entt::null)
+        return;
     static double prevCX = 0.0, prevCY = 0.0;
-    w.reg.view<Transform, Camera>().each(
-        [&](auto, auto& t, auto&) { applyMoveLook(dt, t.pos, t.quat, *w.app, prevCX, prevCY); });
+    Transform& t = w.reg.get<Transform>(cam);
+    applyMoveLook(dt, t.pos, t.quat, *w.app, prevCX, prevCY);
 }
 
 void stepXr(World& w) {
     const XrFrame& fr = w.xrFrame;
+    const entt::entity cam = findActiveCamera(w);
     XrEyeData eyes[2]{};
     int n = 2;
-    if (fr.havePose && fr.nEyes > 0) {
+    if (fr.havePose && fr.nEyes > 0 && cam != entt::null) {
         // head tracks the XR pose (LOCAL ref space, relative to session start)
         const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
-        for (auto [entity, t] : w.reg.view<Transform, VrCamera>().each()) {
-            t.pos = mid;
-            t.quat = fr.eye[0].quat;
-        }
-        // the player rig (X/Y/Z anchor + eye height) places the head in the scene
+        Transform& t = w.reg.get<Transform>(cam);
+        t.pos = mid;
+        t.quat = fr.eye[0].quat;
+        // the rig (player + eye) is the local-ref-space origin in world; translation-only
+        const auto* p = w.reg.try_get<Parent>(cam);
+        V3 anchor{0, 0, 0};
+        if (p)
+            anchor = worldTransform(w.reg, p->e).pos;
         n = fr.nEyes;
-        V3 rigPos{0, 0, 0};
-        if (w.eyeRig != entt::null)
-            rigPos = transformCompose(w.reg.get<Transform>(w.playerRig), w.reg.get<Transform>(w.eyeRig)).pos;
         for (int i = 0; i < n; ++i) {
             eyes[i] = fr.eye[i];
-            eyes[i].pos = vAdd(eyes[i].pos, rigPos);
+            eyes[i].pos = vAdd(eyes[i].pos, anchor);
         }
-    } else {
-        // no session: virtual head = the camera entity, with Quest 3 lens tangents
-        const Transform& t = w.reg.get<Transform>(w.cam);
-        const V3 head = t.pos;
-        const V4 q = t.quat;
+    } else if (cam != entt::null) {
+        // no session: virtual head = the active camera's world pose, with Quest 3 lens tangents
+        const Transform wt = worldTransform(w.reg, cam);
+        const V3 head = wt.pos;
+        const V4 q = wt.quat;
         const float qf[4] = {q.x, q.y, q.z, q.w};
         float rotm[9];
         quatToMat3(qf, rotm);

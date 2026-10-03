@@ -163,10 +163,13 @@ void drawDemoUi(World& w) {
     ImGui::SeparatorText("jolt iterations");
     ImGui::SliderInt("velocity", &w.ui.joltIters, 1, 64);
     ImGui::SeparatorText("camera");
-    Camera& cam = w.reg.get<Camera>(w.cam);
-    ImGui::SliderFloat("fov", &cam.fovDeg, 10.0f, 120.0f, "%.0f");
-    ImGui::SliderFloat("near", &cam.nearP, 0.01f, 5.0f, "%.3f");
-    ImGui::SliderFloat("far", &cam.farP, 10.0f, 1000.0f, "%.0f");
+    entt::entity cam = findActiveCamera(w);
+    if (cam != entt::null) {
+        Camera& c = w.reg.get<Camera>(cam);
+        ImGui::SliderFloat("fov", &c.fovDeg, 10.0f, 120.0f, "%.0f");
+        ImGui::SliderFloat("near", &c.nearP, 0.01f, 5.0f, "%.3f");
+        ImGui::SliderFloat("far", &c.farP, 10.0f, 1000.0f, "%.0f");
+    }
     drawToneSection(w);
     drawLightSection(w);
     ImGui::SeparatorText("materials");
@@ -205,7 +208,8 @@ void drawDemoUi(World& w) {
 } // namespace
 
 void createDemoWorld(World& w) {
-    w.cam = spawnCamera(w, V3{0.0f, 9.0f, 14.0f}, quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2f(6.0f, 14.0f)), 50.0f);
+    const entt::entity cam =
+        spawnCamera(w, V3{0.0f, 9.0f, 14.0f}, quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2f(6.0f, 14.0f)), 50.0f);
     w.drawUi = drawDemoUi;
     spawnLight(w, V3{0.0f, 12.0f, 0.0f}, PointLight{V3{1.0f, 0.95f, 0.90f}, 120.0f, 0.5f, 1.0f, 0.01f, 30.0f},
                "key light");
@@ -216,7 +220,7 @@ void createDemoWorld(World& w) {
     w.rigid.init();
     w.sim.init(w.app->device(), w.app->pdev());
     w.renderer.init(*w.app, kNCapsules + kNSoftBodies + 1 + kNStaticBodies,
-                    cameraViewProj(w, w.cam, (float)ext.width / (float)ext.height));
+                    cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
 
     const entt::entity ground = spawnStaticMesh(w, makeGroundMesh(55.0f), Transform{});
     w.reg.emplace<Name>(ground, "ground");

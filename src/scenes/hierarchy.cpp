@@ -44,7 +44,8 @@ void drawHierarchyUi(World& w) {
 } // namespace
 
 void createHierarchyWorld(World& w) {
-    w.cam = spawnCamera(w, V3{0.0f, 4.5f, 15.0f}, quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2(1.5f, 15.0f)), 50.0f);
+    const entt::entity cam =
+        spawnCamera(w, V3{0.0f, 4.5f, 15.0f}, quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2(1.5f, 15.0f)), 50.0f);
     w.drawUi = drawHierarchyUi;
     spawnLight(w, V3{7.0f, 12.0f, 5.0f}, PointLight{V3{1.0f, 0.97f, 0.92f}, 200.0f, 0.6f, 1.0f}, "sun");
     w.ui.envIntensity = 0.0f;
@@ -53,7 +54,7 @@ void createHierarchyWorld(World& w) {
     w.rigid.init();
     w.sim.init(w.app->device(), w.app->pdev());
     // ~100 branches; the exact count is fixed by the branching below
-    w.renderer.init(*w.app, 140, cameraViewProj(w, w.cam, (float)ext.width / (float)ext.height));
+    w.renderer.init(*w.app, 140, cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
 
     const entt::entity ground = spawnStaticMesh(w, makeGroundMesh(28.0f), Transform{});
     w.reg.emplace<Name>(ground, "ground");

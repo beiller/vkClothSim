@@ -25,10 +25,6 @@ struct World {
     Renderer renderer;
     std::unique_ptr<IXrBackend> xr;
     XrFrame xrFrame;
-    entt::entity cam = entt::null;       // fly camera (Transform + Camera component)
-    entt::entity vrCam = entt::null;     // head (VrCamera): tracks the XR head pose
-    entt::entity playerRig = entt::null; // X/Y/Z player anchor (translation-only)
-    entt::entity eyeRig = entt::null;    // eye-height empty (child of playerRig)
     UIState ui;
     std::function<void(World&)> drawUi;
 };

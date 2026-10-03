@@ -28,7 +28,9 @@ void drawShadowUi(World& w) {
         ImGui::PopID();
     }
     ImGui::SeparatorText("camera");
-    ImGui::SliderFloat("fov", &w.reg.get<Camera>(w.cam).fovDeg, 10.0f, 120.0f, "%.0f");
+    entt::entity cam = findActiveCamera(w);
+    if (cam != entt::null)
+        ImGui::SliderFloat("fov", &w.reg.get<Camera>(cam).fovDeg, 10.0f, 120.0f, "%.0f");
     drawToneSection(w);
     drawLightSection(w);
     ImGui::End();
@@ -37,7 +39,8 @@ void drawShadowUi(World& w) {
 } // namespace
 
 void createShadowTestWorld(World& w) {
-    w.cam = spawnCamera(w, V3{0.0f, 4.0f, 11.0f}, quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2f(2.0f, 11.0f)), 50.0f);
+    const entt::entity cam =
+        spawnCamera(w, V3{0.0f, 4.0f, 11.0f}, quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2f(2.0f, 11.0f)), 50.0f);
     w.drawUi = drawShadowUi;
     spawnLight(w, V3{5.0f, 7.0f, 3.0f}, PointLight{V3{1.0f, 0.97f, 0.92f}, 300.0f, 0.5f, 1.0f}, "key light");
     spawnLight(w, V3{-6.0f, 5.0f, -3.0f}, PointLight{V3{0.35f, 0.55f, 1.0f}, 180.0f, 0.4f, 1.0f}, "cool fill");
@@ -48,7 +51,7 @@ void createShadowTestWorld(World& w) {
     const VkExtent2D ext = w.app->extent();
     w.rigid.init();
     w.sim.init(w.app->device(), w.app->pdev());
-    w.renderer.init(*w.app, 2, cameraViewProj(w, w.cam, (float)ext.width / (float)ext.height));
+    w.renderer.init(*w.app, 2, cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
 
     const entt::entity ground = spawnStaticMesh(w, makeGroundMesh(40.0f), Transform{});
     w.reg.emplace<Name>(ground, "ground");

@@ -83,11 +83,13 @@ struct SoftBodyData {
     int steps = kDefaultSteps;
 };
 
-// viewer camera: pose lives in the entity's Transform, projection params here
+// camera: pose lives in the entity's Transform, projection params here; active = the window
+// renders it (exactly one by convention). The active camera doubles as the viewer's head in VR.
 struct Camera {
     float fovDeg = 50.0f;
     float nearP = 0.1f;
     float farP = 300.0f;
+    bool active = false;
 };
 
 struct Renderable {
@@ -109,6 +111,3 @@ struct PinHold {
     float holdTime;
     float time = 0.0f;
 };
-
-// marks the VR head entity (child of the eye-height rig); its Transform is driven by the OpenXR pose
-struct VrCamera {};
