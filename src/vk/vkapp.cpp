@@ -41,7 +41,8 @@ bool VkApp::initInstance(int width, int height, const char* title) {
     std::vector<VkExtensionProperties> iexts(ne);
     if (ne > 0)
         vkEnumerateInstanceExtensionProperties(nullptr, &ne, iexts.data());
-    const char* want[] = {"VK_KHR_external_memory_capabilities", "VK_KHR_external_semaphore_capabilities"};
+    const char* want[] = {"VK_KHR_external_memory_capabilities", "VK_KHR_external_semaphore_capabilities",
+                          "VK_KHR_portability_enumeration"};
     for (const char* w : want)
         if (std::any_of(iexts.begin(), iexts.end(),
                         [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
@@ -62,6 +63,7 @@ bool VkApp::initInstance(int width, int height, const char* title) {
     app.apiVersion = VK_API_VERSION_1_1;
     VkInstanceCreateInfo ic{};
     ic.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    ic.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR; // needed to see MoltenVK (macOS) portability driver
     ic.pApplicationInfo = &app;
     ic.enabledExtensionCount = (uint32_t)exts.size();
     ic.ppEnabledExtensionNames = exts.data();
@@ -101,16 +103,29 @@ bool VkApp::initInstance(int width, int height, const char* title) {
         return false;
     }
 
-    // queue + extensions, shared by makeDevice() (plain) and xrCreateVulkanDeviceKHR (OpenXR)
+    // queue + extensions
     m_qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     m_qci.queueFamilyIndex = m_qf;
     m_qci.queueCount = 1;
     m_qci.pQueuePriorities = &m_qprio;
+
+    // only enable device extensions the driver actually supports (*_fd is Linux-only)
+    uint32_t nde = 0;
+    vkEnumerateDeviceExtensionProperties(m_pdev, nullptr, &nde, nullptr);
+    std::vector<VkExtensionProperties> deexts(nde);
+    if (nde > 0)
+        vkEnumerateDeviceExtensionProperties(m_pdev, nullptr, &nde, deexts.data());
+    const char* dewant[] = {"VK_KHR_swapchain", "VK_KHR_external_memory_fd", "VK_KHR_external_semaphore_fd"};
+    for (const char* w : dewant)
+        if (std::any_of(deexts.begin(), deexts.end(),
+                        [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
+            m_devExt.push_back(w);
+
     m_dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     m_dci.queueCreateInfoCount = 1;
     m_dci.pQueueCreateInfos = &m_qci;
-    m_dci.enabledExtensionCount = 3;
-    m_dci.ppEnabledExtensionNames = m_devExt;
+    m_dci.enabledExtensionCount = (uint32_t)m_devExt.size();
+    m_dci.ppEnabledExtensionNames = m_devExt.data();
     return true;
 }
 

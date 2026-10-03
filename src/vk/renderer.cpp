@@ -460,7 +460,51 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     m_envCubeSize = cubeSize;
     m_envMips = mips;
 
-    vkMakeImage2DF32(m_dev, m_pdev, w, h, rgb, m_envEq.img, m_envEq.mem, m_envEq.view);
+    // equirect HDR: upload via staging buffer. Metal rejects linear tiling for 16/32-bit float
+    // and does not support R32G32B32_SFLOAT at all, so repack RGB->RGBA and use
+    // R32G32B32A32_SFLOAT in a device-local (optimal) image copied in on the GPU.
+    const VkFormat eqFmt = VK_FORMAT_R32G32B32A32_SFLOAT;
+    const size_t eqPixels = (size_t)w * h;
+    std::vector<float> eqRgba(eqPixels * 4);
+    for (size_t i = 0; i < eqPixels; ++i) {
+        eqRgba[i * 4 + 0] = rgb[i * 3 + 0];
+        eqRgba[i * 4 + 1] = rgb[i * 3 + 1];
+        eqRgba[i * 4 + 2] = rgb[i * 3 + 2];
+        eqRgba[i * 4 + 3] = 1.0f;
+    }
+    const VkDeviceSize eqBytes = eqPixels * 16;
+    VkBuffer eqStg = VK_NULL_HANDLE;
+    VkDeviceMemory eqStgMem = VK_NULL_HANDLE;
+    vkMakeBuffer(m_dev, m_pdev, eqStg, eqStgMem, eqBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, eqRgba.data());
+
+    VkImageCreateInfo eci{};
+    eci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    eci.imageType = VK_IMAGE_TYPE_2D;
+    eci.format = eqFmt;
+    eci.extent = {w, h, 1};
+    eci.mipLevels = 1;
+    eci.arrayLayers = 1;
+    eci.samples = VK_SAMPLE_COUNT_1_BIT;
+    eci.tiling = VK_IMAGE_TILING_OPTIMAL;
+    eci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    eci.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VK(vkCreateImage(m_dev, &eci, nullptr, &m_envEq.img));
+    VkMemoryRequirements emr;
+    vkGetImageMemoryRequirements(m_dev, m_envEq.img, &emr);
+    VkMemoryAllocateInfo emaa{};
+    emaa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    emaa.allocationSize = emr.size;
+    emaa.memoryTypeIndex = vkFindMemoryType(m_pdev, emr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK(vkAllocateMemory(m_dev, &emaa, nullptr, &m_envEq.mem));
+    VK(vkBindImageMemory(m_dev, m_envEq.img, m_envEq.mem, 0));
+    VkImageViewCreateInfo evci{};
+    evci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    evci.image = m_envEq.img;
+    evci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    evci.format = eqFmt;
+    evci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VK(vkCreateImageView(m_dev, &evci, nullptr, &m_envEq.view));
+
     vkMakeCubeImage(m_dev, m_pdev, cubeSize, mips, m_envPre.img, m_envPre.mem, m_envPre.view);
     vkMakeCubeImage(m_dev, m_pdev, cubeSize, 1, m_envIrr.img, m_envIrr.mem, m_envIrr.view);
     m_envPreMips.resize(mips);
@@ -509,6 +553,28 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     writeImg(m_pcIrr.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, irrImg);
 
     VkCommandBuffer cmd = app.beginCommands();
+
+    VkBufferImageCopy bic{};
+    bic.bufferOffset = 0;
+    bic.bufferRowLength = w;
+    bic.bufferImageHeight = h;
+    bic.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    bic.imageOffset = {0, 0, 0};
+    bic.imageExtent = {w, h, 1};
+    vkCmdCopyBufferToImage(cmd, eqStg, m_envEq.img, VK_IMAGE_LAYOUT_GENERAL, 1, &bic);
+    VkImageMemoryBarrier eqBar{};
+    eqBar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    eqBar.image = m_envEq.img;
+    eqBar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    eqBar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    eqBar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    eqBar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    eqBar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    eqBar.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    eqBar.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr,
+                         0, nullptr, 1, &eqBar);
+
     auto imgBar = [&](VkImage img, uint32_t lvl) {
         VkImageMemoryBarrier b{};
         b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -557,6 +623,7 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     vkCmdDispatch(cmd, groups, groups, 6);
     imgBar(m_envIrr.img, 1);
     app.submit(cmd);
+    vkFreeBuffer(m_dev, eqStg, eqStgMem);
 
     m_envReady = true;
     for (auto& inst : m_insts)

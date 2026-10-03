@@ -6,13 +6,14 @@
 #
 #   lib      repo                                  ref             version
 #   ------   ------------------------------------  --------------  -------------
-#   entt     github.com/skypj/entt                 v4.0.0          4.0.0
+#   entt     github.com/skypjack/entt                 v4.0.0          4.0.0
 #   glfw     github.com/glfw/glfw                  3.4             3.4.0
 #   imgui    github.com/ocornut/imgui              v1.92.9         1.92.9
 #   jolt     github.com/jrouwe/JoltPhysics         v5.6.0          5.6.0
-#   openxr   github.com/KhronosGroup/OpenXR-SDK    openxr-1.1.63   XR 1.1.63
-#   stb      github.com/nothings/stb               v2.30           stb_image 2.30
+#   openxr   github.com/KhronosGroup/OpenXR-SDK    release-1.1.63  XR 1.1.63
+#   stb      github.com/nothings/stb               013ac3b         stb_image 2.30
 #   tinyexr  github.com/syoyo/tinyexr              v1.0.3          1.0.x
+#   miniz    github.com/syoyo/tinyexr (deps/miniz) v1.0.3          miniz 2.x
 #
 # A bad ref fails the clone loudly (see the tag list it prints). If a tag has
 # moved, bump the REF in the calls at the bottom.
@@ -62,7 +63,15 @@ fetch_files() { # dir repo ref src...
         return
     fi
     tmp=$(mktemp -d)
-    clone_at "$repo" "$ref" "$tmp"
+    if ! git clone --quiet "$repo" "$tmp"; then
+        echo "error: could not clone $repo" >&2
+        exit 1
+    fi
+    if ! git -C "$tmp" checkout --quiet "$ref" 2>/dev/null; then
+        echo "error: $repo has no ref/commit '$ref'" >&2
+        rm -rf "$tmp"
+        exit 1
+    fi
     rm -rf "$target"
     mkdir -p "$target"
     for f in "$@"; do
@@ -72,14 +81,15 @@ fetch_files() { # dir repo ref src...
 }
 
 echo "fetching third-party libs (force=$FORCE)"
-fetch_full entt https://github.com/skypj/entt v4.0.0
+fetch_full entt https://github.com/skypjack/entt v4.0.0
 fetch_full glfw https://github.com/glfw/glfw 3.4
 fetch_full imgui https://github.com/ocornut/imgui v1.92.9
 fetch_full jolt https://github.com/jrouwe/JoltPhysics v5.6.0
-fetch_files openxr https://github.com/KhronosGroup/OpenXR-SDK openxr-1.1.63 \
+fetch_files openxr https://github.com/KhronosGroup/OpenXR-SDK release-1.1.63 \
     include/openxr/openxr.h include/openxr/openxr_platform_defines.h
-fetch_files stb https://github.com/nothings/stb v2.30 stb_image.h
+fetch_files stb https://github.com/nothings/stb 013ac3beddff3dbffafd5177e7972067cd2b5083 stb_image.h
 fetch_files tinyexr https://github.com/syoyo/tinyexr v1.0.3 tinyexr.h tinyexr.cc
+fetch_files miniz https://github.com/syoyo/tinyexr v1.0.3 deps/miniz/miniz.h deps/miniz/miniz.c
 
 # sanity: each lib's key file is present and non-empty
 for f in \
@@ -91,7 +101,8 @@ for f in \
     lib/openxr/openxr_platform_defines.h \
     lib/stb/stb_image.h \
     lib/tinyexr/tinyexr.h \
-    lib/tinyexr/tinyexr.cc
+    lib/tinyexr/tinyexr.cc \
+    lib/miniz/miniz.h
 do
     [ -s "$f" ] || { echo "error: $f missing/empty" >&2; exit 1; }
 done

@@ -5,15 +5,27 @@
 #include "tinyexr.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 
 std::string exeDir() {
     char buf[4096];
-    const ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n <= 0)
+    size_t n = 0;
+#if defined(__APPLE__)
+    uint32_t sz = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) != 0)
+        return "";
+    n = strlen(buf);
+#else
+    n = (size_t)readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n == 0)
         return "";
     buf[n] = '\0';
-    std::string p(buf);
+#endif
+    std::string p(buf, n);
     const size_t slash = p.find_last_of('/');
     return slash == std::string::npos ? "" : p.substr(0, slash);
 }

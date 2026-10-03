@@ -61,7 +61,7 @@ private:
     uint32_t m_qf = 0;
     float m_qprio = 1.0f;
     VkDeviceQueueCreateInfo m_qci{};
-    const char* m_devExt[3] = {"VK_KHR_swapchain", "VK_KHR_external_memory_fd", "VK_KHR_external_semaphore_fd"};
+    std::vector<const char*> m_devExt;
     VkDeviceCreateInfo m_dci{};
     VkSwapchainKHR m_sc = VK_NULL_HANDLE;
     std::vector<VkImage> m_images;

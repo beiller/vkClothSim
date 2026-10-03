@@ -11,18 +11,34 @@ set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+find_library(VULKAN_LOADER_PATH NAMES vulkan.1 vulkan)
 add_subdirectory(lib/glfw)
+# GLFW dlopen()s the loader itself for glfwCreateWindowSurface; on macOS the bare
+# name (libvulkan.1.dylib) isn't resolvable, so point it at the loader's absolute path.
+if(VULKAN_LOADER_PATH AND TARGET glfw)
+    target_compile_definitions(glfw PRIVATE _GLFW_VULKAN_LIBRARY="${VULKAN_LOADER_PATH}")
+endif()
 
 find_package(Vulkan REQUIRED)
 find_package(ZLIB REQUIRED)
-find_program(GLSLC glslc REQUIRED)
 find_program(XXD xxd REQUIRED)
+find_program(GLSLC NAMES glslc)
+find_program(SPIRVGLS NAMES glslangValidator)
+if(GLSLC)
+    set(GLSLC_BIN ${GLSLC})
+    set(GLSLC_ARGS -O)
+elseif(SPIRVGLS)
+    set(GLSLC_BIN ${SPIRVGLS})
+    set(GLSLC_ARGS -V -O)
+else()
+    message(FATAL_ERROR "neither glslc nor glslangValidator found")
+endif()
 
 set(GEN_DIR ${CMAKE_BINARY_DIR}/gen)
 file(MAKE_DIRECTORY ${GEN_DIR})
 
 function(spirv base file)
-    execute_process(COMMAND ${GLSLC} ${file} -o ${GEN_DIR}/${base}.spv RESULT_VARIABLE _r)
+    execute_process(COMMAND ${GLSLC_BIN} ${GLSLC_ARGS} ${file} -o ${GEN_DIR}/${base}.spv RESULT_VARIABLE _r)
     if(NOT _r EQUAL 0)
         message(FATAL_ERROR "glslc failed for ${base}")
     endif()
@@ -78,6 +94,7 @@ add_executable(vksim
     src/vk/vkapp.cpp
     src/vk/renderer.cpp
     ${CMAKE_SOURCE_DIR}/lib/tinyexr/tinyexr.cc
+    ${CMAKE_SOURCE_DIR}/lib/miniz/miniz.c
     ${XR_SOURCES}
     ${IMGUI_SOURCES})
 target_link_libraries(vksim PRIVATE glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB dl)
@@ -89,6 +106,7 @@ target_include_directories(vksim PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/entt/single_include
     ${CMAKE_SOURCE_DIR}/lib/stb
     ${CMAKE_SOURCE_DIR}/lib/tinyexr
+    ${CMAKE_SOURCE_DIR}/lib/miniz
     ${XR_INCLUDES}
     ${CMAKE_SOURCE_DIR}/src)
 

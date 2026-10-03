@@ -6,6 +6,10 @@ inline constexpr float kPi = std::numbers::pi_v<float>;
 inline constexpr float kSqrt2 = std::numbers::sqrt2_v<float>;
 inline constexpr float kFrameDt = 1.0f / 60.0f;
 
+struct V2 {
+    float x = 0.0f, y = 0.0f;
+};
+
 struct V3 {
     float x, y, z;
 };
