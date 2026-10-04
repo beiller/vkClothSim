@@ -111,3 +111,72 @@ struct PinHold {
     float holdTime;
     float time = 0.0f;
 };
+
+// ---- UI: windows and widgets are entities. A widget is a child (Parent) of its window or
+// section, drawn inside it by drawUi in spawn order. UI entities carry no Transform.
+
+struct UIWindow {
+    std::string title;
+    std::function<V2()> pos; // fn so e.g. the fps HUD can track the window size
+    V2 size{}; // zero = no forced size
+    int flags = 0;
+    bool collapseOnAppear = false;
+    std::function<bool()> visible; // null = always visible
+    int order = 0;
+};
+
+// marker on every widget entity; order drives draw order
+struct UIWidget {
+    int order = 0;
+};
+
+// value bindings yield a pointer to the edited state; the lambda lives in the widget
+
+struct UISliderF {
+    std::string label;
+    float lo, hi;
+    const char* fmt = "%.2f";
+    std::function<float*()> value;
+};
+
+struct UISliderI {
+    std::string label;
+    int lo, hi;
+    std::function<int*()> value;
+};
+
+struct UICheckbox {
+    std::string label;
+    std::function<bool*()> value;
+};
+
+struct UIColorEdit {
+    std::string label;
+    std::function<float*()> value;
+};
+
+struct UIDragV3 {
+    std::string label;
+    float speed = 0.1f;
+    std::function<float*()> value;
+};
+
+struct UIText {
+    std::string label; // static text; per-frame text() overrides when set
+    std::function<std::string()> text;
+};
+
+struct UIButton {
+    std::string label;
+    std::function<void()> on;
+};
+
+struct UISection {
+    std::string label;
+    bool collapsible = false; // false = SeparatorText, true = CollapsingHeader; children are the body
+};
+
+// this Material mirrors leader's every frame (same-named materials, edited through the leader)
+struct MaterialGroup {
+    entt::entity leader;
+};

@@ -26,8 +26,9 @@ public:
     JPH::BodyID addStaticBody(const RigidBody& body);
     void setStaticPose(JPH::BodyID id, const Transform& t);
     void step();
-    void setVelocitySteps(int n);
     Transform pose(JPH::BodyID id) const;
+
+    int velocitySteps = 10; // applied in step(); the UI slider binds to it
 
 private:
     JPH::PhysicsSettings m_settings;

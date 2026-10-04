@@ -83,7 +83,7 @@ void SoftSim::build() {
     if (maxSets == 0)
         maxSets = 1;
     vkMakeDslPool(m_dev, binds, maxSets, m_softDsl, m_softPool);
-    m_softPl = vkMakePipelineLayout(m_dev, m_softDsl);
+    m_softPl = vkMakePipelineLayoutPC(m_dev, m_softDsl, VK_SHADER_STAGE_COMPUTE_BIT, 16);
     VkShaderModule cm = vkMakeModule(m_dev, softbody_spv, softbody_spv_len / 4);
     VkPipelineShaderStageCreateInfo cs{};
     cs.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;

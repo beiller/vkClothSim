@@ -11,33 +11,27 @@
 
 namespace {
 
-void drawHdriUi(World& w) {
-    ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(320, 680), ImGuiCond_Always);
-    ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
-    ImGui::Begin("hdri");
-    for (auto [entity, mat] : w.reg.view<Material>().each()) {
-        const auto* name = w.reg.try_get<Name>(entity);
-        if (!name || name->id != "sphere")
-            continue;
-        ImGui::ColorEdit3("base color", &mat.baseColor.x);
-        ImGui::SliderFloat("metallic", &mat.metallic, 0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("roughness", &mat.roughness, 0.0f, 1.0f, "%.2f");
+void buildHdriUi(World& w, entt::entity sphere) {
+    entt::entity win =
+        spawnUiWindow(w, UIWindow{"hdri", [] { return V2{20.0f, 20.0f}; }, V2{320.0f, 680.0f}, 0, true});
+    Material& m = w.reg.get<Material>(sphere);
+    spawnWidget(w, win, UIColorEdit{"base color", [&m] { return &m.baseColor.x; }});
+    spawnWidget(w, win, UISliderF{"metallic", 0.0f, 1.0f, "%.2f", [&m] { return &m.metallic; }});
+    spawnWidget(w, win, UISliderF{"roughness", 0.0f, 1.0f, "%.2f", [&m] { return &m.roughness; }});
+    entt::entity camSec = spawnWidget(w, win, UISection{"camera", false});
+    const entt::entity cam = findActiveCamera(w);
+    if (cam != entt::null) {
+        Camera& c = w.reg.get<Camera>(cam);
+        spawnWidget(w, camSec, UISliderF{"fov", 10.0f, 120.0f, "%.0f", [&c] { return &c.fovDeg; }});
     }
-    ImGui::SeparatorText("camera");
-    entt::entity cam = findActiveCamera(w);
-    if (cam != entt::null)
-        ImGui::SliderFloat("fov", &w.reg.get<Camera>(cam).fovDeg, 10.0f, 120.0f, "%.0f");
-    drawToneSection(w);
-    drawLightSection(w);
-    ImGui::End();
+    spawnToneSection(w, win);
+    spawnLightSection(w, win);
 }
 
 } // namespace
 
 void createHdriWorld(World& w) {
     const entt::entity cam = spawnCamera(w, V3{0.0f, 0.0f, 6.0f}, V4{0.0f, 0.0f, 0.0f, 1.0f}, 50.0f);
-    w.drawUi = drawHdriUi;
     spawnLight(w, V3{2.0f, 2.0f, 3.0f}, PointLight{V3{1.0f, 1.0f, 1.0f}, 20.0f, 0.15f, 1.0f}, "light");
 
     const VkExtent2D ext = w.app->extent();
@@ -53,4 +47,5 @@ void createHdriWorld(World& w) {
     w.sim.build();
 
     applyEnvHdr(w);
+    buildHdriUi(w, sphere);
 }

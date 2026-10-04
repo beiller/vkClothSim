@@ -720,7 +720,7 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd) {
         float viewProj[16];
         float lightPosBias[4];
     };
-    VkViewport vp{0.0f, (float)m_shadowSize, (float)m_shadowSize, -(float)m_shadowSize, 0.0f, 1.0f};
+    VkViewport vp{0.0f, 0.0f, (float)m_shadowSize, (float)m_shadowSize, 0.0f, 1.0f};
     VkRect2D sc{0, 0, m_shadowSize, m_shadowSize};
 
     for (uint32_t i = 0; i < n; ++i) {
@@ -791,64 +791,6 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd) {
     imb.newLayout = VK_IMAGE_LAYOUT_GENERAL;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
                          0, nullptr, 0, nullptr, 1, &imb);
-}
-
-static void writePgm(const char* path, uint32_t w, uint32_t h, const float* dist, float far) {
-    std::vector<unsigned char> px((size_t)w * h);
-    float mn = 1e30f, mx = -1e30f;
-    for (size_t i = 0; i < (size_t)w * h; ++i) {
-        mn = std::min(mn, dist[i]);
-        mx = std::max(mx, dist[i]);
-        const float t = std::clamp(dist[i] / far, 0.0f, 1.0f);
-        px[i] = (unsigned char)(255.0f * (1.0f - t)); // near light -> bright, background -> dark
-    }
-    FILE* fp = std::fopen(path, "wb");
-    if (!fp) {
-        std::fprintf(stderr, "shadow dump: cannot open %s\n", path);
-        return;
-    }
-    std::fprintf(fp, "P5\n%u %u\n255\n", w, h);
-    std::fwrite(px.data(), 1, px.size(), fp);
-    std::fclose(fp);
-    std::printf("  %s  dist[min=%.2f max=%.2f]\n", path, mn, mx);
-}
-
-void Renderer::dumpShadowMap(VkApp& app, const char* prefix) {
-    const uint32_t S = m_shadowSize;
-    const uint32_t faceBytes = S * S * 4;
-    const VkDeviceSize totalBytes = (VkDeviceSize)faceBytes * 6;
-    VkBuffer staging;
-    VkDeviceMemory stagingMem;
-    vkMakeBuffer(m_dev, m_pdev, staging, stagingMem, totalBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, nullptr);
-
-    VkCommandBuffer cmd = app.beginCommands();
-    VkBufferImageCopy region{};
-    region.bufferRowLength = 0;
-    region.bufferImageHeight = S;
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.mipLevel = 0;
-    region.imageSubresource.layerCount = 1;
-    region.imageOffset = {0, 0, 0};
-    region.imageExtent = {S, S, 1};
-    for (uint32_t f = 0; f < 6; ++f) {
-        region.bufferOffset = (VkDeviceSize)f * faceBytes;
-        region.imageSubresource.baseArrayLayer = f;
-        vkCmdCopyImageToBuffer(cmd, m_shadowCube, VK_IMAGE_LAYOUT_GENERAL, staging, 1, &region);
-    }
-    app.submit(cmd);
-
-    float* data;
-    VK(vkMapMemory(m_dev, stagingMem, 0, totalBytes, 0, (void**)&data));
-    const float lightFar = m_lights.empty() ? 0.0f : m_lights.front().p.shadowFar;
-    const float far = lightFar > 0.01f ? lightFar : m_shadowRange;
-    char path[512];
-    for (uint32_t f = 0; f < 6; ++f) {
-        std::snprintf(path, sizeof(path), "%s_face%u.pgm", prefix, f);
-        writePgm(path, S, S, data + (size_t)f * S * S, far);
-    }
-    vkUnmapMemory(m_dev, stagingMem);
-    vkFreeBuffer(m_dev, staging, stagingMem);
-    std::printf("shadow map dumped -> %s_face[0..5].pgm (far=%.1f)\n", prefix, far);
 }
 
 void Renderer::drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const InstancedMesh& inst) {

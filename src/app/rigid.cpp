@@ -75,12 +75,9 @@ void RigidScene::setStaticPose(JPH::BodyID id, const Transform& t) {
 }
 
 void RigidScene::step() {
-    m_phys->Update(kFrameDt, 1, m_temp, m_job);
-}
-
-void RigidScene::setVelocitySteps(int n) {
-    m_settings.mNumVelocitySteps = (unsigned)n;
+    m_settings.mNumVelocitySteps = (unsigned)velocitySteps;
     m_phys->SetPhysicsSettings(m_settings);
+    m_phys->Update(kFrameDt, 1, m_temp, m_job);
 }
 
 Transform RigidScene::pose(JPH::BodyID id) const {

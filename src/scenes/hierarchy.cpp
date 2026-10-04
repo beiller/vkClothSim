@@ -28,17 +28,14 @@ const V3 kDepthColor[6] = {
     {0.45f, 0.62f, 0.30f}, // 5 foliage
 };
 
-void drawHierarchyUi(World& w) {
-    ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(340, 400), ImGuiCond_Always);
-    ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
-    ImGui::Begin("hierarchy");
-    ImGui::TextDisabled("fractal tree, depth 0-%d (trunk -> canopy)", kMaxDepth);
-    ImGui::TextDisabled("each generation bends outward; capsules taper and");
-    ImGui::TextDisabled("point along their branch; sways in a sin-wave breeze");
-    drawToneSection(w);
-    drawLightSection(w);
-    ImGui::End();
+void buildHierarchyUi(World& w) {
+    entt::entity win =
+        spawnUiWindow(w, UIWindow{"hierarchy", [] { return V2{20.0f, 20.0f}; }, V2{340.0f, 400.0f}, 0, true});
+    spawnWidget(w, win, UIText{"fractal tree, depth 0-5 (trunk -> canopy)"});
+    spawnWidget(w, win, UIText{"each generation bends outward; capsules taper and"});
+    spawnWidget(w, win, UIText{"point along their branch; sways in a sin-wave breeze"});
+    spawnToneSection(w, win);
+    spawnLightSection(w, win);
 }
 
 } // namespace
@@ -46,9 +43,8 @@ void drawHierarchyUi(World& w) {
 void createHierarchyWorld(World& w) {
     const entt::entity cam =
         spawnCamera(w, V3{0.0f, 4.5f, 15.0f}, quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2(1.5f, 15.0f)), 50.0f);
-    w.drawUi = drawHierarchyUi;
     spawnLight(w, V3{7.0f, 12.0f, 5.0f}, PointLight{V3{1.0f, 0.97f, 0.92f}, 200.0f, 0.6f, 1.0f}, "sun");
-    w.ui.envIntensity = 0.0f;
+    w.render.envIntensity = 0.0f;
 
     const VkExtent2D ext = w.app->extent();
     w.rigid.init();
@@ -143,4 +139,5 @@ void createHierarchyWorld(World& w) {
 
     w.sim.build();
     applyEnvHdr(w);
+    buildHierarchyUi(w);
 }

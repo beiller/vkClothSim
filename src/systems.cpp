@@ -1,7 +1,9 @@
 #include "systems.hpp"
 
 #include "vk/vkapp.hpp"
+#include <algorithm>
 #include <cmath>
+#include <functional>
 #include <unordered_map>
 
 entt::entity spawnCapsule(World& w, const RigidBody& body, int geom) {
@@ -284,7 +286,78 @@ void stepSoft(World& w, VkCommandBuffer cmd) {
     w.sim.record(cmd);
 }
 
+void drawUi(World& w) {
+    auto& reg = w.reg;
+    std::unordered_map<entt::entity, std::vector<entt::entity>> kids;
+    for (auto [c, wg, p] : reg.view<UIWidget, Parent>().each()) {
+        (void)wg;
+        kids[p.e].push_back(c);
+    }
+    std::function<void(entt::entity)> drawKids;
+    drawKids = [&](entt::entity parent) {
+        auto it = kids.find(parent);
+        if (it == kids.end())
+            return;
+        auto v = it->second;
+        std::sort(v.begin(), v.end(), [&](entt::entity a, entt::entity b) {
+            return reg.get<UIWidget>(a).order < reg.get<UIWidget>(b).order;
+        });
+        for (entt::entity e : v) {
+            // scope the widget's ID to its entity; sibling sections reuse labels ("metallic", "on", ...)
+            ImGui::PushID((int)e);
+            if (const auto* s = reg.try_get<UISliderF>(e))
+                ImGui::SliderFloat(s->label.c_str(), s->value(), s->lo, s->hi, s->fmt);
+            else if (const auto* s = reg.try_get<UISliderI>(e))
+                ImGui::SliderInt(s->label.c_str(), s->value(), s->lo, s->hi);
+            else if (const auto* c = reg.try_get<UICheckbox>(e))
+                ImGui::Checkbox(c->label.c_str(), c->value());
+            else if (const auto* c = reg.try_get<UIColorEdit>(e))
+                ImGui::ColorEdit3(c->label.c_str(), c->value());
+            else if (const auto* d = reg.try_get<UIDragV3>(e))
+                ImGui::DragFloat3(d->label.c_str(), d->value(), d->speed);
+            else if (const auto* t = reg.try_get<UIText>(e)) {
+                if (t->text)
+                    ImGui::TextUnformatted(t->text().c_str());
+                else
+                    ImGui::TextUnformatted(t->label.c_str());
+            } else if (const auto* b = reg.try_get<UIButton>(e)) {
+                if (ImGui::Button(b->label.c_str()))
+                    b->on();
+            } else if (const auto* sec = reg.try_get<UISection>(e)) {
+                if (sec->collapsible) {
+                    if (ImGui::CollapsingHeader(sec->label.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+                        drawKids(e);
+                } else {
+                    ImGui::SeparatorText(sec->label.c_str());
+                    drawKids(e);
+                }
+            }
+            ImGui::PopID();
+        }
+    };
+    std::vector<entt::entity> wins;
+    reg.view<UIWindow>().each([&](entt::entity e, auto&) { wins.push_back(e); });
+    std::sort(wins.begin(), wins.end(), [&](entt::entity a, entt::entity b) {
+        return reg.get<UIWindow>(a).order < reg.get<UIWindow>(b).order;
+    });
+    for (entt::entity win : wins) {
+        const UIWindow& cfg = reg.get<UIWindow>(win);
+        if (cfg.visible && !cfg.visible())
+            continue;
+        ImGui::SetNextWindowPos(ImVec2(cfg.pos().x, cfg.pos().y), ImGuiCond_Always);
+        if (cfg.size.x > 0.0f && cfg.size.y > 0.0f)
+            ImGui::SetNextWindowSize(ImVec2(cfg.size.x, cfg.size.y), ImGuiCond_Always);
+        if (cfg.collapseOnAppear)
+            ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
+        ImGui::Begin(cfg.title.c_str(), nullptr, cfg.flags);
+        drawKids(win);
+        ImGui::End();
+    }
+}
+
 void syncSceneToRenderer(World& w) {
+    for (auto [entity, g] : w.reg.view<MaterialGroup>().each())
+        w.reg.get<Material>(entity) = w.reg.get<Material>(g.leader);
     for (auto [entity, rend, wt] : w.reg.view<Renderable, WorldTransform>().each())
         w.renderer.setModel(rend.inst, wt.toMat4());
     for (auto [entity, rend] : w.reg.view<Renderable>().each()) {
@@ -296,10 +369,10 @@ void syncSceneToRenderer(World& w) {
     for (auto [entity, wt, p] : w.reg.view<WorldTransform, PointLight>().each())
         lights.push_back({wt.pos, p});
     w.renderer.setLights(lights);
-    w.renderer.setEnvIntensity(w.ui.envIntensity);
+    w.renderer.setEnvIntensity(w.render.envIntensity);
 }
 
-void draw(World& w, VkCommandBuffer cmd, uint32_t fb, const float bg[3], ImDrawData* imgui) {
+void draw(World& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui) {
     syncSceneToRenderer(w);
-    w.renderer.draw(cmd, *w.app, fb, bg, imgui, w.ui.exposure);
+    w.renderer.draw(cmd, *w.app, fb, w.render.bgColor, imgui, w.render.exposure);
 }

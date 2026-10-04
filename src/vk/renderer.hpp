@@ -34,7 +34,6 @@ public:
     void setViewProj(const Mat4& vp, const V3& camPos);
     void setLights(const std::vector<Light>& lights);
     void setEnvIntensity(float intensity);
-    void dumpShadowMap(VkApp& app, const char* prefix);
     void shutdown();
     void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui, float exposure);
 

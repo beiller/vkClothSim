@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <imgui.h>
 #include <map>
 #include <random>
@@ -136,43 +137,43 @@ std::vector<sim::Constraint> makeBallCons(const Mesh& mesh) {
     return cons;
 }
 
-void drawDemoUi(World& w) {
-    ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(320, 800), ImGuiCond_Always);
-    ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
-    ImGui::Begin("3dsim");
-    ImGui::ColorEdit3("background", w.ui.bgColor);
-    ImGui::Text("%.1f fps", ImGui::GetIO().Framerate);
-    ImGui::Text("sim: GPU (cloth + ball)");
+// the UI is a static tree of entities built once; widgets bind to component fields
+void buildDemoUi(World& w) {
+    entt::entity win =
+        spawnUiWindow(w, UIWindow{"3dsim", [] { return V2{20.0f, 20.0f}; }, V2{320.0f, 800.0f}, 0, true});
+    spawnWidget(w, win, UIColorEdit{"background", [&w] { return w.render.bgColor; }});
+    spawnWidget(w, win, UIText{"", [] {
+        char b[32];
+        std::snprintf(b, sizeof(b), "%.1f fps", ImGui::GetIO().Framerate);
+        return std::string(b);
+    }});
+    spawnWidget(w, win, UIText{"sim: GPU (cloth + ball)"});
     for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
         const char* label = "soft body";
         if (const auto* n = w.reg.try_get<Name>(entity))
             label = n->id.c_str();
-        ImGui::PushID((int)entity);
-        if (ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::SliderFloat("mass", &sb.params.mass, 0.1f, 10.0f, "%.2f");
-            ImGui::SliderFloat("damping", &sb.params.damping, 0.90f, 1.00f, "%.3f");
-            ImGui::SliderInt("passes", &sb.params.passes, 1, 16);
-            ImGui::SliderFloat("stiffness", &sb.params.stiffness, 0.0f, 1.0f, "%.2f");
-            ImGui::SliderFloat("tension", &sb.params.tension, 0.5f, 1.5f, "%.2f");
-            ImGui::SliderFloat("friction", &sb.params.friction, 0.0f, 50.0f, "%.2f");
-            ImGui::SliderInt("steps", &sb.steps, 1, 32);
-        }
-        ImGui::PopID();
+        entt::entity sec = spawnWidget(w, win, UISection{label, true});
+        spawnWidget(w, sec, UISliderF{"mass", 0.1f, 10.0f, "%.2f", [&sb] { return &sb.params.mass; }});
+        spawnWidget(w, sec, UISliderF{"damping", 0.90f, 1.00f, "%.3f", [&sb] { return &sb.params.damping; }});
+        spawnWidget(w, sec, UISliderI{"passes", 1, 16, [&sb] { return &sb.params.passes; }});
+        spawnWidget(w, sec, UISliderF{"stiffness", 0.0f, 1.0f, "%.2f", [&sb] { return &sb.params.stiffness; }});
+        spawnWidget(w, sec, UISliderF{"tension", 0.5f, 1.5f, "%.2f", [&sb] { return &sb.params.tension; }});
+        spawnWidget(w, sec, UISliderF{"friction", 0.0f, 50.0f, "%.2f", [&sb] { return &sb.params.friction; }});
+        spawnWidget(w, sec, UISliderI{"steps", 1, 32, [&sb] { return &sb.steps; }});
     }
-    ImGui::SeparatorText("jolt iterations");
-    ImGui::SliderInt("velocity", &w.ui.joltIters, 1, 64);
-    ImGui::SeparatorText("camera");
-    entt::entity cam = findActiveCamera(w);
+    entt::entity jolt = spawnWidget(w, win, UISection{"jolt iterations", false});
+    spawnWidget(w, jolt, UISliderI{"velocity", 1, 64, [&w] { return &w.rigid.velocitySteps; }});
+    entt::entity camSec = spawnWidget(w, win, UISection{"camera", false});
+    const entt::entity cam = findActiveCamera(w);
     if (cam != entt::null) {
         Camera& c = w.reg.get<Camera>(cam);
-        ImGui::SliderFloat("fov", &c.fovDeg, 10.0f, 120.0f, "%.0f");
-        ImGui::SliderFloat("near", &c.nearP, 0.01f, 5.0f, "%.3f");
-        ImGui::SliderFloat("far", &c.farP, 10.0f, 1000.0f, "%.0f");
+        spawnWidget(w, camSec, UISliderF{"fov", 10.0f, 120.0f, "%.0f", [&c] { return &c.fovDeg; }});
+        spawnWidget(w, camSec, UISliderF{"near", 0.01f, 5.0f, "%.3f", [&c] { return &c.nearP; }});
+        spawnWidget(w, camSec, UISliderF{"far", 10.0f, 1000.0f, "%.0f", [&c] { return &c.farP; }});
     }
-    drawToneSection(w);
-    drawLightSection(w);
-    ImGui::SeparatorText("materials");
+    spawnToneSection(w, win);
+    spawnLightSection(w, win);
+    entt::entity matSec = spawnWidget(w, win, UISection{"materials", false});
     std::map<std::string, std::vector<entt::entity>> matByName;
     for (auto [entity, mat] : w.reg.view<Material>().each()) {
         const auto* name = w.reg.try_get<Name>(entity);
@@ -180,29 +181,22 @@ void drawDemoUi(World& w) {
         matByName[name ? name->id : "material"].push_back(entity);
     }
     for (auto& [name, ents] : matByName) {
-        Material m = w.reg.get<Material>(ents[0]);
-        ImGui::PushID(name.c_str());
-        if (ImGui::CollapsingHeader(name.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::ColorEdit3("base color", &m.baseColor.x);
-            ImGui::SliderFloat("metallic", &m.metallic, 0.0f, 1.0f, "%.2f");
-            ImGui::SliderFloat("roughness", &m.roughness, 0.0f, 1.0f, "%.2f");
-        }
-        ImGui::PopID();
-        for (entt::entity e : ents)
-            w.reg.get<Material>(e) = m;
+        entt::entity sub = spawnWidget(w, matSec, UISection{name, true});
+        Material& m = w.reg.get<Material>(ents[0]);
+        spawnWidget(w, sub, UIColorEdit{"base color", [&m] { return &m.baseColor.x; }});
+        spawnWidget(w, sub, UISliderF{"metallic", 0.0f, 1.0f, "%.2f", [&m] { return &m.metallic; }});
+        spawnWidget(w, sub, UISliderF{"roughness", 0.0f, 1.0f, "%.2f", [&m] { return &m.roughness; }});
+        for (size_t i = 1; i < ents.size(); ++i)
+            w.reg.emplace<MaterialGroup>(ents[i], ents[0]);
     }
-    if (ImGui::Button("reset params"))
+    spawnWidget(w, win, UIButton{"reset params", [&w] {
         for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
             sb.params = SimParams{};
             sb.steps = kDefaultSteps;
         }
-    if (ImGui::Button("reset (R)"))
-        resetSofts(w);
-    if (ImGui::Button("demo window"))
-        w.ui.showDemo = true;
-    ImGui::End();
-    if (w.ui.showDemo)
-        ImGui::ShowDemoWindow(&w.ui.showDemo);
+    }});
+    spawnWidget(w, win, UIButton{"reset (R)", [&w] { resetSofts(w); }});
+    spawnWidget(w, win, UIButton{"demo window", [&w] { w.showDemo = true; }});
 }
 
 } // namespace
@@ -210,11 +204,10 @@ void drawDemoUi(World& w) {
 void createDemoWorld(World& w) {
     const entt::entity cam =
         spawnCamera(w, V3{0.0f, 9.0f, 14.0f}, quatAxisAngle({1.0f, 0.0f, 0.0f}, -std::atan2f(6.0f, 14.0f)), 50.0f);
-    w.drawUi = drawDemoUi;
     spawnLight(w, V3{0.0f, 12.0f, 0.0f}, PointLight{V3{1.0f, 0.95f, 0.90f}, 120.0f, 0.5f, 1.0f, 0.01f, 30.0f},
                "key light");
     spawnLight(w, V3{-9.0f, 6.0f, -7.0f}, PointLight{V3{0.4f, 0.6f, 1.0f}, 60.0f, 0.5f, 1.0f}, "rim light");
-    w.ui.envIntensity = 0.0f;
+    w.render.envIntensity = 0.0f;
 
     const VkExtent2D ext = w.app->extent();
     w.rigid.init();
@@ -262,4 +255,5 @@ void createDemoWorld(World& w) {
     w.sim.build();
 
     applyEnvHdr(w);
+    buildDemoUi(w);
 }

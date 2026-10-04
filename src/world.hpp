@@ -4,16 +4,14 @@
 #include "vk/renderer.hpp"
 #include "xr_backend.hpp"
 #include <entt/entt.hpp>
-#include <functional>
 #include <memory>
 
 class VkApp;
 
-struct UIState {
-    int joltIters = 10;
+// renderer-side state the UI binds to (not scene-graph data, so plain state, not an entity)
+struct RenderSettings {
     float bgColor[3] = {0.10f, 0.11f, 0.15f};
     float exposure = 1.0f;
-    bool showDemo = false;
     float envIntensity = 1.0f;
 };
 
@@ -25,6 +23,8 @@ struct World {
     Renderer renderer;
     std::unique_ptr<IXrBackend> xr;
     XrFrame xrFrame;
-    UIState ui;
-    std::function<void(World&)> drawUi;
+    RenderSettings render;
+    float fps = 0.0f;
+    bool showDemo = false;
+    int uiSeq = 0; // auto-assigned draw order for UI windows/widgets
 };

@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
 
     World w;
     w.app = &app;
-    bool wantHdri = false, wantShadow = false, wantHier = false, dumpFrames = false, wantNoVr = false;
+    bool wantHdri = false, wantShadow = false, wantHier = false, wantNoVr = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hdri") == 0)
             wantHdri = true;
@@ -33,8 +33,6 @@ int main(int argc, char** argv) {
             wantShadow = true;
         else if (std::strcmp(argv[i], "--hier") == 0)
             wantHier = true;
-        else if (std::strcmp(argv[i], "--dump") == 0)
-            dumpFrames = true;
         else if (std::strcmp(argv[i], "--no-vr") == 0)
             wantNoVr = true;
     }
@@ -54,6 +52,24 @@ int main(int argc, char** argv) {
         createShadowTestWorld(w);
     else
         createDemoWorld(w);
+    // app-level fps HUD, also a UI window entity
+    const entt::entity fpsWin = spawnUiWindow(w,
+                                              UIWindow{"##fps",
+                                                       [&w] {
+                                                           const VkExtent2D ext = w.app->extent();
+                                                           return V2{(float)ext.width - 120.0f, 8.0f};
+                                                       },
+                                                       V2{112.0f, 26.0f},
+                                                       ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                                           ImGuiWindowFlags_NoSavedSettings |
+                                                           ImGuiWindowFlags_NoBringToFrontOnFocus});
+    spawnWidget(w, fpsWin,
+                UIText{"",
+                        [&w] {
+                            char buf[32];
+                            std::snprintf(buf, sizeof(buf), "%.0f fps", w.fps);
+                            return std::string(buf);
+                        }});
     if (w.xr) {
         spawnVrRig(w, findActiveCamera(w));
         if (w.xr->init(app)) {
@@ -96,15 +112,14 @@ int main(int argc, char** argv) {
     };
     ImGui_ImplVulkan_Init(&ii);
 
-    std::printf("3dsim: vulkan+imgui | GPU soft-body sim | R reset | S dump shadow map | VR auto-detected, "
+    std::printf("3dsim: vulkan+imgui | GPU soft-body sim | R reset | VR auto-detected, "
                 "--no-vr for plain window | esc/close to quit\n");
 
     auto lastFrame = std::chrono::steady_clock::now();
-    bool dumpWasDown = false;
-    int frame = 0;
     float fpsAccum = 0.0f;
     int fpsFrames = 0;
     float fps = 0.0f;
+    float simAccum = 0.0f;
     while (!app.windowShouldClose()) {
         const auto nowFrame = std::chrono::steady_clock::now();
         const float dt = std::chrono::duration<float>(nowFrame - lastFrame).count();
@@ -116,13 +131,10 @@ int main(int argc, char** argv) {
             fpsAccum = 0.0f;
             fpsFrames = 0;
         }
+        w.fps = fps;
         if (app.keyIsDown(GLFW_KEY_R))
             resetSofts(w);
         stepPinHolds(w, dt);
-
-        w.rigid.setVelocitySteps(w.ui.joltIters);
-        stepRigid(w);
-        stepAnimation(w, dt);
 
         app.pollEvents();
         if (w.xr)
@@ -130,32 +142,34 @@ int main(int argc, char** argv) {
         stepFlyCamera(w, dt);
         if (w.xr)
             stepXr(w);
+        stepAnimation(w, dt);
 
+        // sim runs at a fixed kFrameDt rate, decoupled from the render rate; animation and
+        // cameras step with the graphics
+        simAccum += dt;
+        if (simAccum > 0.1f)
+            simAccum = 0.1f;
+        while (simAccum >= kFrameDt) {
+            stepRigid(w);
+            resolveWorldTransforms(w);
+            syncColliders(w);
+            VkCommandBuffer simCmd = app.beginCommands();
+            stepSoft(w, simCmd);
+            app.submit(simCmd);
+            simAccum -= kFrameDt;
+        }
+        // 0-step frames still need fresh world transforms for the renderer (camera, VR head,
+        // animation)
         resolveWorldTransforms(w);
-        syncColliders(w);
-        VkCommandBuffer simCmd = app.beginCommands();
-        stepSoft(w, simCmd);
-        app.submit(simCmd);
 
         stepStaticRigid(w);
         w.renderer.setViewProj(makeVP(app.extent()), worldTransform(w.reg, cam).pos);
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        if (w.drawUi)
-            w.drawUi(w);
-        {
-            const VkExtent2D ext = app.extent();
-            ImGui::SetNextWindowPos(ImVec2((float)ext.width - 120.0f, 8.0f), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(112.0f, 26.0f), ImGuiCond_Always);
-            ImGui::Begin("##fps", nullptr,
-                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                             ImGuiWindowFlags_NoBringToFrontOnFocus);
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), "%.0f fps", fps);
-            ImGui::TextUnformatted(buf);
-            ImGui::End();
-        }
+        drawUi(w);
+        if (w.showDemo) // ImGui's own demo window, not ours to decompose
+            ImGui::ShowDemoWindow(&w.showDemo);
         ImGui::Render();
 
         const uint32_t idx = app.acquireNextImage();
@@ -168,25 +182,15 @@ int main(int argc, char** argv) {
                     w.xr->acquireImage(i);
                     imgIdx[i] = (uint32_t)w.xr->imageIndex(i);
                 }
-            w.renderer.drawVr(cmd, app, idx, w.ui.bgColor, ImGui::GetDrawData(), w.ui.exposure,
+            w.renderer.drawVr(cmd, app, idx, w.render.bgColor, ImGui::GetDrawData(), w.render.exposure,
                               w.xrFrame.shouldRender ? imgIdx : nullptr, w.xrFrame.shouldRender ? w.xr->eyeCount() : 0);
             if (w.xrFrame.shouldRender)
                 for (int i = 0; i < w.xr->eyeCount(); ++i)
                     w.xr->releaseImage(i);
             w.xr->endFrame(w.xrFrame.shouldRender);
         } else {
-            draw(w, cmd, idx, w.ui.bgColor, ImGui::GetDrawData());
-            const bool dumpDown = app.keyIsDown(GLFW_KEY_S);
-            if (dumpDown && !dumpWasDown)
-                w.renderer.dumpShadowMap(app, "/tmp/shadow");
-            dumpWasDown = dumpDown;
-            if (dumpFrames && frame < 3) {
-                char prefix[64];
-                std::snprintf(prefix, sizeof(prefix), "/tmp/shadow_f%d", frame);
-                w.renderer.dumpShadowMap(app, prefix);
-            }
+            draw(w, cmd, idx, ImGui::GetDrawData());
         }
-        ++frame;
         app.present(idx);
     }
 
