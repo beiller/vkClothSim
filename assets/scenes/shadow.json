@@ -1,0 +1,84 @@
+{
+    "name": "shadow test",
+    "env": "fly-studio-03_1K.exr",
+    "envIntensity": 0.0,
+    "camera": {
+        "name": "cam",
+        "pos": [0, 4, 11],
+        "quat": [-0.088866, 0, 0, 0.996047],
+        "fov": 50,
+        "active": true
+    },
+    "lights": [
+        {
+            "name": "key light",
+            "pos": [0, 7, 0],
+            "color": [1.0, 0.97, 0.92],
+            "intensity": 300,
+            "radius": 0.5
+        }
+    ],
+    "materials": [
+        { "name": "white", "baseColor": [1, 1, 1], "roughness": 0.9 },
+        { "name": "plaid", "baseColor": [1, 1, 1], "roughness": 0.35, "texture": "cloth_albedo.png" }
+    ],
+    "objects": [
+        { "name": "ground", "mesh": { "type": "ground", "size": 40 }, "material": "white" },
+        { "name": "ball", "mesh": { "type": "sphere", "subdiv": 4, "radius": 2 }, "pos": [0, 3, 0], "material": "plaid" }
+    ],
+    "set": {
+        "ball.roughness": 0.35
+    },
+    "ui": {
+        "title": "shadow test",
+        "size": [320, 800],
+        "widgets": [
+            {
+                "type": "section",
+                "label": "camera",
+                "children": [
+                    { "type": "slider-f", "label": "fov", "bind": "cam.fovDeg", "fmt": "%.0f" }
+                ]
+            },
+            {
+                "type": "section",
+                "label": "tone",
+                "children": [
+                    { "type": "slider-f", "label": "exposure", "bind": "render.exposure" },
+                    { "type": "slider-f", "label": "hdri intensity", "bind": "render.envIntensity" }
+                ]
+            },
+            {
+                "type": "section",
+                "label": "key light",
+                "children": [
+                    { "type": "drag-v3", "label": "pos", "bind": "key light.pos" },
+                    { "type": "color", "label": "color", "bind": "key light.color" },
+                    { "type": "slider-f", "label": "intensity", "bind": "key light.intensity", "lo": 0, "hi": 1000, "fmt": "%.0f" },
+                    { "type": "slider-f", "label": "radius", "bind": "key light.radius" },
+                    {
+                        "type": "section",
+                        "label": "shadow bias",
+                        "children": [
+                            { "type": "slider-f", "label": "normal", "bind": "key light.shadowNormalBias" },
+                            { "type": "slider-f", "label": "base", "bind": "key light.shadowBiasBase" },
+                            { "type": "slider-f", "label": "slope", "bind": "key light.shadowBiasSlope" },
+                            { "type": "slider-f", "label": "search", "bind": "key light.shadowSearchScale" },
+                            { "type": "slider-f", "label": "max radius", "bind": "key light.shadowMaxRadius", "fmt": "%.1f" }
+                        ]
+                    }
+                ]
+            },
+            {
+                "type": "section",
+                "label": "materials",
+                "children": [
+                    { "type": "color", "label": "ground color", "bind": "ground.baseColor" },
+                    { "type": "slider-f", "label": "ground roughness", "bind": "ground.roughness" },
+                    { "type": "color", "label": "ball color", "bind": "ball.baseColor" },
+                    { "type": "slider-f", "label": "ball roughness", "bind": "ball.roughness" }
+                ]
+            }
+        ]
+    }
+}

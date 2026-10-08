@@ -293,8 +293,8 @@ void drawUi(World& w) {
         (void)wg;
         kids[p.e].push_back(c);
     }
-    std::function<void(entt::entity)> drawKids;
-    drawKids = [&](entt::entity parent) {
+    std::function<void(entt::entity, bool&)> drawKids;
+    drawKids = [&](entt::entity parent, bool& tabOpen) {
         auto it = kids.find(parent);
         if (it == kids.end())
             return;
@@ -302,11 +302,20 @@ void drawUi(World& w) {
         std::sort(v.begin(), v.end(), [&](entt::entity a, entt::entity b) {
             return reg.get<UIWidget>(a).order < reg.get<UIWidget>(b).order;
         });
+        // the tab bar belongs to the level that owns the tab children; content-level
+        // recursion must not close it
+        bool hasTab = false;
+        bool itemOpen = false;
+        for (entt::entity e : v)
+            if (reg.try_get<UITab>(e)) {
+                hasTab = true;
+                break;
+            }
         for (entt::entity e : v) {
             // scope the widget's ID to its entity; sibling sections reuse labels ("metallic", "on", ...)
             ImGui::PushID((int)e);
             if (const auto* s = reg.try_get<UISliderF>(e))
-                ImGui::SliderFloat(s->label.c_str(), s->value(), s->lo, s->hi, s->fmt);
+                ImGui::SliderFloat(s->label.c_str(), s->value(), s->lo, s->hi, s->fmt.c_str());
             else if (const auto* s = reg.try_get<UISliderI>(e))
                 ImGui::SliderInt(s->label.c_str(), s->value(), s->lo, s->hi);
             else if (const auto* c = reg.try_get<UICheckbox>(e))
@@ -326,13 +335,33 @@ void drawUi(World& w) {
             } else if (const auto* sec = reg.try_get<UISection>(e)) {
                 if (sec->collapsible) {
                     if (ImGui::CollapsingHeader(sec->label.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
-                        drawKids(e);
+                        drawKids(e, tabOpen);
                 } else {
                     ImGui::SeparatorText(sec->label.c_str());
-                    drawKids(e);
+                    drawKids(e, tabOpen);
+                }
+            } else if (const auto* tab = reg.try_get<UITab>(e)) {
+                // BeginTabItem only pushes an ID when selected; EndTabItem pops
+                // unconditionally, so it must be called only for opened items
+                if (itemOpen) {
+                    ImGui::EndTabItem();
+                    itemOpen = false;
+                } else if (!tabOpen) {
+                    ImGui::BeginTabBar("##tabs");
+                    tabOpen = true;
+                }
+                if (ImGui::BeginTabItem(tab->label.c_str())) {
+                    itemOpen = true;
+                    drawKids(e, tabOpen);
                 }
             }
             ImGui::PopID();
+        }
+        if (hasTab && tabOpen) {
+            if (itemOpen)
+                ImGui::EndTabItem();
+            ImGui::EndTabBar();
+            tabOpen = false;
         }
     };
     std::vector<entt::entity> wins;
@@ -350,7 +379,8 @@ void drawUi(World& w) {
         if (cfg.collapseOnAppear)
             ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
         ImGui::Begin(cfg.title.c_str(), nullptr, cfg.flags);
-        drawKids(win);
+        bool tabOpen = false;
+        drawKids(win, tabOpen);
         ImGui::End();
     }
 }

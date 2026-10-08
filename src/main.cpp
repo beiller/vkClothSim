@@ -5,6 +5,7 @@
 #include "scenes/demo.hpp"
 #include "scenes/hdri.hpp"
 #include "scenes/hierarchy.hpp"
+#include "scenes/scenefile.hpp"
 #include "scenes/shadowtest.hpp"
 #include "systems.hpp"
 #include "vk/vkapp.hpp"
@@ -26,6 +27,7 @@ int main(int argc, char** argv) {
     World w;
     w.app = &app;
     bool wantHdri = false, wantShadow = false, wantHier = false, wantNoVr = false;
+    std::string scenePath;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hdri") == 0)
             wantHdri = true;
@@ -35,6 +37,8 @@ int main(int argc, char** argv) {
             wantHier = true;
         else if (std::strcmp(argv[i], "--no-vr") == 0)
             wantNoVr = true;
+        else if (std::strcmp(argv[i], "--scene") == 0)
+            scenePath = argv[++i];
     }
     // VR: auto-detect the OpenXR runtime (creates the Vulkan device through it, so this must
     // run before the scene); no runtime/HMD -> plain window mode. --no-vr skips detection.
@@ -44,7 +48,9 @@ int main(int argc, char** argv) {
             w.xr.reset();
     }
     app.initDevice(w.xr ? w.xr->device() : app.makeDevice());
-    if (wantHier)
+    if (!scenePath.empty())
+        createSceneFileWorld(w, scenePath);
+    else if (wantHier)
         createHierarchyWorld(w);
     else if (wantHdri)
         createHdriWorld(w);
@@ -113,7 +119,7 @@ int main(int argc, char** argv) {
     ImGui_ImplVulkan_Init(&ii);
 
     std::printf("3dsim: vulkan+imgui | GPU soft-body sim | R reset | VR auto-detected, "
-                "--no-vr for plain window | esc/close to quit\n");
+                "--no-vr for plain window | --scene file.json | esc/close to quit\n");
 
     auto lastFrame = std::chrono::steady_clock::now();
     float fpsAccum = 0.0f;

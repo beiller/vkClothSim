@@ -135,7 +135,7 @@ struct UIWidget {
 struct UISliderF {
     std::string label;
     float lo, hi;
-    const char* fmt = "%.2f";
+    std::string fmt = "%.2f";
     std::function<float*()> value;
 };
 
@@ -174,6 +174,11 @@ struct UIButton {
 struct UISection {
     std::string label;
     bool collapsible = false; // false = SeparatorText, true = CollapsingHeader; children are the body
+};
+
+// tab page; direct children of a window form the tab bar (convention), children are the page body
+struct UITab {
+    std::string label;
 };
 
 // this Material mirrors leader's every frame (same-named materials, edited through the leader)

@@ -86,8 +86,10 @@ add_executable(vksim
     src/scenes/demo.cpp
     src/scenes/hdri.cpp
     src/scenes/hierarchy.cpp
+    src/scenes/scenefile.cpp
     src/scenes/shadowtest.cpp
     src/systems.cpp
+    src/url.cpp
     src/app/rigid.cpp
     src/assets.cpp
     src/sim/softsim.cpp
@@ -104,6 +106,7 @@ target_include_directories(vksim PRIVATE
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/lib/entt/single_include
+    ${CMAKE_SOURCE_DIR}/lib/json
     ${CMAKE_SOURCE_DIR}/lib/stb
     ${CMAKE_SOURCE_DIR}/lib/tinyexr
     ${CMAKE_SOURCE_DIR}/lib/miniz
