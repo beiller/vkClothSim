@@ -313,7 +313,11 @@ void drawUi(World& w) {
             }
         for (entt::entity e : v) {
             // scope the widget's ID to its entity; sibling sections reuse labels ("metallic", "on", ...)
-            ImGui::PushID((int)e);
+            // tabs are excluded: BeginTabBar/BeginTabItem manage their own ID pushes, and wrapping
+            // them in PushID/PopID makes the ID-stack top (hence the tab ID) depend on selection
+            const bool isTab = reg.try_get<UITab>(e) != nullptr;
+            if (!isTab)
+                ImGui::PushID((int)e);
             if (const auto* s = reg.try_get<UISliderF>(e))
                 ImGui::SliderFloat(s->label.c_str(), s->value(), s->lo, s->hi, s->fmt.c_str());
             else if (const auto* s = reg.try_get<UISliderI>(e))
@@ -355,7 +359,8 @@ void drawUi(World& w) {
                     drawKids(e, tabOpen);
                 }
             }
-            ImGui::PopID();
+            if (!isTab)
+                ImGui::PopID();
         }
         if (hasTab && tabOpen) {
             if (itemOpen)
@@ -373,9 +378,12 @@ void drawUi(World& w) {
         const UIWindow& cfg = reg.get<UIWindow>(win);
         if (cfg.visible && !cfg.visible())
             continue;
-        ImGui::SetNextWindowPos(ImVec2(cfg.pos().x, cfg.pos().y), ImGuiCond_Always);
+        // NoMove windows (like the fps HUD) track their pos every frame; others are placed once and
+        // can be moved/resized freely (state persists in imgui.ini)
+        const bool pin = cfg.flags & ImGuiWindowFlags_NoMove;
+        ImGui::SetNextWindowPos(ImVec2(cfg.pos().x, cfg.pos().y), pin ? ImGuiCond_Always : ImGuiCond_Appearing);
         if (cfg.size.x > 0.0f && cfg.size.y > 0.0f)
-            ImGui::SetNextWindowSize(ImVec2(cfg.size.x, cfg.size.y), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(cfg.size.x, cfg.size.y), ImGuiCond_Appearing);
         if (cfg.collapseOnAppear)
             ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
         ImGui::Begin(cfg.title.c_str(), nullptr, cfg.flags);
