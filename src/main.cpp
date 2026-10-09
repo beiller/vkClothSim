@@ -77,7 +77,6 @@ int main(int argc, char** argv) {
                             return std::string(buf);
                         }});
     if (w.xr) {
-        spawnVrRig(w, findActiveCamera(w));
         if (w.xr->init(app)) {
             std::vector<std::vector<VkImage>> imgs(w.xr->eyeCount());
             VkExtent2D exts[2];
@@ -87,6 +86,7 @@ int main(int argc, char** argv) {
                     imgs[i] = w.xr->images(i);
             }
             w.renderer.initXrTarget(app, w.xr->format(), w.xr->eyeCount(), imgs, exts);
+            spawnControllers(w, findActiveCamera(w));
         } else
             std::printf(
                 "3dsim: no OpenXR session, using virtual head (LMB drag = look, WASD/QE = move, shift = fast)\n");
@@ -148,6 +148,10 @@ int main(int argc, char** argv) {
         stepFlyCamera(w, dt);
         if (w.xr)
             stepXr(w);
+        if (w.xr) {
+            stepControllers(w);
+            stepGrab(w, dt);
+        }
         stepAnimation(w, dt);
 
         // sim runs at a fixed kFrameDt rate, decoupled from the render rate; animation and

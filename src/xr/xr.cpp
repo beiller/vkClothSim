@@ -3,9 +3,12 @@
 #include "vk/vkapp.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
+#include <vector>
 
 namespace {
 
@@ -14,6 +17,30 @@ bool xrok(XrResult r, const char* what) {
         return true;
     std::fprintf(stderr, "xr %s: error %d\n", what, (int)r);
     return false;
+}
+
+// mirrored to a file so it stays readable when the app is launched via Steam (console hidden)
+constexpr const char* kXrDiagPath = "/tmp/3dsim_xr_diag.log";
+
+void diagReset() {
+    if (FILE* f = std::fopen(kXrDiagPath, "w")) {
+        std::fprintf(f, "=== 3dsim XR diagnostic (build: IDMAP-NOOFFSET-20261009) ===\n");
+        std::fclose(f);
+    }
+}
+
+// append one line to both stdout and the diagnostic file
+void diagAppend(const char* fmt, ...) {
+    char buf[256];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    std::printf("%s", buf);
+    if (FILE* f = std::fopen(kXrDiagPath, "a")) {
+        std::fprintf(f, "%s", buf);
+        std::fclose(f);
+    }
 }
 
 void xrafail(XrResult r, const char* what) {
@@ -228,16 +255,118 @@ bool Xr::init(VkApp& app) {
 
     XrReferenceSpaceCreateInfo rs{};
     rs.type = XR_TYPE_REFERENCE_SPACE_CREATE_INFO;
-    // LOCAL_FLOOR (1000426000 in this header) is rejected here; LOCAL is always supported
-    rs.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
+    // STAGE: origin at the floor, centered on the SteamVR play space (a configured room-scale
+    // play area is required). Gives a floor + room origin so the user stands on the floor.
+    rs.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
     rs.poseInReferenceSpace.position = {0.0f, 0.0f, 0.0f};
     rs.poseInReferenceSpace.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
-    if (!xrok(m_loader.xrCreateReferenceSpace(m_session, &rs, &m_refSpace), "createReferenceSpace"))
+    const XrResult res = m_loader.xrCreateReferenceSpace(m_session, &rs, &m_refSpace);
+    if (!xrok(res, "createReferenceSpace(STAGE)")) {
+        std::fprintf(stderr, "xr: STAGE needs a SteamVR play space (SteamVR > Play Area). Relaunch.\n");
         return false;
+    }
+
+    initActions();
 
     std::printf("xr: %d eyes %ux%u format=%d blend=%d\n", m_eyeCount, m_swaps[0].extent.width, m_swaps[0].extent.height,
                 (int)m_fmt, (int)m_blend);
     return true;
+}
+
+void Xr::initActions() {
+    if (m_session == XR_NULL_HANDLE)
+        return;
+    diagReset();
+    if (XR_FAILED(m_loader.xrStringToPath(m_inst, "/user/hand/left", &m_hand[0])) ||
+        XR_FAILED(m_loader.xrStringToPath(m_inst, "/user/hand/right", &m_hand[1]))) {
+        std::printf("xr: stringToPath hand failed\n");
+        return;
+    }
+    XrActionSetCreateInfo asec{};
+    asec.type = XR_TYPE_ACTION_SET_CREATE_INFO;
+    std::snprintf(asec.actionSetName, sizeof(asec.actionSetName), "main");
+    std::snprintf(asec.localizedActionSetName, sizeof(asec.localizedActionSetName), "main");
+    asec.priority = 0;
+    if (XR_FAILED(m_loader.xrCreateActionSet(m_inst, &asec, &m_actionSet))) {
+        std::printf("xr: createActionSet failed\n");
+        return;
+    }
+    auto mk = [&](XrAction& a, const char* name, XrActionType t) {
+        XrActionCreateInfo ci{};
+        ci.type = XR_TYPE_ACTION_CREATE_INFO;
+        std::snprintf(ci.actionName, sizeof(ci.actionName), "%s", name);
+        std::snprintf(ci.localizedActionName, sizeof(ci.localizedActionName), "%s", name);
+        ci.actionType = t;
+        ci.countSubactionPaths = 2;
+        ci.subactionPaths = m_hand;
+        return m_loader.xrCreateAction(m_actionSet, &ci, &a);
+    };
+    if (XR_FAILED(mk(m_gripPose, "grip", XR_ACTION_TYPE_POSE_INPUT)) ||
+        XR_FAILED(mk(m_aimPose, "aim", XR_ACTION_TYPE_POSE_INPUT)) ||
+        XR_FAILED(mk(m_trigger, "trigger", XR_ACTION_TYPE_FLOAT_INPUT))) {
+        std::printf("xr: createAction failed\n");
+        return;
+    }
+    // Suggest bindings per interaction profile; each list only contains paths valid for that
+    // profile (a single unsupported path rejects the whole suggestion). SteamVR matches the
+    // connected hardware to whichever profile it supports and skips the rest.
+    // IMPORTANT: this must run before attaching the action set, or the runtime rejects it with
+    // XR_ERROR_ACTIONSETS_ALREADY_ATTACHED.
+    struct Bind {
+        XrAction action;
+        const char* leaf;
+    };
+    auto suggest = [&](const char* profile, const std::initializer_list<Bind>& binds) {
+        XrPath p;
+        if (XR_FAILED(m_loader.xrStringToPath(m_inst, profile, &p)))
+            return;
+        std::vector<XrActionSuggestedBinding> sb;
+        sb.reserve(binds.size() * 2);
+        for (const Bind& b : binds)
+            for (int h = 0; h < 2; ++h) {
+                char full[128];
+                std::snprintf(full, sizeof(full), "/user/hand/%s%s", h == 0 ? "left" : "right", b.leaf);
+                XrActionSuggestedBinding e{};
+                if (XR_SUCCEEDED(m_loader.xrStringToPath(m_inst, full, &e.binding))) {
+                    e.action = b.action;
+                    sb.push_back(e);
+                }
+            }
+        if (sb.empty())
+            return;
+        XrInteractionProfileSuggestedBinding sip{};
+        sip.type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING;
+        sip.interactionProfile = p;
+        sip.countSuggestedBindings = (uint32_t)sb.size();
+        sip.suggestedBindings = sb.data();
+        const XrResult r = m_loader.xrSuggestInteractionProfileBindings(m_inst, &sip);
+        if (r == XR_ERROR_PATH_UNSUPPORTED)
+            diagAppend("xr: profile %s unsupported here (skipped)\n", profile);
+        else if (XR_FAILED(r))
+            diagAppend("xr: suggest %s failed %d\n", profile, (int)r);
+        else
+            diagAppend("xr: bound %s (%zu inputs)\n", profile, sb.size());
+    };
+    // pose paths are uniform across these profiles; only the trigger leaf differs (simple has none)
+    const char* grip = "/input/grip/pose";
+    const char* aim = "/input/aim/pose";
+    const char* trig = "/input/trigger/value";
+    suggest("/interaction_profiles/khr/simple_controller", {{m_gripPose, grip}, {m_aimPose, aim}});
+    suggest("/interaction_profiles/htc/vive_controller", {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}});
+    suggest("/interaction_profiles/oculus/touch_controller", {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}});
+    suggest("/interaction_profiles/valve/index_controller", {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}});
+    suggest("/interaction_profiles/valve/knuckles_controller",
+            {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}});
+    suggest("/interaction_profiles/windows/mixed_reality_controller",
+            {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}});
+
+    // attach after the suggestions so the runtime can bind the suggested sources to our actions
+    XrSessionActionSetsAttachInfo att{};
+    att.type = XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO;
+    att.countActionSets = 1;
+    XrActionSet set = m_actionSet;
+    att.actionSets = &set;
+    xrafail(m_loader.xrAttachSessionActionSets(m_session, &att), "attachActionSets");
 }
 
 void Xr::pollEvents() {
@@ -322,7 +451,116 @@ XrFrame Xr::poll() {
         e.tanU = std::tan(v.fov.angleUp);
         e.tanD = std::tan(v.fov.angleDown);
     }
+    pollControllers(fr);
     return fr;
+}
+
+void Xr::pollControllers(XrFrame& fr) {
+    if (m_actionSet == XR_NULL_HANDLE)
+        return;
+    // sync once for the active set across both hands
+    XrActionSet set = m_actionSet;
+    XrActiveActionSet active[2] = {{set, m_hand[0]}, {set, m_hand[1]}};
+    XrActionsSyncInfo si{};
+    si.type = XR_TYPE_ACTIONS_SYNC_INFO;
+    si.countActiveActionSets = 2;
+    si.activeActionSets = active;
+    m_loader.xrSyncActions(m_session, &si);
+
+    for (int h = 0; h < 2; ++h) {
+        XrController& c = fr.controller[h];
+        c = XrController{};
+
+        XrActionStateGetInfo gi{};
+        gi.type = XR_TYPE_ACTION_STATE_GET_INFO;
+        gi.subactionPath = m_hand[h];
+        gi.action = m_trigger;
+        XrActionStateFloat tf{};
+        tf.type = XR_TYPE_ACTION_STATE_FLOAT;
+        if (XR_SUCCEEDED(m_loader.xrGetActionStateFloat(m_session, &gi, &tf)) && tf.isActive)
+            c.trigger = tf.currentState;
+
+        // pose via a lazily-created action space, located against the reference space
+        auto poseOf = [&](XrAction action, XrSpace* space, V3& outP, V4& outQ) -> bool {
+            if (*space == XR_NULL_HANDLE) {
+                XrActionSpaceCreateInfo asi{};
+                asi.type = XR_TYPE_ACTION_SPACE_CREATE_INFO;
+                asi.action = action;
+                asi.subactionPath = m_hand[h];
+                asi.poseInActionSpace.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+                asi.poseInActionSpace.position = {0.0f, 0.0f, 0.0f};
+                if (XR_FAILED(m_loader.xrCreateActionSpace(m_session, &asi, space)))
+                    return false;
+            }
+            XrSpaceLocation loc{};
+            loc.type = XR_TYPE_SPACE_LOCATION;
+            if (XR_FAILED(m_loader.xrLocateSpace(*space, m_refSpace, m_fs.predictedDisplayTime, &loc)))
+                return false;
+            const bool ok = (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+                            (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT);
+            if (!ok)
+                return false;
+            outP = {loc.pose.position.x, loc.pose.position.y, loc.pose.position.z};
+            outQ = {loc.pose.orientation.x, loc.pose.orientation.y, loc.pose.orientation.z, loc.pose.orientation.w};
+            return true;
+        };
+        const bool g = poseOf(m_gripPose, &m_gripSpace[h], c.pos, c.quat);
+        const bool a = poseOf(m_aimPose, &m_aimSpace[h], c.aimPos, c.aimQuat);
+        c.active = g || a;
+        if (c.active)
+            ++fr.nControllers;
+    }
+    logInput(fr);
+}
+
+void Xr::logInput(const XrFrame& fr) {
+    if (!m_loggedProfile) {
+        m_loggedProfile = true;
+        // the interaction profile actually in use per hand is the definitive "what device" signal
+        for (int h = 0; h < 2; ++h) {
+            XrInteractionProfileState ips{};
+            ips.type = XR_TYPE_INTERACTION_PROFILE_STATE;
+            const XrResult r1 = m_loader.xrGetCurrentInteractionProfile(m_session, m_hand[h], &ips);
+            if (!XR_SUCCEEDED(r1)) {
+                diagAppend("xr: hand[%d] getCurrentInteractionProfile failed=%d (no source)\n", h, (int)r1);
+                continue;
+            }
+            char buf[256];
+            uint32_t n = (uint32_t)sizeof(buf);
+            const XrResult r2 = m_loader.xrPathToString(m_inst, ips.interactionProfile, n, &n, buf);
+            diagAppend("xr: hand[%d] profile path=0x%llx toString=%d [%s]\n", h,
+                       (unsigned long long)ips.interactionProfile, (int)r2, XR_SUCCEEDED(r2) ? buf : "<failed>");
+        }
+        // how many input sources does each action actually have bound?
+        const XrAction actions[3] = {m_gripPose, m_aimPose, m_trigger};
+        const char* names[3] = {"grip", "aim", "trigger"};
+        for (int a = 0; a < 3; ++a) {
+            XrBoundSourcesForActionEnumerateInfo ei{};
+            ei.type = XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO;
+            ei.action = actions[a];
+            uint32_t count = 0;
+            const XrResult rb = m_loader.xrEnumerateBoundSourcesForAction(m_session, &ei, 0, &count, nullptr);
+            diagAppend("xr: action %s: enumerateBoundSources=%d count=%u\n", names[a], (int)rb, count);
+            if (XR_SUCCEEDED(rb) && count > 0) {
+                std::vector<XrPath> srcs(count);
+                if (XR_SUCCEEDED(m_loader.xrEnumerateBoundSourcesForAction(m_session, &ei, count, &count, srcs.data())))
+                    for (uint32_t s = 0; s < count; ++s) {
+                        char sb[256];
+                        uint32_t sn = (uint32_t)sizeof(sb);
+                        if (XR_SUCCEEDED(m_loader.xrPathToString(m_inst, srcs[s], sn, &sn, sb)))
+                            diagAppend("xr:   %s source[%u]=%s\n", names[a], s, sb);
+                        else
+                            diagAppend("xr:   %s source[%u]=0x%llx\n", names[a], s, (unsigned long long)srcs[s]);
+                    }
+            }
+        }
+    }
+    if (m_diagFrame++ % 30 == 0)
+        for (int h = 0; h < 2; ++h) {
+            const XrController& c = fr.controller[h];
+            diagAppend("xr: c%d active=%d grip=(%.3f,%.3f,%.3f) trig=%.2f\n", h, (int)c.active, c.pos.x, c.pos.y,
+                       c.pos.z, c.trigger);
+        }
 }
 
 void Xr::endFrame(bool render) {
@@ -386,6 +624,23 @@ void Xr::releaseImage(int eye) {
     m_swaps[eye].acquired = false;
 }
 
+void Xr::destroyActions() {
+    for (auto& s : m_gripSpace)
+        if (s != XR_NULL_HANDLE)
+            m_loader.xrDestroySpace(s);
+    for (auto& s : m_aimSpace)
+        if (s != XR_NULL_HANDLE)
+            m_loader.xrDestroySpace(s);
+    for (auto& a : {m_gripPose, m_aimPose, m_trigger})
+        if (a != XR_NULL_HANDLE)
+            m_loader.xrDestroyAction(a);
+    if (m_actionSet != XR_NULL_HANDLE)
+        m_loader.xrDestroyActionSet(m_actionSet);
+    m_gripSpace[0] = m_gripSpace[1] = m_aimSpace[0] = m_aimSpace[1] = XR_NULL_HANDLE;
+    m_gripPose = m_aimPose = m_trigger = XR_NULL_HANDLE;
+    m_actionSet = XR_NULL_HANDLE;
+}
+
 void Xr::shutdown() {
     if (m_session) {
         if (m_running) {
@@ -397,6 +652,7 @@ void Xr::shutdown() {
                 m_loader.xrDestroySwapchain(s.sc);
         if (m_refSpace != XR_NULL_HANDLE)
             m_loader.xrDestroySpace(m_refSpace);
+        destroyActions();
         m_loader.xrDestroySession(m_session);
     }
     if (m_shadowInst != VK_NULL_HANDLE)

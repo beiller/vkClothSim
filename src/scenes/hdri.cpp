@@ -37,7 +37,7 @@ void createHdriWorld(World& w) {
     const VkExtent2D ext = w.app->extent();
     w.rigid.init();
     w.sim.init(w.app->device(), w.app->pdev());
-    w.renderer.init(*w.app, 1, cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
+    w.renderer.init(*w.app, 3, cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
 
     Transform st{};
     st.pos = V3{0.0f, 0.0f, 0.0f};

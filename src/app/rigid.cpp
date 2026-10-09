@@ -3,6 +3,8 @@
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/RegisterTypes.h>
@@ -86,4 +88,35 @@ Transform RigidScene::pose(JPH::BodyID id) const {
     const JPH::Vec3 p = b.GetPosition();
     const JPH::Quat q = b.GetRotation();
     return {{p.GetX(), p.GetY(), p.GetZ()}, {q.GetX(), q.GetY(), q.GetZ(), q.GetW()}};
+}
+
+RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist) const {
+    RayHit out{};
+    // direction encodes the endpoint (length included): anything beyond maxDist is not reported
+    JPH::RRayCast ray(JPH::RVec3(origin.x, origin.y, origin.z), JPH::Vec3(dir.x, dir.y, dir.z) * maxDist);
+    JPH::RayCastResult hit;
+    if (!m_phys->GetNarrowPhaseQuery().CastRay(ray, hit))
+        return out;
+    const JPH::Vec3 hp = ray.GetPointOnRay(hit.mFraction);
+    out.hit = true;
+    out.body = hit.mBodyID;
+    out.pos = {hp.GetX(), hp.GetY(), hp.GetZ()};
+    return out;
+}
+
+void RigidScene::moveBody(JPH::BodyID id, const V3& pos, const V4& quat) {
+    auto& bi = m_phys->GetBodyInterface();
+    bi.SetPositionAndRotation(id, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat), JPH::EActivation::DontActivate);
+    bi.SetLinearVelocity(id, JPH::Vec3(0.0f, 0.0f, 0.0f));
+    bi.SetAngularVelocity(id, JPH::Vec3(0.0f, 0.0f, 0.0f));
+}
+
+void RigidScene::setVelocity(JPH::BodyID id, const V3& linVel) {
+    auto& bi = m_phys->GetBodyInterface();
+    bi.SetLinearVelocity(id, JPH::Vec3(linVel.x, linVel.y, linVel.z));
+}
+
+bool RigidScene::isDynamic(JPH::BodyID id) const {
+    JPH::BodyLockRead lock(m_phys->GetBodyLockInterface(), id);
+    return lock.GetBody().IsDynamic();
 }

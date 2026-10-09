@@ -46,7 +46,7 @@ void createShadowTestWorld(World& w) {
     const VkExtent2D ext = w.app->extent();
     w.rigid.init();
     w.sim.init(w.app->device(), w.app->pdev());
-    w.renderer.init(*w.app, 2, cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
+    w.renderer.init(*w.app, 4, cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
 
     const entt::entity ground = spawnStaticMesh(w, makeGroundMesh(40.0f), Transform{});
     w.reg.emplace<Name>(ground, "ground");

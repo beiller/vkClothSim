@@ -201,7 +201,7 @@ void createSceneFileWorld(World& w, const std::string& path) {
     const VkExtent2D ext = w.app->extent();
     w.rigid.init();
     w.sim.init(w.app->device(), w.app->pdev());
-    w.renderer.init(*w.app, (int)j["objects"].size(), cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
+    w.renderer.init(*w.app, (int)j["objects"].size() + 2, cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
 
     for (const auto& L : j["lights"]) {
         const auto name = L.at("name").get<std::string>();

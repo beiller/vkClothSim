@@ -50,7 +50,7 @@ void createHierarchyWorld(World& w) {
     w.rigid.init();
     w.sim.init(w.app->device(), w.app->pdev());
     // ~100 branches; the exact count is fixed by the branching below
-    w.renderer.init(*w.app, 140, cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
+    w.renderer.init(*w.app, 142, cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
 
     const entt::entity ground = spawnStaticMesh(w, makeGroundMesh(28.0f), Transform{});
     w.reg.emplace<Name>(ground, "ground");

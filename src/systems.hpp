@@ -20,9 +20,6 @@ entt::entity findActiveCamera(const World& w);
 // compose an entity's Transform through its Parent chain (world space); valid before/after resolve
 Transform worldTransform(entt::registry& reg, entt::entity e);
 Mat4 cameraViewProj(World& w, entt::entity cam, float aspect);
-// player + eye-height rig under the head: the active camera is re-parented as the head and its
-// local pose becomes the headset pose (or the mouse/keyboard virtual head when no session runs)
-void spawnVrRig(World& w, entt::entity head);
 
 void stepPinHolds(World& w, float dt);
 void resetSofts(World& w);
@@ -66,3 +63,10 @@ void stepFlyCamera(World& w, float dt);
 // headset pose -> active camera's local Transform; then synthesize the per-eye poses (headset
 // eyes + rig placement, or the active camera's world pose with virtual lens FOVs) -> setVrEyes
 void stepXr(World& w);
+// create a tracked controller entity per hand, parented to the head (grip pose -> Transform,
+// aim pose + trigger -> ControllerInput); hidden until a pose arrives
+void spawnControllers(World& w, entt::entity head);
+// headset controller poses -> controller entities' local Transform + ControllerInput (ref space)
+void stepControllers(World& w);
+// right-controller trigger: aim-ray grab of a dynamic rigid body, release to throw
+void stepGrab(World& w, float dt);

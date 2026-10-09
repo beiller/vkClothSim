@@ -50,6 +50,11 @@ inline Transform transformCompose(const Transform& parent, const Transform& loca
     return r;
 }
 
+// inverse of a rigid (rotation + translation) pose
+inline Transform transformInvert(const Transform& t) {
+    return {vScale(quatRotate(t.quat, t.pos), -1.0f), quatInv(t.quat)};
+}
+
 // per-entity animation of its own Transform; attached to the entity, invoked by stepAnimation
 struct Animation {
     std::function<void(Transform&, float dt)> fn;
@@ -89,6 +94,16 @@ struct Camera {
     float fovDeg = 50.0f;
     float nearP = 0.1f;
     float farP = 300.0f;
+    bool active = false;
+};
+
+// a tracked controller (left/right). Its Transform is the grip pose, local under the head; the
+// aim pose (ref space) + trigger feed the grab interaction. Resolved to world by the rig chain.
+struct ControllerInput {
+    int hand = -1; // 0 left, 1 right
+    V3 aimPos{};   // ref space
+    V4 aimQuat{0, 0, 0, 1};
+    float trigger = 0.0f;
     bool active = false;
 };
 

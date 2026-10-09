@@ -45,6 +45,7 @@
     X(xrSyncActions)                                                                                                   \
     X(xrEnumerateBoundSourcesForAction)                                                                                \
     X(xrGetActionStateBoolean)                                                                                         \
+    X(xrGetActionStateFloat)                                                                                           \
     X(xrGetActionStateVector2f)                                                                                        \
     X(xrCreateActionSpace)                                                                                             \
     X(xrStringToPath)                                                                                                  \

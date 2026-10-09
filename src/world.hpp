@@ -15,6 +15,17 @@ struct RenderSettings {
     float envIntensity = 1.0f;
 };
 
+// a rigid body held by a controller: world-space offset from the aim point, and the smoothed aim
+// velocity imparted on release (throw)
+struct Grab {
+    bool active = false;
+    JPH::BodyID body{};
+    V3 offset{};
+    V4 offsetQuat{0, 0, 0, 1};
+    V3 prevAim{};
+    V3 throwVel{};
+};
+
 struct World {
     entt::registry reg;
     VkApp* app = nullptr;
@@ -24,6 +35,7 @@ struct World {
     std::unique_ptr<IXrBackend> xr;
     XrFrame xrFrame;
     RenderSettings render;
+    Grab grab;
     float fps = 0.0f;
     bool showDemo = false;
     int uiSeq = 0; // auto-assigned draw order for UI windows/widgets
