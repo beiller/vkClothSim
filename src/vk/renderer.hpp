@@ -4,6 +4,7 @@
 #include "gpuverts.hpp"
 #include "math.hpp"
 #include "mesh.hpp"
+#include "xr_frame.hpp"
 #include <imgui.h>
 #include <vector>
 
@@ -44,9 +45,9 @@ public:
     // xrImg[i] is the acquired swapchain image index for eye i (headet); nullptr = window only
     void drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui, float exposure,
                 const uint32_t* xrImg, int nXr);
-    void drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx);
 
 private:
+    void drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx);
     struct GpuMesh {
         VkBuffer pos = VK_NULL_HANDLE, nrm = VK_NULL_HANDLE, uv = VK_NULL_HANDLE;
         VkDeviceMemory posMem = VK_NULL_HANDLE, nrmMem = VK_NULL_HANDLE, uvMem = VK_NULL_HANDLE;

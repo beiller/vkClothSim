@@ -2,11 +2,8 @@
 
 #include "meshgen.hpp"
 #include "vk/vkapp.hpp"
-#include <algorithm>
 #include <cmath>
-#include <cstdarg>
 #include <cstdio>
-#include <functional>
 #include <unordered_map>
 
 entt::entity spawnCapsule(World& w, const RigidBody& body, int geom) {
@@ -70,6 +67,11 @@ entt::entity findActiveCamera(const World& w) {
     return cam;
 }
 
+// the VR root's world translation (stick locomotion); {0,0,0} when there is no VR root
+static V3 walkPos(const World& w) {
+    return w.vrRoot != entt::null ? w.reg.get<Transform>(w.vrRoot).pos : V3{0, 0, 0};
+}
+
 Transform worldTransform(entt::registry& reg, entt::entity e) {
     Transform acc{};
     bool have = false;
@@ -89,18 +91,18 @@ Mat4 cameraViewProj(World& w, entt::entity cam, float aspect) {
     return mul4(perspective(c.fovDeg, aspect, c.nearP, c.farP), viewFromPose(wt.pos, wt.quat));
 }
 
-static void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, double& prevCX, double& prevCY) {
+static void applyMoveLook(float dt, V3& pos, V4& quat, VkApp& app, FlyCam& fc) {
     ImGuiIO& io = ImGui::GetIO();
     double cx, cy;
     glfwGetCursorPos(app.glfwWindow(), &cx, &cy);
     if (glfwGetMouseButton(app.glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS && !io.WantCaptureMouse) {
         const float sens = 0.0025f;
-        const float dx = (float)(cx - prevCX);
-        const float dy = (float)(cy - prevCY);
+        const float dx = (float)(cx - fc.prevCX);
+        const float dy = (float)(cy - fc.prevCY);
         quat = quatMul(quatAxisAngle({0, 1, 0}, -dx * sens), quatMul(quat, quatAxisAngle({1, 0, 0}, -dy * sens)));
     }
-    prevCX = cx;
-    prevCY = cy;
+    fc.prevCX = cx;
+    fc.prevCY = cy;
     const float qf[4] = {quat.x, quat.y, quat.z, quat.w};
     float rotm[9];
     quatToMat3(qf, rotm);
@@ -132,16 +134,15 @@ void stepFlyCamera(World& w, float dt) {
     const entt::entity cam = findActiveCamera(w);
     if (cam == entt::null)
         return;
-    static double prevCX = 0.0, prevCY = 0.0;
     Transform& t = w.reg.get<Transform>(cam);
-    applyMoveLook(dt, t.pos, t.quat, *w.app, prevCX, prevCY);
+    applyMoveLook(dt, t.pos, t.quat, *w.app, w.flyCam);
 }
 
 void stepXr(World& w) {
     const XrFrame& fr = w.xrFrame;
     const entt::entity cam = findActiveCamera(w);
     XrEyeData eyes[2]{};
-    int n = 2;
+    int n = 0;
     if (fr.havePose && fr.nEyes > 0 && cam != entt::null) {
         // head tracks the XR pose. The camera is a child of the VR root, so its LOCAL Transform is
         // the reported head pose and its world = walkPos + head. The per-eye render poses are data
@@ -150,7 +151,7 @@ void stepXr(World& w) {
         Transform& t = w.reg.get<Transform>(cam);
         t.pos = mid;
         t.quat = fr.eye[0].quat;
-        const V3 walk = w.vrRoot != entt::null ? w.reg.get<Transform>(w.vrRoot).pos : V3{0, 0, 0};
+        const V3 walk = walkPos(w);
         n = fr.nEyes;
         for (int i = 0; i < n; ++i) {
             eyes[i] = fr.eye[i];
@@ -173,8 +174,10 @@ void stepXr(World& w) {
             eyes[i].tanU = std::tan(44.0f * kPi / 180.0f);
             eyes[i].tanD = -std::tan(55.0f * kPi / 180.0f);
         }
+        n = 2;
     }
-    w.renderer.setVrEyes(eyes, n);
+    if (n > 0)
+        w.renderer.setVrEyes(eyes, n);
 }
 
 // natural resting spot (head-local: -Z forward, +Y up) so the grip is always visible even
@@ -197,10 +200,9 @@ entt::entity spawnVrRoot(World& w, entt::entity head) {
     return root;
 }
 
-void spawnControllers(World& w, entt::entity head) {
+void spawnControllers(World& w) {
     // grips are children of the VR root; their LOCAL Transform is set to the raw OpenXR grip each
     // frame, so world = walkPos + grip (head-independent -> no drift).
-    (void)head;
     const CapsuleParams gripShape{0.06f, 0.03f};
     const int geom = w.renderer.addMesh(makeCapsuleMesh(gripShape, 1)).geom;
     for (int h = 0; h < 2; ++h) {
@@ -209,6 +211,8 @@ void spawnControllers(World& w, entt::entity head) {
         if (w.vrRoot != entt::null)
             w.reg.emplace<Parent>(e, w.vrRoot);
         w.reg.emplace<ControllerInput>(e, ControllerInput{h, {}, {0, 0, 0, 1}, 0.0f, false});
+        if (h == 1)
+            w.reg.emplace<Grab>(e); // the right hand drives the grab
         w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
         w.reg.emplace<Material>(e, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f);
         w.reg.emplace<Name>(e, h == 0 ? "controller L" : "controller R");
@@ -219,8 +223,8 @@ void stepControllers(World& w) {
     const XrFrame& fr = w.xrFrame;
     const entt::entity cam = findActiveCamera(w);
     // grips are children of the VR root. Their LOCAL Transform is the raw OpenXR grip (so world
-    // = walkPos + grip, head-independent -> no drift); the missing-hand rest pose goes in front
-    // of the head using the head's LOCAL pose (relative to the same root).
+    // = walkPos + grip, head-independent -> no drift); the missing-hand rest pose goes behind
+    // the head using the head's LOCAL pose (relative to the same root).
     Transform headLocal{};
     if (cam != entt::null)
         headLocal = w.reg.get<Transform>(cam);
@@ -236,57 +240,62 @@ void stepControllers(World& w) {
         if (on)
             t = Transform{c.pos, c.quat}; // grip as reported (local rel. to the vr root)
         else if (cam != entt::null)
-            t = transformCompose(headLocal, Transform{restPose(ci.hand), V4{0, 0, 0, 1}}); // in front of head
+            t = transformCompose(headLocal, Transform{restPose(ci.hand), V4{0, 0, 0, 1}}); // behind and below the head
     });
 }
 
+// throw velocity imparted on release, per-frame blend of the aim motion into the throw, aim-ray length
+constexpr float kThrowImpulse = 1.5f;
+constexpr float kThrowLerp = 0.2f;
+constexpr float kGrabRange = 3.0f;
+
 void stepGrab(World& w, float dt) {
-    Grab& grab = w.grab;
     const XrFrame& fr = w.xrFrame;
+    // the right hand is the only controller with a Grab component
+    const ControllerInput* rc = nullptr;
+    Grab* grab = nullptr;
+    for (auto [e, ci, g] : w.reg.view<ControllerInput, Grab>().each()) {
+        rc = &ci;
+        grab = &g;
+    }
     auto release = [&] {
-        if (grab.active) {
-            w.rigid.setVelocity(grab.body, vScale(grab.throwVel, 1.5f));
-            grab.active = false;
+        if (grab && grab->active) {
+            w.rigid.setVelocity(grab->body, vScale(grab->throwVel, kThrowImpulse));
+            grab->active = false;
         }
     };
-
-    const entt::entity cam = findActiveCamera(w);
-    const ControllerInput* rc = nullptr;
-    if (cam != entt::null)
-        for (auto [e, ci] : w.reg.view<ControllerInput>().each())
-            if (ci.hand == 1)
-                rc = &ci;
-    if (!fr.running || fr.nControllers == 0 || !rc || !rc->active) {
+    if (!fr.running || !rc || !rc->active) {
         release();
         return;
     }
 
     // aim point in world = walkPos + the OpenXR aim pose (the aim pose is in the reference space,
     // like the grips). walkPos is head-independent, so this stays drift-free.
-    const V3 walk = w.vrRoot != entt::null ? w.reg.get<Transform>(w.vrRoot).pos : V3{0, 0, 0};
+    const V3 walk = walkPos(w);
     const Transform aimWorld{vAdd(rc->aimPos, walk), rc->aimQuat};
     const V3 fwd = vNorm(quatRotate(aimWorld.quat, V3{0, 0, -1})); // -Z of the aim pose
 
-    if (grab.active) {
-        w.rigid.moveBody(grab.body, vAdd(aimWorld.pos, grab.offset), quatMul(aimWorld.quat, grab.offsetQuat));
+    if (grab->active) {
+        w.rigid.moveBody(grab->body, vAdd(aimWorld.pos, grab->offset), quatMul(aimWorld.quat, grab->offsetQuat));
         if (dt > 0.0f)
-            grab.throwVel = vAdd(vScale(grab.throwVel, 0.8f), vScale(vSub(aimWorld.pos, grab.prevAim), 0.2f / dt));
-        grab.prevAim = aimWorld.pos;
+            grab->throwVel = vAdd(vScale(grab->throwVel, 1.0f - kThrowLerp),
+                                  vScale(vSub(aimWorld.pos, grab->prevAim), kThrowLerp / dt));
+        grab->prevAim = aimWorld.pos;
     }
 
     const bool held = rc->trigger > 0.5f;
-    if (held && !grab.active) {
-        const RayHit hit = w.rigid.raycast(aimWorld.pos, fwd, 3.0f);
+    if (held && !grab->active) {
+        const RayHit hit = w.rigid.raycast(aimWorld.pos, fwd, kGrabRange);
         if (hit.hit && w.rigid.isDynamic(hit.body)) {
             const Transform bp = w.rigid.pose(hit.body);
-            grab.body = hit.body;
-            grab.offset = vSub(bp.pos, aimWorld.pos);
-            grab.offsetQuat = quatMul(bp.quat, quatInv(aimWorld.quat));
-            grab.throwVel = {0, 0, 0};
-            grab.prevAim = aimWorld.pos;
-            grab.active = true;
+            grab->body = hit.body;
+            grab->offset = vSub(bp.pos, aimWorld.pos);
+            grab->offsetQuat = quatMul(bp.quat, quatInv(aimWorld.quat));
+            grab->throwVel = {0, 0, 0};
+            grab->prevAim = aimWorld.pos;
+            grab->active = true;
         }
-    } else if (!held && grab.active) {
+    } else if (!held && grab->active) {
         release();
     }
 }
@@ -391,9 +400,20 @@ void resolveWorldTransforms(World& w) {
         if (!any)
             break;
     }
-    for (int i = 0; i < n; ++i)
-        if (done[i])
+    bool all = true;
+    for (int i = 0; i < n; ++i) {
+        if (!done[i])
+            all = false;
+        else
             reg.emplace_or_replace<WorldTransform>(nodes[i].e, world[i]);
+    }
+    if (!all) {
+        static bool s_cycleLogged = false;
+        if (!s_cycleLogged) {
+            std::fprintf(stderr, "3dsim: parent cycle detected; entities in the cycle have no WorldTransform\n");
+            s_cycleLogged = true;
+        }
+    }
 }
 
 void syncColliders(World& w) {
@@ -409,113 +429,6 @@ void stepSoft(World& w, VkCommandBuffer cmd) {
     w.sim.record(cmd);
 }
 
-void drawUi(World& w) {
-    auto& reg = w.reg;
-    std::unordered_map<entt::entity, std::vector<entt::entity>> kids;
-    for (auto [c, wg, p] : reg.view<UIWidget, Parent>().each()) {
-        (void)wg;
-        kids[p.e].push_back(c);
-    }
-    std::function<void(entt::entity, bool&)> drawKids;
-    drawKids = [&](entt::entity parent, bool& tabOpen) {
-        auto it = kids.find(parent);
-        if (it == kids.end())
-            return;
-        auto v = it->second;
-        std::sort(v.begin(), v.end(), [&](entt::entity a, entt::entity b) {
-            return reg.get<UIWidget>(a).order < reg.get<UIWidget>(b).order;
-        });
-        // the tab bar belongs to the level that owns the tab children; content-level
-        // recursion must not close it
-        bool hasTab = false;
-        bool itemOpen = false;
-        for (entt::entity e : v)
-            if (reg.try_get<UITab>(e)) {
-                hasTab = true;
-                break;
-            }
-        for (entt::entity e : v) {
-            // scope the widget's ID to its entity; sibling sections reuse labels ("metallic", "on", ...)
-            // tabs are excluded: BeginTabBar/BeginTabItem manage their own ID pushes, and wrapping
-            // them in PushID/PopID makes the ID-stack top (hence the tab ID) depend on selection
-            const bool isTab = reg.try_get<UITab>(e) != nullptr;
-            if (!isTab)
-                ImGui::PushID((int)e);
-            if (const auto* s = reg.try_get<UISliderF>(e))
-                ImGui::SliderFloat(s->label.c_str(), s->value(), s->lo, s->hi, s->fmt.c_str());
-            else if (const auto* s = reg.try_get<UISliderI>(e))
-                ImGui::SliderInt(s->label.c_str(), s->value(), s->lo, s->hi);
-            else if (const auto* c = reg.try_get<UICheckbox>(e))
-                ImGui::Checkbox(c->label.c_str(), c->value());
-            else if (const auto* c = reg.try_get<UIColorEdit>(e))
-                ImGui::ColorEdit3(c->label.c_str(), c->value());
-            else if (const auto* d = reg.try_get<UIDragV3>(e))
-                ImGui::DragFloat3(d->label.c_str(), d->value(), d->speed);
-            else if (const auto* t = reg.try_get<UIText>(e)) {
-                if (t->text)
-                    ImGui::TextUnformatted(t->text().c_str());
-                else
-                    ImGui::TextUnformatted(t->label.c_str());
-            } else if (const auto* b = reg.try_get<UIButton>(e)) {
-                if (ImGui::Button(b->label.c_str()))
-                    b->on();
-            } else if (const auto* sec = reg.try_get<UISection>(e)) {
-                if (sec->collapsible) {
-                    if (ImGui::CollapsingHeader(sec->label.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
-                        drawKids(e, tabOpen);
-                } else {
-                    ImGui::SeparatorText(sec->label.c_str());
-                    drawKids(e, tabOpen);
-                }
-            } else if (const auto* tab = reg.try_get<UITab>(e)) {
-                // BeginTabItem only pushes an ID when selected; EndTabItem pops
-                // unconditionally, so it must be called only for opened items
-                if (itemOpen) {
-                    ImGui::EndTabItem();
-                    itemOpen = false;
-                } else if (!tabOpen) {
-                    ImGui::BeginTabBar("##tabs");
-                    tabOpen = true;
-                }
-                if (ImGui::BeginTabItem(tab->label.c_str())) {
-                    itemOpen = true;
-                    drawKids(e, tabOpen);
-                }
-            }
-            if (!isTab)
-                ImGui::PopID();
-        }
-        if (hasTab && tabOpen) {
-            if (itemOpen)
-                ImGui::EndTabItem();
-            ImGui::EndTabBar();
-            tabOpen = false;
-        }
-    };
-    std::vector<entt::entity> wins;
-    reg.view<UIWindow>().each([&](entt::entity e, auto&) { wins.push_back(e); });
-    std::sort(wins.begin(), wins.end(), [&](entt::entity a, entt::entity b) {
-        return reg.get<UIWindow>(a).order < reg.get<UIWindow>(b).order;
-    });
-    for (entt::entity win : wins) {
-        const UIWindow& cfg = reg.get<UIWindow>(win);
-        if (cfg.visible && !cfg.visible())
-            continue;
-        // NoMove windows (like the fps HUD) track their pos every frame; others are placed once and
-        // can be moved/resized freely (state persists in imgui.ini)
-        const bool pin = cfg.flags & ImGuiWindowFlags_NoMove;
-        ImGui::SetNextWindowPos(ImVec2(cfg.pos().x, cfg.pos().y), pin ? ImGuiCond_Always : ImGuiCond_Appearing);
-        if (cfg.size.x > 0.0f && cfg.size.y > 0.0f)
-            ImGui::SetNextWindowSize(ImVec2(cfg.size.x, cfg.size.y), ImGuiCond_Appearing);
-        if (cfg.collapseOnAppear)
-            ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
-        ImGui::Begin(cfg.title.c_str(), nullptr, cfg.flags);
-        bool tabOpen = false;
-        drawKids(win, tabOpen);
-        ImGui::End();
-    }
-}
-
 void syncSceneToRenderer(World& w) {
     for (auto [entity, g] : w.reg.view<MaterialGroup>().each())
         w.reg.get<Material>(entity) = w.reg.get<Material>(g.leader);
@@ -526,10 +439,10 @@ void syncSceneToRenderer(World& w) {
         w.renderer.setMaterial(rend.inst, mat ? mat->baseColor : V3{1.0f, 1.0f, 1.0f}, mat ? mat->metallic : 0.0f,
                                mat ? mat->roughness : 0.5f);
     }
-    std::vector<Renderer::Light> lights;
+    w.lights.clear();
     for (auto [entity, wt, p] : w.reg.view<WorldTransform, PointLight>().each())
-        lights.push_back({wt.pos, p});
-    w.renderer.setLights(lights);
+        w.lights.push_back({wt.pos, p});
+    w.renderer.setLights(w.lights);
     w.renderer.setEnvIntensity(w.render.envIntensity);
 }
 

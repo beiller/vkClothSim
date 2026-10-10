@@ -64,6 +64,7 @@ using PFN_xrCreateVulkanDeviceKHR = XrResult (*)(XrInstance, const XrVulkanDevic
 
 class Xr : public IXrBackend {
 public:
+    ~Xr() override { shutdown(); } // idempotent, so an explicit shutdown() first is safe
     // phase 1: load loader, create OpenXR instance + Vulkan device (via xrCreateVulkanDeviceKHR)
     // so the compositor holds our pfn+device; must run before anything allocates on the device
     bool createDevice(VkApp& app) override;
@@ -124,6 +125,13 @@ private:
              m_stick = XR_NULL_HANDLE;
     XrSpace m_gripSpace[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE}, m_aimSpace[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
     int m_diagFrame = 0;
+    // createDevice phases
+    bool createInstance();
+    // non-fatal: SteamVR pre-session requirement, falls back to app.instance()
+    void createShadowInstance();
+    // informational: what the runtime wants before xrCreateSession
+    void queryRuntimeVulkan(VkApp& app);
+    bool createVulkanDevice(VkApp& app);
     XrCompositionLayerProjectionView m_proj[2]{};
     XrRect2Di m_rects[2]{};
     Swap m_swaps[2]{};

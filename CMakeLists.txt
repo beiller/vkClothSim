@@ -89,12 +89,15 @@ add_executable(vksim
     src/scenes/scenefile.cpp
     src/scenes/shadowtest.cpp
     src/systems.cpp
+    src/ui.cpp
     src/url.cpp
     src/app/rigid.cpp
     src/assets.cpp
     src/sim/softsim.cpp
     src/vk/vkapp.cpp
     src/vk/renderer.cpp
+    src/vk/renderer_env.cpp
+    src/vk/renderer_shadow.cpp
     ${CMAKE_SOURCE_DIR}/lib/tinyexr/tinyexr.cc
     ${CMAKE_SOURCE_DIR}/lib/miniz/miniz.c
     ${XR_SOURCES}

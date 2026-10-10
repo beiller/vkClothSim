@@ -97,7 +97,7 @@ struct Camera {
     bool active = false;
 };
 
-// a tracked controller (left/right). Its Transform is the grip pose, local under the head; the
+// a tracked controller (left/right). Its Transform is the grip pose, local under the VR root; the
 // aim pose (ref space) + trigger feed the grab interaction. Resolved to world by the rig chain.
 struct ControllerInput {
     int hand = -1; // 0 left, 1 right
@@ -105,6 +105,17 @@ struct ControllerInput {
     V4 aimQuat{0, 0, 0, 1};
     float trigger = 0.0f;
     bool active = false;
+};
+
+// a rigid body held by a controller: world-space offset from the aim point, and the smoothed aim
+// velocity imparted on release (throw). Attached to the grabbing controller entity.
+struct Grab {
+    bool active = false;
+    JPH::BodyID body{};
+    V3 offset{};
+    V4 offsetQuat{0, 0, 0, 1};
+    V3 prevAim{};
+    V3 throwVel{};
 };
 
 struct Renderable {

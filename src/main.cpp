@@ -16,8 +16,6 @@
 #include <cstdio>
 #include <cstring>
 #include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 int main(int argc, char** argv) {
     VkApp app;
@@ -58,24 +56,7 @@ int main(int argc, char** argv) {
         createShadowTestWorld(w);
     else
         createDemoWorld(w);
-    // app-level fps HUD, also a UI window entity
-    const entt::entity fpsWin = spawnUiWindow(w,
-                                              UIWindow{"##fps",
-                                                       [&w] {
-                                                           const VkExtent2D ext = w.app->extent();
-                                                           return V2{(float)ext.width - 120.0f, 8.0f};
-                                                       },
-                                                       V2{112.0f, 26.0f},
-                                                       ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                                                           ImGuiWindowFlags_NoSavedSettings |
-                                                           ImGuiWindowFlags_NoBringToFrontOnFocus});
-    spawnWidget(w, fpsWin,
-                UIText{"",
-                        [&w] {
-                            char buf[32];
-                            std::snprintf(buf, sizeof(buf), "%.0f fps", w.fps);
-                            return std::string(buf);
-                        }});
+    spawnFpsHud(w);
     if (w.xr) {
         if (w.xr->init(app)) {
             std::vector<std::vector<VkImage>> imgs(w.xr->eyeCount());
@@ -87,7 +68,7 @@ int main(int argc, char** argv) {
             }
             w.renderer.initXrTarget(app, w.xr->format(), w.xr->eyeCount(), imgs, exts);
             spawnVrRoot(w, findActiveCamera(w));
-            spawnControllers(w, findActiveCamera(w));
+            spawnControllers(w);
         } else
             std::printf(
                 "3dsim: no OpenXR session, using virtual head (LMB drag = look, WASD/QE = move, shift = fast)\n");
@@ -97,27 +78,7 @@ int main(int argc, char** argv) {
         return cameraViewProj(w, cam, (float)ext.width / (float)ext.height);
     };
 
-    ImGui::CreateContext();
-    ImGui::StyleColorsDark();
-    ImGui_ImplGlfw_InitForVulkan(app.glfwWindow(), true);
-    ImGui_ImplVulkan_InitInfo ii{};
-    ii.ApiVersion = VK_API_VERSION_1_1;
-    ii.Instance = app.instance();
-    ii.PhysicalDevice = app.pdev();
-    ii.Device = app.device();
-    ii.QueueFamily = app.queueFamily();
-    ii.Queue = app.queue();
-    ii.DescriptorPoolSize = 1024;
-    ii.MinImageCount = app.imageCount();
-    ii.ImageCount = app.imageCount();
-    ii.PipelineInfoMain.RenderPass = app.renderPass();
-    ii.PipelineInfoMain.Subpass = 0;
-    ii.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    ii.CheckVkResultFn = [](VkResult err) {
-        if (err != VK_SUCCESS)
-            std::printf("ImGui VK err %d\n", (int)err);
-    };
-    ImGui_ImplVulkan_Init(&ii);
+    initImGui(app);
 
     std::printf("3dsim: vulkan+imgui | GPU soft-body sim | R reset | VR auto-detected, "
                 "--no-vr for plain window | --scene file.json | esc/close to quit\n");
@@ -177,9 +138,7 @@ int main(int argc, char** argv) {
 
         stepStaticRigid(w);
         w.renderer.setViewProj(makeVP(app.extent()), worldTransform(w.reg, cam).pos);
-        ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
+        imguiNewFrame();
         drawUi(w);
         if (w.showDemo) // ImGui's own demo window, not ours to decompose
             ImGui::ShowDemoWindow(&w.showDemo);
@@ -207,9 +166,7 @@ int main(int argc, char** argv) {
         app.present(idx);
     }
 
-    ImGui_ImplVulkan_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
+    shutdownImGui();
     w.sim.shutdown();
     w.renderer.shutdown();
     if (w.xr)

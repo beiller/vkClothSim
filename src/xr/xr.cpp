@@ -23,10 +23,8 @@ bool xrok(XrResult r, const char* what) {
 constexpr const char* kXrDiagPath = "/tmp/3dsim_xr_diag.log";
 
 void diagReset() {
-    if (FILE* f = std::fopen(kXrDiagPath, "w")) {
-        std::fprintf(f, "=== 3dsim XR diagnostic (build: IDMAP-NOOFFSET-20261009) ===\n");
+    if (FILE* f = std::fopen(kXrDiagPath, "w"))
         std::fclose(f);
-    }
 }
 
 // append one line to both stdout and the diagnostic file
@@ -66,6 +64,14 @@ bool Xr::createDevice(VkApp& app) {
         std::printf("xr: vendored loader not found (lib/openxr/lib/libopenxr.so.1)\n");
         return false;
     }
+    if (!createInstance())
+        return false;
+    createShadowInstance();
+    queryRuntimeVulkan(app);
+    return createVulkanDevice(app);
+}
+
+bool Xr::createInstance() {
     XrApplicationInfo ai{};
     std::snprintf(ai.applicationName, sizeof(ai.applicationName), "3dsim");
     ai.applicationVersion = 1;
@@ -93,7 +99,10 @@ bool Xr::createDevice(VkApp& app) {
     sp.type = XR_TYPE_SYSTEM_PROPERTIES;
     if (XR_SUCCEEDED(m_loader.xrGetSystemProperties(m_inst, m_system, &sp)))
         std::printf("xr: %s (vendor %u)\n", sp.systemName, sp.vendorId);
+    return true;
+}
 
+void Xr::createShadowInstance() {
     // SteamVR refuses xrCreateSession unless the vulkan-enable2 requirements/device
     // queries happened first (mirrors the sequence a conforming app performs). The
     // device query needs our vkGetInstanceProcAddr, which the runtime only gets if an
@@ -121,6 +130,9 @@ bool Xr::createDevice(VkApp& app) {
     } else {
         std::printf("xr: xrCreateVulkanInstanceKHR not available\n");
     }
+}
+
+void Xr::queryRuntimeVulkan(VkApp& app) {
     PFN_xrGetVulkanGraphicsRequirements2KHR getReqs = nullptr;
     m_loader.xrGetInstanceProcAddr(m_inst, "xrGetVulkanGraphicsRequirements2KHR", (PFN_xrVoidFunction*)&getReqs);
     if (getReqs) {
@@ -144,6 +156,9 @@ bool Xr::createDevice(VkApp& app) {
     } else {
         std::printf("xr: xrGetVulkanGraphicsDevice2KHR not available\n");
     }
+}
+
+bool Xr::createVulkanDevice(VkApp& app) {
     // Create the device through the runtime so the compositor registers our pfn+device and
     // resolves 1.1 core fns (vkGet*MemoryRequirements2KHR) via instance-proc instead of
     // device-proc (which returns NULL for the KHR alias and crashes the compositor).
@@ -527,8 +542,6 @@ void Xr::pollControllers(XrFrame& fr) {
         const bool g = poseOf(m_gripPose, &m_gripSpace[h], "grip", c.pos, c.quat);
         const bool a = poseOf(m_aimPose, &m_aimSpace[h], "aim", c.aimPos, c.aimQuat);
         c.active = g || a;
-        if (c.active)
-            ++fr.nControllers;
     }
 }
 
@@ -611,21 +624,31 @@ void Xr::destroyActions() {
 }
 
 void Xr::shutdown() {
-    if (m_session) {
+    // idempotent: ~Xr calls this after main's explicit shutdown()
+    if (m_session != XR_NULL_HANDLE) {
         if (m_running) {
             xrafail(m_loader.xrEndSession(m_session), "endSession");
             m_running = false;
         }
-        for (auto& s : m_swaps)
-            if (s.sc != XR_NULL_HANDLE)
+        for (auto& s : m_swaps) {
+            if (s.sc != XR_NULL_HANDLE) {
                 m_loader.xrDestroySwapchain(s.sc);
+                s.sc = XR_NULL_HANDLE;
+            }
+        }
         if (m_refSpace != XR_NULL_HANDLE)
             m_loader.xrDestroySpace(m_refSpace);
         destroyActions();
         m_loader.xrDestroySession(m_session);
+        m_session = XR_NULL_HANDLE;
+        m_refSpace = XR_NULL_HANDLE;
     }
-    if (m_shadowInst != VK_NULL_HANDLE)
+    if (m_shadowInst != VK_NULL_HANDLE) {
         vkDestroyInstance(m_shadowInst, nullptr);
-    if (m_inst != XR_NULL_HANDLE)
+        m_shadowInst = VK_NULL_HANDLE;
+    }
+    if (m_inst != XR_NULL_HANDLE) {
         m_loader.xrDestroyInstance(m_inst);
+        m_inst = XR_NULL_HANDLE;
+    }
 }

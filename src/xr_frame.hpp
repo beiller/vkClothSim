@@ -1,6 +1,13 @@
 #pragma once
 #include "math.hpp"
 
+// one render eye of the headset (or synthesized virtual head); no OpenXR types
+struct XrEyeData {
+    V3 pos{0, 0, 0};
+    V4 quat{0, 0, 0, 1};
+    float tanL = 1.0f, tanR = 1.0f, tanU = 0.58f, tanD = 0.58f;
+};
+
 // one controller, in the reference space; no OpenXR types
 struct XrController {
     bool active = false; // has a valid pose this frame
@@ -21,5 +28,4 @@ struct XrFrame {
     int nEyes = 0;
     XrEyeData eye[2]{};
     XrController controller[2]{}; // 0 = left hand, 1 = right hand
-    int nControllers = 0;
 };

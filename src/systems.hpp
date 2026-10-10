@@ -4,6 +4,7 @@
 #include "ecs.hpp"
 #include "mesh.hpp"
 #include "sim/sim.hpp"
+#include "ui.hpp"
 #include "world.hpp"
 #include <imgui.h>
 #include <vector>
@@ -36,27 +37,6 @@ void stepSoft(World& w, VkCommandBuffer cmd);
 void syncSceneToRenderer(World& w);
 void draw(World& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui);
 
-// UI windows/widgets are entities (see ecs.hpp); draws every UIWindow with its widget children
-void drawUi(World& w);
-// spawn a UI window entity; order auto-assigned from World::uiSeq
-inline entt::entity spawnUiWindow(World& w, const UIWindow& cfg) {
-    entt::entity e = w.reg.create();
-    UIWindow c = cfg;
-    c.order = w.uiSeq++;
-    w.reg.emplace<UIWindow>(e, c);
-    return e;
-}
-// spawn a widget entity parented to win/section; order auto-assigned
-template <typename C>
-entt::entity spawnWidget(World& w, entt::entity parent, C c) {
-    entt::entity e = w.reg.create();
-    UIWidget mw;
-    mw.order = w.uiSeq++;
-    w.reg.emplace<UIWidget>(e, mw);
-    w.reg.emplace<C>(e, c);
-    w.reg.emplace<Parent>(e, parent);
-    return e;
-}
 // mouse/keyboard move/look on the active camera (fly camera, or the virtual head when the XR
 // session is not running); skipped while a headset pose is active
 void stepFlyCamera(World& w, float dt);
@@ -70,8 +50,9 @@ entt::entity spawnVrRoot(World& w, entt::entity head);
 // right-stick smooth locomotion: integrate walkPos along the head's horizontal facing
 void stepLocomotion(World& w, float dt);
 // create a tracked controller entity per hand, parented to the VR root (grip pose -> LOCAL
-// Transform, aim pose + trigger -> ControllerInput); a resting pose shows until a pose arrives
-void spawnControllers(World& w, entt::entity head);
+// Transform, aim pose + trigger -> ControllerInput, Grab on the right hand); a resting pose
+// shows until a pose arrives
+void spawnControllers(World& w);
 // headset controller poses -> controller entities' local Transform + ControllerInput (ref space)
 void stepControllers(World& w);
 // right-controller trigger: aim-ray grab of a dynamic rigid body, release to throw

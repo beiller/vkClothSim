@@ -123,12 +123,6 @@ inline Mat4 perspective(float fovyDeg, float aspect, float nearP, float farP) {
     return r;
 }
 
-struct XrEyeData {
-    V3 pos{0, 0, 0};
-    V4 quat{0, 0, 0, 1};
-    float tanL = 1.0f, tanR = 1.0f, tanU = 0.58f, tanD = 0.58f;
-};
-
 // R^T (world-to-pose): rows are the pose's right/up/back axes in the parent frame (view-matrix form)
 inline void quatToMat3(const float q[4], float m[9]) {
     float x = q[0], y = q[1], z = q[2], w = q[3];
