@@ -86,6 +86,7 @@ int main(int argc, char** argv) {
                     imgs[i] = w.xr->images(i);
             }
             w.renderer.initXrTarget(app, w.xr->format(), w.xr->eyeCount(), imgs, exts);
+            spawnVrRoot(w, findActiveCamera(w));
             spawnControllers(w, findActiveCamera(w));
         } else
             std::printf(
@@ -145,6 +146,8 @@ int main(int argc, char** argv) {
         app.pollEvents();
         if (w.xr)
             w.xrFrame = w.xr->poll();
+        if (w.xr)
+            stepLocomotion(w, dt);
         stepFlyCamera(w, dt);
         if (w.xr)
             stepXr(w);

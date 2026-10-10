@@ -143,15 +143,19 @@ void stepXr(World& w) {
     XrEyeData eyes[2]{};
     int n = 2;
     if (fr.havePose && fr.nEyes > 0 && cam != entt::null) {
-        // head tracks the XR pose. World space == the OpenXR reference space (identity mapping),
-        // so the camera (a root, not parented) takes the reported head pose directly.
+        // head tracks the XR pose. The camera is a child of the VR root, so its LOCAL Transform is
+        // the reported head pose and its world = walkPos + head. The per-eye render poses are data
+        // (not entities), so they get walkPos added directly.
         const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
         Transform& t = w.reg.get<Transform>(cam);
         t.pos = mid;
         t.quat = fr.eye[0].quat;
+        const V3 walk = w.vrRoot != entt::null ? w.reg.get<Transform>(w.vrRoot).pos : V3{0, 0, 0};
         n = fr.nEyes;
-        for (int i = 0; i < n; ++i)
+        for (int i = 0; i < n; ++i) {
             eyes[i] = fr.eye[i];
+            eyes[i].pos = vAdd(eyes[i].pos, walk);
+        }
     } else if (cam != entt::null) {
         // no session: virtual head = the active camera's world pose, with Quest 3 lens tangents
         const Transform wt = worldTransform(w.reg, cam);
@@ -179,29 +183,31 @@ static V3 restPose(int hand) {
     return hand == 0 ? V3{-0.30f, -0.40f, 0.40f} : V3{0.30f, -0.40f, 0.40f};
 }
 
-// append one line to the shared XR diagnostic file (same as xr.cpp's)
-static void sysDiag(const char* fmt, ...) {
-    char buf[256];
-    va_list a;
-    va_start(a, fmt);
-    std::vsnprintf(buf, sizeof(buf), fmt, a);
-    va_end(a);
-    if (FILE* f = std::fopen("/tmp/3dsim_xr_diag.log", "a")) {
-        std::fprintf(f, "%s", buf);
-        std::fclose(f);
-    }
+entt::entity spawnVrRoot(World& w, entt::entity head) {
+    // head-independent locomotion anchor. The head (active camera) and the grips are parented
+    // under it; its world Transform is walkPos, a translation driven only by stick locomotion
+    // (identity rotation), never the head. So head/grip world = walkPos + pose, and head motion
+    // can't leak into the grips (no drift).
+    entt::entity root = w.reg.create();
+    w.reg.emplace<Transform>(root, V3{0, 0, 0}, V4{0, 0, 0, 1});
+    w.reg.emplace<Name>(root, "vr root");
+    if (head != entt::null)
+        w.reg.emplace_or_replace<Parent>(head, root);
+    w.vrRoot = root;
+    return root;
 }
 
 void spawnControllers(World& w, entt::entity head) {
-    // The grips are placed directly in world (ref->world) space each frame; they are NOT
-    // parented to the head so head motion never affects them (a VR root for navigation is a
-    // later addition; for now world space is the reference).
+    // grips are children of the VR root; their LOCAL Transform is set to the raw OpenXR grip each
+    // frame, so world = walkPos + grip (head-independent -> no drift).
     (void)head;
     const CapsuleParams gripShape{0.06f, 0.03f};
     const int geom = w.renderer.addMesh(makeCapsuleMesh(gripShape, 1)).geom;
     for (int h = 0; h < 2; ++h) {
         entt::entity e = w.reg.create();
-        w.reg.emplace<Transform>(e, V3{0.0f, 1.0f, -5.0f}, V4{0, 0, 0, 1}); // world; updated per frame
+        w.reg.emplace<Transform>(e, V3{0, 0, 0}, V4{0, 0, 0, 1}); // local rel. to vr root; per frame
+        if (w.vrRoot != entt::null)
+            w.reg.emplace<Parent>(e, w.vrRoot);
         w.reg.emplace<ControllerInput>(e, ControllerInput{h, {}, {0, 0, 0, 1}, 0.0f, false});
         w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
         w.reg.emplace<Material>(e, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f);
@@ -212,13 +218,13 @@ void spawnControllers(World& w, entt::entity head) {
 void stepControllers(World& w) {
     const XrFrame& fr = w.xrFrame;
     const entt::entity cam = findActiveCamera(w);
-    // World space == the OpenXR reference space (identity mapping). The grips are roots, placed
-    // exactly where OpenXR reports them -- independent of the head, so head motion never moves them.
-    Transform headWorld{};
+    // grips are children of the VR root. Their LOCAL Transform is the raw OpenXR grip (so world
+    // = walkPos + grip, head-independent -> no drift); the missing-hand rest pose goes in front
+    // of the head using the head's LOCAL pose (relative to the same root).
+    Transform headLocal{};
     if (cam != entt::null)
-        headWorld = worldTransform(w.reg, cam);
-    Transform rightWorld{};
-    w.reg.view<ControllerInput, Transform>().each([&](auto, ControllerInput& ci, Transform& t) {
+        headLocal = w.reg.get<Transform>(cam);
+    w.reg.view<ControllerInput, Transform>().each([&](auto e, ControllerInput& ci, Transform& t) {
         if (ci.hand < 0 || ci.hand >= 2)
             return;
         const XrController& c = fr.controller[ci.hand];
@@ -228,18 +234,10 @@ void stepControllers(World& w) {
         ci.aimQuat = c.aimQuat;
         ci.trigger = c.trigger;
         if (on)
-            t = Transform{c.pos, c.quat}; // grip exactly as reported (world == ref space)
+            t = Transform{c.pos, c.quat}; // grip as reported (local rel. to the vr root)
         else if (cam != entt::null)
-            t = transformCompose(headWorld, Transform{restPose(ci.hand), V4{0, 0, 0, 1}}); // in front of head
-        if (ci.hand == 1)
-            rightWorld = t;
+            t = transformCompose(headLocal, Transform{restPose(ci.hand), V4{0, 0, 0, 1}}); // in front of head
     });
-    // throttled diagnostic: rCtrl must equal grip (identity mapping); headW moves with the head
-    static int s_diag = 0;
-    if (cam != entt::null && (s_diag++ % 30) == 0)
-        sysDiag("sys: headW=(%.3f,%.3f,%.3f) rCtrl=(%.3f,%.3f,%.3f) grip=(%.3f,%.3f,%.3f)\n", headWorld.pos.x,
-                headWorld.pos.y, headWorld.pos.z, rightWorld.pos.x, rightWorld.pos.y, rightWorld.pos.z,
-                fr.controller[1].pos.x, fr.controller[1].pos.y, fr.controller[1].pos.z);
 }
 
 void stepGrab(World& w, float dt) {
@@ -263,13 +261,11 @@ void stepGrab(World& w, float dt) {
         return;
     }
 
-    // World space == the OpenXR reference space (identity mapping); the aim point is exactly
-    // where OpenXR reports it, independent of the head.
-    const Transform aimWorld{rc->aimPos, rc->aimQuat};
-    const float q[4] = {aimWorld.quat.x, aimWorld.quat.y, aimWorld.quat.z, aimWorld.quat.w};
-    float rm[9];
-    quatToMat3(q, rm);
-    const V3 fwd = vNorm({-rm[2], -rm[5], -rm[8]}); // -Z of the aim pose
+    // aim point in world = walkPos + the OpenXR aim pose (the aim pose is in the reference space,
+    // like the grips). walkPos is head-independent, so this stays drift-free.
+    const V3 walk = w.vrRoot != entt::null ? w.reg.get<Transform>(w.vrRoot).pos : V3{0, 0, 0};
+    const Transform aimWorld{vAdd(rc->aimPos, walk), rc->aimQuat};
+    const V3 fwd = vNorm(quatRotate(aimWorld.quat, V3{0, 0, -1})); // -Z of the aim pose
 
     if (grab.active) {
         w.rigid.moveBody(grab.body, vAdd(aimWorld.pos, grab.offset), quatMul(aimWorld.quat, grab.offsetQuat));
@@ -293,6 +289,31 @@ void stepGrab(World& w, float dt) {
     } else if (!held && grab.active) {
         release();
     }
+}
+
+void stepLocomotion(World& w, float dt) {
+    const XrFrame& fr = w.xrFrame;
+    if (w.vrRoot == entt::null || !fr.havePose || fr.nEyes == 0 || dt <= 0.0f)
+        return;
+    const XrController& rc = fr.controller[1]; // right hand drives locomotion
+    if (!rc.stickOn) // stick source must be bound; independent of the (sometimes flaky) pose actions
+        return;
+    const float kSpeed = 2.0f; // m/s
+    const float kDead = 0.12f; // stick deadzone
+    const float sx = rc.stick.x, sy = rc.stick.y;
+    if (sx * sx + sy * sy < kDead * kDead)
+        return;
+    // horizontal facing: rotate the world -Z (forward) and +X (right) by the head quaternion,
+    // then flatten to the floor plane (pitch/roll ignored)
+    const V4 hq = fr.eye[0].quat;
+    V3 fwd = quatRotate(hq, V3{0, 0, -1});
+    V3 rgt = quatRotate(hq, V3{1, 0, 0});
+    fwd = vNorm({fwd.x, 0.0f, fwd.z});
+    rgt = vNorm({rgt.x, 0.0f, rgt.z});
+    Transform& rt = w.reg.get<Transform>(w.vrRoot);
+    const V3 move = vAdd(vScale(fwd, sy), vScale(rgt, sx));
+    rt.pos = vAdd(rt.pos, vScale(move, kSpeed * dt));
+    rt.pos.y = 0.0f; // walk on the floor plane (head height comes from the STAGE pose)
 }
 
 void stepPinHolds(World& w, float dt) {

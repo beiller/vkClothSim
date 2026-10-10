@@ -303,7 +303,8 @@ void Xr::initActions() {
     };
     if (XR_FAILED(mk(m_gripPose, "grip", XR_ACTION_TYPE_POSE_INPUT)) ||
         XR_FAILED(mk(m_aimPose, "aim", XR_ACTION_TYPE_POSE_INPUT)) ||
-        XR_FAILED(mk(m_trigger, "trigger", XR_ACTION_TYPE_FLOAT_INPUT))) {
+        XR_FAILED(mk(m_trigger, "trigger", XR_ACTION_TYPE_FLOAT_INPUT)) ||
+        XR_FAILED(mk(m_stick, "stick", XR_ACTION_TYPE_VECTOR2F_INPUT))) {
         std::printf("xr: createAction failed\n");
         return;
     }
@@ -347,14 +348,20 @@ void Xr::initActions() {
         else
             diagAppend("xr: bound %s (%zu inputs)\n", profile, sb.size());
     };
-    // pose paths are uniform across these profiles; only the trigger leaf differs (simple has none)
+    // ONE suggestion call per profile: a second call for the same profile replaced the first on
+    // this runtime (only the stick got bound, grip/aim lost their sources). Stick paths below are
+    // the ones this runtime accepted (throttle is NOT supported on simple, so simple stays grip/aim).
     const char* grip = "/input/grip/pose";
     const char* aim = "/input/aim/pose";
     const char* trig = "/input/trigger/value";
+    const char* stick = "/input/thumbstick";
     suggest("/interaction_profiles/khr/simple_controller", {{m_gripPose, grip}, {m_aimPose, aim}});
-    suggest("/interaction_profiles/htc/vive_controller", {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}});
-    suggest("/interaction_profiles/oculus/touch_controller", {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}});
-    suggest("/interaction_profiles/valve/index_controller", {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}});
+    suggest("/interaction_profiles/htc/vive_controller",
+            {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}, {m_stick, "/input/trackpad"}});
+    suggest("/interaction_profiles/oculus/touch_controller",
+            {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}, {m_stick, stick}});
+    suggest("/interaction_profiles/valve/index_controller",
+            {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}, {m_stick, stick}});
     suggest("/interaction_profiles/valve/knuckles_controller",
             {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}});
     suggest("/interaction_profiles/windows/mixed_reality_controller",
@@ -466,6 +473,7 @@ void Xr::pollControllers(XrFrame& fr) {
     si.countActiveActionSets = 2;
     si.activeActionSets = active;
     m_loader.xrSyncActions(m_session, &si);
+    ++m_diagFrame; // throttles the pose failure logs below
 
     for (int h = 0; h < 2; ++h) {
         XrController& c = fr.controller[h];
@@ -479,9 +487,16 @@ void Xr::pollControllers(XrFrame& fr) {
         tf.type = XR_TYPE_ACTION_STATE_FLOAT;
         if (XR_SUCCEEDED(m_loader.xrGetActionStateFloat(m_session, &gi, &tf)) && tf.isActive)
             c.trigger = tf.currentState;
-
+        gi.action = m_stick;
+        XrActionStateVector2f tv{};
+        tv.type = XR_TYPE_ACTION_STATE_VECTOR2F;
+        if (XR_SUCCEEDED(m_loader.xrGetActionStateVector2f(m_session, &gi, &tv)) && tv.isActive) {
+            c.stickOn = true;
+            // standard stick: x=left/right, y=up/down; keep the contract x=right, y=forward
+            c.stick = {tv.currentState.x, tv.currentState.y};
+        }
         // pose via a lazily-created action space, located against the reference space
-        auto poseOf = [&](XrAction action, XrSpace* space, V3& outP, V4& outQ) -> bool {
+        auto poseOf = [&](XrAction action, XrSpace* space, const char* name, V3& outP, V4& outQ) -> bool {
             if (*space == XR_NULL_HANDLE) {
                 XrActionSpaceCreateInfo asi{};
                 asi.type = XR_TYPE_ACTION_SPACE_CREATE_INFO;
@@ -489,78 +504,32 @@ void Xr::pollControllers(XrFrame& fr) {
                 asi.subactionPath = m_hand[h];
                 asi.poseInActionSpace.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
                 asi.poseInActionSpace.position = {0.0f, 0.0f, 0.0f};
-                if (XR_FAILED(m_loader.xrCreateActionSpace(m_session, &asi, space)))
+                const XrResult cr = m_loader.xrCreateActionSpace(m_session, &asi, space);
+                if (XR_FAILED(cr)) {
+                    diagAppend("xr: hand[%d] createSpace %s failed=%d\n", h, name, (int)cr);
                     return false;
+                }
             }
             XrSpaceLocation loc{};
             loc.type = XR_TYPE_SPACE_LOCATION;
-            if (XR_FAILED(m_loader.xrLocateSpace(*space, m_refSpace, m_fs.predictedDisplayTime, &loc)))
-                return false;
-            const bool ok = (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+            const XrResult lr = m_loader.xrLocateSpace(*space, m_refSpace, m_fs.predictedDisplayTime, &loc);
+            const bool ok = XR_SUCCEEDED(lr) && (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
                             (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT);
+            if (!ok && m_diagFrame % 60 == 0)
+                diagAppend("xr: hand[%d] locate %s result=%d flags=0x%x\n", h, name, (int)lr,
+                           (unsigned)loc.locationFlags);
             if (!ok)
                 return false;
             outP = {loc.pose.position.x, loc.pose.position.y, loc.pose.position.z};
             outQ = {loc.pose.orientation.x, loc.pose.orientation.y, loc.pose.orientation.z, loc.pose.orientation.w};
             return true;
         };
-        const bool g = poseOf(m_gripPose, &m_gripSpace[h], c.pos, c.quat);
-        const bool a = poseOf(m_aimPose, &m_aimSpace[h], c.aimPos, c.aimQuat);
+        const bool g = poseOf(m_gripPose, &m_gripSpace[h], "grip", c.pos, c.quat);
+        const bool a = poseOf(m_aimPose, &m_aimSpace[h], "aim", c.aimPos, c.aimQuat);
         c.active = g || a;
         if (c.active)
             ++fr.nControllers;
     }
-    logInput(fr);
-}
-
-void Xr::logInput(const XrFrame& fr) {
-    if (!m_loggedProfile) {
-        m_loggedProfile = true;
-        // the interaction profile actually in use per hand is the definitive "what device" signal
-        for (int h = 0; h < 2; ++h) {
-            XrInteractionProfileState ips{};
-            ips.type = XR_TYPE_INTERACTION_PROFILE_STATE;
-            const XrResult r1 = m_loader.xrGetCurrentInteractionProfile(m_session, m_hand[h], &ips);
-            if (!XR_SUCCEEDED(r1)) {
-                diagAppend("xr: hand[%d] getCurrentInteractionProfile failed=%d (no source)\n", h, (int)r1);
-                continue;
-            }
-            char buf[256];
-            uint32_t n = (uint32_t)sizeof(buf);
-            const XrResult r2 = m_loader.xrPathToString(m_inst, ips.interactionProfile, n, &n, buf);
-            diagAppend("xr: hand[%d] profile path=0x%llx toString=%d [%s]\n", h,
-                       (unsigned long long)ips.interactionProfile, (int)r2, XR_SUCCEEDED(r2) ? buf : "<failed>");
-        }
-        // how many input sources does each action actually have bound?
-        const XrAction actions[3] = {m_gripPose, m_aimPose, m_trigger};
-        const char* names[3] = {"grip", "aim", "trigger"};
-        for (int a = 0; a < 3; ++a) {
-            XrBoundSourcesForActionEnumerateInfo ei{};
-            ei.type = XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO;
-            ei.action = actions[a];
-            uint32_t count = 0;
-            const XrResult rb = m_loader.xrEnumerateBoundSourcesForAction(m_session, &ei, 0, &count, nullptr);
-            diagAppend("xr: action %s: enumerateBoundSources=%d count=%u\n", names[a], (int)rb, count);
-            if (XR_SUCCEEDED(rb) && count > 0) {
-                std::vector<XrPath> srcs(count);
-                if (XR_SUCCEEDED(m_loader.xrEnumerateBoundSourcesForAction(m_session, &ei, count, &count, srcs.data())))
-                    for (uint32_t s = 0; s < count; ++s) {
-                        char sb[256];
-                        uint32_t sn = (uint32_t)sizeof(sb);
-                        if (XR_SUCCEEDED(m_loader.xrPathToString(m_inst, srcs[s], sn, &sn, sb)))
-                            diagAppend("xr:   %s source[%u]=%s\n", names[a], s, sb);
-                        else
-                            diagAppend("xr:   %s source[%u]=0x%llx\n", names[a], s, (unsigned long long)srcs[s]);
-                    }
-            }
-        }
-    }
-    if (m_diagFrame++ % 30 == 0)
-        for (int h = 0; h < 2; ++h) {
-            const XrController& c = fr.controller[h];
-            diagAppend("xr: c%d active=%d grip=(%.3f,%.3f,%.3f) trig=%.2f\n", h, (int)c.active, c.pos.x, c.pos.y,
-                       c.pos.z, c.trigger);
-        }
 }
 
 void Xr::endFrame(bool render) {
@@ -631,13 +600,13 @@ void Xr::destroyActions() {
     for (auto& s : m_aimSpace)
         if (s != XR_NULL_HANDLE)
             m_loader.xrDestroySpace(s);
-    for (auto& a : {m_gripPose, m_aimPose, m_trigger})
+    for (auto& a : {m_gripPose, m_aimPose, m_trigger, m_stick})
         if (a != XR_NULL_HANDLE)
             m_loader.xrDestroyAction(a);
     if (m_actionSet != XR_NULL_HANDLE)
         m_loader.xrDestroyActionSet(m_actionSet);
     m_gripSpace[0] = m_gripSpace[1] = m_aimSpace[0] = m_aimSpace[1] = XR_NULL_HANDLE;
-    m_gripPose = m_aimPose = m_trigger = XR_NULL_HANDLE;
+    m_gripPose = m_aimPose = m_trigger = m_stick = XR_NULL_HANDLE;
     m_actionSet = XR_NULL_HANDLE;
 }
 

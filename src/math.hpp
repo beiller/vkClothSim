@@ -129,6 +129,7 @@ struct XrEyeData {
     float tanL = 1.0f, tanR = 1.0f, tanU = 0.58f, tanD = 0.58f;
 };
 
+// R^T (world-to-pose): rows are the pose's right/up/back axes in the parent frame (view-matrix form)
 inline void quatToMat3(const float q[4], float m[9]) {
     float x = q[0], y = q[1], z = q[2], w = q[3];
     m[0] = 1.0f - 2.0f * (y * y + z * z);
@@ -142,12 +143,13 @@ inline void quatToMat3(const float q[4], float m[9]) {
     m[8] = 1.0f - 2.0f * (x * x + y * y);
 }
 
+// true pose-to-world rotation: quatToMat3 returns R^T, so apply its transpose (R) to v
 inline V3 quatRotate(const V4& q, V3 v) {
     const float qq[4] = {q.x, q.y, q.z, q.w};
     float m[9];
     quatToMat3(qq, m);
-    return {m[0] * v.x + m[1] * v.y + m[2] * v.z, m[3] * v.x + m[4] * v.y + m[5] * v.z,
-            m[6] * v.x + m[7] * v.y + m[8] * v.z};
+    return {m[0] * v.x + m[3] * v.y + m[6] * v.z, m[1] * v.x + m[4] * v.y + m[7] * v.z,
+            m[2] * v.x + m[5] * v.y + m[8] * v.z};
 }
 
 inline Mat4 viewFromPose(const V3& pos, const V4& q) {

@@ -101,8 +101,6 @@ private:
     void initActions();
     // read per-hand controller pose + trigger into fr (called once per poll, after locateViews)
     void pollControllers(XrFrame& fr);
-    // throttled diagnostic: log each hand's interaction profile + per-controller pose/trigger
-    void logInput(const XrFrame& fr);
     void destroyActions();
 
     XrLoader m_loader;
@@ -122,10 +120,10 @@ private:
     // controller actions (hands in OpenXR order: left, right)
     XrActionSet m_actionSet = XR_NULL_HANDLE;
     XrPath m_hand[2] = {XR_NULL_PATH, XR_NULL_PATH};
-    XrAction m_gripPose = XR_NULL_HANDLE, m_aimPose = XR_NULL_HANDLE, m_trigger = XR_NULL_HANDLE;
+    XrAction m_gripPose = XR_NULL_HANDLE, m_aimPose = XR_NULL_HANDLE, m_trigger = XR_NULL_HANDLE,
+             m_stick = XR_NULL_HANDLE;
     XrSpace m_gripSpace[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE}, m_aimSpace[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
     int m_diagFrame = 0;
-    bool m_loggedProfile = false;
     XrCompositionLayerProjectionView m_proj[2]{};
     XrRect2Di m_rects[2]{};
     Swap m_swaps[2]{};

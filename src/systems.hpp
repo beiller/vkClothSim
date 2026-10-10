@@ -60,11 +60,17 @@ entt::entity spawnWidget(World& w, entt::entity parent, C c) {
 // mouse/keyboard move/look on the active camera (fly camera, or the virtual head when the XR
 // session is not running); skipped while a headset pose is active
 void stepFlyCamera(World& w, float dt);
-// headset pose -> active camera's local Transform; then synthesize the per-eye poses (headset
-// eyes + rig placement, or the active camera's world pose with virtual lens FOVs) -> setVrEyes
+// headset pose -> active camera's LOCAL Transform (the camera is a child of the VR root, so its
+// world = walkPos + head); synthesize per-eye poses (headset eyes + walkPos, or the camera's world
+// pose with virtual lens FOVs) -> setVrEyes
 void stepXr(World& w);
-// create a tracked controller entity per hand, parented to the head (grip pose -> Transform,
-// aim pose + trigger -> ControllerInput); hidden until a pose arrives
+// head-independent VR locomotion anchor: a root the head + grips are parented under. Its world
+// Transform is walkPos (stick-driven, never the head), so world = walkPos + pose -> no drift
+entt::entity spawnVrRoot(World& w, entt::entity head);
+// right-stick smooth locomotion: integrate walkPos along the head's horizontal facing
+void stepLocomotion(World& w, float dt);
+// create a tracked controller entity per hand, parented to the VR root (grip pose -> LOCAL
+// Transform, aim pose + trigger -> ControllerInput); a resting pose shows until a pose arrives
 void spawnControllers(World& w, entt::entity head);
 // headset controller poses -> controller entities' local Transform + ControllerInput (ref space)
 void stepControllers(World& w);

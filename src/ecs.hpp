@@ -52,7 +52,7 @@ inline Transform transformCompose(const Transform& parent, const Transform& loca
 
 // inverse of a rigid (rotation + translation) pose
 inline Transform transformInvert(const Transform& t) {
-    return {vScale(quatRotate(t.quat, t.pos), -1.0f), quatInv(t.quat)};
+    return {vScale(quatRotate(quatInv(t.quat), t.pos), -1.0f), quatInv(t.quat)};
 }
 
 // per-entity animation of its own Transform; attached to the entity, invoked by stepAnimation

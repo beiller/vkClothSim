@@ -9,6 +9,8 @@ struct XrController {
     V3 aimPos{};         // aim pose position (front of the controller)
     V4 aimQuat{0, 0, 0, 1};
     float trigger = 0.0f; // 0..1 pull
+    bool stickOn = false; // stick source bound + active this frame
+    V2 stick{};           // primary stick: x=right, y=forward, -1..1
 };
 
 // per-frame XR state: head + per-eye poses in the reference space; no OpenXR types

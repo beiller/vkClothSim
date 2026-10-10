@@ -36,6 +36,7 @@ struct World {
     XrFrame xrFrame;
     RenderSettings render;
     Grab grab;
+    entt::entity vrRoot = entt::null; // head-independent locomotion anchor (world pos = walkPos)
     float fps = 0.0f;
     bool showDemo = false;
     int uiSeq = 0; // auto-assigned draw order for UI windows/widgets
