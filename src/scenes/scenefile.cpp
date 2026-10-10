@@ -72,6 +72,15 @@ void spawnFieldWidget(World& w, entt::entity parent, const char* label, const Fi
     case FieldKind::DragV3:
         spawnWidget(w, parent, UIDragV3{label, 0.1f, [p] { return (float*)p; }});
         break;
+    case FieldKind::Ref: {
+        // read-only: show the referenced entity's name (re-read each frame)
+        const entt::entity target = *(const entt::entity*)p;
+        spawnWidget(w, parent, UIText{label, [&w, target] {
+                                          const auto* n = w.reg.try_get<Name>(target);
+                                          return n ? n->id : "<none>";
+                                      }});
+        break;
+    }
     }
 }
 
@@ -170,13 +179,6 @@ void buildUi(World& w, const json& j, const std::string& path) {
     spawnEditorUi(w, tab);
 }
 
-struct MatDef {
-    V3 color{1, 1, 1};
-    float metallic = 0.0f;
-    float roughness = 0.5f;
-    std::string tex;
-};
-
 } // namespace
 
 void createSceneFileWorld(World& w, const std::string& path) {
@@ -221,17 +223,26 @@ void createSceneFileWorld(World& w, const std::string& path) {
         spawnLight(w, v3(L.at("pos"), (path + " light pos").c_str()), p, name.c_str());
     }
 
-    std::map<std::string, MatDef> mats;
+    // one shared material entity per def; objects reference it (editing one updates all users)
+    std::map<std::string, entt::entity> mats;
     for (const auto& m : j.value("materials", json::array())) {
         const auto name = m.at("name").get<std::string>();
-        MatDef d;
+        const char* mp = (path + " material " + name).c_str();
+        V3 color{1, 1, 1};
         if (m.contains("baseColor"))
-            d.color = v3(m["baseColor"], (path + " material " + name).c_str());
-        d.metallic = m.value("metallic", 0.0f);
-        d.roughness = m.value("roughness", 0.5f);
-        if (m.contains("texture"))
-            d.tex = m["texture"].get<std::string>();
-        mats[name] = d;
+            color = v3(m["baseColor"], mp);
+        const entt::entity me =
+            spawnMaterial(w, color, m.value("metallic", 0.0f), m.value("roughness", 0.5f), name.c_str());
+        if (m.contains("texture")) {
+            const auto tex = m["texture"].get<std::string>();
+            TextureData td;
+            if (!loadTexture(exeDir() + "/../assets/" + tex, td))
+                loadTexture("assets/" + tex, td);
+            if (td.rgba.empty())
+                fail(path, "material '" + name + "': cannot load texture '" + tex + "'");
+            w.reg.get<Material>(me).texId = w.renderer.addTexture(td.rgba.data(), (uint32_t)td.w, (uint32_t)td.h);
+        }
+        mats[name] = me;
     }
 
     for (const auto& o : j["objects"]) {
@@ -259,17 +270,7 @@ void createSceneFileWorld(World& w, const std::string& path) {
         auto it = mats.find(matName);
         if (it == mats.end())
             fail(path, "object '" + name + "': unknown material '" + matName + "'");
-        const MatDef& d = it->second;
-        w.reg.emplace<Material>(e, d.color, d.metallic, d.roughness);
-        if (!d.tex.empty()) {
-            TextureData td;
-            if (!loadTexture(exeDir() + "/../assets/" + d.tex, td))
-                loadTexture("assets/" + d.tex, td);
-            if (td.rgba.empty())
-                fail(path, "material '" + matName + "': cannot load texture '" + d.tex + "'");
-            const int tex = w.renderer.addTexture(td.rgba.data(), (uint32_t)td.w, (uint32_t)td.h);
-            w.renderer.setTexture(w.reg.get<Renderable>(e).inst, 0, tex);
-        }
+        w.reg.emplace<MaterialRef>(e, it->second);
     }
 
     if (j.contains("set")) {

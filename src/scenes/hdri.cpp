@@ -11,10 +11,10 @@
 
 namespace {
 
-void buildHdriUi(World& w, entt::entity sphere) {
+void buildHdriUi(World& w, entt::entity matEnt) {
     entt::entity win =
         spawnUiWindow(w, UIWindow{"hdri", [] { return V2{20.0f, 20.0f}; }, V2{320.0f, 680.0f}, 0, true});
-    Material& m = w.reg.get<Material>(sphere);
+    Material& m = w.reg.get<Material>(matEnt);
     spawnWidget(w, win, UIColorEdit{"base color", [&m] { return &m.baseColor.x; }});
     spawnWidget(w, win, UISliderF{"metallic", 0.0f, 1.0f, "%.2f", [&m] { return &m.metallic; }});
     spawnWidget(w, win, UISliderF{"roughness", 0.0f, 1.0f, "%.2f", [&m] { return &m.roughness; }});
@@ -43,9 +43,11 @@ void createHdriWorld(World& w) {
     st.pos = V3{0.0f, 0.0f, 0.0f};
     const entt::entity sphere = spawnStaticMesh(w, makeSphereMesh(4, 2.0f), st);
     w.reg.emplace<Name>(sphere, "sphere");
-    w.reg.emplace<Material>(sphere, V3{0.25f, 0.25f, 0.25f}, 0.0f, 1.0f);
+    // unnamed: "sphere" is already taken by the mesh (URL names must be unique)
+    const entt::entity matEnt = spawnMaterial(w, V3{0.25f, 0.25f, 0.25f}, 0.0f, 1.0f);
+    w.reg.emplace<MaterialRef>(sphere, matEnt);
     w.sim.build();
 
     applyEnvHdr(w);
-    buildHdriUi(w, sphere);
+    buildHdriUi(w, matEnt);
 }

@@ -13,6 +13,8 @@ entt::entity spawnCapsule(World& w, const RigidBody& body, int geom);
 entt::entity spawnStaticBody(World& w, const RigidBody& body, int geom);
 entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, int pinned);
 entt::entity spawnStaticMesh(World& w, const Mesh& mesh, const Transform& t);
+// shared material entity (Material, optional Name); meshes reference it via MaterialRef
+entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float roughness, const char* name = nullptr);
 entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char* name);
 // a plain camera entity (Transform + Camera). active = the window renders it; one by convention
 entt::entity spawnCamera(World& w, const V3& pos, const V4& quat, float fovDeg, bool active = true);

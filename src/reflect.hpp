@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-enum class FieldKind { SliderF, SliderI, Checkbox, Color, DragV3 };
+enum class FieldKind { SliderF, SliderI, Checkbox, Color, DragV3, Ref }; // Ref = entity reference, read-only text
 
 struct FieldDesc {
     const char* name;
@@ -35,6 +35,10 @@ static const FieldDesc kMaterial[] = {
     {"baseColor", OFF(Material, baseColor), FieldKind::Color},
     {"metallic", OFF(Material, metallic), FieldKind::SliderF, 0.0f, 1.0f},
     {"roughness", OFF(Material, roughness), FieldKind::SliderF, 0.0f, 1.0f},
+};
+// offset unused for Ref fields
+static const FieldDesc kMaterialRef[] = {
+    {"material", 0, FieldKind::Ref},
 };
 static const FieldDesc kCamera[] = {
     {"fovDeg", OFF(Camera, fovDeg), FieldKind::SliderF, 10.0f, 120.0f},
@@ -83,6 +87,7 @@ static const FieldDesc kRigidScene[] = {
 static const TypeDesc kTypes[] = {
     {"Transform", kTransform},
     {"Material", kMaterial},
+    {"MaterialRef", kMaterialRef},
     {"Camera", kCamera},
     {"PointLight", kPointLight},
     {"SoftBodyData", kSoftBodyData},
@@ -103,8 +108,10 @@ inline std::vector<std::pair<const TypeDesc*, const void*>> entityFields(const e
     std::vector<std::pair<const TypeDesc*, const void*>> out;
     if (auto* p = reg.try_get<Transform>(e))
         out.push_back({findType("Transform"), (const void*)p});
-    if (auto* p = reg.try_get<Material>(e))
+    if (auto* p = reg.try_get<Material>(e)) // on material entities
         out.push_back({findType("Material"), (const void*)p});
+    if (auto* p = reg.try_get<MaterialRef>(e)) // on mesh entities
+        out.push_back({findType("MaterialRef"), (const void*)p});
     if (auto* p = reg.try_get<Camera>(e))
         out.push_back({findType("Camera"), (const void*)p});
     if (auto* p = reg.try_get<PointLight>(e))

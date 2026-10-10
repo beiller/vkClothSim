@@ -173,21 +173,16 @@ void buildDemoUi(World& w) {
     }
     spawnToneSection(w, win);
     spawnLightSection(w, win);
+    // one section per material entity (unique materials by construction)
     entt::entity matSec = spawnWidget(w, win, UISection{"materials", false});
-    std::map<std::string, std::vector<entt::entity>> matByName;
-    for (auto [entity, mat] : w.reg.view<Material>().each()) {
-        const auto* name = w.reg.try_get<Name>(entity);
-        (void)mat;
-        matByName[name ? name->id : "material"].push_back(entity);
-    }
-    for (auto& [name, ents] : matByName) {
+    for (auto [me, mat] : w.reg.view<Material>().each()) {
+        const char* name = "material";
+        if (const auto* n = w.reg.try_get<Name>(me))
+            name = n->id.c_str();
         entt::entity sub = spawnWidget(w, matSec, UISection{name, true});
-        Material& m = w.reg.get<Material>(ents[0]);
-        spawnWidget(w, sub, UIColorEdit{"base color", [&m] { return &m.baseColor.x; }});
-        spawnWidget(w, sub, UISliderF{"metallic", 0.0f, 1.0f, "%.2f", [&m] { return &m.metallic; }});
-        spawnWidget(w, sub, UISliderF{"roughness", 0.0f, 1.0f, "%.2f", [&m] { return &m.roughness; }});
-        for (size_t i = 1; i < ents.size(); ++i)
-            w.reg.emplace<MaterialGroup>(ents[i], ents[0]);
+        spawnWidget(w, sub, UIColorEdit{"base color", [&mat] { return &mat.baseColor.x; }});
+        spawnWidget(w, sub, UISliderF{"metallic", 0.0f, 1.0f, "%.2f", [&mat] { return &mat.metallic; }});
+        spawnWidget(w, sub, UISliderF{"roughness", 0.0f, 1.0f, "%.2f", [&mat] { return &mat.roughness; }});
     }
     spawnWidget(w, win, UIButton{"reset params", [&w] {
         for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
@@ -217,32 +212,36 @@ void createDemoWorld(World& w) {
 
     const entt::entity ground = spawnStaticMesh(w, makeGroundMesh(55.0f), Transform{});
     w.reg.emplace<Name>(ground, "ground");
-    w.reg.emplace<Material>(ground, V3{0.19f, 0.21f, 0.17f}, 0.0f, 0.85f);
+    const entt::entity groundMat = spawnMaterial(w, V3{0.19f, 0.21f, 0.17f}, 0.0f, 0.85f, "ground");
+    w.reg.emplace<MaterialRef>(ground, groundMat);
     const int capGeom = w.renderer.addMesh(makeCapsuleMesh(kCapsule, 1)).geom;
+    const entt::entity capMat = spawnMaterial(w, V3{0.85f, 0.35f, 0.30f}, 0.9f, 0.25f, "capsule");
     std::mt19937 rng(12345); // NOLINT(bugprone-random-generator-seed)
     std::uniform_real_distribution<float> rnd(0.0f, 1.0f);
     for (int i = 0; i < kNCapsules; ++i) {
         const entt::entity cap = spawnCapsule(w, scatteredBody(rng, rnd), capGeom);
         w.reg.emplace<Name>(cap, "capsule");
-        w.reg.emplace<Material>(cap, V3{0.85f, 0.35f, 0.30f}, 0.9f, 0.25f);
+        w.reg.emplace<MaterialRef>(cap, capMat); // all 50 capsules share one material
     }
 
     const entt::entity cloth =
         spawnSoftBody(w, makeClothMesh(kCW, kCH, kClothSpan, kClothY0), makeClothCons(kCW, kCH, kClothSpan), 1);
     w.reg.emplace<Name>(cloth, "cloth");
     w.reg.emplace<PinHold>(cloth, kClothHoldTime);
-    w.reg.emplace<Material>(cloth, V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.8f);
+    const entt::entity clothMat = spawnMaterial(w, V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.8f, "cloth");
+    w.reg.emplace<MaterialRef>(cloth, clothMat);
     TextureData plaid;
     if (!loadTexture(exeDir() + "/../assets/cloth_albedo.png", plaid))
         loadTexture("assets/cloth_albedo.png", plaid);
     if (!plaid.rgba.empty())
-        w.renderer.setTexture(w.reg.get<Renderable>(cloth).inst, 0,
-                              w.renderer.addTexture(plaid.rgba.data(), (uint32_t)plaid.w, (uint32_t)plaid.h));
+        w.reg.get<Material>(clothMat).texId =
+            w.renderer.addTexture(plaid.rgba.data(), (uint32_t)plaid.w, (uint32_t)plaid.h);
     const Mesh ballMesh = makeSphereMesh(kBallSubdiv, kBallRadius, V3{0.0f, kBallY0, 0.0f});
     const entt::entity ball = spawnSoftBody(w, ballMesh, makeBallCons(ballMesh), 0);
     w.reg.emplace<Name>(ball, "ball");
     w.reg.get<SoftBodyData>(ball).params.mass = 2.0f;
-    w.reg.emplace<Material>(ball, V3{0.22f, 0.62f, 0.60f}, 0.0f, 0.4f);
+    const entt::entity ballMat = spawnMaterial(w, V3{0.22f, 0.62f, 0.60f}, 0.0f, 0.4f, "ball");
+    w.reg.emplace<MaterialRef>(ball, ballMat);
     w.sim.build();
 
     applyEnvHdr(w);

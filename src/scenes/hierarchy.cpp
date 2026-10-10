@@ -54,11 +54,14 @@ void createHierarchyWorld(World& w) {
 
     const entt::entity ground = spawnStaticMesh(w, makeGroundMesh(28.0f), Transform{});
     w.reg.emplace<Name>(ground, "ground");
-    w.reg.emplace<Material>(ground, V3{0.16f, 0.20f, 0.14f}, 0.0f, 0.9f);
+    w.reg.emplace<MaterialRef>(ground, spawnMaterial(w, V3{0.16f, 0.20f, 0.14f}, 0.0f, 0.9f));
 
     int geomDepth[kMaxDepth + 1];
-    for (int d = 0; d <= kMaxDepth; ++d)
+    entt::entity matDepth[kMaxDepth + 1];
+    for (int d = 0; d <= kMaxDepth; ++d) {
         geomDepth[d] = w.renderer.addMesh(makeCapsuleMesh(CapsuleParams{kHalfLen[d], kRadius[d]}, 1)).geom;
+        matDepth[d] = spawnMaterial(w, kDepthColor[d], 0.1f, 0.6f); // shared per depth level
+    }
 
     std::mt19937 rng(20260929);
     std::uniform_real_distribution<float> u01(0.0f, 1.0f);
@@ -116,7 +119,7 @@ void createHierarchyWorld(World& w) {
         if (parent != entt::null)
             w.reg.emplace<Parent>(e, parent);
         w.reg.emplace<Renderable>(e, geomDepth[depth], w.renderer.addInstance(geomDepth[depth]));
-        w.reg.emplace<Material>(e, kDepthColor[depth], 0.1f, 0.6f);
+        w.reg.emplace<MaterialRef>(e, matDepth[depth]);
         const float amp = 0.02f + 0.02f * depth; // tips sway more
         const float phase = 0.35f * depth;       // outward lag -> bend travels to the tips
         w.reg.emplace<Animation>(e, [localPos, localQuat, amp, phase, windAxis, windFreq, windTime,

@@ -50,11 +50,13 @@ void createShadowTestWorld(World& w) {
 
     const entt::entity ground = spawnStaticMesh(w, makeGroundMesh(40.0f), Transform{});
     w.reg.emplace<Name>(ground, "ground");
-    w.reg.emplace<Material>(ground, V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.9f);
+    const entt::entity groundMat = spawnMaterial(w, V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.9f, "ground");
+    w.reg.emplace<MaterialRef>(ground, groundMat);
 
     const entt::entity ball = spawnStaticMesh(w, makeSphereMesh(4, 2.0f, V3{0.0f, 3.0f, 0.0f}), Transform{});
     w.reg.emplace<Name>(ball, "ball");
-    w.reg.emplace<Material>(ball, V3{0.5f, 0.5f, 0.5f}, 0.0f, 0.35f);
+    const entt::entity ballMat = spawnMaterial(w, V3{0.5f, 0.5f, 0.5f}, 0.0f, 0.35f, "ball");
+    w.reg.emplace<MaterialRef>(ball, ballMat);
 
     w.sim.build();
 

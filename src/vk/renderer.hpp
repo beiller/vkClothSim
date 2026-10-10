@@ -72,6 +72,7 @@ private:
         V3 baseColor{1.0f, 1.0f, 1.0f};
         float metallic = 0.0f;
         float roughness = 0.5f;
+        int tex[3] = {-2, -2, -2}; // per-channel texture id; -2 = descriptor not written yet
     };
 
     struct EnvPass {

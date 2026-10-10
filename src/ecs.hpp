@@ -123,10 +123,18 @@ struct Renderable {
     int inst = -1;
 };
 
+// owned by material entities only; meshes point at it via MaterialRef, so many meshes can share
+// one material (and editing it updates all users)
 struct Material {
     V3 baseColor{1.0f, 1.0f, 1.0f};
     float metallic = 0.0f;
     float roughness = 0.5f;
+    int texId = -1; // renderer texture (albedo); -1 = none
+};
+
+// mesh -> shared material entity
+struct MaterialRef {
+    entt::entity mat;
 };
 
 struct Name {
@@ -205,9 +213,4 @@ struct UISection {
 // tab page; direct children of a window form the tab bar (convention), children are the page body
 struct UITab {
     std::string label;
-};
-
-// this Material mirrors leader's every frame (same-named materials, edited through the leader)
-struct MaterialGroup {
-    entt::entity leader;
 };

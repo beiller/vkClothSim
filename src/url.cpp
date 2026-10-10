@@ -74,6 +74,17 @@ bool resolveUrl(World& w, const std::string& url, UrlRef& out, std::string& err)
             ++matches;
         }
     }
+    // field not on the entity: follow its MaterialRef to the shared material (indirection), so
+    // "ball.roughness" addresses the material many meshes may share
+    if (matches == 0)
+        if (const auto* ref = w.reg.try_get<MaterialRef>(ent))
+            for (auto& [t, b] : refl::entityFields(w.reg, ref->mat)) {
+                if (const FieldDesc* f = findField(t, rest)) {
+                    match = f;
+                    matchBase = (char*)b + f->offset;
+                    ++matches;
+                }
+            }
     if (matches == 0) {
         err = "no field '" + rest + "' on '" + head + "'";
         return false;
@@ -116,6 +127,9 @@ bool sceneSet(World& w, const std::string& url, const float* vals, int n, std::s
         }
         *(bool*)r.base = vals[0] != 0.0f;
         return true;
+    case FieldKind::Ref:
+        err = "field is read-only";
+        return false;
     }
     return false;
 }

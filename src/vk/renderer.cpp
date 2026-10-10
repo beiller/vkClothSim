@@ -213,6 +213,10 @@ int Renderer::addTexture(const void* rgba, uint32_t w, uint32_t h) {
 }
 
 void Renderer::setTexture(int inst, int channel, int texId) {
+    InstancedMesh& im = m_insts[inst];
+    if (im.tex[channel] == texId)
+        return;
+    im.tex[channel] = texId;
     const bool hasTex = texId >= 0 && (size_t)texId < m_texs.size();
     const GpuTexture& t = hasTex ? m_texs[texId] : m_white;
     VkDescriptorImageInfo ii;

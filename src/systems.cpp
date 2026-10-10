@@ -40,6 +40,14 @@ entt::entity spawnStaticMesh(World& w, const Mesh& mesh, const Transform& t) {
     return e;
 }
 
+entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float roughness, const char* name) {
+    entt::entity e = w.reg.create();
+    w.reg.emplace<Material>(e, baseColor, metallic, roughness);
+    if (name)
+        w.reg.emplace<Name>(e, name);
+    return e;
+}
+
 entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char* name) {
     entt::entity e = w.reg.create();
     w.reg.emplace<Transform>(e, pos, V4{0.0f, 0.0f, 0.0f, 1.0f});
@@ -205,6 +213,7 @@ void spawnControllers(World& w) {
     // frame, so world = walkPos + grip (head-independent -> no drift).
     const CapsuleParams gripShape{0.06f, 0.03f};
     const int geom = w.renderer.addMesh(makeCapsuleMesh(gripShape, 1)).geom;
+    const entt::entity gripMat = spawnMaterial(w, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f);
     for (int h = 0; h < 2; ++h) {
         entt::entity e = w.reg.create();
         w.reg.emplace<Transform>(e, V3{0, 0, 0}, V4{0, 0, 0, 1}); // local rel. to vr root; per frame
@@ -214,7 +223,7 @@ void spawnControllers(World& w) {
         if (h == 1)
             w.reg.emplace<Grab>(e); // the right hand drives the grab
         w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
-        w.reg.emplace<Material>(e, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f);
+        w.reg.emplace<MaterialRef>(e, gripMat);
         w.reg.emplace<Name>(e, h == 0 ? "controller L" : "controller R");
     }
 }
@@ -430,14 +439,14 @@ void stepSoft(World& w, VkCommandBuffer cmd) {
 }
 
 void syncSceneToRenderer(World& w) {
-    for (auto [entity, g] : w.reg.view<MaterialGroup>().each())
-        w.reg.get<Material>(entity) = w.reg.get<Material>(g.leader);
     for (auto [entity, rend, wt] : w.reg.view<Renderable, WorldTransform>().each())
         w.renderer.setModel(rend.inst, wt.toMat4());
-    for (auto [entity, rend] : w.reg.view<Renderable>().each()) {
-        const auto* mat = w.reg.try_get<Material>(entity);
-        w.renderer.setMaterial(rend.inst, mat ? mat->baseColor : V3{1.0f, 1.0f, 1.0f}, mat ? mat->metallic : 0.0f,
-                               mat ? mat->roughness : 0.5f);
+    for (auto [entity, rend, ref] : w.reg.view<Renderable, MaterialRef>().each()) {
+        if (const auto* mat = w.reg.try_get<Material>(ref.mat)) {
+            w.renderer.setMaterial(rend.inst, mat->baseColor, mat->metallic, mat->roughness);
+            if (mat->texId >= 0)
+                w.renderer.setTexture(rend.inst, 0, mat->texId);
+        }
     }
     w.lights.clear();
     for (auto [entity, wt, p] : w.reg.view<WorldTransform, PointLight>().each())
