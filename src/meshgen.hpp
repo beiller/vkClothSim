@@ -2,6 +2,8 @@
 #include "capsule.hpp"
 #include "math.hpp"
 #include "mesh.hpp"
+#include "sim/sim.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -81,6 +83,104 @@ inline Mesh makeGroundMesh(float span) {
     }
     m.indices = {0, 1, 2, 0, 2, 3};
     return m;
+}
+
+// cloth grid: vertex grid + structural/shear constraints
+inline Mesh makeClothMesh(int cw, int ch, float span, float y0) {
+    Mesh out;
+    const int CN = cw * ch;
+    out.pos.assign((size_t)3 * CN, 0.0f);
+    out.nrm.assign((size_t)3 * CN, 0.0f);
+    out.uv.assign((size_t)2 * CN, 0.0f);
+    for (int gy = 0; gy < ch; ++gy)
+        for (int gx = 0; gx < cw; ++gx) {
+            int i = gy * cw + gx;
+            const float x = -span / 2 + span * (float)gx / (float)(cw - 1);
+            const float z = -span / 2 + span * (float)gy / (float)(ch - 1);
+            vStore(out.pos.data(), i, {x, y0, z});
+            out.nrm[3 * i + 1] = 1.0f;
+            out.uv[2 * i] = (float)gx / (float)(cw - 1);
+            out.uv[2 * i + 1] = (float)gy / (float)(ch - 1);
+        }
+    for (int gy = 0; gy < ch - 1; ++gy)
+        for (int gx = 0; gx < cw - 1; ++gx) {
+            auto a = (uint32_t)(gy * cw + gx);
+            out.indices.push_back(a);
+            out.indices.push_back(a + (uint32_t)cw);
+            out.indices.push_back(a + 1);
+            out.indices.push_back(a + 1);
+            out.indices.push_back(a + (uint32_t)cw);
+            out.indices.push_back(a + (uint32_t)cw + 1);
+        }
+    return out;
+}
+
+inline std::vector<sim::Constraint> makeClothCons(int cw, int ch, float span) {
+    std::vector<sim::Constraint> cons;
+    const int CN = cw * ch;
+    const float spacing = span / (float)(cw - 1);
+    const float diag = spacing * kSqrt2;
+    for (int i = 0; i < CN; ++i) {
+        int gx = i % cw, gy = i / cw;
+        if (gx < cw - 1)
+            cons.push_back({i, i + 1, spacing, 1.0f});
+        if (gy < ch - 1)
+            cons.push_back({i, i + cw, spacing, 1.0f});
+        if (gx < cw - 1 && gy < ch - 1)
+            cons.push_back({i, i + cw + 1, diag, 1.0f});
+        if (gx > 0 && gy < ch - 1)
+            cons.push_back({i, i + cw - 1, diag, 1.0f});
+    }
+    return cons;
+}
+
+// soft-sphere constraints: edge springs + antipodal ties (holds shape against gravity)
+inline std::vector<sim::Constraint> makeBallCons(const Mesh& mesh) {
+    std::vector<sim::Constraint> cons;
+    {
+        const float* pos = mesh.pos.data();
+        std::map<uint64_t, bool> seen;
+        for (size_t f = 0; f < mesh.indices.size(); f += 3) {
+            const uint32_t e[3][2] = {{mesh.indices[f], mesh.indices[f + 1]},
+                                      {mesh.indices[f + 1], mesh.indices[f + 2]},
+                                      {mesh.indices[f + 2], mesh.indices[f]}};
+            for (const auto& p : e) {
+                const int lo = p[0] < p[1] ? (int)p[0] : (int)p[1];
+                const int hi = p[0] < p[1] ? (int)p[1] : (int)p[0];
+                const uint64_t key = ((uint64_t)lo << 32) | (uint32_t)hi;
+                if (seen.contains(key))
+                    continue;
+                seen[key] = true;
+                cons.push_back({lo, hi, vLen(vSub(vAt(pos, lo), vAt(pos, hi))), 0.5f});
+            }
+        }
+    }
+    const int n = mesh.vertexCount();
+    const float* pos = mesh.pos.data();
+    V3 c{0, 0, 0};
+    for (int i = 0; i < n; ++i)
+        c = vAdd(c, vAt(pos, i));
+    c = vScale(c, 1.0f / (float)n);
+    std::vector<V3> dir(n);
+    for (int i = 0; i < n; ++i)
+        dir[i] = vNorm(vSub(vAt(pos, i), c));
+    for (int i = 0; i < n; ++i) {
+        int partner = -1;
+        float bestDot = 1e30f;
+        for (int j = 0; j < n; ++j) {
+            if (j == i)
+                continue;
+            const float d = vDot(dir[j], dir[i]);
+            if (d < bestDot) {
+                bestDot = d;
+                partner = j;
+            }
+        }
+        if (partner <= i)
+            continue;
+        cons.push_back({i, partner, vLen(vSub(vAt(pos, i), vAt(pos, partner))), 0.5f});
+    }
+    return cons;
 }
 
 constexpr int kCapPhiSegs = 20;

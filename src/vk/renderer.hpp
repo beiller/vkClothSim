@@ -23,6 +23,7 @@ public:
     };
 
     static constexpr int kMaxLights = 8;
+    static constexpr int kPoolChunk = 64; // descriptor pool growth step for mesh instances
 
     void init(VkApp& app, int nInstances, const Mat4& viewProj);
     GpuMeshRef addMesh(const Mesh& mesh);
@@ -107,7 +108,8 @@ private:
     VkBuffer m_vpUbuf = VK_NULL_HANDLE;
     VkDeviceMemory m_vpMem = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_dsl = VK_NULL_HANDLE;
-    VkDescriptorPool m_pool = VK_NULL_HANDLE;
+    std::vector<VkDescriptorPool> m_meshPools; // grown in kPoolChunk steps as instances are added
+    int m_poolCap = 0, m_poolUsed = 0;
     VkPipelineLayout m_pl = VK_NULL_HANDLE;
     VkPipeline m_pipe = VK_NULL_HANDLE;
 

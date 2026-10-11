@@ -1,5 +1,6 @@
 #pragma once
 #include "ecs.hpp"
+#include "url.hpp"
 #include "world.hpp"
 
 class VkApp;
@@ -18,6 +19,8 @@ template <typename C> entt::entity spawnWidget(World& w, entt::entity parent, C 
     w.reg.emplace<Parent>(e, parent);
     return e;
 }
+// spawn a widget from a reflect field (type/range from the table); used by the editor tab
+void spawnFieldWidget(World& w, entt::entity parent, const char* label, const FieldDesc* f, void* base);
 // app-level fps HUD, top right
 void spawnFpsHud(World& w);
 // ImGui context + vulkan/glfw backends

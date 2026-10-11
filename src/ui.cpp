@@ -19,6 +19,40 @@ entt::entity spawnUiWindow(World& w, const UIWindow& cfg) {
     return e;
 }
 
+void spawnFieldWidget(World& w, entt::entity parent, const char* label, const FieldDesc* f, void* base) {
+    char* p = (char*)base + f->offset;
+    switch (f->kind) {
+    case FieldKind::SliderF:
+        spawnWidget(w, parent, UISliderF{label, f->lo, f->hi, "%.2f", [p] { return (float*)p; }});
+        break;
+    case FieldKind::SliderI: {
+        int* ip = (int*)p;
+        spawnWidget(w, parent, UISliderI{label, (int)f->lo, (int)f->hi, [ip] { return ip; }});
+        break;
+    }
+    case FieldKind::Checkbox: {
+        bool* bp = (bool*)p;
+        spawnWidget(w, parent, UICheckbox{label, [bp] { return bp; }});
+        break;
+    }
+    case FieldKind::Color:
+        spawnWidget(w, parent, UIColorEdit{label, [p] { return (float*)p; }});
+        break;
+    case FieldKind::DragV3:
+        spawnWidget(w, parent, UIDragV3{label, 0.1f, [p] { return (float*)p; }});
+        break;
+    case FieldKind::Ref: {
+        // read-only: show the referenced entity's name (re-read each frame)
+        const entt::entity target = *(const entt::entity*)p;
+        spawnWidget(w, parent, UIText{label, [&w, target] {
+                                          const auto* n = w.reg.try_get<Name>(target);
+                                          return n ? n->id : "<none>";
+                                      }});
+        break;
+    }
+    }
+}
+
 void spawnFpsHud(World& w) {
     // app-level fps HUD, also a UI window entity
     const entt::entity fpsWin =

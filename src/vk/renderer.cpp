@@ -100,8 +100,11 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     vkMakeBuffer(m_dev, m_pdev, m_vpUbuf, m_vpMem, sizeof(ViewUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &vpInit);
     vkMakeBuffer(m_dev, m_pdev, m_lightsUbuf, m_lightsMem, sizeof(LightsUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                  nullptr);
-    const auto binds = meshBinds();
-    vkMakeDslPool(m_dev, binds, (uint32_t)nInstances, m_dsl, m_pool);
+    VkDescriptorPool pool;
+    vkMakeDslPool(m_dev, meshBinds(), (uint32_t)nInstances, m_dsl, pool);
+    m_meshPools.push_back(pool);
+    m_poolCap = nInstances;
+    m_poolUsed = 0;
     m_pl = vkMakePipelineLayout(m_dev, m_dsl);
     m_pipe = makeGraphicsPipeline(m_dev, app.sceneRenderPass(), mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
                                   mesh_frag_spv_len / 4, m_pl, true);
@@ -169,7 +172,13 @@ int Renderer::addInstance(int geom) {
                                               {m_vpUbuf, 0, sizeof(ViewUbo)},
                                               {inst.modelUbuf, 0, sizeof(ModelUbo)},
                                               {g.uv, 0, (VkDeviceSize)8 * g.vtxCount}};
-    vkMakeSet(m_dev, m_pool, m_dsl, meshBinds(), inst.set, bi);
+    if (m_poolUsed == m_poolCap) {
+        m_meshPools.push_back(vkMakePool(m_dev, meshBinds(), (uint32_t)kPoolChunk));
+        m_poolCap = kPoolChunk;
+        m_poolUsed = 0;
+    }
+    vkMakeSet(m_dev, m_meshPools.back(), m_dsl, meshBinds(), inst.set, bi);
+    ++m_poolUsed;
     m_insts.push_back(inst);
     const int id = (int)m_insts.size() - 1;
     setTexture(id, 0, -1);
@@ -640,8 +649,9 @@ void Renderer::shutdown() {
         if (m_cubeSampler)
             vkDestroySampler(m_dev, m_cubeSampler, nullptr);
     }
-    if (m_pool)
-        vkDestroyDescriptorPool(m_dev, m_pool, nullptr);
+    for (VkDescriptorPool p : m_meshPools)
+        vkDestroyDescriptorPool(m_dev, p, nullptr);
+    m_meshPools.clear();
     if (m_dsl)
         vkDestroyDescriptorSetLayout(m_dev, m_dsl, nullptr);
     if (m_pl)

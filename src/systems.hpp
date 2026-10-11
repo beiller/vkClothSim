@@ -18,6 +18,21 @@ entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float 
 entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char* name);
 // a plain camera entity (Transform + Camera). active = the window renders it; one by convention
 entt::entity spawnCamera(World& w, const V3& pos, const V4& quat, float fovDeg, bool active = true);
+// first entity with a matching Name (entt::null if none)
+entt::entity findNamedEntity(const World& w, const std::string& name);
+// (halfLen, radius) -> renderer geom; built and cached so many capsules share one mesh
+int capsuleGeom(World& w, const CapsuleParams& shape);
+// dynamic rigid capsule sharing one material entity; t = initial pose
+entt::entity spawnDynamicCapsule(World& w, const CapsuleParams& shape, const Transform& t, entt::entity mat);
+// render-only capsule (no physics), optionally parented; for kinematic hierarchies
+entt::entity spawnVisualCapsule(World& w, const CapsuleParams& shape, const Transform& t, entt::entity mat,
+                                entt::entity parent);
+// soft cloth grid; pinned for pinSecs when > 0
+entt::entity spawnSoftCloth(World& w, int cw, int ch, float span, float y0, entt::entity mat, float pinSecs);
+// soft sphere with edge + antipodal constraints; mass > 0 overrides the default
+entt::entity spawnSoftBall(World& w, int subdiv, float radius, const V3& center, entt::entity mat, float mass);
+// texture from assets/ (or assets/ relative to the exe); renderer texture id or -1
+int loadAssetTexture(World& w, const std::string& path);
 // the active camera (entt::null if none)
 entt::entity findActiveCamera(const World& w);
 // compose an entity's Transform through its Parent chain (world space); valid before/after resolve

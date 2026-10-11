@@ -11,7 +11,7 @@ static const FieldDesc* findField(const TypeDesc* t, const std::string& name) {
     return nullptr;
 }
 
-bool resolveUrl(World& w, const std::string& url, UrlRef& out, std::string& err) {
+bool resolveUrl(const World& w, const std::string& url, UrlRef& out, std::string& err) {
     const auto dot = url.find('.');
     if (dot == std::string::npos) {
         err = "expected 'name.field'";
@@ -129,6 +129,42 @@ bool sceneSet(World& w, const std::string& url, const float* vals, int n, std::s
         return true;
     case FieldKind::Ref:
         err = "field is read-only";
+        return false;
+    }
+    return false;
+}
+
+bool sceneGet(const World& w, const std::string& url, float* vals, int maxN, int& n, std::string& err) {
+    UrlRef r;
+    if (!resolveUrl(w, url, r, err))
+        return false;
+    switch (r.field->kind) {
+    case FieldKind::SliderF:
+    case FieldKind::Color:
+    case FieldKind::DragV3: {
+        const int want = r.field->kind == FieldKind::SliderF ? 1 : 3;
+        if (maxN < want) {
+            err = "field expects " + std::to_string(want) + " value(s)";
+            return false;
+        }
+        std::memcpy(vals, r.base, (size_t)want * sizeof(float));
+        n = want;
+        return true;
+    }
+    case FieldKind::SliderI:
+        if (maxN < 1)
+            return false;
+        vals[0] = (float)*(int*)r.base;
+        n = 1;
+        return true;
+    case FieldKind::Checkbox:
+        if (maxN < 1)
+            return false;
+        vals[0] = *(bool*)r.base ? 1.0f : 0.0f;
+        n = 1;
+        return true;
+    case FieldKind::Ref:
+        err = "field is an entity reference";
         return false;
     }
     return false;

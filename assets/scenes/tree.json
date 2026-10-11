@@ -1,0 +1,60 @@
+{
+    "name": "hierarchy",
+    "env": "fly-studio-03_1K.exr",
+    "envIntensity": 0.0,
+    "camera": {
+        "name": "cam",
+        "pos": [0, 4.5, 15],
+        "quat": [-0.049814, 0, 0, 0.998759],
+        "fov": 50,
+        "active": true
+    },
+    "lights": [
+        { "name": "sun", "pos": [7, 12, 5], "color": [1, 0.97, 0.92], "intensity": 200, "radius": 0.6 }
+    ],
+    "materials": [
+        { "name": "mat_ground", "baseColor": [0.16, 0.2, 0.14], "roughness": 0.9 }
+    ],
+    "objects": [
+        { "name": "ground", "mesh": { "type": "ground", "size": 28 }, "material": "mat_ground" }
+    ],
+    "ui": {
+        "title": "hierarchy",
+        "size": [340, 400],
+        "widgets": [
+            { "type": "text", "label": "fractal tree, depth 0-5 (trunk -> canopy)" },
+            { "type": "text", "label": "each generation bends outward; capsules taper and" },
+            { "type": "text", "label": "point along their branch; sways in a sin-wave breeze" },
+            {
+                "type": "section",
+                "label": "tone",
+                "children": [
+                    { "type": "slider-f", "label": "exposure", "bind": "render.exposure" },
+                    { "type": "slider-f", "label": "hdri intensity", "bind": "render.envIntensity" }
+                ]
+            },
+            {
+                "type": "section",
+                "label": "sun",
+                "children": [
+                    { "type": "slider-f", "label": "on", "bind": "sun.on", "lo": 0, "hi": 1, "fmt": "%.0f" },
+                    { "type": "drag-v3", "label": "pos", "bind": "sun.pos" },
+                    { "type": "color", "label": "color", "bind": "sun.color" },
+                    { "type": "slider-f", "label": "intensity", "bind": "sun.intensity", "lo": 0, "hi": 1000, "fmt": "%.0f" },
+                    { "type": "slider-f", "label": "radius", "bind": "sun.radius" },
+                    {
+                        "type": "section",
+                        "label": "shadow bias",
+                        "children": [
+                            { "type": "slider-f", "label": "normal", "bind": "sun.shadowNormalBias" },
+                            { "type": "slider-f", "label": "base", "bind": "sun.shadowBiasBase" },
+                            { "type": "slider-f", "label": "slope", "bind": "sun.shadowBiasSlope" },
+                            { "type": "slider-f", "label": "search", "bind": "sun.shadowSearchScale" },
+                            { "type": "slider-f", "label": "max radius", "bind": "sun.shadowMaxRadius", "fmt": "%.1f" }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}

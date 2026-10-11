@@ -1,0 +1,57 @@
+{
+    "name": "hdri",
+    "env": "fly-studio-03_1K.exr",
+    "envIntensity": 1.0,
+    "camera": {
+        "name": "cam",
+        "pos": [0, 0, 6],
+        "quat": [0, 0, 0, 1],
+        "fov": 50,
+        "active": true
+    },
+    "lights": [
+        { "name": "light", "pos": [2, 2, 3], "color": [1, 1, 1], "intensity": 20, "radius": 0.15 }
+    ],
+    "materials": [
+        { "name": "mat_sphere", "baseColor": [0.25, 0.25, 0.25], "roughness": 1.0 }
+    ],
+    "objects": [
+        { "name": "sphere", "mesh": { "type": "sphere", "subdiv": 4, "radius": 2 }, "material": "mat_sphere" }
+    ],
+    "ui": {
+        "title": "hdri",
+        "size": [320, 680],
+        "widgets": [
+            { "type": "color", "label": "base color", "bind": "sphere.baseColor" },
+            { "type": "slider-f", "label": "metallic", "bind": "sphere.metallic" },
+            { "type": "slider-f", "label": "roughness", "bind": "sphere.roughness" },
+            {
+                "type": "section",
+                "label": "camera",
+                "collapsible": false,
+                "children": [
+                    { "type": "slider-f", "label": "fov", "bind": "cam.fovDeg", "fmt": "%.0f" }
+                ]
+            },
+            {
+                "type": "section",
+                "label": "tone",
+                "children": [
+                    { "type": "slider-f", "label": "exposure", "bind": "render.exposure" },
+                    { "type": "slider-f", "label": "hdri intensity", "bind": "render.envIntensity" }
+                ]
+            },
+            {
+                "type": "section",
+                "label": "light",
+                "children": [
+                    { "type": "slider-f", "label": "on", "bind": "light.on", "lo": 0, "hi": 1, "fmt": "%.0f" },
+                    { "type": "drag-v3", "label": "pos", "bind": "light.pos" },
+                    { "type": "color", "label": "color", "bind": "light.color" },
+                    { "type": "slider-f", "label": "intensity", "bind": "light.intensity", "lo": 0, "hi": 1000, "fmt": "%.0f" },
+                    { "type": "slider-f", "label": "radius", "bind": "light.radius" }
+                ]
+            }
+        ]
+    }
+}

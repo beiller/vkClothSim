@@ -81,13 +81,16 @@ include(${PHYSICS_REPO_ROOT}/Jolt/Jolt.cmake)
 set(XR_SOURCES src/xr/openxr_loader.cpp src/xr/xr.cpp)
 set(XR_INCLUDES ${CMAKE_SOURCE_DIR}/lib/openxr)
 
+find_path(LUA_INCLUDE_DIR lua.hpp PATH_SUFFIXES lua5.4)
+find_library(LUA_LIBRARY NAMES lua5.4 lua)
+if(NOT LUA_INCLUDE_DIR OR NOT LUA_LIBRARY)
+    message(FATAL_ERROR "Lua 5.4 not found (need lua5.4 dev headers + lib)")
+endif()
+
 add_executable(vksim
     src/main.cpp
-    src/scenes/demo.cpp
-    src/scenes/hdri.cpp
-    src/scenes/hierarchy.cpp
-    src/scenes/scenefile.cpp
-    src/scenes/shadowtest.cpp
+    src/scene.cpp
+    src/scene_script.cpp
     src/systems.cpp
     src/ui.cpp
     src/url.cpp
@@ -102,7 +105,7 @@ add_executable(vksim
     ${CMAKE_SOURCE_DIR}/lib/miniz/miniz.c
     ${XR_SOURCES}
     ${IMGUI_SOURCES})
-target_link_libraries(vksim PRIVATE glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB dl)
+target_link_libraries(vksim PRIVATE glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB dl ${LUA_LIBRARY})
 target_compile_features(vksim PRIVATE cxx_std_23)
 target_include_directories(vksim PRIVATE
     ${GEN_DIR}
@@ -110,6 +113,7 @@ target_include_directories(vksim PRIVATE
     ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/lib/entt/single_include
     ${CMAKE_SOURCE_DIR}/lib/json
+    ${LUA_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/lib/stb
     ${CMAKE_SOURCE_DIR}/lib/tinyexr
     ${CMAKE_SOURCE_DIR}/lib/miniz

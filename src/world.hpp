@@ -1,10 +1,13 @@
 #pragma once
 #include "app/rigid.hpp"
+#include "scene_script.hpp"
 #include "sim/softsim.hpp"
 #include "vk/renderer.hpp"
 #include "xr_backend.hpp"
 #include <entt/entt.hpp>
+#include <map>
 #include <memory>
+#include <utility>
 
 class VkApp;
 
@@ -31,7 +34,9 @@ struct World {
     RenderSettings render;
     entt::entity vrRoot = entt::null; // head-independent locomotion anchor (world pos = walkPos)
     FlyCam flyCam;
-    std::vector<Renderer::Light> lights; // per-frame scratch for syncSceneToRenderer
+    std::vector<Renderer::Light> lights;                 // per-frame scratch for syncSceneToRenderer
+    std::map<std::pair<float, float>, int> capsuleGeoms; // (halfLen, radius) -> renderer geom
+    SceneScript script;                                  // optional Lua behavior layer (empty for data-only scenes)
     float fps = 0.0f;
     bool showDemo = false;
     int uiSeq = 0; // auto-assigned draw order for UI windows/widgets

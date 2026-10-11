@@ -320,13 +320,8 @@ inline void vkMakeCubeMipArrayView(VkDevice dev, VkImage img, uint32_t mip, VkIm
     VK(vkCreateImageView(dev, &vci, nullptr, &view));
 }
 
-inline void vkMakeDslPool(VkDevice dev, const std::vector<VkDescriptorSetLayoutBinding>& binds, uint32_t maxSets,
-                          VkDescriptorSetLayout& dsl, VkDescriptorPool& pool) {
-    VkDescriptorSetLayoutCreateInfo dslc{};
-    dslc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dslc.bindingCount = (uint32_t)binds.size();
-    dslc.pBindings = binds.data();
-    VK(vkCreateDescriptorSetLayout(dev, &dslc, nullptr, &dsl));
+inline VkDescriptorPool vkMakePool(VkDevice dev, const std::vector<VkDescriptorSetLayoutBinding>& binds,
+                                   uint32_t maxSets) {
     std::vector<VkDescriptorPoolSize> sizes;
     for (const auto& b : binds) {
         auto it =
@@ -341,7 +336,19 @@ inline void vkMakeDslPool(VkDevice dev, const std::vector<VkDescriptorSetLayoutB
     dpc.maxSets = maxSets;
     dpc.poolSizeCount = (uint32_t)sizes.size();
     dpc.pPoolSizes = sizes.data();
+    VkDescriptorPool pool;
     VK(vkCreateDescriptorPool(dev, &dpc, nullptr, &pool));
+    return pool;
+}
+
+inline void vkMakeDslPool(VkDevice dev, const std::vector<VkDescriptorSetLayoutBinding>& binds, uint32_t maxSets,
+                          VkDescriptorSetLayout& dsl, VkDescriptorPool& pool) {
+    VkDescriptorSetLayoutCreateInfo dslc{};
+    dslc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dslc.bindingCount = (uint32_t)binds.size();
+    dslc.pBindings = binds.data();
+    VK(vkCreateDescriptorSetLayout(dev, &dslc, nullptr, &dsl));
+    pool = vkMakePool(dev, binds, maxSets);
 }
 
 inline void vkMakeSet(VkDevice dev, VkDescriptorPool pool, VkDescriptorSetLayout dsl,

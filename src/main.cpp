@@ -2,11 +2,7 @@
 
 #include <GLFW/glfw3.h>
 
-#include "scenes/demo.hpp"
-#include "scenes/hdri.hpp"
-#include "scenes/hierarchy.hpp"
-#include "scenes/scenefile.hpp"
-#include "scenes/shadowtest.hpp"
+#include "scene.hpp"
 #include "systems.hpp"
 #include "vk/vkapp.hpp"
 #include "world.hpp"
@@ -46,16 +42,17 @@ int main(int argc, char** argv) {
             w.xr.reset();
     }
     app.initDevice(w.xr ? w.xr->device() : app.makeDevice());
-    if (!scenePath.empty())
-        createSceneFileWorld(w, scenePath);
-    else if (wantHier)
-        createHierarchyWorld(w);
-    else if (wantHdri)
-        createHdriWorld(w);
-    else if (wantShadow)
-        createShadowTestWorld(w);
-    else
-        createDemoWorld(w);
+    if (scenePath.empty()) {
+        if (wantHdri)
+            scenePath = "assets/scenes/hdri.json";
+        else if (wantShadow)
+            scenePath = "assets/scenes/shadow.json";
+        else if (wantHier)
+            scenePath = "assets/scenes/tree.json";
+        else
+            scenePath = "assets/scenes/demo.json";
+    }
+    createSceneWorld(w, scenePath);
     spawnFpsHud(w);
     if (w.xr) {
         if (w.xr->init(app)) {
@@ -80,8 +77,8 @@ int main(int argc, char** argv) {
 
     initImGui(app);
 
-    std::printf("3dsim: vulkan+imgui | GPU soft-body sim | R reset | VR auto-detected, "
-                "--no-vr for plain window | --scene file.json | esc/close to quit\n");
+    std::printf("3dsim: vulkan+imgui | GPU soft-body sim | scenes in assets/scenes (json + lua) | "
+                "R reset | VR auto-detected, --no-vr for plain window | --scene file.json | esc/close to quit\n");
 
     auto lastFrame = std::chrono::steady_clock::now();
     float fpsAccum = 0.0f;
@@ -117,6 +114,7 @@ int main(int argc, char** argv) {
             stepGrab(w, dt);
         }
         stepAnimation(w, dt);
+        w.script.frame(dt);
 
         // sim runs at a fixed kFrameDt rate, decoupled from the render rate; animation and
         // cameras step with the graphics
@@ -168,6 +166,7 @@ int main(int argc, char** argv) {
 
     shutdownImGui();
     w.sim.shutdown();
+    w.script.shutdown();
     w.renderer.shutdown();
     if (w.xr)
         w.xr->shutdown();

@@ -1,17 +1,20 @@
-#include "scenes/scenefile.hpp"
+#include "scene.hpp"
 
 #include "assets.hpp"
 #include "json.hpp"
 #include "meshgen.hpp"
 #include "reflect.hpp"
 #include "systems.hpp"
+#include "ui.hpp"
 #include "url.hpp"
 #include "vk/vkapp.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <map>
+#include <vector>
 
 namespace {
 
@@ -48,47 +51,33 @@ UrlRef urlBind(World& w, const std::string& url, const std::string& path) {
     return r;
 }
 
-// ---- editor tab: auto-generated from reflect.hpp tables x ECS contents
-
-void spawnFieldWidget(World& w, entt::entity parent, const char* label, const FieldDesc* f, void* base) {
-    char* p = (char*)base + f->offset;
-    switch (f->kind) {
-    case FieldKind::SliderF:
-        spawnWidget(w, parent, UISliderF{label, f->lo, f->hi, "%.2f", [p] { return (float*)p; }});
-        break;
-    case FieldKind::SliderI: {
-        int* ip = (int*)p;
-        spawnWidget(w, parent, UISliderI{label, (int)f->lo, (int)f->hi, [ip] { return ip; }});
-        break;
+// the behavior script: explicit "script" field (relative to the JSON file) or a .lua file
+// with the same base name next to the JSON, when present
+std::string scriptFile(const json& j, const std::string& path) {
+    if (j.contains("script")) {
+        std::string s = j["script"].get<std::string>();
+        const size_t slash = path.find_last_of('/');
+        if (!s.contains('/') || slash == std::string::npos)
+            return s;
+        return path.substr(0, slash + 1) + s;
     }
-    case FieldKind::Checkbox: {
-        bool* bp = (bool*)p;
-        spawnWidget(w, parent, UICheckbox{label, [bp] { return bp; }});
-        break;
-    }
-    case FieldKind::Color:
-        spawnWidget(w, parent, UIColorEdit{label, [p] { return (float*)p; }});
-        break;
-    case FieldKind::DragV3:
-        spawnWidget(w, parent, UIDragV3{label, 0.1f, [p] { return (float*)p; }});
-        break;
-    case FieldKind::Ref: {
-        // read-only: show the referenced entity's name (re-read each frame)
-        const entt::entity target = *(const entt::entity*)p;
-        spawnWidget(w, parent, UIText{label, [&w, target] {
-                                          const auto* n = w.reg.try_get<Name>(target);
-                                          return n ? n->id : "<none>";
-                                      }});
-        break;
-    }
-    }
+    const size_t dot = path.find_last_of('.');
+    const size_t slash = path.find_last_of('/');
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash))
+        return "";
+    std::string autoPath = path.substr(0, dot) + ".lua";
+    if (std::filesystem::exists(autoPath))
+        return autoPath;
+    return "";
 }
+
+// ---- editor tab: auto-generated from reflect.hpp tables x ECS contents
 
 void spawnEditorUi(World& w, entt::entity tab) {
     std::vector<std::pair<entt::entity, std::string>> named;
     for (auto [e, n] : w.reg.view<Name>().each())
-        named.push_back({e, n.id});
-    std::sort(named.begin(), named.end(), [](auto& a, auto& b) { return a.first < b.first; });
+        named.emplace_back(e, n.id);
+    std::ranges::sort(named, [](auto& a, auto& b) { return a.first < b.first; });
     for (auto& [e, name] : named) {
         auto comps = refl::entityFields(w.reg, e);
         if (comps.empty())
@@ -113,55 +102,62 @@ void spawnEditorUi(World& w, entt::entity tab) {
 
 // ---- scene tab: explicit widgets from JSON, bound by URL
 
-void spawnJsonWidgets(World& w, entt::entity parent, const json& arr, const std::string& path) {
+void spawnJsonWidgets(World& w, entt::entity parent, const json& arr, const std::string& path,
+                      std::vector<std::string>& scriptButtons) {
     for (const auto& W : arr) {
         const auto type = W.at("type").get<std::string>();
         const auto label = W.value("label", std::string(""));
         if (type == "section") {
             entt::entity sec = spawnWidget(w, parent, UISection{label, W.value("collapsible", true)});
             if (W.contains("children"))
-                spawnJsonWidgets(w, sec, W["children"], path);
+                spawnJsonWidgets(w, sec, W["children"], path, scriptButtons);
         } else if (type == "slider-f") {
-            const UrlRef r = urlBind(w, W.at("bind").get<std::string>(), path);
-            float* p = (float*)r.base;
-            spawnWidget(w, parent, UISliderF{label, W.value("lo", r.field->lo), W.value("hi", r.field->hi),
-                                              W.value("fmt", std::string("%.2f")), [p] { return p; }});
+            auto r = urlBind(w, W.at("bind").get<std::string>(), path);
+            auto* p = (float*)r.base;
+            spawnWidget(w, parent,
+                        UISliderF{label, W.value("lo", r.field->lo), W.value("hi", r.field->hi),
+                                  W.value("fmt", std::string("%.2f")), [p] { return p; }});
         } else if (type == "slider-i") {
-            const UrlRef r = urlBind(w, W.at("bind").get<std::string>(), path);
-            int* p = (int*)r.base;
-            spawnWidget(w, parent, UISliderI{label, (int)W.value("lo", (int)r.field->lo),
-                                              (int)W.value("hi", (int)r.field->hi), [p] { return p; }});
+            auto r = urlBind(w, W.at("bind").get<std::string>(), path);
+            auto* p = (int*)r.base;
+            spawnWidget(w, parent,
+                        UISliderI{label, (int)W.value("lo", (int)r.field->lo), (int)W.value("hi", (int)r.field->hi),
+                                  [p] { return p; }});
         } else if (type == "checkbox") {
-            const UrlRef r = urlBind(w, W.at("bind").get<std::string>(), path);
-            bool* p = (bool*)r.base;
+            auto r = urlBind(w, W.at("bind").get<std::string>(), path);
+            auto* p = (bool*)r.base;
             spawnWidget(w, parent, UICheckbox{label, [p] { return p; }});
         } else if (type == "color") {
-            const UrlRef r = urlBind(w, W.at("bind").get<std::string>(), path);
-            float* p = (float*)r.base;
+            auto r = urlBind(w, W.at("bind").get<std::string>(), path);
+            auto* p = (float*)r.base;
             spawnWidget(w, parent, UIColorEdit{label, [p] { return p; }});
         } else if (type == "drag-v3") {
-            const UrlRef r = urlBind(w, W.at("bind").get<std::string>(), path);
-            float* p = (float*)r.base;
+            auto r = urlBind(w, W.at("bind").get<std::string>(), path);
+            auto* p = (float*)r.base;
             spawnWidget(w, parent, UIDragV3{label, W.value("speed", 0.1f), [p] { return p; }});
         } else if (type == "text") {
             spawnWidget(w, parent, UIText{label});
         } else if (type == "button") {
             const auto action = W.at("action").get<std::string>();
-            if (action == "reset-softs")
+            if (action == "reset-softs") {
                 spawnWidget(w, parent, UIButton{label, [&w] { resetSofts(w); }});
-            else if (action == "reset-params")
+            } else if (action == "reset-params") {
                 spawnWidget(w, parent, UIButton{label, [&w] {
-                    for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
-                        sb.params = SimParams{};
-                        sb.steps = kDefaultSteps;
-                    }
-                }});
-            else if (action == "demo-window")
+                                                    for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
+                                                        sb.params = SimParams{};
+                                                        sb.steps = kDefaultSteps;
+                                                    }
+                                                }});
+            } else if (action == "demo-window") {
                 spawnWidget(w, parent, UIButton{label, [&w] { w.showDemo = true; }});
-            else
-                fail(path, "unknown button action '" + action + "'");
-        } else
+            } else {
+                // behavior: the scene script must register a handler under this name
+                spawnWidget(w, parent, UIButton{label, [&w, action] { w.script.button(action); }});
+                scriptButtons.push_back(action);
+            }
+        } else {
             fail(path, "unknown widget type '" + type + "'");
+        }
     }
 }
 
@@ -169,33 +165,39 @@ void buildUi(World& w, const json& j, const std::string& path) {
     const json& ui = j.value("ui", json::object());
     const auto title = ui.value("title", j.value("name", std::string("scene")));
     const V2 size = ui.contains("size") ? v2(ui["size"], (path + " ui.size").c_str()) : V2{320.0f, 720.0f};
-    entt::entity win =
-        spawnUiWindow(w, UIWindow{title, [] { return V2{20.0f, 20.0f}; }, size, 0, true});
+    entt::entity win = spawnUiWindow(w, UIWindow{title, [] { return V2{20.0f, 20.0f}; }, size, 0, true});
+    std::vector<std::string> scriptButtons;
     if (ui.contains("widgets")) {
         entt::entity tab = spawnWidget(w, win, UITab{"scene"});
-        spawnJsonWidgets(w, tab, ui["widgets"], path);
+        spawnJsonWidgets(w, tab, ui["widgets"], path, scriptButtons);
     }
+    for (const auto& a : scriptButtons)
+        if (!w.script.hasButton(a))
+            fail(path, "button action '" + a + "': no handler in scene script");
     entt::entity tab = spawnWidget(w, win, UITab{"editor"});
     spawnEditorUi(w, tab);
 }
 
 } // namespace
 
-void createSceneFileWorld(World& w, const std::string& path) {
-    std::ifstream in(path);
+void createSceneWorld(World& w, const std::string& path) {
+    std::string p = path;
+    if (!std::filesystem::exists(p))
+        p = exeDir() + "/../" + path;
+    std::ifstream in(p);
     if (!in)
-        fail(path, "cannot open file");
+        fail(p, "cannot open file");
     json j;
     try {
         in >> j;
     } catch (const std::exception& e) {
-        fail(path, e.what());
+        fail(p, e.what());
     }
 
     const json& c = j.at("camera");
-    const entt::entity cam = spawnCamera(w, v3(c.at("pos"), (path + " camera.pos").c_str()),
-                                         v4(c.at("quat"), (path + " camera.quat").c_str()), c.value("fov", 50.0f),
-                                         c.value("active", true));
+    const entt::entity cam =
+        spawnCamera(w, v3(c.at("pos"), (p + " camera.pos").c_str()), v4(c.at("quat"), (p + " camera.quat").c_str()),
+                    c.value("fov", 50.0f), c.value("active", true));
     if (c.contains("name"))
         w.reg.emplace<Name>(cam, c["name"].get<std::string>());
     w.render.envIntensity = j.value("envIntensity", 1.0f);
@@ -207,40 +209,37 @@ void createSceneFileWorld(World& w, const std::string& path) {
 
     for (const auto& L : j["lights"]) {
         const auto name = L.at("name").get<std::string>();
-        PointLight p;
+        PointLight pl;
         if (L.contains("color"))
-            p.color = v3(L["color"], (path + " light color").c_str());
-        p.intensity = L.value("intensity", 25.0f);
-        p.radius = L.value("radius", 0.25f);
-        p.on = L.value("on", 1.0f);
-        p.shadowNear = L.value("shadowNear", 0.01f);
-        p.shadowFar = L.value("shadowFar", 30.0f);
-        p.shadowNormalBias = L.value("shadowNormalBias", 0.05f);
-        p.shadowBiasBase = L.value("shadowBiasBase", 0.3f);
-        p.shadowBiasSlope = L.value("shadowBiasSlope", 0.3f);
-        p.shadowSearchScale = L.value("shadowSearchScale", 2.0f);
-        p.shadowMaxRadius = L.value("shadowMaxRadius", 16.0f);
-        spawnLight(w, v3(L.at("pos"), (path + " light pos").c_str()), p, name.c_str());
+            pl.color = v3(L["color"], (p + " light color").c_str());
+        pl.intensity = L.value("intensity", 25.0f);
+        pl.radius = L.value("radius", 0.25f);
+        pl.on = L.value("on", 1.0f);
+        pl.shadowNear = L.value("shadowNear", 0.01f);
+        pl.shadowFar = L.value("shadowFar", 30.0f);
+        pl.shadowNormalBias = L.value("shadowNormalBias", 0.05f);
+        pl.shadowBiasBase = L.value("shadowBiasBase", 0.3f);
+        pl.shadowBiasSlope = L.value("shadowBiasSlope", 0.3f);
+        pl.shadowSearchScale = L.value("shadowSearchScale", 2.0f);
+        pl.shadowMaxRadius = L.value("shadowMaxRadius", 16.0f);
+        spawnLight(w, v3(L.at("pos"), (p + " light pos").c_str()), pl, name.c_str());
     }
 
     // one shared material entity per def; objects reference it (editing one updates all users)
     std::map<std::string, entt::entity> mats;
     for (const auto& m : j.value("materials", json::array())) {
         const auto name = m.at("name").get<std::string>();
-        const char* mp = (path + " material " + name).c_str();
+        std::string mp = p + " material " + name;
         V3 color{1, 1, 1};
         if (m.contains("baseColor"))
-            color = v3(m["baseColor"], mp);
+            color = v3(m["baseColor"], mp.c_str());
         const entt::entity me =
             spawnMaterial(w, color, m.value("metallic", 0.0f), m.value("roughness", 0.5f), name.c_str());
         if (m.contains("texture")) {
-            const auto tex = m["texture"].get<std::string>();
-            TextureData td;
-            if (!loadTexture(exeDir() + "/../assets/" + tex, td))
-                loadTexture("assets/" + tex, td);
-            if (td.rgba.empty())
-                fail(path, "material '" + name + "': cannot load texture '" + tex + "'");
-            w.reg.get<Material>(me).texId = w.renderer.addTexture(td.rgba.data(), (uint32_t)td.w, (uint32_t)td.h);
+            const int texId = loadAssetTexture(w, m["texture"].get<std::string>());
+            if (texId < 0)
+                fail(p, "material '" + name + "': cannot load texture '" + m["texture"].get<std::string>() + "'");
+            w.reg.get<Material>(me).texId = texId;
         }
         mats[name] = me;
     }
@@ -255,13 +254,13 @@ void createSceneFileWorld(World& w, const std::string& path) {
         else if (type == "sphere")
             mesh = makeSphereMesh(mj.value("subdiv", 4), mj.at("radius").get<float>());
         else
-            fail(path, "object '" + name + "': unknown mesh type '" + type + "'");
+            fail(p, "object '" + name + "': unknown mesh type '" + type + "'");
 
         Transform t{};
         if (o.contains("pos"))
-            t.pos = v3(o["pos"], (path + " object " + name + " pos").c_str());
+            t.pos = v3(o["pos"], (p + " object " + name + " pos").c_str());
         if (o.contains("quat"))
-            t.quat = v4(o["quat"], (path + " object " + name + " quat").c_str());
+            t.quat = v4(o["quat"], (p + " object " + name + " quat").c_str());
 
         const entt::entity e = spawnStaticMesh(w, mesh, t);
         w.reg.emplace<Name>(e, name);
@@ -269,16 +268,28 @@ void createSceneFileWorld(World& w, const std::string& path) {
         const auto matName = o.at("material").get<std::string>();
         auto it = mats.find(matName);
         if (it == mats.end())
-            fail(path, "object '" + name + "': unknown material '" + matName + "'");
+            fail(p, "object '" + name + "': unknown material '" + matName + "'");
         w.reg.emplace<MaterialRef>(e, it->second);
     }
 
+    // behavior script: spawns programmatic content (loops, soft bodies, hierarchies) and
+    // registers frame/anim/button callbacks; runs before sim.build() and the UI so URLs and
+    // the editor tab see its entities
+    const std::string script = scriptFile(j, p);
+    if (!script.empty()) {
+        w.script.init(w);
+        std::string err;
+        if (!w.script.run(script, err))
+            fail(p, "scene script: " + err);
+    }
+
+    // set block after the script: URLs may point at script-spawned entities
     if (j.contains("set")) {
-        for (auto& [k, v] : j["set"].items()) {
+        for (const auto& [k, v] : j["set"].items()) {
             float vals[3];
             int n = v.is_array() ? (int)v.size() : 1;
             if (n > 3)
-                fail(path, "set '" + k + "': too many values");
+                fail(p, "set '" + k + "': too many values");
             if (v.is_array())
                 for (int i = 0; i < n; ++i)
                     vals[i] = v[(size_t)i].get<float>();
@@ -286,7 +297,7 @@ void createSceneFileWorld(World& w, const std::string& path) {
                 vals[0] = v.get<float>();
             std::string err;
             if (!sceneSet(w, k, vals, n, err))
-                fail(path, "set '" + k + "': " + err);
+                fail(p, "set '" + k + "': " + err);
         }
     }
 
@@ -297,8 +308,8 @@ void createSceneFileWorld(World& w, const std::string& path) {
         if (!loadHdr(exeDir() + "/../assets/" + env, hdr))
             loadHdr("assets/" + env, hdr);
         if (hdr.rgb.empty())
-            fail(path, "cannot load env '" + env + "'");
+            fail(p, "cannot load env '" + env + "'");
         w.renderer.setEnvironment(*w.app, hdr.rgb.data(), (uint32_t)hdr.w, (uint32_t)hdr.h);
     }
-    buildUi(w, j, path);
+    buildUi(w, j, p);
 }

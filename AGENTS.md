@@ -22,11 +22,11 @@ Conventions:
 
 ## Current layout
 
-- `src/main.cpp`: app loop, ImGui, scene selection (`--hdri` or default demo)
+- `src/main.cpp`: app loop, ImGui, scene selection (`--hdri` / `--shadow` / `--hier` / `--scene file.json`; `--no-vr` = plain window, else VR auto-detects)
 - `src/world.hpp`: shared `World` state
-- `src/demo.cpp`: default cloth/ball/capsule demo
-- `src/hdri.cpp`: HDRI sphere test scene
-- `src/systems.cpp`: sim step, collider sync, resets
+- `src/scene.cpp`: scene loader — builds the world from `assets/scenes/*.json` + optional `.lua`
+- `src/scene_script.cpp`: embedded Lua 5.4 host; scripts see only the `scene` table (no io/os/debug/package)
+- `src/systems.cpp`: sim step, collider sync, resets, spawn verbs (capsule/cloth/ball, textures)
 - `src/app/rigid.cpp`: Jolt rigid step
 - `src/sim/softsim.cpp`: GPU soft-body dispatch
 - `src/vk/vkapp.cpp`: GLFW/Vulkan app, swapchain, render pass
@@ -41,6 +41,17 @@ Conventions:
   - `env_brdf.comp`: BRDF LUT pass, currently unused by `mesh_frag.frag`
   - `tonemap_*`: HDR tonemap / sRGB post pass
 - `assets/fly-studio-03_1K.exr`: HDRI used by `--hdri` and demo
+- `assets/scenes/`: scene definitions — `.json` data + optional `.lua` behavior
+
+## Scenes
+
+Scenes are `.json` (declarative data) + optional `.lua` (behavior) in `assets/scenes/`; the engine contains no scene content.
+
+- Loader order (`createSceneWorld`): JSON build -> script runs -> `set` block -> `sim.build()` -> env -> UI.
+- Script discovery: `"script"` field in the JSON (relative to the JSON's dir), else same-basename `.lua` next to the JSON.
+- Scripts get a `scene` table: spawn verbs (material, capsule, cloth, ball), `set`/`get` through URL indirection, `frame`/`anim`/`button` callbacks, and a vec/quat math kit (vectors/quats as Lua arrays). The full list is in `src/scene_script.cpp`.
+- Error model: load errors abort; runtime callback errors print one traceback, then the frame callback is dropped (anim callbacks are silenced but kept).
+- Scene JSON `ui.widgets` bind sliders/checkboxes/buttons to entity fields via `bind` URLs; script `button` actions are validated at load.
 
 ## HDRI process
 
@@ -54,20 +65,28 @@ Conventions:
 ## Render loop
 
 Per frame, `main.cpp` drives the layers in order:
-- Jolt: `stepRigid()` advances rigid bodies at fixed `kFrameDt` and writes poses back to ECS `Transform`.
+- XR (when active): pose read, controller/grab steps.
+- Animation: `stepAnimation()` advances animators, then `script.frame(dt)` runs Lua frame callbacks.
+- Jolt: `stepRigid()` advances rigid bodies at fixed `kFrameDt` (decoupled from render rate) and writes poses back to ECS `Transform`.
 - Collider sync: `syncColliders()` copies capsule poses into the GPU capsule buffer used by the soft-body sim.
 - Soft body: `stepSoft()` records and submits `softbody.comp` substeps, updating the same GPU position/normal buffers later read by the mesh renderer.
 - Camera: `renderer.setViewProj()` updates the view/projection and camera-position UBO.
-- Scene render: `Renderer::draw()` updates per-instance model/material UBOs, draws meshes into an HDR scene target with depth, tonemaps to the swapchain image, and renders ImGui on top.
+- Scene render: `Renderer::draw()` (or `drawVr()` per-eye in VR) updates per-instance model/material UBOs, draws meshes into an HDR scene target with depth, tonemaps to the swapchain image, and renders ImGui on top.
 - Present: the swapchain image is presented.
 
 ## Build & run
 
+Requires system Lua 5.4 (headers + liblua5.4, found via CMake).
+
 ```sh
 cmake -S . -B build -Wno-dev        # re-run after editing any shader (SPIR-V is baked here)
 cmake --build build -j
-./build/vksim                        # default demo
+./build/vksim                        # default demo scene
 ./build/vksim --hdri                 # HDRI sphere test
+./build/vksim --shadow               # shadow test
+./build/vksim --hier                 # fractal tree (json + lua)
+./build/vksim --scene file.json      # any scene json
+./build/vksim --no-vr                # plain window (no OpenXR session)
 DRI_PRIME=1 ./build/vksim            # force AMD iGPU (RADV) instead of the 4090
 ```
 
@@ -76,7 +95,7 @@ DRI_PRIME=1 ./build/vksim            # force AMD iGPU (RADV) instead of the 4090
 Capture the app window (needs `import`/ImageMagick + `xprop`).
 
 ```sh
-setsid ./build/vksim >/tmp/vksim.log 2>&1 < /dev/null & disown
+setsid ./build/vksim --no-vr >/tmp/vksim.log 2>&1 < /dev/null & disown
 sleep 6
 for id in $(xprop -root _NET_CLIENT_LIST | sed 's/.*# //' | tr -d ','); do
     n=$(xprop -id "$id" _NET_WM_NAME 2>/dev/null | sed 's/.*= //; s/"//g')

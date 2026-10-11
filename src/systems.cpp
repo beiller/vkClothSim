@@ -1,5 +1,6 @@
 #include "systems.hpp"
 
+#include "assets.hpp"
 #include "meshgen.hpp"
 #include "vk/vkapp.hpp"
 #include <cmath>
@@ -64,6 +65,69 @@ entt::entity spawnCamera(World& w, const V3& pos, const V4& quat, float fovDeg, 
     c.active = active;
     w.reg.emplace<Camera>(e, c);
     return e;
+}
+
+entt::entity findNamedEntity(const World& w, const std::string& name) {
+    entt::entity out = entt::null;
+    w.reg.view<Name>().each([&](entt::entity e, const Name& n) {
+        if (n.id == name)
+            out = e;
+    });
+    return out;
+}
+
+int capsuleGeom(World& w, const CapsuleParams& shape) {
+    const auto it = w.capsuleGeoms.find({shape.halfLen, shape.radius});
+    if (it != w.capsuleGeoms.end())
+        return it->second;
+    const int geom = w.renderer.addMesh(makeCapsuleMesh(shape, 1)).geom;
+    w.capsuleGeoms[{shape.halfLen, shape.radius}] = geom;
+    return geom;
+}
+
+entt::entity spawnDynamicCapsule(World& w, const CapsuleParams& shape, const Transform& t, entt::entity mat) {
+    const RigidBody body{shape, t.pos, t.quat, {}};
+    const entt::entity e = spawnCapsule(w, body, capsuleGeom(w, shape));
+    w.reg.emplace<MaterialRef>(e, mat);
+    return e;
+}
+
+entt::entity spawnVisualCapsule(World& w, const CapsuleParams& shape, const Transform& t, entt::entity mat,
+                                entt::entity parent) {
+    const entt::entity e = w.reg.create();
+    w.reg.emplace<Transform>(e, t.pos, t.quat);
+    if (parent != entt::null)
+        w.reg.emplace<Parent>(e, parent);
+    const int geom = capsuleGeom(w, shape);
+    w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
+    w.reg.emplace<MaterialRef>(e, mat);
+    return e;
+}
+
+entt::entity spawnSoftCloth(World& w, int cw, int ch, float span, float y0, entt::entity mat, float pinSecs) {
+    const entt::entity e = spawnSoftBody(w, makeClothMesh(cw, ch, span, y0), makeClothCons(cw, ch, span), 1);
+    if (pinSecs > 0.0f)
+        w.reg.emplace<PinHold>(e, pinSecs);
+    w.reg.emplace<MaterialRef>(e, mat);
+    return e;
+}
+
+entt::entity spawnSoftBall(World& w, int subdiv, float radius, const V3& center, entt::entity mat, float mass) {
+    const Mesh m = makeSphereMesh(subdiv, radius, center);
+    const entt::entity e = spawnSoftBody(w, m, makeBallCons(m), 0);
+    if (mass > 0.0f)
+        w.reg.get<SoftBodyData>(e).params.mass = mass;
+    w.reg.emplace<MaterialRef>(e, mat);
+    return e;
+}
+
+int loadAssetTexture(World& w, const std::string& path) {
+    TextureData td;
+    if (!loadTexture(exeDir() + "/../assets/" + path, td))
+        loadTexture("assets/" + path, td);
+    if (td.rgba.empty())
+        return -1;
+    return w.renderer.addTexture(td.rgba.data(), (uint32_t)td.w, (uint32_t)td.h);
 }
 
 entt::entity findActiveCamera(const World& w) {
