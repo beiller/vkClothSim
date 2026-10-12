@@ -5,7 +5,6 @@
 #include "vk/renderer.hpp"
 #include "xr_backend.hpp"
 #include <entt/entt.hpp>
-#include <map>
 #include <memory>
 #include <utility>
 
@@ -34,9 +33,8 @@ struct World {
     RenderSettings render;
     entt::entity vrRoot = entt::null; // head-independent locomotion anchor (world pos = walkPos)
     FlyCam flyCam;
-    std::vector<Renderer::Light> lights;                 // per-frame scratch for syncSceneToRenderer
-    std::map<std::pair<float, float>, int> capsuleGeoms; // (halfLen, radius) -> renderer geom
-    SceneScript script;                                  // optional Lua behavior layer (empty for data-only scenes)
+    std::vector<Renderer::Light> lights; // per-frame scratch for syncSceneToRenderer
+    SceneScript script;                  // Lua layer: std geometry library + optional scene behavior
     float fps = 0.0f;
     bool showDemo = false;
     int uiSeq = 0; // auto-assigned draw order for UI windows/widgets

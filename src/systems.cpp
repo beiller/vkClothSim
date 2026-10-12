@@ -1,10 +1,10 @@
 #include "systems.hpp"
 
 #include "assets.hpp"
-#include "meshgen.hpp"
 #include "vk/vkapp.hpp"
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <unordered_map>
 
 entt::entity spawnCapsule(World& w, const RigidBody& body, int geom) {
@@ -12,15 +12,6 @@ entt::entity spawnCapsule(World& w, const RigidBody& body, int geom) {
     w.reg.emplace<Transform>(e, body.position, body.orientation);
     w.reg.emplace<CapsuleCollider>(e, w.sim.addCapsule(body.shape));
     w.reg.emplace<RigidDynamics>(e, body.props, w.rigid.addRigidBody(body));
-    w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
-    return e;
-}
-
-entt::entity spawnStaticBody(World& w, const RigidBody& body, int geom) {
-    entt::entity e = w.reg.create();
-    w.reg.emplace<Transform>(e, body.position, body.orientation);
-    w.reg.emplace<RigidStatic>(e, w.rigid.addStaticBody(body));
-    w.reg.emplace<CapsuleCollider>(e, w.sim.addCapsule(body.shape));
     w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
     return e;
 }
@@ -33,11 +24,10 @@ entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Co
     return e;
 }
 
-entt::entity spawnStaticMesh(World& w, const Mesh& mesh, const Transform& t) {
+entt::entity spawnStaticGeom(World& w, int geom, const Transform& t) {
     entt::entity e = w.reg.create();
-    const Renderer::GpuMeshRef ref = w.renderer.addMesh(mesh);
     w.reg.emplace<Transform>(e, t.pos, t.quat);
-    w.reg.emplace<Renderable>(e, ref.geom, w.renderer.addInstance(ref.geom));
+    w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
     return e;
 }
 
@@ -76,45 +66,35 @@ entt::entity findNamedEntity(const World& w, const std::string& name) {
     return out;
 }
 
-int capsuleGeom(World& w, const CapsuleParams& shape) {
-    const auto it = w.capsuleGeoms.find({shape.halfLen, shape.radius});
-    if (it != w.capsuleGeoms.end())
-        return it->second;
-    const int geom = w.renderer.addMesh(makeCapsuleMesh(shape, 1)).geom;
-    w.capsuleGeoms[{shape.halfLen, shape.radius}] = geom;
-    return geom;
-}
-
-entt::entity spawnDynamicCapsule(World& w, const CapsuleParams& shape, const Transform& t, entt::entity mat) {
+entt::entity spawnDynamicCapsule(World& w, int geom, const CapsuleParams& shape, const Transform& t, entt::entity mat) {
     const RigidBody body{shape, t.pos, t.quat, {}};
-    const entt::entity e = spawnCapsule(w, body, capsuleGeom(w, shape));
+    const entt::entity e = spawnCapsule(w, body, geom);
     w.reg.emplace<MaterialRef>(e, mat);
     return e;
 }
 
-entt::entity spawnVisualCapsule(World& w, const CapsuleParams& shape, const Transform& t, entt::entity mat,
-                                entt::entity parent) {
+entt::entity spawnVisualCapsule(World& w, int geom, const Transform& t, entt::entity mat, entt::entity parent) {
     const entt::entity e = w.reg.create();
     w.reg.emplace<Transform>(e, t.pos, t.quat);
     if (parent != entt::null)
         w.reg.emplace<Parent>(e, parent);
-    const int geom = capsuleGeom(w, shape);
     w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
     w.reg.emplace<MaterialRef>(e, mat);
     return e;
 }
 
-entt::entity spawnSoftCloth(World& w, int cw, int ch, float span, float y0, entt::entity mat, float pinSecs) {
-    const entt::entity e = spawnSoftBody(w, makeClothMesh(cw, ch, span, y0), makeClothCons(cw, ch, span), 1);
+entt::entity spawnSoftCloth(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
+                            float pinSecs) {
+    const entt::entity e = spawnSoftBody(w, mesh, cons, 1);
     if (pinSecs > 0.0f)
         w.reg.emplace<PinHold>(e, pinSecs);
     w.reg.emplace<MaterialRef>(e, mat);
     return e;
 }
 
-entt::entity spawnSoftBall(World& w, int subdiv, float radius, const V3& center, entt::entity mat, float mass) {
-    const Mesh m = makeSphereMesh(subdiv, radius, center);
-    const entt::entity e = spawnSoftBody(w, m, makeBallCons(m), 0);
+entt::entity spawnSoftBall(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
+                           float mass) {
+    const entt::entity e = spawnSoftBody(w, mesh, cons, 0);
     if (mass > 0.0f)
         w.reg.get<SoftBodyData>(e).params.mass = mass;
     w.reg.emplace<MaterialRef>(e, mat);
@@ -275,8 +255,14 @@ entt::entity spawnVrRoot(World& w, entt::entity head) {
 void spawnControllers(World& w) {
     // grips are children of the VR root; their LOCAL Transform is set to the raw OpenXR grip each
     // frame, so world = walkPos + grip (head-independent -> no drift).
+    // grip visual from the std geometry library (the engine has no mesh generators of its own)
     const CapsuleParams gripShape{0.06f, 0.03f};
-    const int geom = w.renderer.addMesh(makeCapsuleMesh(gripShape, 1)).geom;
+    std::string err;
+    const int geom = w.script.callMeshGen("capsule", "{halfLen = 0.06, radius = 0.03}", err);
+    if (geom < 0) {
+        std::fprintf(stderr, "3dsim: controller grip geometry: %s\n", err.c_str());
+        std::exit(1);
+    }
     const entt::entity gripMat = spawnMaterial(w, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f);
     for (int h = 0; h < 2; ++h) {
         entt::entity e = w.reg.create();

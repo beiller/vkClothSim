@@ -19,6 +19,47 @@ int scenePanic(lua_State* L) {
     return 0;
 }
 
+// array field of a geometry/constraints table -> std::vector (1-based Lua, nil = absent)
+template <class T>
+bool readNumArray(lua_State* L, int tidx, const char* name, size_t per, std::vector<T>& out, bool required,
+                  std::string& err) {
+    lua_getfield(L, tidx, name);
+    if (lua_isnoneornil(L, -1)) {
+        lua_pop(L, 1);
+        if (required)
+            err = std::string("geometry: missing '") + name + "'";
+        return err.empty();
+    }
+    if (!lua_istable(L, -1)) {
+        err = std::string("geometry: '") + name + "' must be an array";
+        lua_pop(L, 1);
+        return false;
+    }
+    int n = 0;
+    for (;;) {
+        lua_geti(L, -1, n + 1);
+        if (lua_isnoneornil(L, -1)) {
+            lua_pop(L, 1);
+            break;
+        }
+        if (!lua_isnumber(L, -1)) {
+            err = std::string("geometry: '") + name + "' must be numbers";
+            lua_pop(L, 2);
+            return false;
+        }
+        out.push_back((T)lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        ++n;
+    }
+    lua_pop(L, 1);
+    if (out.size() % per != 0) {
+        err = std::string("geometry: '") + name + "' length is not a multiple of " + std::to_string(per);
+        out.clear();
+        return false;
+    }
+    return true;
+}
+
 entt::entity readEnt(lua_State* L, int idx) {
     return static_cast<entt::entity>((uint32_t)luaL_checkinteger(L, idx));
 }
@@ -115,9 +156,10 @@ void SceneScript::init(World& w) {
         lua_setfield(L, -2, name);
     };
     reg("material", lMaterial); // material(name, color, metallic, roughness, texture?)
-    reg("capsule", lCapsule);   // capsule(halfLen, radius, mat, pos?, quat?, name?, {body?, parent?}?)
-    reg("cloth", lCloth);       // cloth(cw, ch, span, y0, mat, pin?, name?)
-    reg("ball", lBall);         // ball(subdiv, radius, mat, pos?, mass?, name?)
+    reg("geometry", lGeometry); // geometry(geomTable) -> geom id
+    reg("capsule", lCapsule);   // capsule(geom, halfLen, radius, mat, pos?, quat?, name?, {body?, parent?}?)
+    reg("cloth", lCloth);       // cloth(geom, cons, mat, pin?, name?)
+    reg("ball", lBall);         // ball(geom, cons, mat, mass?, name?)
     reg("set", lSet);           // set(url, value | {values})
     reg("get", lGet);           // get(url) -> number | {x, y, z}
     reg("time", lTime);         // time() -> seconds since scene start
@@ -141,6 +183,22 @@ void SceneScript::init(World& w) {
     lua_setglobal(L, "scene");
 }
 
+bool SceneScript::runLib(const std::string& path, const char* global, std::string& err) {
+    if (luaL_loadfile(L, path.c_str()) != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
+        err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
+        std::fprintf(stderr, "3dsim: %s: %s\n", path.c_str(), err.c_str());
+        lua_pop(L, 1);
+        return false;
+    }
+    if (!lua_istable(L, -1)) {
+        err = "library must return a table";
+        lua_pop(L, 1);
+        return false;
+    }
+    lua_setglobal(L, global); // consumes the result
+    return true;
+}
+
 bool SceneScript::run(const std::string& path, std::string& err) {
     if (luaL_loadfile(L, path.c_str()) != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
         err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
@@ -149,6 +207,92 @@ bool SceneScript::run(const std::string& path, std::string& err) {
         return false;
     }
     return true;
+}
+
+int SceneScript::callMeshGen(const std::string& gen, const std::string& args, std::string& err) {
+    const std::string code = "return mesh." + gen + "(" + args + ")";
+    if (luaL_loadbuffer(L, code.data(), code.size(), "(mesh)") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
+        err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
+        lua_pop(L, 1);
+        return -1;
+    }
+    const int top = lua_gettop(L);
+    Mesh m = readGeom(L, top, err);
+    lua_pop(L, 1);
+    if (!err.empty()) {
+        std::fprintf(stderr, "3dsim: mesh %s: %s\n", gen.c_str(), err.c_str());
+        return -1;
+    }
+    return w().renderer.addMesh(m).geom;
+}
+
+Mesh SceneScript::readGeom(lua_State* L, int idx, std::string& err) {
+    if (!lua_istable(L, idx)) {
+        err = "expected a geometry table";
+        return {};
+    }
+    Mesh m;
+    if (!readNumArray(L, idx, "pos", 3, m.pos, true, err))
+        return m;
+    if (!readNumArray(L, idx, "nrm", 3, m.nrm, false, err))
+        return m;
+    if (!readNumArray(L, idx, "uv", 2, m.uv, false, err))
+        return m;
+    if (!readNumArray(L, idx, "idx", 1, m.indices, true, err))
+        return m;
+    const int n = m.vertexCount();
+    if (m.nrm.empty())
+        m.nrm.assign((size_t)3 * n, 0.0f);
+    if (m.uv.empty())
+        m.uv.assign((size_t)2 * n, 0.0f);
+    // Lua indices are 1-based; Vulkan wants 0-based
+    for (auto& i : m.indices) {
+        if (i < 1 || i > (uint32_t)n) {
+            err = "geometry: index out of range";
+            return {};
+        }
+        i -= 1;
+    }
+    return m;
+}
+
+std::vector<sim::Constraint> SceneScript::readCons(lua_State* L, int idx, int nVerts, std::string& err) {
+    std::vector<sim::Constraint> out;
+    if (!lua_istable(L, idx)) {
+        err = "expected a constraint array {a, b, rest, k, ...}";
+        return out;
+    }
+    std::vector<float> flat;
+    int n = 0;
+    for (;;) {
+        lua_geti(L, idx, n + 1);
+        if (lua_isnoneornil(L, -1)) {
+            lua_pop(L, 1);
+            break;
+        }
+        if (!lua_isnumber(L, -1)) {
+            err = "constraints must be numbers";
+            lua_pop(L, 1);
+            return out;
+        }
+        flat.push_back((float)lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        ++n;
+    }
+    if (flat.size() % 4 != 0) {
+        err = "constraints length is not a multiple of 4 (a, b, rest, k)";
+        return out;
+    }
+    out.reserve(flat.size() / 4);
+    for (size_t i = 0; i < flat.size(); i += 4) {
+        const int a = (int)flat[i] - 1, b = (int)flat[i + 1] - 1;
+        if (a < 0 || a >= nVerts || b < 0 || b >= nVerts) {
+            err = "constraint index out of range";
+            return {};
+        }
+        out.push_back({a, b, flat[i + 2], flat[i + 3]});
+    }
+    return out;
 }
 
 void SceneScript::frame(float dt) {
@@ -237,7 +381,7 @@ void SceneScript::reportError(const char* what) {
     luaL_traceback(L, L, lua_tostring(L, -1), 1);
     const char* tb = lua_tostring(L, -1);
     std::fprintf(stderr, "3dsim: script %s: %s\n", what, tb ? tb : "?");
-    lua_pop(L, 1);
+    lua_pop(L, 2); // traceback + error object
 }
 
 int SceneScript::lMaterial(lua_State* L) {
@@ -261,24 +405,36 @@ int SceneScript::lMaterial(lua_State* L) {
     return 1;
 }
 
+int SceneScript::lGeometry(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    std::string err;
+    Mesh m = readGeom(L, lua_absindex(L, 1), err);
+    if (!err.empty())
+        return luaL_error(L, "scene.geometry: %s", err.c_str());
+    lua_pushinteger(L, w.renderer.addMesh(m).geom);
+    return 1;
+}
+
 int SceneScript::lCapsule(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
-    const CapsuleParams shape{(float)luaL_checknumber(L, 1), (float)luaL_checknumber(L, 2)};
-    const char* matName = luaL_checkstring(L, 3);
-    auto pos = readV3(L, 4);
-    auto quat = readQuat(L, 5);
-    const char* name = luaL_optstring(L, 6, nullptr);
-    const std::string body = lua_istable(L, 7) ? optString(L, 7, "body", "dynamic") : "dynamic";
-    const entt::entity parent = lua_istable(L, 7) ? optEnt(L, 7, "parent") : entt::null;
+    const int geom = (int)luaL_checkinteger(L, 1);
+    const CapsuleParams shape{(float)luaL_checknumber(L, 2), (float)luaL_checknumber(L, 3)};
+    const char* matName = luaL_checkstring(L, 4);
+    auto pos = readV3(L, 5);
+    auto quat = readQuat(L, 6);
+    const char* name = luaL_optstring(L, 7, nullptr);
+    const std::string body = lua_istable(L, 8) ? optString(L, 8, "body", "dynamic") : "dynamic";
+    const entt::entity parent = lua_istable(L, 8) ? optEnt(L, 8, "parent") : entt::null;
     const entt::entity mat = findNamedEntity(w, matName);
     if (mat == entt::null)
         return luaL_error(L, "scene.capsule: unknown material '%s'", matName);
     entt::entity e;
     if (body == "kinematic")
-        e = spawnVisualCapsule(w, shape, {pos, quat}, mat, parent);
+        e = spawnVisualCapsule(w, geom, {pos, quat}, mat, parent);
     else
-        e = spawnDynamicCapsule(w, shape, {pos, quat}, mat);
+        e = spawnDynamicCapsule(w, geom, shape, {pos, quat}, mat);
     if (name)
         w.reg.emplace<Name>(e, name);
     pushEnt(L, e);
@@ -288,17 +444,20 @@ int SceneScript::lCapsule(lua_State* L) {
 int SceneScript::lCloth(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
-    const int cw = (int)luaL_checkinteger(L, 1);
-    const int ch = (int)luaL_checkinteger(L, 2);
-    const float span = (float)luaL_checknumber(L, 3);
-    const float y0 = (float)luaL_checknumber(L, 4);
-    const char* matName = luaL_checkstring(L, 5);
-    const float pin = (float)luaL_optnumber(L, 6, 0.0f);
-    const char* name = luaL_optstring(L, 7, nullptr);
+    std::string err;
+    Mesh m = readGeom(L, lua_absindex(L, 1), err);
+    if (!err.empty())
+        return luaL_error(L, "scene.cloth: %s", err.c_str());
+    std::vector<sim::Constraint> cons = readCons(L, 2, m.vertexCount(), err);
+    if (!err.empty())
+        return luaL_error(L, "scene.cloth: %s", err.c_str());
+    const char* matName = luaL_checkstring(L, 3);
+    const float pin = (float)luaL_optnumber(L, 4, 0.0f);
+    const char* name = luaL_optstring(L, 5, nullptr);
     const entt::entity mat = findNamedEntity(w, matName);
     if (mat == entt::null)
         return luaL_error(L, "scene.cloth: unknown material '%s'", matName);
-    const entt::entity e = spawnSoftCloth(w, cw, ch, span, y0, mat, pin);
+    const entt::entity e = spawnSoftCloth(w, m, cons, mat, pin);
     if (name)
         w.reg.emplace<Name>(e, name);
     pushEnt(L, e);
@@ -308,16 +467,20 @@ int SceneScript::lCloth(lua_State* L) {
 int SceneScript::lBall(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
-    const int subdiv = (int)luaL_checkinteger(L, 1);
-    const float radius = (float)luaL_checknumber(L, 2);
+    std::string err;
+    Mesh m = readGeom(L, lua_absindex(L, 1), err);
+    if (!err.empty())
+        return luaL_error(L, "scene.ball: %s", err.c_str());
+    std::vector<sim::Constraint> cons = readCons(L, 2, m.vertexCount(), err);
+    if (!err.empty())
+        return luaL_error(L, "scene.ball: %s", err.c_str());
     const char* matName = luaL_checkstring(L, 3);
-    auto pos = readV3(L, 4);
-    const float mass = (float)luaL_optnumber(L, 5, 0.0f);
-    const char* name = luaL_optstring(L, 6, nullptr);
+    const float mass = (float)luaL_optnumber(L, 4, 0.0f);
+    const char* name = luaL_optstring(L, 5, nullptr);
     const entt::entity mat = findNamedEntity(w, matName);
     if (mat == entt::null)
         return luaL_error(L, "scene.ball: unknown material '%s'", matName);
-    const entt::entity e = spawnSoftBall(w, subdiv, radius, pos, mat, mass);
+    const entt::entity e = spawnSoftBall(w, m, cons, mat, mass);
     if (name)
         w.reg.emplace<Name>(e, name);
     pushEnt(L, e);

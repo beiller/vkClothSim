@@ -14,8 +14,11 @@ local depthColor = {
     [4] = { 0.30, 0.48, 0.22 },
     [5] = { 0.45, 0.62, 0.30 },
 }
+-- one material + one shared geometry per depth (branches of a depth reuse both)
+local capGeom = {}
 for d = 0, kMaxDepth do
     scene.material("mat_d" .. d, depthColor[d], 0.1, 0.6)
+    capGeom[d] = scene.geometry(mesh.capsule({ halfLen = halfLen[d], radius = radius[d] }))
 end
 
 math.randomseed(20260929)
@@ -74,7 +77,7 @@ local function addBranch(parent, parentWQ, parentWPos, parentDir, depth)
     local amp = 0.02 + 0.02 * depth -- tips sway more
     local phase = 0.35 * depth      -- outward lag -> bend travels to the tips
     local isClock = depth == 0
-    local e = scene.capsule(halfLen[depth], radius[depth], "mat_d" .. depth, localPos, localQuat, nil,
+    local e = scene.capsule(capGeom[depth], halfLen[depth], radius[depth], "mat_d" .. depth, localPos, localQuat, nil,
                             { body = "kinematic", parent = parent })
     scene.anim(e, function(dt)
         if isClock then

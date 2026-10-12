@@ -2,13 +2,13 @@
 
 #include "assets.hpp"
 #include "json.hpp"
-#include "meshgen.hpp"
 #include "reflect.hpp"
 #include "systems.hpp"
 #include "ui.hpp"
 #include "url.hpp"
 #include "vk/vkapp.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -69,6 +69,17 @@ std::string scriptFile(const json& j, const std::string& path) {
     if (std::filesystem::exists(autoPath))
         return autoPath;
     return "";
+}
+
+bool isIdent(const std::string& s) {
+    if (s.empty())
+        return false;
+    for (size_t i = 0; i < s.size(); ++i) {
+        const char c = s[i];
+        if (!std::isalnum((unsigned char)c) && c != '_')
+            return false;
+    }
+    return std::isalpha((unsigned char)s[0]) || s[0] == '_';
 }
 
 // ---- editor tab: auto-generated from reflect.hpp tables x ECS contents
@@ -207,6 +218,16 @@ void createSceneWorld(World& w, const std::string& path) {
     w.sim.init(w.app->device(), w.app->pdev());
     w.renderer.init(*w.app, (int)j["objects"].size() + 2, cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
 
+    // geometry is generated in Lua (the std library, loaded for every scene); the engine only
+    // receives raw vertex/index/constraint data
+    w.script.init(w);
+    std::string stdLib = "assets/scenes/mesh.lua";
+    if (!std::filesystem::exists(stdLib))
+        stdLib = exeDir() + "/../" + stdLib;
+    std::string err;
+    if (!w.script.runLib(stdLib, "mesh", err))
+        fail(p, "mesh library: " + err);
+
     for (const auto& L : j["lights"]) {
         const auto name = L.at("name").get<std::string>();
         PointLight pl;
@@ -248,13 +269,23 @@ void createSceneWorld(World& w, const std::string& path) {
         const auto name = o.at("name").get<std::string>();
         const json& mj = o.at("mesh");
         const auto type = mj.at("type").get<std::string>();
-        Mesh mesh;
-        if (type == "ground")
-            mesh = makeGroundMesh(mj.value("size", 40.0f));
-        else if (type == "sphere")
-            mesh = makeSphereMesh(mj.value("subdiv", 4), mj.at("radius").get<float>());
-        else
-            fail(p, "object '" + name + "': unknown mesh type '" + type + "'");
+        if (!isIdent(type))
+            fail(p, "object '" + name + "': bad mesh type '" + type + "'");
+        // mesh params (everything but "type") become a Lua table literal for the std generator
+        std::string args = "{";
+        for (const auto& [k, v] : mj.items()) {
+            if (k == "type")
+                continue;
+            if (!v.is_number())
+                fail(p, "object '" + name + "': mesh param '" + k + "' must be a number");
+            char num[32];
+            std::snprintf(num, sizeof num, "%.10g", v.get<double>());
+            args += k + " = " + num + ", ";
+        }
+        args += "}";
+        const int geom = w.script.callMeshGen(type, args, err);
+        if (geom < 0)
+            fail(p, "object '" + name + "': mesh '" + type + "': " + err);
 
         Transform t{};
         if (o.contains("pos"))
@@ -262,7 +293,7 @@ void createSceneWorld(World& w, const std::string& path) {
         if (o.contains("quat"))
             t.quat = v4(o["quat"], (p + " object " + name + " quat").c_str());
 
-        const entt::entity e = spawnStaticMesh(w, mesh, t);
+        const entt::entity e = spawnStaticGeom(w, geom, t);
         w.reg.emplace<Name>(e, name);
 
         const auto matName = o.at("material").get<std::string>();
@@ -276,12 +307,8 @@ void createSceneWorld(World& w, const std::string& path) {
     // registers frame/anim/button callbacks; runs before sim.build() and the UI so URLs and
     // the editor tab see its entities
     const std::string script = scriptFile(j, p);
-    if (!script.empty()) {
-        w.script.init(w);
-        std::string err;
-        if (!w.script.run(script, err))
-            fail(p, "scene script: " + err);
-    }
+    if (!script.empty() && !w.script.run(script, err))
+        fail(p, "scene script: " + err);
 
     // set block after the script: URLs may point at script-spawned entities
     if (j.contains("set")) {

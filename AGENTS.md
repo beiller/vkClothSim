@@ -24,9 +24,9 @@ Conventions:
 
 - `src/main.cpp`: app loop, ImGui, scene selection (`--hdri` / `--shadow` / `--hier` / `--scene file.json`; `--no-vr` = plain window, else VR auto-detects)
 - `src/world.hpp`: shared `World` state
-- `src/scene.cpp`: scene loader — builds the world from `assets/scenes/*.json` + optional `.lua`
+- `src/scene.cpp`: scene loader — builds the world from `assets/scenes/*.json` + optional `.lua`; all geometry generated via the Lua std-lib
 - `src/scene_script.cpp`: embedded Lua 5.4 host; scripts see only the `scene` table (no io/os/debug/package)
-- `src/systems.cpp`: sim step, collider sync, resets, spawn verbs (capsule/cloth/ball, textures)
+- `src/systems.cpp`: sim step, collider sync, resets, spawn verbs (capsule/cloth/ball, textures); consumes Lua-generated geometry only
 - `src/app/rigid.cpp`: Jolt rigid step
 - `src/sim/softsim.cpp`: GPU soft-body dispatch
 - `src/vk/vkapp.cpp`: GLFW/Vulkan app, swapchain, render pass
@@ -45,11 +45,14 @@ Conventions:
 
 ## Scenes
 
-Scenes are `.json` (declarative data) + optional `.lua` (behavior) in `assets/scenes/`; the engine contains no scene content.
+Scenes are `.json` (declarative data) + optional `.lua` (behavior) in `assets/scenes/`; the engine contains no scene content and no mesh generators.
 
-- Loader order (`createSceneWorld`): JSON build -> script runs -> `set` block -> `sim.build()` -> env -> UI.
+- Loader order (`createSceneWorld`): std-lib load (`mesh` global) -> JSON build (lights, materials, objects) -> script runs -> `set` block -> `sim.build()` -> env -> UI.
+- All geometry is generated in Lua by `assets/scenes/mesh.lua` (`mesh.capsule` / `mesh.sphere` / `mesh.ground` / `mesh.cloth`, plus `mesh.clothCons` / `mesh.ballCons`), loaded by the engine for every scene before any scene content.
+- Geometry tables: `{pos, nrm?, uv?, idx}` of flat floats; vertex indices are 1-based (the engine normalizes to 0-based). Constraints: flat `{a, b, rest, k, ...}` with 1-based vertex indices.
 - Script discovery: `"script"` field in the JSON (relative to the JSON's dir), else same-basename `.lua` next to the JSON.
-- Scripts get a `scene` table: spawn verbs (material, capsule, cloth, ball), `set`/`get` through URL indirection, `frame`/`anim`/`button` callbacks, and a vec/quat math kit (vectors/quats as Lua arrays). The full list is in `src/scene_script.cpp`.
+- Scripts get a `scene` table: `geometry(geom) -> geomId` (shared for rigid/static meshes), spawn verbs `capsule(geom, halfLen, radius, ...)` / `cloth(geom, cons, ...)` / `ball(geom, cons, ...)`, `material`, `set`/`get` through URL indirection, `frame`/`anim`/`button` callbacks, and a vec/quat math kit (vectors/quats as Lua arrays). The full list is in `src/scene_script.cpp`.
+- Scene JSON objects: `{"mesh": {"type": "ground", "size": 55}}` — `type` selects the `mesh.<type>` generator, the other (numeric) keys become its params.
 - Error model: load errors abort; runtime callback errors print one traceback, then the frame callback is dropped (anim callbacks are silenced but kept).
 - Scene JSON `ui.widgets` bind sliders/checkboxes/buttons to entity fields via `bind` URLs; script `button` actions are validated at load.
 
