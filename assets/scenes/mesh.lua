@@ -215,7 +215,8 @@ function m.ballCons(p)
     for f = 1, #idx, 3 do
         local a, b, c = idx[f], idx[f + 1], idx[f + 2]
         for _, e in ipairs({ { a, b }, { b, c }, { c, a } }) do
-            local lo, hi = (e[1] < e[2]) and e[1] or e[2], (e[1] < e[2]) and e[2] or e[1]
+            local x, y = e[1], e[2]
+            local lo, hi = (x < y) and x or y, (x < y) and y or x
             local key = lo * 1000000 + hi
             if not seen[key] then
                 seen[key] = true

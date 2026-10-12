@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <lua.hpp>
 #include <vector>
 
@@ -19,37 +22,70 @@ int scenePanic(lua_State* L) {
     return 0;
 }
 
-// array field of a geometry/constraints table -> std::vector (1-based Lua, nil = absent)
-template <class T>
-bool readNumArray(lua_State* L, int tidx, const char* name, size_t per, std::vector<T>& out, bool required,
-                  std::string& err) {
-    lua_getfield(L, tidx, name);
-    if (lua_isnoneornil(L, -1)) {
-        lua_pop(L, 1);
-        if (required)
-            err = std::string("geometry: missing '") + name + "'";
-        return err.empty();
-    }
-    if (!lua_istable(L, -1)) {
-        err = std::string("geometry: '") + name + "' must be an array";
-        lua_pop(L, 1);
+// the assets dir (cwd or exe-relative) — root for restricted includes
+std::string assetsRoot() {
+    return std::filesystem::exists("assets") ? "assets" : exeDir() + "/../assets";
+}
+
+// relPath must be relative and stay under the assets root (no leading '/', no '..' component)
+bool safeIncludePath(const std::string& p, std::string& err) {
+    if (p.empty() || p.front() == '/') {
+        err = "path must be relative to the assets dir";
         return false;
     }
-    int n = 0;
-    for (;;) {
-        lua_geti(L, -1, n + 1);
+    for (size_t i = 0;;) {
+        const size_t j = p.find('/', i);
+        const std::string c = p.substr(i, j == std::string::npos ? j : j - i);
+        if (c == "..") {
+            err = "path must not contain '..'";
+            return false;
+        }
+        if (j == std::string::npos)
+            return true;
+        i = j + 1;
+    }
+}
+
+// sequential array of numbers in the table at absidx -> out
+template <class T> bool readNumArray(lua_State* L, int absidx, std::vector<T>& out, std::string& err) {
+    if (!lua_istable(L, absidx)) {
+        err = "must be an array of numbers";
+        return false;
+    }
+    for (int i = 1;; ++i) {
+        lua_geti(L, absidx, i);
         if (lua_isnoneornil(L, -1)) {
             lua_pop(L, 1);
             break;
         }
         if (!lua_isnumber(L, -1)) {
-            err = std::string("geometry: '") + name + "' must be numbers";
-            lua_pop(L, 2);
+            err = "must be an array of numbers";
+            lua_pop(L, 1);
             return false;
         }
         out.push_back((T)lua_tonumber(L, -1));
         lua_pop(L, 1);
-        ++n;
+    }
+    return true;
+}
+
+// named geometry field at tidx -> out (1-based array of numbers); nil is ok when !required
+template <class T>
+bool readGeomField(lua_State* L, int tidx, const char* name, size_t per, std::vector<T>& out, bool required,
+                   std::string& err) {
+    lua_getfield(L, tidx, name);
+    if (lua_isnoneornil(L, -1)) {
+        lua_pop(L, 1);
+        if (required) {
+            err = std::string("geometry: missing '") + name + "'";
+            return false;
+        }
+        return true;
+    }
+    if (!readNumArray(L, lua_absindex(L, -1), out, err)) {
+        err = std::string("geometry: '") + name + "' " + err;
+        lua_pop(L, 1);
+        return false;
     }
     lua_pop(L, 1);
     if (out.size() % per != 0) {
@@ -109,14 +145,6 @@ void pushV4(lua_State* L, V4 q) {
     lua_seti(L, -2, 3);
     lua_pushnumber(L, q.w);
     lua_seti(L, -2, 4);
-}
-
-// named field of an opts table, with default
-float optNum(lua_State* L, int tidx, const char* key, float def) {
-    lua_getfield(L, tidx, key);
-    const float v = lua_isnumber(L, -1) ? (float)lua_tonumber(L, -1) : def;
-    lua_pop(L, 1);
-    return v;
 }
 
 std::string optString(lua_State* L, int tidx, const char* key, const char* def) {
@@ -181,22 +209,52 @@ void SceneScript::init(World& w) {
     reg("qrot", lqRot);
     reg("qfromto", lqFromTo);
     lua_setglobal(L, "scene");
+    // global module loader (restricted to the assets dir, cached per path)
+    lua_pushlightuserdata(L, this);
+    lua_pushcclosure(L, lInclude, 1);
+    lua_setglobal(L, "include");
 }
 
-bool SceneScript::runLib(const std::string& path, const char* global, std::string& err) {
-    if (luaL_loadfile(L, path.c_str()) != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
+int SceneScript::includeModule(const std::string& rel, std::string& err) {
+    if (!safeIncludePath(rel, err))
+        return -1;
+    std::string full = assetsRoot() + "/" + rel;
+    if (full.size() < 4 || full.compare(full.size() - 4, 4, ".lua") != 0)
+        full += ".lua";
+    if (const auto it = m_modules.find(full); it != m_modules.end())
+        return it->second;
+    std::ifstream in(full);
+    if (!in) {
+        err = "cannot open '" + full + "'";
+        return -1;
+    }
+    const std::string code((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (luaL_loadbuffer(L, code.data(), code.size(), full.c_str()) != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
         err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
-        std::fprintf(stderr, "3dsim: %s: %s\n", path.c_str(), err.c_str());
+        std::fprintf(stderr, "3dsim: %s: %s\n", full.c_str(), err.c_str());
         lua_pop(L, 1);
-        return false;
+        return -1;
     }
     if (!lua_istable(L, -1)) {
-        err = "library must return a table";
+        err = "module must return a table";
         lua_pop(L, 1);
-        return false;
+        return -1;
     }
-    lua_setglobal(L, global); // consumes the result
-    return true;
+    const int ref = newRef(L, -1);
+    lua_pop(L, 1);
+    m_modules[full] = ref;
+    return ref;
+}
+
+int SceneScript::lInclude(lua_State* L) {
+    auto* self = sSelf(L);
+    const char* p = luaL_checkstring(L, 1);
+    std::string err;
+    const int ref = self->includeModule(p, err);
+    if (ref < 0)
+        return luaL_error(L, "include: %s", err.c_str());
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    return 1;
 }
 
 bool SceneScript::run(const std::string& path, std::string& err) {
@@ -209,16 +267,34 @@ bool SceneScript::run(const std::string& path, std::string& err) {
     return true;
 }
 
-int SceneScript::callMeshGen(const std::string& gen, const std::string& args, std::string& err) {
-    const std::string code = "return mesh." + gen + "(" + args + ")";
-    if (luaL_loadbuffer(L, code.data(), code.size(), "(mesh)") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
-        err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
-        lua_pop(L, 1);
+int SceneScript::callMeshGen(const std::string& gen, const std::vector<std::pair<std::string, double>>& params,
+                             std::string& err) {
+    if (m_geomModule < 0) {
+        err = "no geometry module (scene has no \"meshlib\")";
         return -1;
     }
-    const int top = lua_gettop(L);
-    Mesh m = readGeom(L, top, err);
-    lua_pop(L, 1);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, m_geomModule);
+    lua_getfield(L, -1, gen.c_str());
+    if (!lua_isfunction(L, -1)) {
+        err = "no mesh generator '" + gen + "' in geometry module";
+        lua_pop(L, 2);
+        return -1;
+    }
+    lua_createtable(L, (int)params.size(), 0);
+    for (const auto& [k, v] : params) {
+        lua_pushnumber(L, v);
+        lua_setfield(L, -2, k.c_str());
+    }
+    // stack: [module, fn, params]; this liblua5.4 takes the function at top-nargs (fn under its
+    // args, as in the anim/frame callbacks), so call it in place
+    if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+        err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
+        std::fprintf(stderr, "3dsim: mesh %s: %s\n", gen.c_str(), err.c_str());
+        lua_pop(L, 2); // module, error
+        return -1;
+    }
+    Mesh m = readGeom(L, lua_absindex(L, -1), err);
+    lua_pop(L, 2); // module, geom
     if (!err.empty()) {
         std::fprintf(stderr, "3dsim: mesh %s: %s\n", gen.c_str(), err.c_str());
         return -1;
@@ -232,13 +308,13 @@ Mesh SceneScript::readGeom(lua_State* L, int idx, std::string& err) {
         return {};
     }
     Mesh m;
-    if (!readNumArray(L, idx, "pos", 3, m.pos, true, err))
+    if (!readGeomField(L, idx, "pos", 3, m.pos, true, err))
         return m;
-    if (!readNumArray(L, idx, "nrm", 3, m.nrm, false, err))
+    if (!readGeomField(L, idx, "nrm", 3, m.nrm, false, err))
         return m;
-    if (!readNumArray(L, idx, "uv", 2, m.uv, false, err))
+    if (!readGeomField(L, idx, "uv", 2, m.uv, false, err))
         return m;
-    if (!readNumArray(L, idx, "idx", 1, m.indices, true, err))
+    if (!readGeomField(L, idx, "idx", 1, m.indices, true, err))
         return m;
     const int n = m.vertexCount();
     if (m.nrm.empty())
@@ -256,28 +332,21 @@ Mesh SceneScript::readGeom(lua_State* L, int idx, std::string& err) {
     return m;
 }
 
+// geometry table at stack slot 1 (errors via luaL_error)
+Mesh SceneScript::checkGeom(lua_State* L, const char* what) {
+    std::string err;
+    Mesh m = readGeom(L, lua_absindex(L, 1), err);
+    if (!err.empty())
+        luaL_error(L, "%s: %s", what, err.c_str());
+    return m;
+}
+
 std::vector<sim::Constraint> SceneScript::readCons(lua_State* L, int idx, int nVerts, std::string& err) {
     std::vector<sim::Constraint> out;
-    if (!lua_istable(L, idx)) {
-        err = "expected a constraint array {a, b, rest, k, ...}";
-        return out;
-    }
     std::vector<float> flat;
-    int n = 0;
-    for (;;) {
-        lua_geti(L, idx, n + 1);
-        if (lua_isnoneornil(L, -1)) {
-            lua_pop(L, 1);
-            break;
-        }
-        if (!lua_isnumber(L, -1)) {
-            err = "constraints must be numbers";
-            lua_pop(L, 1);
-            return out;
-        }
-        flat.push_back((float)lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        ++n;
+    if (!readNumArray(L, idx, flat, err)) {
+        err = "constraints " + err;
+        return out;
     }
     if (flat.size() % 4 != 0) {
         err = "constraints length is not a multiple of 4 (a, b, rest, k)";
@@ -408,10 +477,7 @@ int SceneScript::lMaterial(lua_State* L) {
 int SceneScript::lGeometry(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
-    std::string err;
-    Mesh m = readGeom(L, lua_absindex(L, 1), err);
-    if (!err.empty())
-        return luaL_error(L, "scene.geometry: %s", err.c_str());
+    const Mesh m = checkGeom(L, "scene.geometry");
     lua_pushinteger(L, w.renderer.addMesh(m).geom);
     return 1;
 }
@@ -444,10 +510,8 @@ int SceneScript::lCapsule(lua_State* L) {
 int SceneScript::lCloth(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
+    const Mesh m = checkGeom(L, "scene.cloth");
     std::string err;
-    Mesh m = readGeom(L, lua_absindex(L, 1), err);
-    if (!err.empty())
-        return luaL_error(L, "scene.cloth: %s", err.c_str());
     std::vector<sim::Constraint> cons = readCons(L, 2, m.vertexCount(), err);
     if (!err.empty())
         return luaL_error(L, "scene.cloth: %s", err.c_str());
@@ -467,10 +531,8 @@ int SceneScript::lCloth(lua_State* L) {
 int SceneScript::lBall(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
+    const Mesh m = checkGeom(L, "scene.ball");
     std::string err;
-    Mesh m = readGeom(L, lua_absindex(L, 1), err);
-    if (!err.empty())
-        return luaL_error(L, "scene.ball: %s", err.c_str());
     std::vector<sim::Constraint> cons = readCons(L, 2, m.vertexCount(), err);
     if (!err.empty())
         return luaL_error(L, "scene.ball: %s", err.c_str());

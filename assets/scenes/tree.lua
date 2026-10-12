@@ -1,5 +1,6 @@
 -- fractal tree: kinematic capsule branches in a parent chain, each swaying in a
 -- shared sin-wave breeze (static data, lights and UI live in tree.json)
+local mesh = include("scenes/mesh")
 
 local kMaxDepth = 5
 -- depth -> capsule size: thick trunk tapering to thin twigs

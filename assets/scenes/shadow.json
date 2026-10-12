@@ -1,5 +1,6 @@
 {
     "name": "shadow test",
+    "meshlib": "scenes/mesh",
     "env": "fly-studio-03_1K.exr",
     "envIntensity": 0.0,
     "camera": {

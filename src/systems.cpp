@@ -256,9 +256,8 @@ void spawnControllers(World& w) {
     // grips are children of the VR root; their LOCAL Transform is set to the raw OpenXR grip each
     // frame, so world = walkPos + grip (head-independent -> no drift).
     // grip visual from the std geometry library (the engine has no mesh generators of its own)
-    const CapsuleParams gripShape{0.06f, 0.03f};
     std::string err;
-    const int geom = w.script.callMeshGen("capsule", "{halfLen = 0.06, radius = 0.03}", err);
+    const int geom = w.script.callMeshGen("capsule", {{"halfLen", 0.06}, {"radius", 0.03}}, err);
     if (geom < 0) {
         std::fprintf(stderr, "3dsim: controller grip geometry: %s\n", err.c_str());
         std::exit(1);

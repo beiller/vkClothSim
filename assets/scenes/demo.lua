@@ -1,5 +1,6 @@
 -- demo behavior: scattered rigid capsules + cloth/ball soft bodies
 -- (static data, lights, materials and UI live in demo.json)
+local mesh = include("scenes/mesh")
 
 -- 50 scattered dynamic capsules, all sharing one material and one geometry
 local capGeom = scene.geometry(mesh.capsule({ halfLen = 0.9, radius = 0.5 }))
