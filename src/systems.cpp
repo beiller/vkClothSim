@@ -16,10 +16,10 @@ entt::entity spawnCapsule(World& w, const RigidBody& body, int geom) {
     return e;
 }
 
-entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, int pinned) {
+entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons) {
     entt::entity e = w.reg.create();
     const Renderer::GpuMeshRef ref = w.renderer.addMesh(mesh);
-    w.reg.emplace<SoftBodyData>(e, w.sim.addSoftBody(mesh, cons, ref.rw), pinned);
+    w.reg.emplace<SoftBodyData>(e, w.sim.addSoftBody(mesh, cons, ref.rw));
     w.reg.emplace<Renderable>(e, ref.geom, w.renderer.addInstance(ref.geom));
     return e;
 }
@@ -83,18 +83,15 @@ entt::entity spawnVisualCapsule(World& w, int geom, const Transform& t, entt::en
     return e;
 }
 
-entt::entity spawnSoftCloth(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
-                            float pinSecs) {
-    const entt::entity e = spawnSoftBody(w, mesh, cons, 1);
-    if (pinSecs > 0.0f)
-        w.reg.emplace<PinHold>(e, pinSecs);
+entt::entity spawnSoftCloth(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat) {
+    const entt::entity e = spawnSoftBody(w, mesh, cons);
     w.reg.emplace<MaterialRef>(e, mat);
     return e;
 }
 
 entt::entity spawnSoftBall(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
                            float mass) {
-    const entt::entity e = spawnSoftBody(w, mesh, cons, 0);
+    const entt::entity e = spawnSoftBody(w, mesh, cons);
     if (mass > 0.0f)
         w.reg.get<SoftBodyData>(e).params.mass = mass;
     w.reg.emplace<MaterialRef>(e, mat);
@@ -383,23 +380,6 @@ void stepLocomotion(World& w, float dt) {
     rt.pos.y = 0.0f; // walk on the floor plane (head height comes from the STAGE pose)
 }
 
-void stepPinHolds(World& w, float dt) {
-    for (auto [entity, hold, sb] : w.reg.view<PinHold, SoftBodyData>().each()) {
-        hold.time += dt;
-        if (hold.time >= hold.holdTime)
-            sb.pinned = 0;
-    }
-}
-
-void resetSofts(World& w) {
-    for (auto [entity, sb] : w.reg.view<SoftBodyData>().each())
-        w.sim.resetSoft(sb.softId);
-    for (auto [entity, hold, sb] : w.reg.view<PinHold, SoftBodyData>().each()) {
-        hold.time = 0.0f;
-        sb.pinned = 1;
-    }
-}
-
 void stepRigid(World& w) {
     w.rigid.step();
     for (auto [entity, dyn, t] : w.reg.view<RigidDynamics, Transform>().each())
@@ -409,10 +389,6 @@ void stepRigid(World& w) {
 void stepStaticRigid(World& w) {
     for (auto [entity, st, t] : w.reg.view<RigidStatic, Transform>().each())
         w.rigid.setStaticPose(st.id, t);
-}
-
-void stepAnimation(World& w, float dt) {
-    w.reg.view<Animation, Transform>().each([&](auto, Animation& a, Transform& t) { a.fn(t, dt); });
 }
 
 void resolveWorldTransforms(World& w) {

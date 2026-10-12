@@ -2,6 +2,7 @@
 #include "math.hpp"
 #include "mesh.hpp"
 #include "sim/sim.hpp"
+#include <entt/entt.hpp>
 #include <map>
 #include <string>
 #include <utility>
@@ -21,29 +22,44 @@ public:
     SceneScript& operator=(const SceneScript&) = delete;
 
     void init(World& w);
-    // load + run the script file (the JSON data must already be built); false on error
-    bool run(const std::string& path, std::string& err);
     // restricted module loader: run a .lua file under the assets dir once and cache its
     // (table) result; registry ref, or -1 on error. Exposed to scripts as include(path)
     int includeModule(const std::string& relPath, std::string& err);
-    // the module providing geometry generators (from the scene's "meshlib"); used by callMeshGen
-    void setGeomModule(int ref) { m_geomModule = ref; }
+    // load the geometry stdlib ("scenes/mesh") as the global `mesh` and the geometry module
+    // used by callMeshGen (declarative meshes + VR controller grips); false on error
+    bool loadMeshStdlib(std::string& err);
     // call geometry-module generator gen(params) and upload the geometry table it returns;
     // renderer geom id, or -1 on error
     int callMeshGen(const std::string& gen, const std::vector<std::pair<std::string, double>>& params,
                     std::string& err);
-    // run all frame callbacks; no-op without a script
-    void frame(float dt);
     bool hasButton(const std::string& name) const;
     void button(const std::string& name);
     void shutdown();
+
+    // ---- per-entity behavior scripts (LuaScript component) ----
+    // activate every not-ready script entity (load module, build instance, call _on_ready);
+    // runs to fixpoint so a script that spawns a child script entity activates it too
+    void activateScripts();
+    // call _animate(self, dt) on every ready script entity (per render frame)
+    void animateAll(float dt);
+    // call _physics(self, dt) on every ready script entity (per physics step)
+    void physicsAll(float dt);
+    // unref a script entity's Lua refs (invoked from the on_destroy<LuaScript> hook; takes the
+    // refs directly so it stays safe while the entity's components are being torn down)
+    void destroyScript(int inst, int params, int onReady, int animate, int physics);
+
+private:
+    // call a hook fn(self, dt) via its registry ref; reports an error once; false on failure
+    bool callHook(int fnRef, int instRef, float dt);
+    // call a hook fn(self) (no dt); reports an error once; false on failure
+    bool callOnReady(int fnRef, int instRef);
+    // on_destroy<LuaScript> handler: unref the destroyed entity's script refs
+    void onScriptDestroy(entt::registry& reg, entt::entity e);
 
 private:
     World& w() const { return *m_w; }
     int newRef(lua_State* L, int idx);
     void dropRef(int ref);
-    // invoke an anim callback fn(dt) -> (pos, quat); reports an error once; false on failure
-    bool callPoseRef(int ref, float dt, V3& pos, V4& quat);
     // the error object is on top of the stack
     void reportError(const char* what);
 
@@ -61,14 +77,19 @@ private:
     static int lCapsule(lua_State* L);
     static int lCloth(lua_State* L);
     static int lBall(lua_State* L);
+    static int lStatic(lua_State* L);
     static int lSet(lua_State* L);
     static int lGet(lua_State* L);
     static int lTime(lua_State* L);
     static int lEntity(lua_State* L);
-    static int lFrame(lua_State* L);
-    static int lAnim(lua_State* L);
     static int lButton(lua_State* L);
-    static int lResetSofts(lua_State* L);
+    static int lSetPose(lua_State* L);
+    static int lAttachScript(lua_State* L);
+    static int lDestroy(lua_State* L);
+    static int lAddChild(lua_State* L);
+    static int lRemoveChild(lua_State* L);
+    static int lGetParent(lua_State* L);
+    static int lGetChildren(lua_State* L);
     static int lvAdd(lua_State* L);
     static int lvSub(lua_State* L);
     static int lvScale(lua_State* L);
@@ -84,7 +105,6 @@ private:
 
     World* m_w = nullptr;
     lua_State* L = nullptr;
-    std::vector<int> m_frames;            // registry refs of frame callbacks
     std::map<std::string, int> m_buttons; // action name -> registry ref
     std::vector<int> m_refs;              // every registry ref (unrefed at shutdown)
     std::vector<int> m_errored;           // anim refs that already reported an error

@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <lua.hpp>
@@ -20,11 +19,6 @@ int scenePanic(lua_State* L) {
     std::fprintf(stderr, "3dsim: lua panic:\n%s\n", lua_tostring(L, -1));
     std::abort();
     return 0;
-}
-
-// the assets dir (cwd or exe-relative) — root for restricted includes
-std::string assetsRoot() {
-    return std::filesystem::exists("assets") ? "assets" : exeDir() + "/../assets";
 }
 
 // relPath must be relative and stay under the assets root (no leading '/', no '..' component)
@@ -183,19 +177,24 @@ void SceneScript::init(World& w) {
         lua_pushcclosure(L, fn, 1); // pops the upvalue: stack is [scene, closure]
         lua_setfield(L, -2, name);
     };
-    reg("material", lMaterial); // material(name, color, metallic, roughness, texture?)
-    reg("geometry", lGeometry); // geometry(geomTable) -> geom id
-    reg("capsule", lCapsule);   // capsule(geom, halfLen, radius, mat, pos?, quat?, name?, {body?, parent?}?)
-    reg("cloth", lCloth);       // cloth(geom, cons, mat, pin?, name?)
-    reg("ball", lBall);         // ball(geom, cons, mat, mass?, name?)
-    reg("set", lSet);           // set(url, value | {values})
-    reg("get", lGet);           // get(url) -> number | {x, y, z}
-    reg("time", lTime);         // time() -> seconds since scene start
-    reg("entity", lEntity);     // entity(name) -> handle
-    reg("frame", lFrame);       // frame(fn(dt))
-    reg("anim", lAnim);         // anim(entity, fn(dt) -> pos, quat)
-    reg("button", lButton);     // button(name, fn())
-    reg("reset_softs", lResetSofts);
+    reg("material", lMaterial);          // material(name, color, metallic, roughness, texture?)
+    reg("geometry", lGeometry);          // geometry(geomTable) -> geom id
+    reg("capsule", lCapsule);            // capsule(geom, halfLen, radius, mat, pos?, quat?, name?, {body?, parent?}?)
+    reg("cloth", lCloth);                // cloth(geom, cons, mat, pin?, name?)
+    reg("ball", lBall);                  // ball(geom, cons, mat, mass?, name?)
+    reg("static", lStatic);              // static(geom, mat, pos?, quat?, name?)
+    reg("set", lSet);                    // set(url, value | {values})
+    reg("get", lGet);                    // get(url) -> number | {x, y, z}
+    reg("time", lTime);                  // time() -> seconds since scene start
+    reg("entity", lEntity);              // entity(name) -> handle
+    reg("button", lButton);              // button(name, fn())
+    reg("set_pose", lSetPose);           // set_pose(entity, pos, quat)
+    reg("attach_script", lAttachScript); // attach_script(entity, file, params?)
+    reg("destroy", lDestroy);            // destroy(entity)
+    reg("add_child", lAddChild);         // add_child(parent, child)
+    reg("remove_child", lRemoveChild);   // remove_child(child)
+    reg("get_parent", lGetParent);       // get_parent(child) -> entity | nil
+    reg("get_children", lGetChildren);   // get_children(entity) -> {entity, ...}
     reg("vadd", lvAdd);
     reg("vsub", lvSub);
     reg("vscale", lvScale);
@@ -213,6 +212,8 @@ void SceneScript::init(World& w) {
     lua_pushlightuserdata(L, this);
     lua_pushcclosure(L, lInclude, 1);
     lua_setglobal(L, "include");
+    // unref a script entity's Lua refs when it is destroyed
+    w.reg.on_destroy<LuaScript>().connect<&SceneScript::onScriptDestroy>(this);
 }
 
 int SceneScript::includeModule(const std::string& rel, std::string& err) {
@@ -257,20 +258,20 @@ int SceneScript::lInclude(lua_State* L) {
     return 1;
 }
 
-bool SceneScript::run(const std::string& path, std::string& err) {
-    if (luaL_loadfile(L, path.c_str()) != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-        err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
-        std::fprintf(stderr, "3dsim: scene script %s: %s\n", path.c_str(), err.c_str());
-        lua_pop(L, 1);
+bool SceneScript::loadMeshStdlib(std::string& err) {
+    const int ref = includeModule("scenes/mesh", err);
+    if (ref < 0)
         return false;
-    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    lua_setglobal(L, "mesh");
+    m_geomModule = ref;
     return true;
 }
 
 int SceneScript::callMeshGen(const std::string& gen, const std::vector<std::pair<std::string, double>>& params,
                              std::string& err) {
     if (m_geomModule < 0) {
-        err = "no geometry module (scene has no \"meshlib\")";
+        err = "no geometry module (scenes/mesh not loaded)";
         return -1;
     }
     lua_rawgeti(L, LUA_REGISTRYINDEX, m_geomModule);
@@ -364,24 +365,6 @@ std::vector<sim::Constraint> SceneScript::readCons(lua_State* L, int idx, int nV
     return out;
 }
 
-void SceneScript::frame(float dt) {
-    if (!L)
-        return;
-    m_time += dt;
-    for (size_t i = 0; i < m_frames.size();) {
-        const int ref = m_frames[i];
-        lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
-        lua_pushnumber(L, dt);
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-            reportError("frame callback");
-            dropRef(ref);
-            m_frames.erase(m_frames.begin() + (std::ptrdiff_t)i);
-            continue;
-        }
-        ++i;
-    }
-}
-
 bool SceneScript::hasButton(const std::string& name) const {
     return L != nullptr && m_buttons.contains(name);
 }
@@ -402,13 +385,185 @@ void SceneScript::button(const std::string& name) {
     }
 }
 
+bool SceneScript::callOnReady(int fnRef, int instRef) {
+    lua_rawgeti(L, LUA_REGISTRYINDEX, fnRef);   // [fn]
+    lua_rawgeti(L, LUA_REGISTRYINDEX, instRef); // [fn, self]
+    if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+        if (std::ranges::find(m_errored, fnRef) == m_errored.end()) {
+            m_errored.push_back(fnRef);
+            reportError("_on_ready");
+        } else {
+            lua_pop(L, 1);
+        }
+        return false;
+    }
+    return true;
+}
+
+bool SceneScript::callHook(int fnRef, int instRef, float dt) {
+    lua_rawgeti(L, LUA_REGISTRYINDEX, fnRef);   // [fn]
+    lua_rawgeti(L, LUA_REGISTRYINDEX, instRef); // [fn, self]
+    lua_pushnumber(L, dt);                      // [fn, self, dt]
+    if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
+        if (std::ranges::find(m_errored, fnRef) == m_errored.end()) {
+            m_errored.push_back(fnRef);
+            reportError("script hook");
+        } else {
+            lua_pop(L, 1);
+        }
+        return false;
+    }
+    return true;
+}
+
+void SceneScript::destroyScript(int inst, int params, int onReady, int animate, int physics) {
+    for (int ref : {inst, params, onReady, animate, physics})
+        if (ref > 0)
+            dropRef(ref);
+}
+
+void SceneScript::onScriptDestroy(entt::registry& reg, entt::entity e) {
+    if (const auto* ls = reg.try_get<LuaScript>(e))
+        destroyScript(ls->inst, ls->params, ls->onReady, ls->animate, ls->physics);
+}
+
+void SceneScript::activateScripts() {
+    if (!L)
+        return;
+    for (;;) {
+        std::vector<entt::entity> pending;
+        for (auto [e, ls] : w().reg.view<LuaScript>().each())
+            if (!ls.ready)
+                pending.push_back(e);
+        if (pending.empty())
+            break;
+        for (auto e : pending) {
+            if (!w().reg.valid(e))
+                continue;
+            // snapshot the component; do not hold a reference across _on_ready (which may spawn
+            // new script entities and reallocate the storage, invalidating the reference)
+            std::string file;
+            int paramsRef = -1;
+            {
+                const auto& ls = w().reg.get<LuaScript>(e);
+                file = ls.file;
+                paramsRef = ls.params;
+            }
+            std::string err;
+            const int mod = includeModule(file, err);
+            if (mod < 0) {
+                std::fprintf(stderr, "3dsim: script '%s': %s\n", file.c_str(), err.c_str());
+                if (auto* ls = w().reg.try_get<LuaScript>(e))
+                    ls->ready = true; // inert; do not retry every frame
+                continue;
+            }
+            // instance: setmetatable({entity = e, params = params?}, {__index = module})
+            lua_rawgeti(L, LUA_REGISTRYINDEX, mod); // [module]
+            lua_newtable(L);                        // [module, inst]
+            pushEnt(L, e);                          // [module, inst, e]
+            lua_setfield(L, -2, "entity");          // [module, inst]
+            if (paramsRef > 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, paramsRef); // [module, inst, params]
+                lua_setfield(L, -2, "params");                // [module, inst]
+            }
+            lua_newtable(L);                        // [module, inst, mt]
+            lua_rawgeti(L, LUA_REGISTRYINDEX, mod); // [module, inst, mt, module]
+            lua_setfield(L, -2, "__index");         // [module, inst, mt]
+            lua_setmetatable(L, -2);                // [module, inst]
+            const int instRef = newRef(L, -1);      // [module, inst]
+            int onReadyRef = -1, animateRef = -1, physicsRef = -1;
+            const auto grab = [this, mod](const char* name, int& out) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, mod); // [.., module]
+                lua_getfield(L, -1, name);              // [.., module, fn|nil]
+                if (lua_isfunction(L, -1))
+                    out = newRef(L, -1);
+                lua_pop(L, 2); // [..]
+            };
+            grab("_on_ready", onReadyRef);
+            grab("_animate", animateRef);
+            grab("_physics", physicsRef);
+            lua_pop(L, 2); // module, inst
+            const bool ok = (onReadyRef <= 0) || callOnReady(onReadyRef, instRef);
+            auto* ls = w().reg.try_get<LuaScript>(e);
+            if (!ls) {
+                // the entity was destroyed during _on_ready; its on_destroy hook already unrefed
+                // the params, so drop only the refs created here
+                dropRef(instRef);
+                dropRef(onReadyRef);
+                dropRef(animateRef);
+                dropRef(physicsRef);
+                continue;
+            }
+            if (!ok) {
+                // setup failed: tear down the hooks, leave the entity inert
+                dropRef(instRef);
+                dropRef(paramsRef);
+                dropRef(onReadyRef);
+                dropRef(animateRef);
+                dropRef(physicsRef);
+                ls->inst = ls->params = ls->onReady = ls->animate = ls->physics = -1;
+            } else {
+                ls->inst = instRef;
+                ls->onReady = onReadyRef;
+                ls->animate = animateRef;
+                ls->physics = physicsRef;
+            }
+            ls->ready = true;
+        }
+    }
+}
+
+void SceneScript::animateAll(float dt) {
+    if (!L)
+        return;
+    m_time += dt; // scene time (render-rate), read by scene.time()
+    struct Call {
+        entt::entity e;
+        int fn;
+        int inst;
+    };
+    std::vector<Call> calls;
+    for (auto [e, ls] : w().reg.view<LuaScript>().each())
+        if (ls.ready && ls.animate > 0)
+            calls.push_back({e, ls.animate, ls.inst});
+    for (auto& c : calls) {
+        if (callHook(c.fn, c.inst, dt))
+            continue;
+        if (auto* ls = w().reg.try_get<LuaScript>(c.e)) {
+            dropRef(ls->animate);
+            ls->animate = -1;
+        }
+    }
+}
+
+void SceneScript::physicsAll(float dt) {
+    if (!L)
+        return;
+    struct Call {
+        entt::entity e;
+        int fn;
+        int inst;
+    };
+    std::vector<Call> calls;
+    for (auto [e, ls] : w().reg.view<LuaScript>().each())
+        if (ls.ready && ls.physics > 0)
+            calls.push_back({e, ls.physics, ls.inst});
+    for (auto& c : calls) {
+        if (callHook(c.fn, c.inst, dt))
+            continue;
+        if (auto* ls = w().reg.try_get<LuaScript>(c.e)) {
+            dropRef(ls->physics);
+            ls->physics = -1;
+        }
+    }
+}
+
 void SceneScript::shutdown() {
     if (!L)
         return;
     for (int ref : m_refs)
         luaL_unref(L, LUA_REGISTRYINDEX, ref);
     m_refs.clear();
-    m_frames.clear();
     m_buttons.clear();
     m_errored.clear();
     lua_close(L);
@@ -426,24 +581,6 @@ int SceneScript::newRef(lua_State* L, int idx) {
 void SceneScript::dropRef(int ref) {
     luaL_unref(L, LUA_REGISTRYINDEX, ref);
     m_refs.erase(std::remove(m_refs.begin(), m_refs.end(), ref), m_refs.end());
-}
-
-bool SceneScript::callPoseRef(int ref, float dt, V3& pos, V4& quat) {
-    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
-    lua_pushnumber(L, dt);
-    if (lua_pcall(L, 1, 2, 0) != LUA_OK) {
-        if (std::ranges::find(m_errored, ref) == m_errored.end()) {
-            m_errored.push_back(ref);
-            reportError("anim callback");
-        } else {
-            lua_pop(L, 1); // error object
-        }
-        return false;
-    }
-    pos = readV3(L, -2);
-    quat = readQuat(L, -1);
-    lua_pop(L, 2);
-    return true;
 }
 
 void SceneScript::reportError(const char* what) {
@@ -516,12 +653,11 @@ int SceneScript::lCloth(lua_State* L) {
     if (!err.empty())
         return luaL_error(L, "scene.cloth: %s", err.c_str());
     const char* matName = luaL_checkstring(L, 3);
-    const float pin = (float)luaL_optnumber(L, 4, 0.0f);
-    const char* name = luaL_optstring(L, 5, nullptr);
+    const char* name = luaL_optstring(L, 4, nullptr);
     const entt::entity mat = findNamedEntity(w, matName);
     if (mat == entt::null)
         return luaL_error(L, "scene.cloth: unknown material '%s'", matName);
-    const entt::entity e = spawnSoftCloth(w, m, cons, mat, pin);
+    const entt::entity e = spawnSoftCloth(w, m, cons, mat);
     if (name)
         w.reg.emplace<Name>(e, name);
     pushEnt(L, e);
@@ -549,25 +685,58 @@ int SceneScript::lBall(lua_State* L) {
     return 1;
 }
 
+int SceneScript::lStatic(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const int geom = (int)luaL_checkinteger(L, 1);
+    const char* matName = luaL_checkstring(L, 2);
+    Transform t{};
+    t.pos = readV3(L, 3);    // nil -> {0,0,0}
+    t.quat = readQuat(L, 4); // nil -> identity
+    const char* name = luaL_optstring(L, 5, nullptr);
+    const entt::entity mat = findNamedEntity(w, matName);
+    if (mat == entt::null)
+        return luaL_error(L, "scene.static: unknown material '%s'", matName);
+    const entt::entity e = spawnStaticGeom(w, geom, t);
+    w.reg.emplace<MaterialRef>(e, mat);
+    if (name)
+        w.reg.emplace<Name>(e, name);
+    pushEnt(L, e);
+    return 1;
+}
+
 int SceneScript::lSet(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
-    const std::string url = luaL_checkstring(L, 1);
-    std::vector<float> vals;
-    if (lua_istable(L, 2)) {
-        for (int i = 1;; ++i) {
-            lua_geti(L, 2, i);
-            if (lua_isnoneornil(L, -1)) {
+    // value(s) at arg idx: a number, or a {n, ...} array
+    const auto readVals = [L](int idx) {
+        std::vector<float> vals;
+        if (lua_istable(L, idx)) {
+            for (int i = 1;; ++i) {
+                lua_geti(L, idx, i);
+                if (lua_isnoneornil(L, -1)) {
+                    lua_pop(L, 1);
+                    break;
+                }
+                vals.push_back((float)lua_tonumber(L, -1));
                 lua_pop(L, 1);
-                break;
             }
-            vals.push_back((float)lua_tonumber(L, -1));
-            lua_pop(L, 1);
+        } else {
+            vals.push_back((float)luaL_checknumber(L, idx));
         }
-    } else {
-        vals.push_back((float)luaL_checknumber(L, 2));
-    }
+        return vals;
+    };
     std::string err;
+    if (lua_isnumber(L, 1)) { // handle form: set(entity, field, value | {values})
+        const entt::entity e = readEnt(L, 1);
+        const std::string field = luaL_checkstring(L, 2);
+        const auto vals = readVals(3);
+        if (vals.empty() || !sceneSetEnt(w, e, field, vals.data(), (int)vals.size(), err))
+            return luaL_error(L, "scene.set %s: %s", field.c_str(), err.c_str());
+        return 0;
+    }
+    const std::string url = luaL_checkstring(L, 1); // url form: set("name.field", value | {values})
+    const auto vals = readVals(2);
     if (vals.empty() || !sceneSet(w, url, vals.data(), (int)vals.size(), err))
         return luaL_error(L, "scene.set '%s': %s", url.c_str(), err.c_str());
     return 0;
@@ -576,12 +745,14 @@ int SceneScript::lSet(lua_State* L) {
 int SceneScript::lGet(lua_State* L) {
     auto* self = sSelf(L);
     const World& w = self->w();
-    const std::string url = luaL_checkstring(L, 1);
     float vals[3]{};
     int n = 0;
     std::string err;
-    if (!sceneGet(w, url, vals, 3, n, err))
-        return luaL_error(L, "scene.get '%s': %s", url.c_str(), err.c_str());
+    const bool ok = lua_isnumber(L, 1)
+                        ? sceneGetEnt(w, readEnt(L, 1), luaL_checkstring(L, 2), vals, 3, n, err) // get(entity, field)
+                        : sceneGet(w, luaL_checkstring(L, 1), vals, 3, n, err);                  // get("name.field")
+    if (!ok)
+        return luaL_error(L, "scene.get: %s", err.c_str());
     if (n == 1) {
         lua_pushnumber(L, vals[0]);
         return 1;
@@ -605,30 +776,6 @@ int SceneScript::lEntity(lua_State* L) {
     return 1;
 }
 
-int SceneScript::lFrame(lua_State* L) {
-    auto* self = sSelf(L);
-    luaL_checktype(L, 1, LUA_TFUNCTION);
-    self->m_frames.push_back(self->newRef(L, 1));
-    return 0;
-}
-
-int SceneScript::lAnim(lua_State* L) {
-    auto* self = sSelf(L);
-    World& w = self->w();
-    const entt::entity e = readEnt(L, 1);
-    luaL_checktype(L, 2, LUA_TFUNCTION);
-    const int ref = self->newRef(L, 2);
-    w.reg.emplace_or_replace<Animation>(e, [self, ref](Transform& t, float dt) {
-        V3 pos;
-        V4 quat;
-        if (self->callPoseRef(ref, dt, pos, quat)) {
-            t.pos = pos;
-            t.quat = quat;
-        }
-    });
-    return 0;
-}
-
 int SceneScript::lButton(lua_State* L) {
     auto* self = sSelf(L);
     const std::string name = luaL_checkstring(L, 1);
@@ -637,9 +784,130 @@ int SceneScript::lButton(lua_State* L) {
     return 0;
 }
 
-int SceneScript::lResetSofts(lua_State* L) {
-    resetSofts(sSelf(L)->w());
+int SceneScript::lSetPose(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = readEnt(L, 1);
+    const auto pos = readV3(L, 2);
+    const auto quat = readQuat(L, 3);
+    if (auto* t = w.reg.try_get<Transform>(e)) {
+        t->pos = pos;
+        t->quat = quat;
+    } else {
+        return luaL_error(L, "scene.set_pose: entity has no Transform");
+    }
     return 0;
+}
+
+int SceneScript::lAttachScript(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = readEnt(L, 1);
+    const std::string file = luaL_checkstring(L, 2);
+    if (!w.reg.valid(e))
+        return luaL_error(L, "scene.attach_script: invalid entity");
+    auto* p = w.reg.try_get<LuaScript>(e);
+    LuaScript& ls = p ? *p : w.reg.emplace<LuaScript>(e);
+    if (ls.ready) { // re-attach: tear down the old script first
+        self->destroyScript(ls.inst, ls.params, ls.onReady, ls.animate, ls.physics);
+        ls = LuaScript{};
+    }
+    ls.file = file;
+    if (lua_istable(L, 3))
+        ls.params = self->newRef(L, 3);
+    return 0;
+}
+
+// an entity and all its descendants (children, grandchildren, ...)
+static std::vector<entt::entity> subtreeEntities(entt::registry& reg, entt::entity root) {
+    std::map<unsigned, std::vector<entt::entity>> children;
+    for (auto [c, p] : reg.view<Parent>().each())
+        children[entt::to_integral(p.e)].push_back(c);
+    std::vector<entt::entity> out;
+    std::vector<entt::entity> stack{root};
+    while (!stack.empty()) {
+        const auto cur = stack.back();
+        stack.pop_back();
+        out.push_back(cur);
+        if (const auto it = children.find(entt::to_integral(cur)); it != children.end())
+            for (const auto c : it->second)
+                stack.push_back(c);
+    }
+    return out;
+}
+
+int SceneScript::lDestroy(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = readEnt(L, 1);
+    if (!w.reg.valid(e))
+        return 0;
+    for (const auto c : subtreeEntities(w.reg, e))
+        w.reg.destroy(c); // fires on_destroy<LuaScript> -> unrefs each script entity's Lua refs
+    return 0;
+}
+
+int SceneScript::lAddChild(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity parent = readEnt(L, 1);
+    const entt::entity child = readEnt(L, 2);
+    if (!w.reg.valid(parent) || !w.reg.valid(child))
+        return luaL_error(L, "scene.add_child: invalid entity");
+    if (!w.reg.try_get<Transform>(parent))
+        return luaL_error(L, "scene.add_child: parent has no Transform");
+    bool keepWorld = false;
+    if (lua_istable(L, 3)) {
+        lua_getfield(L, 3, "keepWorld");
+        keepWorld = lua_toboolean(L, -1);
+        lua_pop(L, 1);
+    }
+    if (keepWorld) {
+        // preserve the child's current world pose: rewrite its Transform as local-to-parent
+        if (!w.reg.try_get<Transform>(child))
+            return luaL_error(L, "scene.add_child: keepWorld requires the child to have a Transform");
+        const auto local =
+            transformCompose(transformInvert(worldTransform(w.reg, parent)), worldTransform(w.reg, child));
+        auto& ct = w.reg.get<Transform>(child);
+        ct.pos = local.pos;
+        ct.quat = local.quat;
+    }
+    w.reg.emplace_or_replace<Parent>(child, parent); // (re)interprets the child's Transform as local
+    return 0;
+}
+
+int SceneScript::lRemoveChild(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity child = readEnt(L, 1);
+    if (w.reg.valid(child))
+        w.reg.remove<Parent>(child);
+    return 0;
+}
+
+int SceneScript::lGetParent(lua_State* L) {
+    auto* self = sSelf(L);
+    const World& w = self->w();
+    const entt::entity child = readEnt(L, 1);
+    if (const auto* p = w.reg.try_get<Parent>(child)) {
+        pushEnt(L, p->e);
+        return 1;
+    }
+    return 0; // nil
+}
+
+int SceneScript::lGetChildren(lua_State* L) {
+    auto* self = sSelf(L);
+    const World& w = self->w();
+    const entt::entity e = readEnt(L, 1);
+    lua_newtable(L);
+    int i = 1;
+    for (auto [c, p] : w.reg.view<Parent>().each())
+        if (p.e == e) {
+            lua_pushinteger(L, (lua_Integer)entt::to_integral(c));
+            lua_seti(L, -2, i++);
+        }
+    return 1;
 }
 
 int SceneScript::lvAdd(lua_State* L) {

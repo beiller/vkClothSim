@@ -1,6 +1,5 @@
 {
     "name": "3dsim",
-    "meshlib": "scenes/mesh",
     "env": "fly-studio-03_1K.exr",
     "envIntensity": 0.0,
     "camera": {
@@ -33,7 +32,7 @@
         { "name": "mat_ball", "baseColor": [0.22, 0.62, 0.6], "roughness": 0.4 }
     ],
     "objects": [
-        { "name": "ground", "mesh": { "type": "ground", "size": 55 }, "material": "mat_ground" }
+        { "name": "demo", "script": "scenes/demo" }
     ],
     "ui": {
         "title": "3dsim",
@@ -177,7 +176,6 @@
                 ]
             },
             { "type": "button", "label": "reset params", "action": "reset-params" },
-            { "type": "button", "label": "reset (R)", "action": "reset-softs" },
             { "type": "button", "label": "demo window", "action": "demo-window" }
         ]
     }

@@ -11,6 +11,58 @@ static const FieldDesc* findField(const TypeDesc* t, const std::string& name) {
     return nullptr;
 }
 
+// resolve a field on a specific entity (no name lookup): optional Component qualifier
+// ("Component.field"), then a MaterialRef fallthrough. label is for error messages.
+bool resolveEntityField(const World& w, entt::entity ent, const std::string& field, const std::string& label,
+                        UrlRef& out, std::string& err) {
+    auto comps = refl::entityFields(w.reg, ent);
+    if (comps.empty()) {
+        err = "entity '" + label + "' has no reflectable components";
+        return false;
+    }
+
+    // optional qualifier: Component.field
+    const TypeDesc* qual = nullptr;
+    if (const auto d2 = field.find('.'); d2 != std::string::npos)
+        for (auto& [t, b] : comps)
+            if (field.substr(0, d2) == t->name)
+                qual = t;
+
+    const FieldDesc* match = nullptr;
+    void* matchBase = nullptr;
+    int matches = 0;
+    for (auto& [t, b] : comps) {
+        if (qual && t != qual)
+            continue;
+        if (const FieldDesc* f = findField(t, field)) {
+            match = f;
+            matchBase = (char*)b + f->offset;
+            ++matches;
+        }
+    }
+    // field not on the entity: follow its MaterialRef to the shared material (indirection), so
+    // "ball.roughness" addresses the material many meshes may share
+    if (matches == 0)
+        if (const auto* ref = w.reg.try_get<MaterialRef>(ent))
+            for (auto& [t, b] : refl::entityFields(w.reg, ref->mat)) {
+                if (const FieldDesc* f = findField(t, field)) {
+                    match = f;
+                    matchBase = (char*)b + f->offset;
+                    ++matches;
+                }
+            }
+    if (matches == 0) {
+        err = "no field '" + field + "' on '" + label + "'";
+        return false;
+    }
+    if (matches > 1) {
+        err = "field '" + field + "' on '" + label + "' is ambiguous; use <Component>." + field;
+        return false;
+    }
+    out = {match, matchBase};
+    return true;
+}
+
 bool resolveUrl(const World& w, const std::string& url, UrlRef& out, std::string& err) {
     const auto dot = url.find('.');
     if (dot == std::string::npos) {
@@ -49,58 +101,11 @@ bool resolveUrl(const World& w, const std::string& url, UrlRef& out, std::string
         return false;
     }
 
-    auto comps = refl::entityFields(w.reg, ent);
-    if (comps.empty()) {
-        err = "entity '" + head + "' has no reflectable components";
-        return false;
-    }
-
-    // optional qualifier: head.Component.field
-    const TypeDesc* qual = nullptr;
-    if (const auto d2 = rest.find('.'); d2 != std::string::npos)
-        for (auto& [t, b] : comps)
-            if (rest.substr(0, d2) == t->name)
-                qual = t;
-
-    const FieldDesc* match = nullptr;
-    void* matchBase = nullptr;
-    int matches = 0;
-    for (auto& [t, b] : comps) {
-        if (qual && t != qual)
-            continue;
-        if (const FieldDesc* f = findField(t, rest)) {
-            match = f;
-            matchBase = (char*)b + f->offset;
-            ++matches;
-        }
-    }
-    // field not on the entity: follow its MaterialRef to the shared material (indirection), so
-    // "ball.roughness" addresses the material many meshes may share
-    if (matches == 0)
-        if (const auto* ref = w.reg.try_get<MaterialRef>(ent))
-            for (auto& [t, b] : refl::entityFields(w.reg, ref->mat)) {
-                if (const FieldDesc* f = findField(t, rest)) {
-                    match = f;
-                    matchBase = (char*)b + f->offset;
-                    ++matches;
-                }
-            }
-    if (matches == 0) {
-        err = "no field '" + rest + "' on '" + head + "'";
-        return false;
-    }
-    if (matches > 1) {
-        err = "field '" + rest + "' on '" + head + "' is ambiguous; use " + head + ".<Component>." + rest;
-        return false;
-    }
-    out = {match, matchBase};
-    return true;
+    return resolveEntityField(w, ent, rest, head, out, err);
 }
 
-bool sceneSet(World& w, const std::string& url, const float* vals, int n, std::string& err) {
-    UrlRef r;
-    if (!resolveUrl(w, url, r, err))
-        return false;
+// write vals into a resolved field; false on a kind/count mismatch
+static bool applySet(const UrlRef& r, const float* vals, int n, std::string& err) {
     switch (r.field->kind) {
     case FieldKind::SliderF:
     case FieldKind::Color:
@@ -134,10 +139,8 @@ bool sceneSet(World& w, const std::string& url, const float* vals, int n, std::s
     return false;
 }
 
-bool sceneGet(const World& w, const std::string& url, float* vals, int maxN, int& n, std::string& err) {
-    UrlRef r;
-    if (!resolveUrl(w, url, r, err))
-        return false;
+// read a resolved field into vals (maxN floats); out n = 1 for scalars, 3 for Color/DragV3
+static bool applyGet(const UrlRef& r, float* vals, int maxN, int& n, std::string& err) {
     switch (r.field->kind) {
     case FieldKind::SliderF:
     case FieldKind::Color:
@@ -168,4 +171,34 @@ bool sceneGet(const World& w, const std::string& url, float* vals, int maxN, int
         return false;
     }
     return false;
+}
+
+bool sceneSet(World& w, const std::string& url, const float* vals, int n, std::string& err) {
+    UrlRef r;
+    if (!resolveUrl(w, url, r, err))
+        return false;
+    return applySet(r, vals, n, err);
+}
+
+bool sceneGet(const World& w, const std::string& url, float* vals, int maxN, int& n, std::string& err) {
+    UrlRef r;
+    if (!resolveUrl(w, url, r, err))
+        return false;
+    return applyGet(r, vals, maxN, n, err);
+}
+
+// handle form: address a field on a specific entity (arg-1 = handle, not a name URL)
+bool sceneSetEnt(World& w, entt::entity ent, const std::string& field, const float* vals, int n, std::string& err) {
+    UrlRef r;
+    if (!resolveEntityField(w, ent, field, "entity", r, err))
+        return false;
+    return applySet(r, vals, n, err);
+}
+
+bool sceneGetEnt(const World& w, entt::entity ent, const std::string& field, float* vals, int maxN, int& n,
+                 std::string& err) {
+    UrlRef r;
+    if (!resolveEntityField(w, ent, field, "entity", r, err))
+        return false;
+    return applyGet(r, vals, maxN, n, err);
 }

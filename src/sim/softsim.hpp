@@ -21,7 +21,6 @@ public:
     void setPinned(int softId, int pinned);
     void setParams(int softId, const SimParams& params, int steps);
     void record(VkCommandBuffer cmd);
-    void resetSoft(int softId);
 
 private:
     struct GpuBody {
@@ -48,7 +47,6 @@ private:
     void dispatch(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset);
     void recordMode(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset);
     void recordBody(VkCommandBuffer cmd, const GpuBody& b, int iters, int pinned);
-    void resetBody(GpuBody& b);
 
     VkDevice m_dev = VK_NULL_HANDLE;
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;

@@ -55,9 +55,17 @@ inline Transform transformInvert(const Transform& t) {
     return {vScale(quatRotate(quatInv(t.quat), t.pos), -1.0f), quatInv(t.quat)};
 }
 
-// per-entity animation of its own Transform; attached to the entity, invoked by stepAnimation
-struct Animation {
-    std::function<void(Transform&, float dt)> fn;
+// per-entity Lua behavior script: file is a module (loaded once, cached) with optional
+// lifecycle hooks _on_ready(self) / _animate(self, dt) / _physics(self, dt). The inst/hook
+// registry refs are owned by SceneScript (unrefed on destroy/shutdown).
+struct LuaScript {
+    std::string file; // include-relative module path
+    int inst = -1;    // registry ref to the per-entity instance table (self)
+    int params = -1;  // registry ref to a read-only per-entity config table (self.params)
+    int onReady = -1; // ref to _on_ready  (-1 = absent)
+    int animate = -1; // ref to _animate   (-1)
+    int physics = -1; // ref to _physics   (-1)
+    bool ready = false;
 };
 
 struct RigidBodyProps {
@@ -141,18 +149,13 @@ struct Name {
     std::string id;
 };
 
-struct PinHold {
-    float holdTime;
-    float time = 0.0f;
-};
-
 // ---- UI: windows and widgets are entities. A widget is a child (Parent) of its window or
 // section, drawn inside it by drawUi in spawn order. UI entities carry no Transform.
 
 struct UIWindow {
     std::string title;
     std::function<V2()> pos; // fn so e.g. the fps HUD can track the window size
-    V2 size{}; // zero = no forced size
+    V2 size{};               // zero = no forced size
     int flags = 0;
     bool collapseOnAppear = false;
     std::function<bool()> visible; // null = always visible

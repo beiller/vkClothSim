@@ -1,6 +1,5 @@
 {
     "name": "hierarchy",
-    "meshlib": "scenes/mesh",
     "env": "fly-studio-03_1K.exr",
     "envIntensity": 0.0,
     "camera": {
@@ -17,7 +16,7 @@
         { "name": "mat_ground", "baseColor": [0.16, 0.2, 0.14], "roughness": 0.9 }
     ],
     "objects": [
-        { "name": "ground", "mesh": { "type": "ground", "size": 28 }, "material": "mat_ground" }
+        { "name": "tree", "script": "scenes/tree" }
     ],
     "ui": {
         "title": "hierarchy",

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -28,6 +29,10 @@ std::string exeDir() {
     std::string p(buf, n);
     const size_t slash = p.find_last_of('/');
     return slash == std::string::npos ? "" : p.substr(0, slash);
+}
+
+std::string assetsRoot() {
+    return std::filesystem::exists("assets") ? "assets" : exeDir() + "/../assets";
 }
 
 bool loadTexture(const std::string& path, TextureData& out) {

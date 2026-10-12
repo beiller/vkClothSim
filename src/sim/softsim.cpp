@@ -220,19 +220,6 @@ void SoftSim::record(VkCommandBuffer cmd) {
     }
 }
 
-void SoftSim::resetBody(GpuBody& b) {
-    const VkDeviceSize posBytes = (VkDeviceSize)12 * b.soft.n;
-    for (VkDeviceMemory mem : {b.posMem, b.prevMem, b.sub0Mem})
-        vkWriteBuffer(m_dev, mem, b.soft.pos0.data(), posBytes);
-    vkWriteBuffer(m_dev, b.nrmMem, b.soft.nrm0.data(), posBytes);
-    vkZeroBuffer(m_dev, b.contactNMem, (VkDeviceSize)16 * b.soft.n);
-    vkZeroBuffer(m_dev, b.contactLMem, (VkDeviceSize)4 * b.soft.n);
-}
-
-void SoftSim::resetSoft(int softId) {
-    resetBody(m_body[softId]);
-}
-
 void SoftSim::setCapsulePose(int slot, const Transform& p) {
     const CapsuleParams& c = m_colliders[slot];
     CapsuleGPU o{};

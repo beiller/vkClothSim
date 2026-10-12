@@ -1,6 +1,5 @@
 {
     "name": "hdri",
-    "meshlib": "scenes/mesh",
     "env": "fly-studio-03_1K.exr",
     "envIntensity": 1.0,
     "camera": {
@@ -17,7 +16,7 @@
         { "name": "mat_sphere", "baseColor": [0.25, 0.25, 0.25], "roughness": 1.0 }
     ],
     "objects": [
-        { "name": "sphere", "mesh": { "type": "sphere", "subdiv": 4, "radius": 2 }, "material": "mat_sphere" }
+        { "name": "hdri", "script": "scenes/hdri" }
     ],
     "ui": {
         "title": "hdri",

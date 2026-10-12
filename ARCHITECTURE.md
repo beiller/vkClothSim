@@ -70,21 +70,18 @@ Soft-body bodies are passed to the GPU as vertices + two-point joints; Jolt caps
 
 Order in `main.cpp`, fixed dt = 1/60:
 
-1. R key — `resetSofts`: SoftBodyData -> `sim.resetSoft` (GPU pos/prev/nrm <- rest pose)
-2. `stepPinHolds` — PinHold + SoftBodyData -> `sb.pinned` (unpin after holdTime)
-3. `stepRigid` — Jolt `Update(kFrameDt)`; poses -> ECS Transform
-4. `stepAnimation` — Animation fn mutates its entity's Transform
-5. `pollEvents`; `xr->poll` -> XrFrame (eye poses)
-6. `stepFlyCamera` — mouse/WASD/QE -> camera Transform (only when no XR session)
-7. `stepXr` — head -> camera Transform; eyes -> `renderer.setVrEyes`
-8. `resolveWorldTransforms` — Transform + Parent -> WorldTransform (hierarchy)
-9. `syncColliders` — CapsuleCollider + WorldTransform -> `sim.setCapsulePose`
-10. `stepSoft` — SoftBodyData -> `sim.setPinned/setParams`; `sim.record(simCmd)`:
+1. `stepRigid` — Jolt `Update(kFrameDt)`; poses -> ECS Transform
+2. `pollEvents`; `xr->poll` -> XrFrame (eye poses)
+3. `stepFlyCamera` — mouse/WASD/QE -> camera Transform (only when no XR session)
+4. `stepXr` — head -> camera Transform; eyes -> `renderer.setVrEyes`
+5. `resolveWorldTransforms` — Transform + Parent -> WorldTransform (hierarchy)
+6. `syncColliders` — CapsuleCollider + WorldTransform -> `sim.setCapsulePose`
+7. `stepSoft` — SoftBodyData -> `sim.setPinned/setParams`; `sim.record(simCmd)`:
     - per substep: mode 0 verlet integrate (damping/gravity/clamp) -> mode 1 distance constraints x passes x graph-color groups (one dispatch per color) -> mode 2 capsule collision + velocity clamp
     - after all substeps: mode 3 recompute normals
     - `app.submit(simCmd)`
-11. `stepStaticRigid` — Transform -> Jolt static body pose
-12. `setViewProj` — camera WorldTransform -> view/proj + camPos UBO
+8. `stepStaticRigid` — Transform -> Jolt static body pose
+9. `setViewProj` — camera WorldTransform -> view/proj + camPos UBO
 13. `draw` / `drawVr` — `syncSceneToRenderer` -> `renderShadowCubes` (per-light cube) -> `renderScenePass` (PBR + IBL + shadows -> HDR target) -> tonemap -> window and/or per-VR-eye targets -> ImGui overlay
 14. `present`
 

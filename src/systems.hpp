@@ -10,7 +10,7 @@
 #include <vector>
 
 entt::entity spawnCapsule(World& w, const RigidBody& body, int geom);
-entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, int pinned);
+entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons);
 // static render-only mesh (no physics) from an uploaded geom
 entt::entity spawnStaticGeom(World& w, int geom, const Transform& t);
 // shared material entity (Material, optional Name); meshes reference it via MaterialRef
@@ -24,9 +24,8 @@ entt::entity findNamedEntity(const World& w, const std::string& name);
 entt::entity spawnDynamicCapsule(World& w, int geom, const CapsuleParams& shape, const Transform& t, entt::entity mat);
 // render-only capsule (no physics), optionally parented; for kinematic hierarchies
 entt::entity spawnVisualCapsule(World& w, int geom, const Transform& t, entt::entity mat, entt::entity parent);
-// soft body from script-provided mesh + constraints; pinned for pinSecs when > 0
-entt::entity spawnSoftCloth(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
-                            float pinSecs);
+// soft body from script-provided mesh + constraints
+entt::entity spawnSoftCloth(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat);
 // soft sphere; mass > 0 overrides the default
 entt::entity spawnSoftBall(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
                            float mass);
@@ -38,13 +37,9 @@ entt::entity findActiveCamera(const World& w);
 Transform worldTransform(entt::registry& reg, entt::entity e);
 Mat4 cameraViewProj(World& w, entt::entity cam, float aspect);
 
-void stepPinHolds(World& w, float dt);
-void resetSofts(World& w);
 void stepRigid(World& w);
 // push each RigidStatic body's ECS Transform into its Jolt body (Transform is the source of truth)
 void stepStaticRigid(World& w);
-// run the scene's per-frame animation callback (local Transform writes)
-void stepAnimation(World& w, float dt);
 // compose each entity's Transform through its Parent chain into a WorldTransform
 void resolveWorldTransforms(World& w);
 void syncColliders(World& w);

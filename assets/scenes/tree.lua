@@ -1,6 +1,8 @@
--- fractal tree: kinematic capsule branches in a parent chain, each swaying in a
--- shared sin-wave breeze (static data, lights and UI live in tree.json)
-local mesh = include("scenes/mesh")
+-- fractal tree builder: spawns kinematic capsule branches in a parent chain and attaches a
+-- branch script to each; also spawns the ground (mesh is the engine-loaded geometry stdlib
+-- global; lights and UI live in tree.json)
+
+local M = {}
 
 local kMaxDepth = 5
 -- depth -> capsule size: thick trunk tapering to thin twigs
@@ -17,15 +19,6 @@ local depthColor = {
 }
 -- one material + one shared geometry per depth (branches of a depth reuse both)
 local capGeom = {}
-for d = 0, kMaxDepth do
-    scene.material("mat_d" .. d, depthColor[d], 0.1, 0.6)
-    capGeom[d] = scene.geometry(mesh.capsule({ halfLen = halfLen[d], radius = radius[d] }))
-end
-
-math.randomseed(20260929)
-local windTime = 0.0
-local windAxis = { 0, 0, 1 } -- local-frame bend axis
-local windFreq = 1.0
 
 local function childCount(depth)
     if depth == 0 then
@@ -74,20 +67,12 @@ local function addBranch(parent, parentWQ, parentWPos, parentDir, depth)
     local nodeWQ = scene.qfromto({ 0, 1, 0 }, scene.vnorm(dir))
     local localPos = depth == 0 and wpos or scene.qrot(scene.qinv(parentWQ), scene.vsub(wpos, parentWPos))
     local localQuat = depth == 0 and nodeWQ or scene.qmul(scene.qinv(parentWQ), nodeWQ)
-
     local amp = 0.02 + 0.02 * depth -- tips sway more
     local phase = 0.35 * depth      -- outward lag -> bend travels to the tips
     local isClock = depth == 0
     local e = scene.capsule(capGeom[depth], halfLen[depth], radius[depth], "mat_d" .. depth, localPos, localQuat, nil,
                             { body = "kinematic", parent = parent })
-    scene.anim(e, function(dt)
-        if isClock then
-            windTime = windTime + dt
-        end
-        local sway = scene.qaxis(windAxis, amp * math.sin(windFreq * windTime + phase))
-        return scene.qrot(sway, localPos), scene.qmul(sway, localQuat)
-    end)
-
+    scene.attach_script(e, "scenes/branch", { pos = localPos, quat = localQuat, amp = amp, phase = phase, isClock = isClock })
     if depth >= kMaxDepth then
         return
     end
@@ -96,4 +81,16 @@ local function addBranch(parent, parentWQ, parentWPos, parentDir, depth)
     end
 end
 
-addBranch(nil, { 0, 0, 0, 1 }, { 0, 0, 0 }, { 0, 1, 0 }, 0)
+function M._on_ready(self)
+    -- static ground
+    scene.static(scene.geometry(mesh.ground({ size = 28 })), "mat_ground", nil, nil, "ground")
+
+    for d = 0, kMaxDepth do
+        scene.material("mat_d" .. d, depthColor[d], 0.1, 0.6)
+        capGeom[d] = scene.geometry(mesh.capsule({ halfLen = halfLen[d], radius = radius[d] }))
+    end
+    math.randomseed(20260929)
+    addBranch(nil, { 0, 0, 0, 1 }, { 0, 0, 0 }, { 0, 1, 0 }, 0)
+end
+
+return M

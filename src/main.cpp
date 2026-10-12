@@ -97,9 +97,6 @@ int main(int argc, char** argv) {
             fpsFrames = 0;
         }
         w.fps = fps;
-        if (app.keyIsDown(GLFW_KEY_R))
-            resetSofts(w);
-        stepPinHolds(w, dt);
 
         app.pollEvents();
         if (w.xr)
@@ -113,8 +110,9 @@ int main(int argc, char** argv) {
             stepControllers(w);
             stepGrab(w, dt);
         }
-        stepAnimation(w, dt);
-        w.script.frame(dt);
+        // activate any script entities spawned since last frame (fixpoint), then run _animate
+        w.script.activateScripts();
+        w.script.animateAll(dt);
 
         // sim runs at a fixed kFrameDt rate, decoupled from the render rate; animation and
         // cameras step with the graphics
@@ -122,6 +120,7 @@ int main(int argc, char** argv) {
         if (simAccum > 0.1f)
             simAccum = 0.1f;
         while (simAccum >= kFrameDt) {
+            w.script.physicsAll(kFrameDt);
             stepRigid(w);
             resolveWorldTransforms(w);
             syncColliders(w);

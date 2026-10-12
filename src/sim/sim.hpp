@@ -30,7 +30,6 @@ struct Entry {
 struct SoftBody {
     int n = 0;
     std::vector<float> pos0;
-    std::vector<float> nrm0;
     std::vector<Constraint> cons;
     std::vector<Entry> entries;
     std::vector<int> entryStart;
@@ -43,7 +42,6 @@ struct SoftBody {
     void init(const Mesh& mesh, const std::vector<Constraint>& c) {
         n = mesh.vertexCount();
         pos0 = mesh.pos;
-        nrm0 = mesh.nrm;
         cons = c;
         buildEntries();
         buildColoring();
