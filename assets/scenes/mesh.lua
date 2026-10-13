@@ -120,23 +120,39 @@ function m.sphere(p)
     return { pos = pos, nrm = nrm, uv = uv, idx = idx }
 end
 
--- flat quad at y=0, spanning +/- size
-function m.ground(p)
-    local s = p.size or 40.0
-    local corners = { { -s, -s }, { s, -s }, { s, s }, { -s, s } }
-    local pos, nrm, uv, idx = {}, {}, {}, { 1, 2, 3, 1, 3, 4 }
-    for i = 1, 4 do
-        local x, z = corners[i][1], corners[i][2]
-        pos[3 * i - 2], pos[3 * i - 1], pos[3 * i] = x, 0, z
-        nrm[3 * i - 2], nrm[3 * i - 1], nrm[3 * i] = 0, 1, 0
-        uv[2 * i - 1] = (x + s) / (2 * s)
-        uv[2 * i] = (z + s) / (2 * s)
+-- axis-aligned box centered at the origin; p = {hx, hy, hz} half-extents
+function m.box(p)
+    local hx, hy, hz = p[1], p[2], p[3]
+    local pos, nrm, uv, idx = {}, {}, {}, {}
+    -- each face: outward normal + 4 corners, wound CCW when viewed from outside
+    local faces = {
+        { { 1, 0, 0 }, { { hx, -hy, -hz }, { hx, hy, -hz }, { hx, hy, hz }, { hx, -hy, hz } } },
+        { { -1, 0, 0 }, { { -hx, -hy, hz }, { -hx, hy, hz }, { -hx, hy, -hz }, { -hx, -hy, -hz } } },
+        { { 0, 1, 0 }, { { -hx, hy, -hz }, { -hx, hy, hz }, { hx, hy, hz }, { hx, hy, -hz } } },
+        { { 0, -1, 0 }, { { -hx, -hy, hz }, { -hx, -hy, -hz }, { hx, -hy, -hz }, { hx, -hy, hz } } },
+        { { 0, 0, 1 }, { { -hx, -hy, hz }, { hx, -hy, hz }, { hx, hy, hz }, { -hx, hy, hz } } },
+        { { 0, 0, -1 }, { { hx, -hy, -hz }, { -hx, -hy, -hz }, { -hx, hy, -hz }, { hx, hy, -hz } } },
+    }
+    local v0 = 0
+    for _, f in ipairs(faces) do
+        local n, corners = f[1], f[2]
+        for i = 1, 4 do
+            local c = corners[i]
+            v0 = v0 + 1
+            pos[3 * v0 - 2], pos[3 * v0 - 1], pos[3 * v0] = c[1], c[2], c[3]
+            nrm[3 * v0 - 2], nrm[3 * v0 - 1], nrm[3 * v0] = n[1], n[2], n[3]
+            uv[2 * v0 - 1], uv[2 * v0] = 0, 0
+        end
+        local base = #idx
+        local a, b, c, d = v0 - 3, v0 - 2, v0 - 1, v0
+        idx[base + 1], idx[base + 2], idx[base + 3] = a, b, c
+        idx[base + 4], idx[base + 5], idx[base + 6] = a, c, d
     end
     return { pos = pos, nrm = nrm, uv = uv, idx = idx }
 end
 
 -- cw x ch vertex grid in the xz plane at y=y0, spanning +/- span/2
-function m.cloth(p)
+function m.plane(p)
     local cw, ch = p.cw, p.ch
     local span = p.span
     local y0 = p.y0 or 0
@@ -162,8 +178,8 @@ function m.cloth(p)
     return { pos = pos, nrm = nrm, uv = uv, idx = idx }
 end
 
--- structural + shear springs for the cloth grid
-function m.clothCons(p)
+-- structural + shear springs for the plane grid
+function m.planeCons(p)
     local cw, ch = p.cw, p.ch
     local spacing = p.span / (cw - 1)
     local diag = spacing * math.sqrt(2)

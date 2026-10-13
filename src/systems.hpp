@@ -9,10 +9,9 @@
 #include <imgui.h>
 #include <vector>
 
-entt::entity spawnCapsule(World& w, const RigidBody& body, int geom);
 entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons);
-// static render-only mesh (no physics) from an uploaded geom
-entt::entity spawnStaticGeom(World& w, int geom, const Transform& t);
+// static render-only mesh (no physics) from an uploaded geom; optionally parented (kinematic hierarchies)
+entt::entity spawnStaticGeom(World& w, int geom, const Transform& t, entt::entity parent = entt::null);
 // shared material entity (Material, optional Name); meshes reference it via MaterialRef
 entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float roughness, const char* name = nullptr);
 entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char* name);
@@ -20,15 +19,8 @@ entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char
 entt::entity spawnCamera(World& w, const V3& pos, const V4& quat, float fovDeg, bool active = true);
 // first entity with a matching Name (entt::null if none)
 entt::entity findNamedEntity(const World& w, const std::string& name);
-// dynamic rigid capsule sharing one material entity; t = initial pose, shape = Jolt collider
-entt::entity spawnDynamicCapsule(World& w, int geom, const CapsuleParams& shape, const Transform& t, entt::entity mat);
-// render-only capsule (no physics), optionally parented; for kinematic hierarchies
-entt::entity spawnVisualCapsule(World& w, int geom, const Transform& t, entt::entity mat, entt::entity parent);
-// soft body from script-provided mesh + constraints
-entt::entity spawnSoftCloth(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat);
-// soft sphere; mass > 0 overrides the default
-entt::entity spawnSoftBall(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
-                           float mass);
+// dynamic rigid body from a shared shape: Jolt body + soft-sim capsule collider + render + material
+entt::entity spawnRigidBody(World& w, int shapeId, int geom, const Transform& t, entt::entity mat);
 // texture from assets/ (or assets/ relative to the exe); renderer texture id or -1
 int loadAssetTexture(World& w, const std::string& path);
 // the active camera (entt::null if none)

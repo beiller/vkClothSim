@@ -2,8 +2,8 @@
 local M = {}
 
 function M._on_ready(self)
-    scene.static(scene.geometry(mesh.ground({ size = 40 })), "white", nil, nil, "ground")
-    scene.static(scene.geometry(mesh.sphere({ subdiv = 4, radius = 2 })), "plaid", { 0, 3, 0 }, nil, "ball")
+    render.static(render.geometry(mesh.box({ 40, 1, 40 })), "white", { 0, -1, 0 }, nil, "ground")
+    render.static(render.geometry(mesh.sphere({ subdiv = 4, radius = 2 })), "plaid", { 0, 3, 0 }, nil, "ball")
 end
 
 return M

@@ -70,8 +70,7 @@ local function addBranch(parent, parentWQ, parentWPos, parentDir, depth)
     local amp = 0.02 + 0.02 * depth -- tips sway more
     local phase = 0.35 * depth      -- outward lag -> bend travels to the tips
     local isClock = depth == 0
-    local e = scene.capsule(capGeom[depth], halfLen[depth], radius[depth], "mat_d" .. depth, localPos, localQuat, nil,
-                            { body = "kinematic", parent = parent })
+    local e = render.static(capGeom[depth], "mat_d" .. depth, localPos, localQuat, nil, { parent = parent })
     scene.attach_script(e, "scenes/branch", { pos = localPos, quat = localQuat, amp = amp, phase = phase, isClock = isClock })
     if depth >= kMaxDepth then
         return
@@ -83,11 +82,11 @@ end
 
 function M._on_ready(self)
     -- static ground
-    scene.static(scene.geometry(mesh.ground({ size = 28 })), "mat_ground", nil, nil, "ground")
+    render.static(render.geometry(mesh.box({ 28, 1, 28 })), "mat_ground", { 0, -1, 0 }, nil, "ground")
 
     for d = 0, kMaxDepth do
-        scene.material("mat_d" .. d, depthColor[d], 0.1, 0.6)
-        capGeom[d] = scene.geometry(mesh.capsule({ halfLen = halfLen[d], radius = radius[d] }))
+        render.material("mat_d" .. d, depthColor[d], 0.1, 0.6)
+        capGeom[d] = render.geometry(mesh.capsule({ halfLen = halfLen[d], radius = radius[d] }))
     end
     math.randomseed(20260929)
     addBranch(nil, { 0, 0, 0, 1 }, { 0, 0, 0 }, { 0, 1, 0 }, 0)

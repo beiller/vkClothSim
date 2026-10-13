@@ -2,7 +2,7 @@
 local M = {}
 
 function M._on_ready(self)
-    scene.static(scene.geometry(mesh.sphere({ subdiv = 4, radius = 2 })), "mat_sphere", nil, nil, "sphere")
+    render.static(render.geometry(mesh.sphere({ subdiv = 4, radius = 2 })), "mat_sphere", nil, nil, "sphere")
 end
 
 return M

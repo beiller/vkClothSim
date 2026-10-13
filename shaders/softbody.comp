@@ -23,6 +23,7 @@ layout(binding = 7) buffer PhysP {
     float tension;
     float stiff;
     float maxStep;
+    float floorY;
 } ph;
 
 layout(binding = 8) buffer Sub0 { float v[]; } sub0;
@@ -118,8 +119,8 @@ vec3 collideVertex(int i, vec3 P) {
             cL += corr;
         }
     }
-    if (P.y < 0.0) {
-        float corr = -P.y / (1.0 + COLLIDE_COMPLIANCE);
+    if (P.y < ph.floorY) {
+        float corr = (ph.floorY - P.y) / (1.0 + COLLIDE_COMPLIANCE);
         P.y += corr;
         cN.y += corr;
         cL += corr;

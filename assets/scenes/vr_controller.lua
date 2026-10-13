@@ -30,8 +30,8 @@ end
 
 function M._on_ready(self)
     camH = scene.find("cam")
-    scene.material("grab_marker", {1, 0.1, 0.1}, 0.0, 0.35)
-    markerGeom = scene.geometry(mesh.sphere({ radius = kMarkerRadius, subdiv = 2 }))
+    render.material("grab_marker", {1, 0.1, 0.1}, 0.0, 0.35)
+    markerGeom = render.geometry(mesh.sphere({ radius = kMarkerRadius, subdiv = 2 }))
 end
 
 -- place a small sphere on the grabbed capsule, at the joint anchor (Parent system)
@@ -44,13 +44,13 @@ local function spawnMarker(capEnt, hitPos)
     local capQ = {scene.get(capEnt, "qx"), scene.get(capEnt, "qy"), scene.get(capEnt, "qz"), scene.get(capEnt, "qw")}
     -- joint anchor (world hitPos) in the capsule's local frame
     local localPos = scene.qrot(scene.qinv(capQ), scene.vsub(hitPos, capPos))
-    marker = scene.static(markerGeom, "grab_marker", localPos, {0, 0, 0, 1})
+    marker = render.static(markerGeom, "grab_marker", localPos, {0, 0, 0, 1})
     scene.add_child(capEnt, marker)
 end
 
 local function release()
     if joint then
-        scene.destroy_joint(joint)
+        physics.destroy_joint(joint)
         joint = nil
     end
     if marker then
@@ -99,9 +99,9 @@ local function vrGrab()
             scene.get(ctrlH, "aim_qz"), scene.get(ctrlH, "aim_qw"),
         }
         local fwd = scene.qrot(aq, {0, 0, -1})
-        local hit = scene.raycast(aimWorld, fwd, kGrabRange)
-        if hit and hit.entity and scene.is_dynamic(hit.entity) then
-            joint = scene.create_joint(ctrlH, hit.entity, "point", hit.pos)
+        local hit = physics.raycast(aimWorld, fwd, kGrabRange)
+        if hit and hit.entity and physics.is_dynamic(hit.entity) then
+            joint = physics.create_joint(ctrlH, hit.entity, "point", hit.pos)
             spawnMarker(hit.entity, hit.pos)
         end
     end

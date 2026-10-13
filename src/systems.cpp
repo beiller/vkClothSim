@@ -7,12 +7,14 @@
 #include <cstdlib>
 #include <unordered_map>
 
-entt::entity spawnCapsule(World& w, const RigidBody& body, int geom) {
+entt::entity spawnRigidBody(World& w, int shapeId, int geom, const Transform& t, entt::entity mat) {
     entt::entity e = w.reg.create();
-    w.reg.emplace<Transform>(e, body.position, body.orientation);
-    w.reg.emplace<CapsuleCollider>(e, w.sim.addCapsule(body.shape));
-    w.reg.emplace<RigidDynamics>(e, body.props, w.rigid.addRigidBody(body));
+    w.reg.emplace<Transform>(e, t.pos, t.quat);
+    const RigidBodyProps props{};
+    w.reg.emplace<CapsuleCollider>(e, w.sim.addCapsule(w.rigid.shapeParams(shapeId)));
+    w.reg.emplace<RigidDynamics>(e, props, w.rigid.addRigidBody(shapeId, t.pos, t.quat, props));
     w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
+    w.reg.emplace<MaterialRef>(e, mat);
     return e;
 }
 
@@ -24,9 +26,11 @@ entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Co
     return e;
 }
 
-entt::entity spawnStaticGeom(World& w, int geom, const Transform& t) {
+entt::entity spawnStaticGeom(World& w, int geom, const Transform& t, entt::entity parent) {
     entt::entity e = w.reg.create();
     w.reg.emplace<Transform>(e, t.pos, t.quat);
+    if (parent != entt::null)
+        w.reg.emplace<Parent>(e, parent);
     w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
     return e;
 }
@@ -64,38 +68,6 @@ entt::entity findNamedEntity(const World& w, const std::string& name) {
             out = e;
     });
     return out;
-}
-
-entt::entity spawnDynamicCapsule(World& w, int geom, const CapsuleParams& shape, const Transform& t, entt::entity mat) {
-    const RigidBody body{shape, t.pos, t.quat, {}};
-    const entt::entity e = spawnCapsule(w, body, geom);
-    w.reg.emplace<MaterialRef>(e, mat);
-    return e;
-}
-
-entt::entity spawnVisualCapsule(World& w, int geom, const Transform& t, entt::entity mat, entt::entity parent) {
-    const entt::entity e = w.reg.create();
-    w.reg.emplace<Transform>(e, t.pos, t.quat);
-    if (parent != entt::null)
-        w.reg.emplace<Parent>(e, parent);
-    w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
-    w.reg.emplace<MaterialRef>(e, mat);
-    return e;
-}
-
-entt::entity spawnSoftCloth(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat) {
-    const entt::entity e = spawnSoftBody(w, mesh, cons);
-    w.reg.emplace<MaterialRef>(e, mat);
-    return e;
-}
-
-entt::entity spawnSoftBall(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
-                           float mass) {
-    const entt::entity e = spawnSoftBody(w, mesh, cons);
-    if (mass > 0.0f)
-        w.reg.get<SoftBodyData>(e).params.mass = mass;
-    w.reg.emplace<MaterialRef>(e, mat);
-    return e;
 }
 
 int loadAssetTexture(World& w, const std::string& path) {

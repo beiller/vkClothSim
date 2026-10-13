@@ -44,27 +44,39 @@ void RigidScene::init() {
 
     m_phys = new JPH::PhysicsSystem();
     m_phys->Init(1024, 0, 1024, 2048, *m_bpl, *m_ovb, *m_pair);
-
-    auto& bi = m_phys->GetBodyInterface();
-    JPH::BoxShapeSettings gs(JPH::Vec3(40.0f, 1.0f, 40.0f));
-    gs.SetEmbedded();
-    JPH::ShapeRefC gshape = gs.Create().Get();
-    JPH::BodyCreationSettings gset(gshape, JPH::RVec3(0.0f, -1.0f, 0.0f), JPH::Quat::sIdentity(),
-                                   JPH::EMotionType::Static, 0);
-    JPH::Body* gb = bi.CreateBody(gset);
-    bi.AddBody(gb->GetID(), JPH::EActivation::DontActivate);
-    m_phys->OptimizeBroadPhase();
 }
 
-JPH::BodyID RigidScene::addRigidBody(const RigidBody& body) {
+int RigidScene::addCapsuleShape(const CapsuleParams& params) {
+    JPH::ShapeRefC shape(new JPH::CapsuleShape(params.halfLen, params.radius));
+    m_shapes.push_back({shape, params});
+    return (int)m_shapes.size() - 1;
+}
+
+const CapsuleParams& RigidScene::shapeParams(int shapeId) const {
+    return m_shapes[shapeId].params;
+}
+
+JPH::BodyID RigidScene::addRigidBody(int shapeId, const V3& pos, const V4& quat, const RigidBodyProps& props) {
     auto& bi = m_phys->GetBodyInterface();
-    JPH::BodyCreationSettings cs(new JPH::CapsuleShape(body.shape.halfLen, body.shape.radius),
-                                 JPH::RVec3(body.position.x, body.position.y, body.position.z), jQuat(body.orientation),
+    JPH::BodyCreationSettings cs(m_shapes[shapeId].shape, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat),
                                  JPH::EMotionType::Dynamic, 1);
-    cs.mFriction = body.props.friction;
-    cs.mRestitution = body.props.restitution;
-    cs.mLinearDamping = body.props.damping;
+    cs.mFriction = props.friction;
+    cs.mRestitution = props.restitution;
+    cs.mLinearDamping = props.damping;
     return bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
+}
+
+JPH::BodyID RigidScene::addStaticBox(const V3& center, const V3& half) {
+    auto& bi = m_phys->GetBodyInterface();
+    JPH::BoxShapeSettings bs(JPH::Vec3(half.x, half.y, half.z));
+    bs.SetEmbedded();
+    JPH::ShapeRefC shape = bs.Create().Get();
+    JPH::BodyCreationSettings cs(shape, JPH::RVec3(center.x, center.y, center.z), JPH::Quat::sIdentity(),
+                                 JPH::EMotionType::Static, 0);
+    JPH::Body* b = bi.CreateBody(cs);
+    bi.AddBody(b->GetID(), JPH::EActivation::DontActivate);
+    m_phys->OptimizeBroadPhase();
+    return b->GetID();
 }
 
 JPH::BodyID RigidScene::addKinematicBody(const V3& pos, const V4& quat, float radius) {

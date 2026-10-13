@@ -73,10 +73,11 @@ private:
 
     static int lMaterial(lua_State* L);
     static int lGeometry(lua_State* L);
-    static int lCapsule(lua_State* L);
-    static int lCloth(lua_State* L);
-    static int lBall(lua_State* L);
     static int lStatic(lua_State* L);
+    static int lShapeCapsule(lua_State* L);
+    static int lBody(lua_State* L);
+    static int lBox(lua_State* L);
+    static int lSoftBody(lua_State* L);
     static int lSet(lua_State* L);
     static int lGet(lua_State* L);
     static int lTime(lua_State* L);

@@ -6,19 +6,13 @@
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
 #include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
+#include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <Jolt/Physics/Constraints/Constraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
 #include "capsule.hpp"
 #include "ecs.hpp"
 #include "math.hpp"
-
-struct RigidBody {
-    CapsuleParams shape;
-    V3 position{0, 0, 0};
-    V4 orientation{0, 0, 0, 1};
-    RigidBodyProps props;
-};
 
 struct RayHit {
     bool hit = false;
@@ -29,7 +23,13 @@ struct RayHit {
 class RigidScene {
 public:
     void init();
-    JPH::BodyID addRigidBody(const RigidBody& body);
+    // a reusable collision shape (Jolt shape + params): create once, build many bodies from it
+    int addCapsuleShape(const CapsuleParams& params);
+    const CapsuleParams& shapeParams(int shapeId) const;
+    // dynamic rigid body from a shared shape
+    JPH::BodyID addRigidBody(int shapeId, const V3& pos, const V4& quat, const RigidBodyProps& props);
+    // static box collider (e.g. the scene ground); half = box half-extents, center = box center
+    JPH::BodyID addStaticBox(const V3& center, const V3& half);
     JPH::BodyID addKinematicBody(const V3& pos, const V4& quat, float radius);
     void setKinematicPose(JPH::BodyID id, const V3& pos, const V4& quat);
     void step();
@@ -44,6 +44,10 @@ public:
     int velocitySteps = 10; // applied in step(); the UI slider binds to it
 
 private:
+    struct ShapeEntry {
+        JPH::ShapeRefC shape; // owning ref so a shape outlives its bodies and can be reused
+        CapsuleParams params;
+    };
     struct JointEntry {
         JPH::Ref<JPH::Constraint> constraint; // owning ref; RemoveConstraint drops the manager's, we drop ours
         bool alive = false;
@@ -56,5 +60,6 @@ private:
     JPH::ObjectLayerPairFilterTable* m_pair = nullptr;
     JPH::BroadPhaseLayerInterfaceTable* m_bpl = nullptr;
     JPH::ObjectVsBroadPhaseLayerFilterTable* m_ovb = nullptr;
+    std::vector<ShapeEntry> m_shapes;
     std::vector<JointEntry> m_joints;
 };

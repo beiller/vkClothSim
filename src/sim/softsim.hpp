@@ -8,12 +8,15 @@
 #include "sim/params.hpp"
 #include "sim/phys.hpp"
 #include "sim/sim.hpp"
+#include <limits>
 #include <vector>
 
 class SoftSim {
 public:
     void init(VkDevice dev, VkPhysicalDevice pdev);
     int addCapsule(const CapsuleParams& params);
+    // scene ground: the soft-body floor plane (top face of the ground box); -inf = no floor
+    void setFloor(float y);
     void setCapsulePose(int slot, const Transform& pose);
     int addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw);
     void build();
@@ -58,4 +61,5 @@ private:
     VkPipelineLayout m_softPl = VK_NULL_HANDLE;
     VkBuffer m_capsInstances = VK_NULL_HANDLE;
     VkDeviceMemory m_capsInstancesMem = VK_NULL_HANDLE;
+    float m_floorY = -std::numeric_limits<float>::infinity();
 };

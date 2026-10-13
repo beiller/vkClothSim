@@ -48,6 +48,10 @@ int SoftSim::addCapsule(const CapsuleParams& params) {
     return (int)m_colliders.size() - 1;
 }
 
+void SoftSim::setFloor(float y) {
+    m_floorY = y;
+}
+
 int SoftSim::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw) {
     GpuBody b;
     b.soft.init(mesh, cons);
@@ -69,7 +73,7 @@ int SoftSim::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& c
     mk(b.tris, b.trisMem, 4 * mesh.indices.size(), mesh.indices.data());
     mk(b.triStart, b.triStartMem, 4 * (vn + 1), b.soft.triStart.data());
     mk(b.triList, b.triListMem, 4 * b.soft.triList.size(), b.soft.triList.data());
-    mk(b.paramsBuf, b.paramsMem, 36, nullptr);
+    mk(b.paramsBuf, b.paramsMem, 40, nullptr);
     m_body.push_back(std::move(b));
     return (int)m_body.size() - 1;
 }
@@ -110,7 +114,7 @@ void SoftSim::makeBodySet(GpuBody& b) {
         {b.entries, 0, (VkDeviceSize)16 * b.soft.entries.size()},
         {b.entryStart, 0, (VkDeviceSize)4 * (n + 1)},
         {b.colorVerts, 0, (VkDeviceSize)4 * n},
-        {b.paramsBuf, 0, 36},
+        {b.paramsBuf, 0, 40},
         {b.sub0, 0, (VkDeviceSize)12 * n},
         {b.contactN, 0, (VkDeviceSize)16 * n},
         {b.contactL, 0, (VkDeviceSize)4 * n},
@@ -197,7 +201,8 @@ void SoftSim::record(VkCommandBuffer cmd) {
         phys.tension = b.params.tension;
         phys.stiff = b.params.stiffness;
         phys.maxStep = kSoftMaxStep;
-        vkWriteBuffer(m_dev, b.paramsMem, &phys, 36);
+        phys.floorY = m_floorY;
+        vkWriteBuffer(m_dev, b.paramsMem, &phys, 40);
     }
 
     std::vector<VkBufferMemoryBarrier> first;
