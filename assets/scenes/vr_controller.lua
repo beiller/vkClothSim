@@ -9,10 +9,13 @@ local W, A, S, D, Q, E, SHIFT = 87, 65, 83, 68, 81, 69, 340
 local ctrlH, rootH, camH, mouseH, kbH
 local prevMX, prevMY = 0, 0
 local joint = nil
+local marker = nil
+local markerGeom = nil
 local kSpeed = 2.0
 local kDead = 0.12
 local kSens = 0.0025
 local kGrabRange = 3.0
+local kMarkerRadius = 0.03
 
 local function camQuat()
     return {scene.get(camH, "qx"), scene.get(camH, "qy"), scene.get(camH, "qz"), scene.get(camH, "qw")}
@@ -27,12 +30,32 @@ end
 
 function M._on_ready(self)
     camH = scene.find("cam")
+    scene.material("grab_marker", {1, 0.1, 0.1}, 0.0, 0.35)
+    markerGeom = scene.geometry(mesh.sphere({ radius = kMarkerRadius, subdiv = 2 }))
+end
+
+-- place a small sphere on the grabbed capsule, at the joint anchor (Parent system)
+local function spawnMarker(capEnt, hitPos)
+    if marker then
+        scene.destroy(marker)
+        marker = nil
+    end
+    local capPos = scene.get(capEnt, "pos")
+    local capQ = {scene.get(capEnt, "qx"), scene.get(capEnt, "qy"), scene.get(capEnt, "qz"), scene.get(capEnt, "qw")}
+    -- joint anchor (world hitPos) in the capsule's local frame
+    local localPos = scene.qrot(scene.qinv(capQ), scene.vsub(hitPos, capPos))
+    marker = scene.static(markerGeom, "grab_marker", localPos, {0, 0, 0, 1})
+    scene.add_child(capEnt, marker)
 end
 
 local function release()
     if joint then
         scene.destroy_joint(joint)
         joint = nil
+    end
+    if marker then
+        scene.destroy(marker)
+        marker = nil
     end
 end
 
@@ -78,7 +101,8 @@ local function vrGrab()
         local fwd = scene.qrot(aq, {0, 0, -1})
         local hit = scene.raycast(aimWorld, fwd, kGrabRange)
         if hit and hit.entity and scene.is_dynamic(hit.entity) then
-            joint = scene.create_joint(ctrlH, hit.entity, "point")
+            joint = scene.create_joint(ctrlH, hit.entity, "point", hit.pos)
+            spawnMarker(hit.entity, hit.pos)
         end
     end
 end

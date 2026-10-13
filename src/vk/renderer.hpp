@@ -28,6 +28,7 @@ public:
     void init(VkApp& app, int nInstances, const Mat4& viewProj);
     GpuMeshRef addMesh(const Mesh& mesh);
     int addInstance(int geom);
+    void removeInstance(int inst); // mark dead (skipped by draw); buffer freed at shutdown
     void setModel(int inst, const Mat4& model);
     void setMaterial(int inst, const V3& baseColor, float metallic, float roughness);
     int addTexture(const void* rgba, uint32_t w, uint32_t h);
@@ -74,6 +75,7 @@ private:
         float metallic = 0.0f;
         float roughness = 0.5f;
         int tex[3] = {-2, -2, -2}; // per-channel texture id; -2 = descriptor not written yet
+        bool dead = false;          // removed from the scene graph; skipped by draw, buffer freed at shutdown
     };
 
     struct EnvPass {

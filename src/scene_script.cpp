@@ -849,7 +849,11 @@ int SceneScript::lDestroy(lua_State* L) {
     const entt::entity e = readEnt(L, 1);
     if (!w.reg.valid(e))
         return 0;
-    for (const auto c : subtreeEntities(w.reg, e))
+    const auto subtree = subtreeEntities(w.reg, e);
+    for (const auto c : subtree)
+        if (const auto* r = w.reg.try_get<Renderable>(c))
+            w.renderer.removeInstance(r->inst); // stop drawing; the instance buffer is released at shutdown
+    for (const auto c : subtree)
         w.reg.destroy(c); // fires on_destroy<LuaScript> -> unrefs each script entity's Lua refs
     return 0;
 }
@@ -1055,7 +1059,8 @@ int SceneScript::lCreateJoint(lua_State* L) {
     const JPH::BodyID idB = getBodyId(eB);
     if (idA.IsInvalid() && idB.IsInvalid())
         return luaL_error(L, "scene.create_joint: entity has no rigid/kinematic body");
-    const int jid = w.rigid.createJoint(idA, idB, type);
+    const V3 grabPos = readV3(L, 4); // world collision point the joint anchors
+    const int jid = w.rigid.createJoint(idA, idB, type, grabPos);
     if (jid < 0)
         return luaL_error(L, "scene.create_joint: unknown type '%s'", type);
     lua_pushnumber(L, jid);

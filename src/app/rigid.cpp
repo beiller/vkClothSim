@@ -94,7 +94,7 @@ void RigidScene::setKinematicPose(JPH::BodyID id, const V3& pos, const V4& quat)
     bi.SetPositionAndRotation(id, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat), JPH::EActivation::Activate);
 }
 
-int RigidScene::createJoint(JPH::BodyID a, JPH::BodyID b, const char* type) {
+int RigidScene::createJoint(JPH::BodyID a, JPH::BodyID b, const char* type, const V3& grabPos) {
     if (std::strcmp(type, "point") != 0)
         return -1;
     // no body locking: single-threaded between Update() calls, so the references stay valid
@@ -103,11 +103,12 @@ int RigidScene::createJoint(JPH::BodyID a, JPH::BodyID b, const char* type) {
     if (!bodyA || !bodyB)
         return -1;
     JPH::PointConstraintSettings cs;
-    // LocalToBodyCOM with both points at the COM: ball joint pinning the two centers of mass
-    // together, so the grabbed body's COM follows the hand's COM (and rotates freely).
+    // LocalToBodyCOM: express the grab (collision) point in each body's COM-local space so the
+    // grabbed point on the target follows the hand's grip, not the two centers of mass.
+    const JPH::RVec3 grab(grabPos.x, grabPos.y, grabPos.z);
     cs.mSpace = JPH::EConstraintSpace::LocalToBodyCOM;
-    cs.mPoint1 = JPH::RVec3::sZero();
-    cs.mPoint2 = JPH::RVec3::sZero();
+    cs.mPoint1 = bodyA->GetRotation().InverseRotate(grab - bodyA->GetPosition());
+    cs.mPoint2 = bodyB->GetRotation().InverseRotate(grab - bodyB->GetPosition());
     JPH::TwoBodyConstraint* constraint = cs.Create(*bodyA, *bodyB);
     m_phys->AddConstraint(constraint);
     m_joints.push_back({constraint, true});

@@ -204,6 +204,12 @@ int Renderer::addInstance(int geom) {
     return id;
 }
 
+void Renderer::removeInstance(int inst) {
+    if (inst < 0 || inst >= (int)m_insts.size() || m_insts[inst].dead)
+        return;
+    m_insts[inst].dead = true; // stop drawing; the model UBO is released at shutdown
+}
+
 void Renderer::setModel(int inst, const Mat4& model) {
     m_insts[inst].model = model;
 }
@@ -269,6 +275,8 @@ void Renderer::writeViewUbo(const Mat4& vp, const V3& cam) {
 void Renderer::prepBuffers() {
     writeLights();
     for (auto& inst : m_insts) {
+        if (inst.dead)
+            continue;
         const ModelUbo mb = packModel(inst.model, inst.baseColor, inst.metallic, inst.roughness);
         vkWriteBuffer(m_dev, inst.modelMem, &mb, sizeof(ModelUbo));
     }
@@ -293,7 +301,8 @@ void Renderer::renderScenePass(VkCommandBuffer cmd, VkApp& app, const float bg[3
     vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipe);
     for (const auto& inst : m_insts)
-        drawInstance(cmd, m_pl, m_geoms[inst.geom], inst);
+        if (!inst.dead)
+            drawInstance(cmd, m_pl, m_geoms[inst.geom], inst);
     vkCmdEndRenderPass(cmd);
 }
 
