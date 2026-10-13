@@ -8,8 +8,7 @@
 #include <unordered_map>
 
 void addMesh(World& w, entt::entity e, int geom, entt::entity mat, const V3& pos, const V4& quat, entt::entity parent) {
-    if (!w.reg.try_get<Transform>(e))
-        w.reg.emplace<Transform>(e, pos, quat);
+    w.reg.emplace_or_replace<Transform>(e, pos, quat);
     w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
     w.reg.emplace<MaterialRef>(e, mat);
     if (parent != entt::null)
