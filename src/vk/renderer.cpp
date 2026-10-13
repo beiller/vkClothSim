@@ -1,5 +1,6 @@
 #include "vk/renderer.hpp"
 
+#include "ecs.hpp"
 #include "mesh_frag_spv.hpp"
 #include "mesh_vert_spv.hpp"
 #include "tonemap_frag_spv.hpp"
@@ -162,8 +163,8 @@ int Renderer::addInstance(int geom) {
     const GpuMesh& g = m_geoms[geom];
     InstancedMesh inst;
     inst.geom = geom;
-    inst.model = mat4Identity();
-    const ModelUbo modelInit = packModel(inst.model, inst.baseColor, inst.metallic, inst.roughness);
+    // prepBuffers rewrites this from the ECS every frame; identity + defaults just keep it valid
+    const ModelUbo modelInit = packModel(mat4Identity(), V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
     vkMakeBuffer(m_dev, m_pdev, inst.modelUbuf, inst.modelMem, sizeof(ModelUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                  &modelInit);
     const VkDeviceSize attrSize = (VkDeviceSize)12 * g.vtxCount;
@@ -204,22 +205,6 @@ int Renderer::addInstance(int geom) {
     return id;
 }
 
-void Renderer::removeInstance(int inst) {
-    if (inst < 0 || inst >= (int)m_insts.size() || m_insts[inst].dead)
-        return;
-    m_insts[inst].dead = true; // stop drawing; the model UBO is released at shutdown
-}
-
-void Renderer::setModel(int inst, const Mat4& model) {
-    m_insts[inst].model = model;
-}
-
-void Renderer::setMaterial(int inst, const V3& baseColor, float metallic, float roughness) {
-    m_insts[inst].baseColor = baseColor;
-    m_insts[inst].metallic = metallic;
-    m_insts[inst].roughness = roughness;
-}
-
 int Renderer::addTexture(const void* rgba, uint32_t w, uint32_t h) {
     GpuTexture t;
     vkMakeImage2D(m_dev, m_pdev, w, h, rgba, t.img, t.mem, t.view);
@@ -253,36 +238,41 @@ void Renderer::setViewProj(const Mat4& vp, const V3& camPos) {
     m_camPos = camPos;
 }
 
-void Renderer::setLights(const std::vector<Light>& lights) {
-    m_lights = lights;
-}
-
-void Renderer::setEnvIntensity(float intensity) {
-    m_envIntensity = intensity;
-}
-
-void Renderer::writeViewUbo(const Mat4& vp, const V3& cam) {
+void Renderer::writeViewUbo(const Mat4& vp, const V3& cam, float envIntensity) {
     ViewUbo u{};
     std::memcpy(u.viewProj, vp.m, 64);
     u.camPos[0] = cam.x;
     u.camPos[1] = cam.y;
     u.camPos[2] = cam.z;
-    u.envIntensity = m_envIntensity;
+    u.envIntensity = envIntensity;
     u.shadowTexels = (float)m_shadowSize;
     vkWriteBuffer(m_dev, m_vpMem, &u, sizeof(ViewUbo));
 }
 
-void Renderer::prepBuffers() {
-    writeLights();
-    for (auto& inst : m_insts) {
-        if (inst.dead)
-            continue;
-        const ModelUbo mb = packModel(inst.model, inst.baseColor, inst.metallic, inst.roughness);
+void Renderer::prepBuffers(const entt::registry& reg) {
+    writeLights(reg);
+    for (auto [e, rend] : reg.view<Renderable>().each()) {
+        InstancedMesh& inst = m_insts[rend.inst];
+        V3 base{1.0f, 1.0f, 1.0f};
+        float metallic = 0.0f, roughness = 0.5f;
+        if (const auto* ref = reg.try_get<MaterialRef>(e))
+            if (const auto* mat = reg.try_get<Material>(ref->mat)) {
+                base = mat->baseColor;
+                metallic = mat->metallic;
+                roughness = mat->roughness;
+                if (mat->texId >= 0 && inst.tex[0] != mat->texId)
+                    setTexture(rend.inst, 0, mat->texId);
+            }
+        // soft bodies have no Transform (geometry is world-space in the GPU buffer) -> identity
+        Mat4 model = mat4Identity();
+        if (const auto* wt = reg.try_get<WorldTransform>(e))
+            model = wt->toMat4();
+        const ModelUbo mb = packModel(model, base, metallic, roughness);
         vkWriteBuffer(m_dev, inst.modelMem, &mb, sizeof(ModelUbo));
     }
 }
 
-void Renderer::renderScenePass(VkCommandBuffer cmd, VkApp& app, const float bg[3]) {
+void Renderer::renderScenePass(VkCommandBuffer cmd, VkApp& app, const entt::registry& reg, const float bg[3]) {
     const VkExtent2D ext = app.extent();
     VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
     VkRect2D sc{0, 0, ext.width, ext.height};
@@ -300,9 +290,8 @@ void Renderer::renderScenePass(VkCommandBuffer cmd, VkApp& app, const float bg[3
     vkCmdSetViewport(cmd, 0, 1, &vpt);
     vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipe);
-    for (const auto& inst : m_insts)
-        if (!inst.dead)
-            drawInstance(cmd, m_pl, m_geoms[inst.geom], inst);
+    for (auto [e, rend] : reg.view<Renderable>().each())
+        drawInstance(cmd, m_pl, m_geoms[m_insts[rend.inst].geom], m_insts[rend.inst]);
     vkCmdEndRenderPass(cmd);
 }
 
@@ -326,30 +315,31 @@ void Renderer::writeTonemapUbo(float ox, float oy, float sx, float sy) {
     vkWriteBuffer(m_dev, m_tmMem, tm, 32);
 }
 
-void Renderer::writeLights() {
+void Renderer::writeLights(const entt::registry& reg) {
     LightsUbo u{};
-    const int n = (int)std::min(m_lights.size(), (size_t)kMaxLights);
+    int n = 0;
+    reg.view<WorldTransform, PointLight>().each([&](auto, const WorldTransform& wt, const PointLight& p) {
+        if (n >= kMaxLights)
+            return;
+        LightGPU& g = u.lights[n++];
+        g.pos[0] = wt.pos.x;
+        g.pos[1] = wt.pos.y;
+        g.pos[2] = wt.pos.z;
+        g.intensity = p.intensity;
+        g.color[0] = p.color.x;
+        g.color[1] = p.color.y;
+        g.color[2] = p.color.z;
+        g.radius = p.radius;
+        g.on = p.on;
+        g.shadowNear = p.shadowNear;
+        g.shadowFar = p.shadowFar;
+        g.shadowNormalBias = p.shadowNormalBias;
+        g.biasBase = p.shadowBiasBase;
+        g.biasSlope = p.shadowBiasSlope;
+        g.searchScale = p.shadowSearchScale;
+        g.maxRadius = p.shadowMaxRadius;
+    });
     u.count = n;
-    for (int i = 0; i < n; ++i) {
-        const Light& L = m_lights[i];
-        LightGPU& g = u.lights[i];
-        g.pos[0] = L.pos.x;
-        g.pos[1] = L.pos.y;
-        g.pos[2] = L.pos.z;
-        g.intensity = L.p.intensity;
-        g.color[0] = L.p.color.x;
-        g.color[1] = L.p.color.y;
-        g.color[2] = L.p.color.z;
-        g.radius = L.p.radius;
-        g.on = L.p.on;
-        g.shadowNear = L.p.shadowNear;
-        g.shadowFar = L.p.shadowFar;
-        g.shadowNormalBias = L.p.shadowNormalBias;
-        g.biasBase = L.p.shadowBiasBase;
-        g.biasSlope = L.p.shadowBiasSlope;
-        g.searchScale = L.p.shadowSearchScale;
-        g.maxRadius = L.p.shadowMaxRadius;
-    }
     vkWriteBuffer(m_dev, m_lightsMem, &u, sizeof(LightsUbo));
 }
 
@@ -399,14 +389,14 @@ void Renderer::rebuildTonemapSet(VkApp& app) {
     m_tmSrcView = app.hdrView();
 }
 
-void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui,
-                    float exposure) {
-    m_exposure = exposure;
-    writeViewUbo(m_viewProj, m_camPos);
-    prepBuffers();
+void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
+                    ImDrawData* imgui) {
+    m_exposure = rs.exposure;
+    writeViewUbo(m_viewProj, m_camPos, rs.envIntensity);
+    prepBuffers(reg);
     const VkExtent2D ext = app.extent();
-    renderShadowCubes(cmd);
-    renderScenePass(cmd, app, bg);
+    renderShadowCubes(cmd, reg);
+    renderScenePass(cmd, app, reg, rs.bgColor);
     hdrBarrier(cmd, app);
     if (app.hdrView() != m_tmSrcView)
         rebuildTonemapSet(app);
@@ -487,12 +477,12 @@ void Renderer::ensureNoClearFbs(VkApp& app) {
     m_noClearExt = ext;
 }
 
-void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui,
-                      float exposure, const uint32_t* xrImg, int nXr) {
-    m_exposure = exposure;
-    prepBuffers();
+void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
+                      ImDrawData* imgui, const uint32_t* xrImg, int nXr) {
+    m_exposure = rs.exposure;
+    prepBuffers(reg);
     const VkExtent2D ext = app.extent();
-    renderShadowCubes(cmd);
+    renderShadowCubes(cmd, reg);
     ensureNoClearFbs(app);
     VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
     VkRect2D full{0, 0, ext.width, ext.height};
@@ -501,8 +491,8 @@ void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float 
     for (int eye = 0; eye < m_vrEyesN; ++eye) {
         // the view + tonemap UBOs are single-slot host buffers, so each eye is
         // its own fence-waited submit to avoid the next eye clobbering this one
-        writeViewUbo(eyeVP(eye), m_vrEyes[eye].pos);
-        renderScenePass(cmd, app, bg);
+        writeViewUbo(eyeVP(eye), m_vrEyes[eye].pos, rs.envIntensity);
+        renderScenePass(cmd, app, reg, rs.bgColor);
         hdrBarrier(cmd, app);
         if (app.hdrView() != m_tmSrcView)
             rebuildTonemapSet(app);

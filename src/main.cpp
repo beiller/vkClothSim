@@ -140,14 +140,13 @@ int main(int argc, char** argv) {
         const uint32_t idx = app.acquireNextImage();
         VkCommandBuffer cmd = app.beginCommands();
         if (w.xr) {
-            syncSceneToRenderer(w);
             uint32_t imgIdx[2] = {0, 0};
             if (w.xrFrame.shouldRender)
                 for (int i = 0; i < w.xr->eyeCount(); ++i) {
                     w.xr->acquireImage(i);
                     imgIdx[i] = (uint32_t)w.xr->imageIndex(i);
                 }
-            w.renderer.drawVr(cmd, app, idx, w.render.bgColor, ImGui::GetDrawData(), w.render.exposure,
+            w.renderer.drawVr(cmd, app, idx, w.reg, w.render, ImGui::GetDrawData(),
                               w.xrFrame.shouldRender ? imgIdx : nullptr, w.xrFrame.shouldRender ? w.xr->eyeCount() : 0);
             if (w.xrFrame.shouldRender)
                 for (int i = 0; i < w.xr->eyeCount(); ++i)

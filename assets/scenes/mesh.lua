@@ -60,7 +60,7 @@ function m.capsule(p)
     return { pos = pos, nrm = nrm, uv = uv, idx = idx }
 end
 
--- icosphere (subdivided icosahedron), centered at p.center
+-- icosphere (subdivided icosahedron), centered at the origin
 local function icoSphere(subdiv)
     local t = (1 + math.sqrt(5)) * 0.5
     local verts = { { -1, t, 0 }, { 1, t, 0 }, { -1, -t, 0 }, { 1, -t, 0 }, { 0, -1, t }, { 0, 1, t },
@@ -103,13 +103,12 @@ end
 function m.sphere(p)
     local subdiv = p.subdiv or 4
     local r = p.radius or 1.0
-    local c = p.center or { 0, 0, 0 }
     local verts, tris = icoSphere(subdiv)
     local n = #verts
     local pos, nrm, uv, idx = {}, {}, {}, {}
     for i = 1, n do
         local d = verts[i]
-        pos[3 * i - 2], pos[3 * i - 1], pos[3 * i] = c[1] + d[1] * r, c[2] + d[2] * r, c[3] + d[3] * r
+        pos[3 * i - 2], pos[3 * i - 1], pos[3 * i] = d[1] * r, d[2] * r, d[3] * r
         nrm[3 * i - 2], nrm[3 * i - 1], nrm[3 * i] = d[1], d[2], d[3]
         uv[2 * i - 1] = 0.5 + math.atan(d[3], d[1]) / (2 * math.pi)
         uv[2 * i] = 0.5 + math.asin(d[2]) / math.pi
@@ -151,17 +150,16 @@ function m.box(p)
     return { pos = pos, nrm = nrm, uv = uv, idx = idx }
 end
 
--- cw x ch vertex grid in the xz plane at y=y0, spanning +/- span/2
+-- cw x ch vertex grid in the xz plane at the origin, spanning +/- span/2
 function m.plane(p)
     local cw, ch = p.cw, p.ch
     local span = p.span
-    local y0 = p.y0 or 0
     local pos, nrm, uv, idx = {}, {}, {}, {}
     for gy = 0, ch - 1 do
         for gx = 0, cw - 1 do
             local v = gy * cw + gx + 1
             pos[3 * v - 2] = -span / 2 + span * gx / (cw - 1)
-            pos[3 * v - 1] = y0
+            pos[3 * v - 1] = 0
             pos[3 * v] = -span / 2 + span * gy / (ch - 1)
             nrm[3 * v - 2], nrm[3 * v - 1], nrm[3 * v] = 0, 1, 0
             uv[2 * v - 1], uv[2 * v] = gx / (cw - 1), gy / (ch - 1)

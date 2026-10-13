@@ -1,3 +1,4 @@
+#include "ecs.hpp"
 #include "shadow_frag_spv.hpp"
 #include "shadow_vert_spv.hpp"
 #include "vk/renderer.hpp"
@@ -81,8 +82,18 @@ void Renderer::initShadow(VkApp& app) {
     app.submit(cmd);
 }
 
-void Renderer::renderShadowCubes(VkCommandBuffer cmd) {
-    const uint32_t n = (uint32_t)std::min(m_lights.size(), (size_t)kMaxLights);
+void Renderer::renderShadowCubes(VkCommandBuffer cmd, const entt::registry& reg) {
+    struct SL {
+        V3 pos;
+        float nearP, farP, normalBias;
+    };
+    SL sl[kMaxLights];
+    int n = 0;
+    reg.view<WorldTransform, PointLight>().each([&](auto, const WorldTransform& wt, const PointLight& p) {
+        if (n < kMaxLights && p.on >= 0.5f)
+            sl[n++] = {wt.pos, std::max(p.shadowNear, 0.001f),
+                       std::max(p.shadowFar, std::max(p.shadowNear, 0.001f) + 0.01f), p.shadowNormalBias};
+    });
     if (n == 0)
         return;
     struct Face {
@@ -99,14 +110,10 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd) {
     VkViewport vp{0.0f, 0.0f, (float)m_shadowSize, (float)m_shadowSize, 0.0f, 1.0f};
     VkRect2D sc{0, 0, m_shadowSize, m_shadowSize};
 
-    for (uint32_t i = 0; i < n; ++i) {
-        const Light& L = m_lights[i];
-        if (L.p.on < 0.5f)
-            continue;
-        const float shadowNear = std::max(L.p.shadowNear, 0.001f);
-        const float shadowFar = std::max(L.p.shadowFar, shadowNear + 0.01f);
-        const Mat4 proj = perspective(90.0f, 1.0f, shadowNear, shadowFar);
-        const float farD = shadowFar + 1.0f;
+    for (int i = 0; i < n; ++i) {
+        const SL& L = sl[i];
+        const Mat4 proj = perspective(90.0f, 1.0f, L.nearP, L.farP);
+        const float farD = L.farP + 1.0f;
 
         for (uint32_t f = 0; f < 6; ++f) {
             const Face& fc = faces[f];
@@ -131,7 +138,7 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd) {
             pc.lightPosBias[0] = L.pos.x;
             pc.lightPosBias[1] = L.pos.y;
             pc.lightPosBias[2] = L.pos.z;
-            pc.lightPosBias[3] = L.p.shadowNormalBias;
+            pc.lightPosBias[3] = L.normalBias;
 
             VkClearValue cv[2]{};
             cv[0].color = {farD, 0.0f, 0.0f, 1.0f};
@@ -149,9 +156,8 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipe);
             vkCmdPushConstants(cmd, m_shadowPl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                sizeof(Pc), &pc);
-            for (const auto& inst : m_insts)
-                if (!inst.dead)
-                    drawInstance(cmd, m_shadowPl, m_geoms[inst.geom], inst);
+            for (auto [e, rend] : reg.view<Renderable>().each())
+                drawInstance(cmd, m_shadowPl, m_geoms[m_insts[rend.inst].geom], m_insts[rend.inst]);
             vkCmdEndRenderPass(cmd);
         }
     }
@@ -159,7 +165,7 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd) {
     VkImageMemoryBarrier imb{};
     imb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     imb.image = m_shadowCube;
-    imb.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, n * 6};
+    imb.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, (uint32_t)(n * 6)};
     imb.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     imb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     imb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;

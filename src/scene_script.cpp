@@ -626,6 +626,7 @@ int SceneScript::lEntity(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
     const entt::entity e = w.reg.create();
+    w.reg.emplace<Transform>(e); // identity pose; scripts set it before use (e.g. soft-body spawn)
     const char* name = luaL_optstring(L, 1, nullptr);
     if (name)
         w.reg.emplace<Name>(e, name);
@@ -826,10 +827,7 @@ int SceneScript::lDestroy(lua_State* L) {
         return 0;
     const auto subtree = subtreeEntities(w.reg, e);
     for (const auto c : subtree)
-        if (const auto* r = w.reg.try_get<Renderable>(c))
-            w.renderer.removeInstance(r->inst); // stop drawing; the instance buffer is released at shutdown
-    for (const auto c : subtree)
-        w.reg.destroy(c); // fires on_destroy<LuaScript> -> unrefs each script entity's Lua refs
+        w.reg.destroy(c); // destroyed entities fall out of the renderer's ECS query; buffers freed at shutdown
     return 0;
 }
 

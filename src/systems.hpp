@@ -38,8 +38,7 @@ void stepRigid(World& w);
 void resolveWorldTransforms(World& w);
 void syncColliders(World& w);
 void stepSoft(World& w, VkCommandBuffer cmd);
-// copy ECS transforms/materials/lights/env into the renderer; call before any render
-void syncSceneToRenderer(World& w);
+// query the ECS and render the scene (mono) to the swapchain image
 void draw(World& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui);
 
 // current camera: the VR head camera while presenting, the scene's fly camera otherwise;

@@ -32,8 +32,26 @@ void addStaticBox(World& w, entt::entity e, const V3& half) {
 
 void addSoftBody(World& w, entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
                  float mass) {
-    const Renderer::GpuMeshRef ref = w.renderer.addMesh(mesh);
-    w.reg.emplace<SoftBodyData>(e, w.sim.addSoftBody(mesh, cons, ref.rw));
+    // the entity's Transform is the pinned (spawn) pose: lift the local geometry into world space
+    // once here; the sim owns the vertices (world space) from then on
+    Mesh m = mesh;
+    Transform t{};
+    if (w.reg.try_get<Transform>(e))
+        t = worldTransform(w.reg, e);
+    for (int i = 0; i < m.vertexCount(); ++i) {
+        const V3 v = vAdd(quatRotate(t.quat, V3{m.pos[3 * i], m.pos[3 * i + 1], m.pos[3 * i + 2]}), t.pos);
+        m.pos[3 * i] = v.x;
+        m.pos[3 * i + 1] = v.y;
+        m.pos[3 * i + 2] = v.z;
+        if (m.nrm.size() == m.pos.size()) {
+            const V3 n = quatRotate(t.quat, V3{m.nrm[3 * i], m.nrm[3 * i + 1], m.nrm[3 * i + 2]});
+            m.nrm[3 * i] = n.x;
+            m.nrm[3 * i + 1] = n.y;
+            m.nrm[3 * i + 2] = n.z;
+        }
+    }
+    const Renderer::GpuMeshRef ref = w.renderer.addMesh(m);
+    w.reg.emplace<SoftBodyData>(e, w.sim.addSoftBody(m, cons, ref.rw));
     if (mass > 0.0f)
         w.reg.get<SoftBodyData>(e).params.mass = mass;
     w.reg.emplace<Renderable>(e, w.renderer.addInstance(ref.geom));
@@ -313,6 +331,8 @@ void resolveWorldTransforms(World& w) {
     };
     std::vector<Node> nodes;
     for (auto [e, t] : reg.view<Transform>().each()) {
+        if (reg.try_get<SoftBodyData>(e))
+            continue; // soft-body geometry is world-space (pinned pose lifted at spawn)
         entt::entity parent = entt::null;
         if (const auto* p = reg.try_get<Parent>(e))
             parent = p->e;
@@ -376,24 +396,6 @@ void stepSoft(World& w, VkCommandBuffer cmd) {
     w.sim.record(cmd);
 }
 
-void syncSceneToRenderer(World& w) {
-    for (auto [entity, rend, wt] : w.reg.view<Renderable, WorldTransform>().each())
-        w.renderer.setModel(rend.inst, wt.toMat4());
-    for (auto [entity, rend, ref] : w.reg.view<Renderable, MaterialRef>().each()) {
-        if (const auto* mat = w.reg.try_get<Material>(ref.mat)) {
-            w.renderer.setMaterial(rend.inst, mat->baseColor, mat->metallic, mat->roughness);
-            if (mat->texId >= 0)
-                w.renderer.setTexture(rend.inst, 0, mat->texId);
-        }
-    }
-    std::vector<Renderer::Light> lights;
-    for (auto [entity, wt, p] : w.reg.view<WorldTransform, PointLight>().each())
-        lights.push_back({wt.pos, p});
-    w.renderer.setLights(lights);
-    w.renderer.setEnvIntensity(w.render.envIntensity);
-}
-
 void draw(World& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui) {
-    syncSceneToRenderer(w);
-    w.renderer.draw(cmd, *w.app, fb, w.render.bgColor, imgui, w.render.exposure);
+    w.renderer.draw(cmd, *w.app, fb, w.reg, w.render, imgui);
 }

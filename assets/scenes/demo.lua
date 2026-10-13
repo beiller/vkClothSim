@@ -29,13 +29,15 @@ function M._on_ready(self)
         physics.body(e, capShape)
     end
 
-    -- soft bodies; the cloth is held (pinned) for PIN_SECS then released
-    local clothGeom = mesh.plane({ cw = 64, ch = 64, span = 8.0, y0 = 10.0 })
+    -- soft bodies; the entity's Transform is the pinned (spawn) pose, the cloth is released after PIN_SECS
+    local clothGeom = mesh.plane({ cw = 64, ch = 64, span = 8.0 })
     clothH = scene.entity("cloth")
+    scene.set(clothH, "pos", {0, 10, 0})
     soft.body(clothH, clothGeom, mesh.planeCons({ cw = 64, ch = 64, span = 8.0 }), "mat_cloth")
     scene.set(clothH, "pinned", 1)
-    local ballGeom = mesh.sphere({ subdiv = 2, radius = 1.5, center = {0, 12, 0} })
+    local ballGeom = mesh.sphere({ subdiv = 2, radius = 1.5 })
     local ball = scene.entity("ball")
+    scene.set(ball, "pos", {0, 12, 0})
     soft.body(ball, ballGeom, mesh.ballCons(ballGeom), "mat_ball", 2.0)
 end
 

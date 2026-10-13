@@ -5,10 +5,18 @@
 #include "math.hpp"
 #include "mesh.hpp"
 #include "xr_frame.hpp"
+#include <entt/entt.hpp>
 #include <imgui.h>
 #include <vector>
 
 class VkApp;
+
+// renderer-side state the UI binds to (not scene-graph data, so plain state, not an entity)
+struct RenderSettings {
+    float bgColor[3] = {0.10f, 0.11f, 0.15f};
+    float exposure = 1.0f;
+    float envIntensity = 1.0f;
+};
 
 class Renderer {
 public:
@@ -17,36 +25,27 @@ public:
         MeshGpu rw;
     };
 
-    struct Light {
-        V3 pos{0.0f, 0.0f, 0.0f};
-        PointLight p;
-    };
-
     static constexpr int kMaxLights = 8;
     static constexpr int kPoolChunk = 64; // descriptor pool growth step for mesh instances
 
     void init(VkApp& app, int nInstances, const Mat4& viewProj);
     GpuMeshRef addMesh(const Mesh& mesh);
-    int addInstance(int geom);
-    void removeInstance(int inst); // mark dead (skipped by draw); buffer freed at shutdown
-    void setModel(int inst, const Mat4& model);
-    void setMaterial(int inst, const V3& baseColor, float metallic, float roughness);
+    int addInstance(int geom); // per-instance model UBO + descriptor set; the ECS keeps the id
     int addTexture(const void* rgba, uint32_t w, uint32_t h);
-    void setTexture(int inst, int channel, int texId);
     void setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h);
     void setViewProj(const Mat4& vp, const V3& camPos);
-    void setLights(const std::vector<Light>& lights);
-    void setEnvIntensity(float intensity);
     void shutdown();
-    void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui, float exposure);
+    // per-frame: query the ECS for instance poses/materials + lights, upload them, render
+    void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
+              ImDrawData* imgui);
 
     // VR: per-eye scene render + side-by-side window debug view + headset swapchain
     void initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vector<std::vector<VkImage>>& images,
                       const VkExtent2D* exts);
     void setVrEyes(const XrEyeData* eyes, int nEyes);
     // xrImg[i] is the acquired swapchain image index for eye i (headet); nullptr = window only
-    void drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const float bg[3], ImDrawData* imgui, float exposure,
-                const uint32_t* xrImg, int nXr);
+    void drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
+                ImDrawData* imgui, const uint32_t* xrImg, int nXr);
 
 private:
     void drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx);
@@ -70,12 +69,7 @@ private:
         VkBuffer modelUbuf = VK_NULL_HANDLE;
         VkDeviceMemory modelMem = VK_NULL_HANDLE;
         VkDescriptorSet set = VK_NULL_HANDLE;
-        Mat4 model{};
-        V3 baseColor{1.0f, 1.0f, 1.0f};
-        float metallic = 0.0f;
-        float roughness = 0.5f;
-        int tex[3] = {-2, -2, -2}; // per-channel texture id; -2 = descriptor not written yet
-        bool dead = false;         // removed from the scene graph; skipped by draw, buffer freed at shutdown
+        int tex[3] = {-2, -2, -2}; // per-channel texture id last written to the descriptor
     };
 
     struct EnvPass {
@@ -88,17 +82,18 @@ private:
 
     static void drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const InstancedMesh& inst);
     void rebuildTonemapSet(VkApp& app);
-    void writeViewUbo(const Mat4& vp, const V3& cam);
-    void writeLights();
-    void prepBuffers();
-    void renderScenePass(VkCommandBuffer cmd, VkApp& app, const float bg[3]);
+    void writeViewUbo(const Mat4& vp, const V3& cam, float envIntensity);
+    void writeLights(const entt::registry& reg);
+    void prepBuffers(const entt::registry& reg);
+    void renderScenePass(VkCommandBuffer cmd, VkApp& app, const entt::registry& reg, const float bg[3]);
+    void setTexture(int inst, int channel, int texId); // rewrite the descriptor only when the id changes
     void hdrBarrier(VkCommandBuffer cmd, VkApp& app);
     void writeTonemapUbo(float ox, float oy, float sx, float sy);
     void ensureNoClearFbs(VkApp& app);
     Mat4 eyeVP(int eye) const;
     VkRect2D eyeRegion(int eye, VkExtent2D ext) const;
     void initShadow(VkApp& app);
-    void renderShadowCubes(VkCommandBuffer cmd);
+    void renderShadowCubes(VkCommandBuffer cmd, const entt::registry& reg);
     void makeComputePass(const void* spv, uint32_t len, const std::vector<VkDescriptorSetLayoutBinding>& binds,
                          uint32_t pcSize, EnvPass& out);
     void writeEnvSet(VkDescriptorSet set);
@@ -140,8 +135,6 @@ private:
 
     Mat4 m_viewProj{};
     V3 m_camPos{0, 0, 0};
-    std::vector<Light> m_lights;
-    float m_envIntensity = 1.0f;
     float m_exposure = 1.0f;
     VkBuffer m_lightsUbuf = VK_NULL_HANDLE;
     VkDeviceMemory m_lightsMem = VK_NULL_HANDLE;

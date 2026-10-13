@@ -10,13 +10,6 @@
 
 class VkApp;
 
-// renderer-side state the UI binds to (not scene-graph data, so plain state, not an entity)
-struct RenderSettings {
-    float bgColor[3] = {0.10f, 0.11f, 0.15f};
-    float exposure = 1.0f;
-    float envIntensity = 1.0f;
-};
-
 struct World {
     entt::registry reg;
     VkApp* app = nullptr;
