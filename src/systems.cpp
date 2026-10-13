@@ -7,32 +7,37 @@
 #include <cstdlib>
 #include <unordered_map>
 
-entt::entity spawnRigidBody(World& w, int shapeId, int geom, const Transform& t, entt::entity mat) {
-    entt::entity e = w.reg.create();
-    w.reg.emplace<Transform>(e, t.pos, t.quat);
+void addMesh(World& w, entt::entity e, int geom, entt::entity mat, const V3& pos, const V4& quat, entt::entity parent) {
+    if (!w.reg.try_get<Transform>(e))
+        w.reg.emplace<Transform>(e, pos, quat);
+    w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
+    w.reg.emplace<MaterialRef>(e, mat);
+    if (parent != entt::null)
+        w.reg.emplace<Parent>(e, parent);
+}
+
+void addRigidBody(World& w, entt::entity e, int shapeId) {
+    const Transform& t = w.reg.get<Transform>(e);
     const RigidBodyProps props{};
     w.reg.emplace<CapsuleCollider>(e, w.sim.addCapsule(w.rigid.shapeParams(shapeId)));
     w.reg.emplace<RigidDynamics>(e, props, w.rigid.addRigidBody(shapeId, t.pos, t.quat, props));
-    w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
-    w.reg.emplace<MaterialRef>(e, mat);
-    return e;
 }
 
-entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Constraint>& cons) {
-    entt::entity e = w.reg.create();
+void addStaticBox(World& w, entt::entity e, const V3& half) {
+    const Transform& t = w.reg.get<Transform>(e);
+    const RigidBodyProps props{};
+    w.reg.emplace<RigidDynamics>(e, props, w.rigid.addStaticBox(t.pos, half));
+    w.sim.setFloor(t.pos.y + half.y);
+}
+
+void addSoftBody(World& w, entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
+                 float mass) {
     const Renderer::GpuMeshRef ref = w.renderer.addMesh(mesh);
     w.reg.emplace<SoftBodyData>(e, w.sim.addSoftBody(mesh, cons, ref.rw));
+    if (mass > 0.0f)
+        w.reg.get<SoftBodyData>(e).params.mass = mass;
     w.reg.emplace<Renderable>(e, w.renderer.addInstance(ref.geom));
-    return e;
-}
-
-entt::entity spawnStaticGeom(World& w, int geom, const Transform& t, entt::entity parent) {
-    entt::entity e = w.reg.create();
-    w.reg.emplace<Transform>(e, t.pos, t.quat);
-    if (parent != entt::null)
-        w.reg.emplace<Parent>(e, parent);
-    w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
-    return e;
+    w.reg.emplace<MaterialRef>(e, mat);
 }
 
 entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float roughness, const char* name) {

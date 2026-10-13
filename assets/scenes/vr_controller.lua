@@ -44,7 +44,8 @@ local function spawnMarker(capEnt, hitPos)
     local capQ = {scene.get(capEnt, "qx"), scene.get(capEnt, "qy"), scene.get(capEnt, "qz"), scene.get(capEnt, "qw")}
     -- joint anchor (world hitPos) in the capsule's local frame
     local localPos = scene.qrot(scene.qinv(capQ), scene.vsub(hitPos, capPos))
-    marker = render.static(markerGeom, "grab_marker", localPos, {0, 0, 0, 1})
+    marker = scene.entity()
+    render.mesh(marker, markerGeom, "grab_marker", localPos, {0, 0, 0, 1})
     scene.add_child(capEnt, marker)
 end
 

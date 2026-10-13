@@ -71,9 +71,10 @@ private:
     // flat constraint array at idx: {a, b, rest, k, ...} with 1-based vertices; sets err
     static std::vector<sim::Constraint> readCons(lua_State* L, int idx, int nVerts, std::string& err);
 
+    static int lEntity(lua_State* L);
     static int lMaterial(lua_State* L);
     static int lGeometry(lua_State* L);
-    static int lStatic(lua_State* L);
+    static int lMesh(lua_State* L);
     static int lShapeCapsule(lua_State* L);
     static int lBody(lua_State* L);
     static int lBox(lua_State* L);

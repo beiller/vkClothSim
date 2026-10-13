@@ -9,9 +9,10 @@ local released = false
 local PIN_SECS = 3.0
 
 function M._on_ready(self)
-    -- ground: static visual box + physics floor (rigid box collider + soft-body floor at the box top)
-    render.static(render.geometry(mesh.box({ 55, 1, 55 })), "mat_ground", { 0, -1, 0 }, nil, "ground")
-    physics.box({ 40, 1, 40 }, { 0, -1, 0 })
+    -- ground: one entity with a visual box + static box collider + soft-body floor
+    local ground = scene.entity("ground")
+    render.mesh(ground, render.geometry(mesh.box({ 55, 1, 55 })), "mat_ground", { 0, -1, 0 })
+    physics.box(ground, { 40, 1, 40 })
 
     -- 50 scattered dynamic capsules, all sharing one shape, one material, one geometry
     local capShape = physics.shapeCapsule(0.9, 0.5)
@@ -23,15 +24,19 @@ function M._on_ready(self)
         local pz = (math.random() * 2 - 1) * 2
         local q = scene.qmul(scene.qaxis({0, 1, 0}, math.random() * 2 * math.pi),
                              scene.qaxis({1, 0, 0}, (math.random() * 2 - 1) * 0.9))
-        physics.body(capShape, capGeom, "mat_capsule", {px, py, pz}, q)
+        local e = scene.entity()
+        render.mesh(e, capGeom, "mat_capsule", {px, py, pz}, q)
+        physics.body(e, capShape)
     end
 
     -- soft bodies; the cloth is held (pinned) for PIN_SECS then released
-    local cloth = mesh.plane({ cw = 64, ch = 64, span = 8.0, y0 = 10.0 })
-    clothH = soft.body(cloth, mesh.planeCons({ cw = 64, ch = 64, span = 8.0 }), "mat_cloth", nil, "cloth")
+    local clothGeom = mesh.plane({ cw = 64, ch = 64, span = 8.0, y0 = 10.0 })
+    clothH = scene.entity("cloth")
+    soft.body(clothH, clothGeom, mesh.planeCons({ cw = 64, ch = 64, span = 8.0 }), "mat_cloth")
     scene.set(clothH, "pinned", 1)
-    local ball = mesh.sphere({ subdiv = 2, radius = 1.5, center = {0, 12, 0} })
-    soft.body(ball, mesh.ballCons(ball), "mat_ball", 2.0, "ball")
+    local ballGeom = mesh.sphere({ subdiv = 2, radius = 1.5, center = {0, 12, 0} })
+    local ball = scene.entity("ball")
+    soft.body(ball, ballGeom, mesh.ballCons(ballGeom), "mat_ball", 2.0)
 end
 
 function M._physics(self, dt)

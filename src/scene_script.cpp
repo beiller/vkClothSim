@@ -170,7 +170,8 @@ void SceneScript::init(World& w) {
         lua_setfield(L, -2, name);
     };
 
-    lua_newtable(L); // scene: the ECS graph, scripts, transforms, time, UI, and the math kit
+    lua_newtable(L);                     // scene: the ECS graph, scripts, transforms, time, UI, and the math kit
+    reg("entity", lEntity);              // entity(name?) -> new empty entity
     reg("set", lSet);                    // set(url, value | {values})
     reg("get", lGet);                    // get(url) -> number | {x, y, z}
     reg("time", lTime);                  // time() -> seconds since scene start
@@ -194,29 +195,29 @@ void SceneScript::init(World& w) {
     reg("qaxis", lqAxis);
     reg("qrot", lqRot);
     reg("qfromto", lqFromTo);
-    reg("find", lFind);                  // find(name) -> handle | nil
-    reg("is_vr", lIsVr);                 // is_vr() -> bool
-    reg("key_down", lKeyDown);           // key_down(entity, code) -> bool
+    reg("find", lFind);        // find(name) -> handle | nil
+    reg("is_vr", lIsVr);       // is_vr() -> bool
+    reg("key_down", lKeyDown); // key_down(entity, code) -> bool
     lua_setglobal(L, "scene");
 
-    lua_newtable(L); // render: geometry, materials, render-only instances
-    reg("geometry", lGeometry); // geometry(geomTable) -> geom id
+    lua_newtable(L);            // render: mesh assets, materials, and visuals
+    reg("geometry", lGeometry); // geometry(geomTable) -> shared mesh id
     reg("material", lMaterial); // material(name, color, metallic, roughness, texture?)
-    reg("static", lStatic);     // static(geom, mat, pos?, quat?, name?, {parent?}?)
+    reg("mesh", lMesh);         // mesh(entity, geom, mat, pos?, quat?, {parent?})
     lua_setglobal(L, "render");
 
-    lua_newtable(L); // physics: Jolt rigid bodies + colliders, raycasts, joints
-    reg("shapeCapsule", lShapeCapsule); // shapeCapsule(halfLen, radius) -> shape id
-    reg("body", lBody);                 // body(shape, geom, mat, pos?, quat?, name?) -> entity
-    reg("box", lBox);                   // box(halfExtents, pos?) -> static box collider + soft-body floor
-    reg("raycast", lRaycast);           // raycast(origin, dir, maxDist) -> {hit,pos,dist,entity} | nil
-    reg("create_joint", lCreateJoint);  // create_joint(entA, entB, type, grabPos) -> joint id
+    lua_newtable(L);                     // physics: Jolt shapes, rigid bodies, colliders, raycasts, joints
+    reg("shapeCapsule", lShapeCapsule);  // shapeCapsule(halfLen, radius) -> shared shape id
+    reg("body", lBody);                  // body(entity, shape) -> dynamic rigid body
+    reg("box", lBox);                    // box(entity, halfExtents) -> static box collider + soft floor
+    reg("raycast", lRaycast);            // raycast(origin, dir, maxDist) -> {hit,pos,dist,entity} | nil
+    reg("create_joint", lCreateJoint);   // create_joint(entA, entB, type, grabPos) -> joint id
     reg("destroy_joint", lDestroyJoint); // destroy_joint(id)
-    reg("is_dynamic", lIsDynamic);      // is_dynamic(entity) -> bool
+    reg("is_dynamic", lIsDynamic);       // is_dynamic(entity) -> bool
     lua_setglobal(L, "physics");
 
-    lua_newtable(L); // soft: GPU soft bodies (a mesh + its constraints)
-    reg("body", lSoftBody); // body(geom, cons, mat, mass?, name?) -> entity
+    lua_newtable(L);        // soft: GPU soft bodies (a mesh + its constraints)
+    reg("body", lSoftBody); // body(entity, geom, cons, mat, mass?)
     lua_setglobal(L, "soft");
     // unref a script entity's Lua refs when it is destroyed
     w.reg.on_destroy<LuaScript>().connect<&SceneScript::onScriptDestroy>(this);
@@ -621,21 +622,56 @@ int SceneScript::lShapeCapsule(lua_State* L) {
     return 1;
 }
 
+int SceneScript::lEntity(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = w.reg.create();
+    const char* name = luaL_optstring(L, 1, nullptr);
+    if (name)
+        w.reg.emplace<Name>(e, name);
+    pushEnt(L, e);
+    return 1;
+}
+
+int SceneScript::lMesh(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = readEnt(L, 1);
+    const int geom = (int)luaL_checkinteger(L, 2);
+    const char* matName = luaL_checkstring(L, 3);
+    const V3 pos = readV3(L, 4);
+    const V4 quat = readQuat(L, 5);
+    const entt::entity parent = lua_istable(L, 6) ? optEnt(L, 6, "parent") : entt::null;
+    const entt::entity mat = findNamedEntity(w, matName);
+    if (mat == entt::null)
+        return luaL_error(L, "render.mesh: unknown material '%s'", matName);
+    addMesh(w, e, geom, mat, pos, quat, parent);
+    pushEnt(L, e);
+    return 1;
+}
+
 int SceneScript::lBody(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
-    const int shapeId = (int)luaL_checkinteger(L, 1);
-    const int geom = (int)luaL_checkinteger(L, 2);
-    const char* matName = luaL_checkstring(L, 3);
-    auto pos = readV3(L, 4);
-    auto quat = readQuat(L, 5);
-    const char* name = luaL_optstring(L, 6, nullptr);
-    const entt::entity mat = findNamedEntity(w, matName);
-    if (mat == entt::null)
-        return luaL_error(L, "physics.body: unknown material '%s'", matName);
-    const entt::entity e = spawnRigidBody(w, shapeId, geom, {pos, quat}, mat);
-    if (name)
-        w.reg.emplace<Name>(e, name);
+    const entt::entity e = readEnt(L, 1);
+    const int shapeId = (int)luaL_checkinteger(L, 2);
+    if (!w.reg.try_get<Transform>(e))
+        return luaL_error(L, "physics.body: entity has no transform (add a mesh first)");
+    addRigidBody(w, e, shapeId);
+    pushEnt(L, e);
+    return 1;
+}
+
+// a static box collider (rigid capsules) whose top face is the soft-body floor; the box is
+// axis-aligned around the entity's pose
+int SceneScript::lBox(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = readEnt(L, 1);
+    const V3 half = readV3(L, 2);
+    if (!w.reg.try_get<Transform>(e))
+        return luaL_error(L, "physics.box: entity has no transform (add a mesh first)");
+    addStaticBox(w, e, half);
     pushEnt(L, e);
     return 1;
 }
@@ -643,58 +679,22 @@ int SceneScript::lBody(lua_State* L) {
 int SceneScript::lSoftBody(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
-    const Mesh m = checkGeom(L, "soft.body");
+    const entt::entity e = readEnt(L, 1);
     std::string err;
-    std::vector<sim::Constraint> cons = readCons(L, 2, m.vertexCount(), err);
+    const Mesh m = readGeom(L, 2, err);
     if (!err.empty())
         return luaL_error(L, "soft.body: %s", err.c_str());
-    const char* matName = luaL_checkstring(L, 3);
-    const float mass = (float)luaL_optnumber(L, 4, 0.0f); // 0 = keep the default
-    const char* name = luaL_optstring(L, 5, nullptr);
+    std::vector<sim::Constraint> cons = readCons(L, 3, m.vertexCount(), err);
+    if (!err.empty())
+        return luaL_error(L, "soft.body: %s", err.c_str());
+    const char* matName = luaL_checkstring(L, 4);
+    const float mass = (float)luaL_optnumber(L, 5, 0.0f); // 0 = keep the default
     const entt::entity mat = findNamedEntity(w, matName);
     if (mat == entt::null)
         return luaL_error(L, "soft.body: unknown material '%s'", matName);
-    const entt::entity e = spawnSoftBody(w, m, cons);
-    if (mass > 0.0f)
-        w.reg.get<SoftBodyData>(e).params.mass = mass;
-    w.reg.emplace<MaterialRef>(e, mat);
-    if (name)
-        w.reg.emplace<Name>(e, name);
+    addSoftBody(w, e, m, cons, mat, mass);
     pushEnt(L, e);
     return 1;
-}
-
-int SceneScript::lStatic(lua_State* L) {
-    auto* self = sSelf(L);
-    World& w = self->w();
-    const int geom = (int)luaL_checkinteger(L, 1);
-    const char* matName = luaL_checkstring(L, 2);
-    Transform t{};
-    t.pos = readV3(L, 3);    // nil -> {0,0,0}
-    t.quat = readQuat(L, 4); // nil -> identity
-    const char* name = luaL_optstring(L, 5, nullptr);
-    const entt::entity parent = lua_istable(L, 6) ? optEnt(L, 6, "parent") : entt::null;
-    const entt::entity mat = findNamedEntity(w, matName);
-    if (mat == entt::null)
-        return luaL_error(L, "render.static: unknown material '%s'", matName);
-    const entt::entity e = spawnStaticGeom(w, geom, t, parent);
-    w.reg.emplace<MaterialRef>(e, mat);
-    if (name)
-        w.reg.emplace<Name>(e, name);
-    pushEnt(L, e);
-    return 1;
-}
-
-// a static box collider (rigid capsules) whose top face is the soft-body floor; the box is
-// axis-aligned. halfExtents = box half-extents, pos = box center (nil -> {0,0,0})
-int SceneScript::lBox(lua_State* L) {
-    auto* self = sSelf(L);
-    World& w = self->w();
-    const V3 half = readV3(L, 1);
-    const V3 pos = readV3(L, 2);
-    w.rigid.addStaticBox(pos, half);
-    w.sim.setFloor(pos.y + half.y);
-    return 0;
 }
 
 int SceneScript::lSet(lua_State* L) {

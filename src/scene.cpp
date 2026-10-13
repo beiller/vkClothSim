@@ -265,14 +265,13 @@ void createSceneWorld(World& w, const std::string& path) {
         if (o.contains("quat"))
             t.quat = v4(o["quat"], (p + " object " + name + " quat").c_str());
 
-        const entt::entity e = spawnStaticGeom(w, geom, t);
-        w.reg.emplace<Name>(e, name);
-
         const auto matName = o.at("material").get<std::string>();
         auto it = mats.find(matName);
         if (it == mats.end())
             fail(p, "object '" + name + "': unknown material '" + matName + "'");
-        w.reg.emplace<MaterialRef>(e, it->second);
+        const entt::entity e = w.reg.create();
+        addMesh(w, e, geom, it->second, t.pos, t.quat, entt::null);
+        w.reg.emplace<Name>(e, name);
     }
 
     // activate every script entity to fixpoint; a _on_ready may spawn more script entities,
