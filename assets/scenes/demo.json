@@ -7,7 +7,8 @@
         "pos": [0, 9, 14],
         "quat": [-0.201066, 0, 0, 0.979578],
         "fov": 50,
-        "active": true
+        "active": true,
+        "script": "scenes/camera"
     },
     "lights": [
         {

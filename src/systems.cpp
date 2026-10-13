@@ -119,12 +119,18 @@ Mat4 cameraViewProj(World& w, entt::entity cam, float aspect) {
 
 void stepXr(World& w) {
     const XrFrame& fr = w.xrFrame;
+    const bool havePose = fr.havePose && fr.nEyes > 0;
+    // current camera: the VR head camera while presenting, the scene's fly camera otherwise
+    if (w.vrCam != entt::null)
+        w.reg.get<Camera>(w.vrCam).active = havePose;
+    if (w.cam != entt::null)
+        w.reg.get<Camera>(w.cam).active = !havePose;
     const entt::entity cam = findActiveCamera(w);
     XrEyeData eyes[2]{};
     int n = 0;
-    if (fr.havePose && fr.nEyes > 0 && cam != entt::null) {
-        // head tracks the XR pose. The camera is a child of the VR root, so its LOCAL Transform is
-        // the reported head pose and its world = walkPos + head. The per-eye render poses are data
+    if (havePose && cam != entt::null) {
+        // the VR head camera tracks the XR pose. It's a child of the VR root, so its LOCAL Transform
+        // is the reported head pose and its world = walkPos + head. The per-eye render poses are data
         // (not entities), so they get walkPos added directly.
         const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
         Transform& t = w.reg.get<Transform>(cam);
@@ -137,7 +143,7 @@ void stepXr(World& w) {
             eyes[i].pos = vAdd(eyes[i].pos, walk);
         }
     } else if (cam != entt::null) {
-        // no session: virtual head = the active camera's world pose, with Quest 3 lens tangents
+        // no session: virtual head = the fly camera's world pose, with Quest 3 lens tangents
         const Transform wt = worldTransform(w.reg, cam);
         const V3 head = wt.pos;
         const V4 q = wt.quat;
@@ -165,16 +171,21 @@ static V3 restPose(int hand) {
     return hand == 0 ? V3{-0.30f, -0.40f, 0.40f} : V3{0.30f, -0.40f, 0.40f};
 }
 
-entt::entity spawnVrRoot(World& w, entt::entity head) {
-    // head-independent locomotion anchor. The head (active camera) and the grips are parented
-    // under it; its world Transform is walkPos, a translation driven only by stick locomotion
-    // (identity rotation), never the head. So head/grip world = walkPos + pose, and head motion
-    // can't leak into the grips (no drift).
+entt::entity spawnVrRoot(World& w) {
+    // head-independent locomotion anchor. The VR head camera and the grips are parented under it;
+    // its world Transform is walkPos, a translation driven only by stick locomotion (identity
+    // rotation), never the head. So head/grip world = walkPos + pose, and head motion can't leak
+    // into the grips (no drift). The VR head camera is a camera like the scene's fly camera, but
+    // C++-driven (XR pose, local to the root) instead of script-driven.
     entt::entity root = w.reg.create();
     w.reg.emplace<Transform>(root, V3{0, 0, 0}, V4{0, 0, 0, 1});
     w.reg.emplace<Name>(root, "vr root");
-    if (head != entt::null)
-        w.reg.emplace_or_replace<Parent>(head, root);
+    entt::entity head = w.reg.create();
+    w.reg.emplace<Transform>(head, V3{0, 0, 0}, V4{0, 0, 0, 1});
+    w.reg.emplace<Camera>(head, Camera{90.0f, 0.1f, 300.0f, false});
+    w.reg.emplace<Parent>(head, root);
+    w.reg.emplace<Name>(head, "vr cam");
+    w.vrCam = head;
     w.vrRoot = root;
     return root;
 }
@@ -209,9 +220,16 @@ void spawnControllers(World& w) {
 void stepControllers(World& w) {
     const XrFrame& fr = w.xrFrame;
     const entt::entity cam = findActiveCamera(w);
-    Transform headLocal{};
-    if (cam != entt::null)
-        headLocal = w.reg.get<Transform>(cam);
+    Transform headLocal{}; // head pose in the vr root's frame (the grips' parent)
+    if (cam != entt::null) {
+        if (fr.havePose && fr.nEyes > 0)
+            headLocal = w.reg.get<Transform>(cam); // vr cam: the XR head pose, already local
+        else {
+            // virtual head: the fly camera's world pose, re-expressed under the (rooted) vr root
+            const Transform wt = worldTransform(w.reg, cam);
+            headLocal = Transform{vSub(wt.pos, walkPos(w)), wt.quat};
+        }
+    }
     w.reg.view<ControllerInput, Transform>().each([&](auto e, ControllerInput& ci, Transform& t) {
         if (ci.hand < 0 || ci.hand >= 2)
             return;
@@ -368,10 +386,10 @@ void syncSceneToRenderer(World& w) {
                 w.renderer.setTexture(rend.inst, 0, mat->texId);
         }
     }
-    w.lights.clear();
+    std::vector<Renderer::Light> lights;
     for (auto [entity, wt, p] : w.reg.view<WorldTransform, PointLight>().each())
-        w.lights.push_back({wt.pos, p});
-    w.renderer.setLights(w.lights);
+        lights.push_back({wt.pos, p});
+    w.renderer.setLights(lights);
     w.renderer.setEnvIntensity(w.render.envIntensity);
 }
 

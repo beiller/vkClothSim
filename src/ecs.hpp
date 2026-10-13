@@ -90,8 +90,9 @@ struct SoftBodyData {
     int steps = kDefaultSteps;
 };
 
-// camera: pose lives in the entity's Transform, projection params here; active = the window
-// renders it (exactly one by convention). The active camera doubles as the viewer's head in VR.
+// camera: pose lives in the entity's Transform, projection params here; active = the current
+// camera the window renders (exactly one by convention). The engine swaps it per display mode:
+// the VR head camera ("vr cam") while presenting, the scene's fly camera otherwise.
 struct Camera {
     float fovDeg = 50.0f;
     float nearP = 0.1f;

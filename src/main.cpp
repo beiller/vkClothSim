@@ -64,17 +64,13 @@ int main(int argc, char** argv) {
                     imgs[i] = w.xr->images(i);
             }
             w.renderer.initXrTarget(app, w.xr->format(), w.xr->eyeCount(), imgs, exts);
-            spawnVrRoot(w, findActiveCamera(w));
+            spawnVrRoot(w);
             spawnControllers(w);
         } else
             std::printf(
                 "3dsim: no OpenXR session, using virtual head (LMB drag = look, WASD/QE = move, shift = fast)\n");
     }
     spawnInputEntities(w);
-    const entt::entity cam = findActiveCamera(w);
-    auto makeVP = [cam, &w](VkExtent2D ext) {
-        return cameraViewProj(w, cam, (float)ext.width / (float)ext.height);
-    };
 
     initImGui(app);
 
@@ -131,7 +127,10 @@ int main(int argc, char** argv) {
         // animation)
         resolveWorldTransforms(w);
 
-        w.renderer.setViewProj(makeVP(app.extent()), worldTransform(w.reg, cam).pos);
+        const entt::entity cam = findActiveCamera(w); // current camera (swapped by display mode)
+        if (cam != entt::null)
+            w.renderer.setViewProj(cameraViewProj(w, cam, (float)app.extent().width / (float)app.extent().height),
+                                   worldTransform(w.reg, cam).pos);
         imguiNewFrame();
         drawUi(w);
         if (w.showDemo) // ImGui's own demo window, not ours to decompose

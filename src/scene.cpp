@@ -175,11 +175,16 @@ void createSceneWorld(World& w, const std::string& path) {
     }
 
     const json& c = j.at("camera");
-    const entt::entity cam =
-        spawnCamera(w, v3(c.at("pos"), (p + " camera.pos").c_str()), v4(c.at("quat"), (p + " camera.quat").c_str()),
-                    c.value("fov", 50.0f), c.value("active", true));
+    w.cam = spawnCamera(w, v3(c.at("pos"), (p + " camera.pos").c_str()), v4(c.at("quat"), (p + " camera.quat").c_str()),
+                        c.value("fov", 50.0f), c.value("active", true));
+    const entt::entity cam = w.cam;
     if (c.contains("name"))
         w.reg.emplace<Name>(cam, c["name"].get<std::string>());
+    if (c.contains("script")) {
+        // the camera's behavior script (e.g. fly controls); self.entity is the camera itself
+        auto& ls = w.reg.emplace<LuaScript>(cam);
+        ls.file = c["script"].get<std::string>();
+    }
     w.render.envIntensity = j.value("envIntensity", 1.0f);
 
     const VkExtent2D ext = w.app->extent();

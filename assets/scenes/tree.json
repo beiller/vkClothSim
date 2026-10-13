@@ -7,7 +7,8 @@
         "pos": [0, 4.5, 15],
         "quat": [-0.049814, 0, 0, 0.998759],
         "fov": 50,
-        "active": true
+        "active": true,
+        "script": "scenes/camera"
     },
     "lights": [
         { "name": "sun", "pos": [7, 12, 5], "color": [1, 0.97, 0.92], "intensity": 200, "radius": 0.6 }
@@ -16,7 +17,8 @@
         { "name": "mat_ground", "baseColor": [0.16, 0.2, 0.14], "roughness": 0.9 }
     ],
     "objects": [
-        { "name": "tree", "script": "scenes/tree" }
+        { "name": "tree", "script": "scenes/tree" },
+        { "name": "vr", "script": "scenes/vr_controller" }
     ],
     "ui": {
         "title": "hierarchy",

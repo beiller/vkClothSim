@@ -7,7 +7,8 @@
         "pos": [0, 4, 11],
         "quat": [-0.088866, 0, 0, 0.996047],
         "fov": 50,
-        "active": true
+        "active": true,
+        "script": "scenes/camera"
     },
     "lights": [
         {
@@ -23,7 +24,8 @@
         { "name": "plaid", "baseColor": [1, 1, 1], "roughness": 0.35, "texture": "cloth_albedo.png" }
     ],
     "objects": [
-        { "name": "shadow", "script": "scenes/shadow" }
+        { "name": "shadow", "script": "scenes/shadow" },
+        { "name": "vr", "script": "scenes/vr_controller" }
     ],
     "set": {
         "ball.roughness": 0.35

@@ -42,12 +42,14 @@ void stepSoft(World& w, VkCommandBuffer cmd);
 void syncSceneToRenderer(World& w);
 void draw(World& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui);
 
-// headset pose -> active camera's LOCAL Transform (the camera is a child of the VR root, so its
-// world = walkPos + head); synthesize per-eye poses (headset eyes + walkPos, or the camera's world
-// pose with virtual lens FOVs) -> setVrEyes
+// current camera: the VR head camera while presenting, the scene's fly camera otherwise;
+// headset pose -> vr cam's LOCAL Transform (a child of the VR root, so its world = walkPos +
+// head); synthesize per-eye poses (headset eyes + walkPos, or the fly camera's world pose with
+// virtual lens FOVs) -> setVrEyes
 void stepXr(World& w);
-// head-independent VR locomotion anchor: a root the head + grips are parented under
-entt::entity spawnVrRoot(World& w, entt::entity head);
+// head-independent VR locomotion anchor: a root the VR head camera + grips are parented under;
+// also spawns the "vr cam" (the VR head camera)
+entt::entity spawnVrRoot(World& w);
 // create a tracked controller entity per hand, parented to the VR root; right hand gets a
 // kinematic Jolt body (hand anchor for joints)
 void spawnControllers(World& w);
