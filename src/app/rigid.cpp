@@ -7,9 +7,13 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Constraints/PointConstraint.h>
+#include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
+#include <cstring>
 #include <thread>
 
 namespace {
@@ -71,9 +75,52 @@ JPH::BodyID RigidScene::addStaticBody(const RigidBody& body) {
     return bi.CreateAndAddBody(cs, JPH::EActivation::DontActivate);
 }
 
+JPH::BodyID RigidScene::addKinematicBody(const V3& pos, const V4& quat, float radius) {
+    // kinematic = user-driven anchor for joints; infinite mass in the solver, no integration
+    auto& bi = m_phys->GetBodyInterface();
+    JPH::BodyCreationSettings cs(new JPH::SphereShape(radius), JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat),
+                                 JPH::EMotionType::Kinematic, 1);
+    return bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
+}
+
 void RigidScene::setStaticPose(JPH::BodyID id, const Transform& t) {
     auto& bi = m_phys->GetBodyInterface();
     bi.SetPositionAndRotation(id, JPH::RVec3(t.pos.x, t.pos.y, t.pos.z), jQuat(t.quat), JPH::EActivation::DontActivate);
+}
+
+void RigidScene::setKinematicPose(JPH::BodyID id, const V3& pos, const V4& quat) {
+    // kinematic body: Jolt derives its velocity from the position change (used by the solver/broadphase)
+    auto& bi = m_phys->GetBodyInterface();
+    bi.SetPositionAndRotation(id, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat), JPH::EActivation::Activate);
+}
+
+int RigidScene::createJoint(JPH::BodyID a, JPH::BodyID b, const char* type) {
+    if (std::strcmp(type, "point") != 0)
+        return -1;
+    // no body locking: single-threaded between Update() calls, so the references stay valid
+    JPH::Body* bodyA = m_phys->GetBodyLockInterface().TryGetBody(a);
+    JPH::Body* bodyB = m_phys->GetBodyLockInterface().TryGetBody(b);
+    if (!bodyA || !bodyB)
+        return -1;
+    JPH::PointConstraintSettings cs;
+    // LocalToBodyCOM with both points at the COM: ball joint pinning the two centers of mass
+    // together, so the grabbed body's COM follows the hand's COM (and rotates freely).
+    cs.mSpace = JPH::EConstraintSpace::LocalToBodyCOM;
+    cs.mPoint1 = JPH::RVec3::sZero();
+    cs.mPoint2 = JPH::RVec3::sZero();
+    JPH::TwoBodyConstraint* constraint = cs.Create(*bodyA, *bodyB);
+    m_phys->AddConstraint(constraint);
+    m_joints.push_back({constraint, true});
+    return (int)m_joints.size() - 1;
+}
+
+void RigidScene::destroyJoint(int jointId) {
+    if (jointId < 0 || jointId >= (int)m_joints.size() || !m_joints[jointId].alive)
+        return;
+    // RemoveConstraint drops the manager's ref; releasing ours frees the constraint (never delete by hand)
+    m_phys->RemoveConstraint(m_joints[jointId].constraint);
+    m_joints[jointId].constraint = nullptr;
+    m_joints[jointId].alive = false;
 }
 
 void RigidScene::step() {
@@ -104,13 +151,6 @@ RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist) const
     return out;
 }
 
-void RigidScene::moveBody(JPH::BodyID id, const V3& pos, const V4& quat) {
-    auto& bi = m_phys->GetBodyInterface();
-    bi.SetPositionAndRotation(id, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat), JPH::EActivation::DontActivate);
-    bi.SetLinearVelocity(id, JPH::Vec3(0.0f, 0.0f, 0.0f));
-    bi.SetAngularVelocity(id, JPH::Vec3(0.0f, 0.0f, 0.0f));
-}
-
 void RigidScene::setVelocity(JPH::BodyID id, const V3& linVel) {
     auto& bi = m_phys->GetBodyInterface();
     bi.SetLinearVelocity(id, JPH::Vec3(linVel.x, linVel.y, linVel.z));
@@ -118,5 +158,7 @@ void RigidScene::setVelocity(JPH::BodyID id, const V3& linVel) {
 
 bool RigidScene::isDynamic(JPH::BodyID id) const {
     JPH::BodyLockRead lock(m_phys->GetBodyLockInterface(), id);
+    if (!lock.Succeeded())
+        return false;
     return lock.GetBody().IsDynamic();
 }

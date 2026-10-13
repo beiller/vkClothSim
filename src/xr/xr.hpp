@@ -122,7 +122,8 @@ private:
     XrActionSet m_actionSet = XR_NULL_HANDLE;
     XrPath m_hand[2] = {XR_NULL_PATH, XR_NULL_PATH};
     XrAction m_gripPose = XR_NULL_HANDLE, m_aimPose = XR_NULL_HANDLE, m_trigger = XR_NULL_HANDLE,
-             m_stick = XR_NULL_HANDLE;
+             m_stick = XR_NULL_HANDLE, m_squeeze = XR_NULL_HANDLE, m_buttonA = XR_NULL_HANDLE,
+             m_buttonB = XR_NULL_HANDLE;
     XrSpace m_gripSpace[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE}, m_aimSpace[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
     int m_diagFrame = 0;
     // createDevice phases

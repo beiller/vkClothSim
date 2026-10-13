@@ -70,6 +70,7 @@ int main(int argc, char** argv) {
             std::printf(
                 "3dsim: no OpenXR session, using virtual head (LMB drag = look, WASD/QE = move, shift = fast)\n");
     }
+    spawnInputEntities(w);
     const entt::entity cam = findActiveCamera(w);
     auto makeVP = [cam, &w](VkExtent2D ext) {
         return cameraViewProj(w, cam, (float)ext.width / (float)ext.height);
@@ -78,7 +79,7 @@ int main(int argc, char** argv) {
     initImGui(app);
 
     std::printf("3dsim: vulkan+imgui | GPU soft-body sim | scenes in assets/scenes (json + lua) | "
-                "R reset | VR auto-detected, --no-vr for plain window | --scene file.json | esc/close to quit\n");
+                "VR auto-detected, --no-vr for plain window | --scene file.json | esc/close to quit\n");
 
     auto lastFrame = std::chrono::steady_clock::now();
     float fpsAccum = 0.0f;
@@ -101,15 +102,12 @@ int main(int argc, char** argv) {
         app.pollEvents();
         if (w.xr)
             w.xrFrame = w.xr->poll();
-        if (w.xr)
-            stepLocomotion(w, dt);
-        stepFlyCamera(w, dt);
+        stepMouse(w);
+        stepKeyboard(w);
         if (w.xr)
             stepXr(w);
-        if (w.xr) {
+        if (w.xr)
             stepControllers(w);
-            stepGrab(w, dt);
-        }
         // activate any script entities spawned since last frame (fixpoint), then run _animate
         w.script.activateScripts();
         w.script.animateAll(dt);

@@ -106,24 +106,32 @@ struct Camera {
 };
 
 // a tracked controller (left/right). Its Transform is the grip pose, local under the VR root; the
-// aim pose (ref space) + trigger feed the grab interaction. Resolved to world by the rig chain.
+// aim pose (ref space) + inputs feed grab/locomotion from Lua. Resolved to world by the rig chain.
 struct ControllerInput {
-    int hand = -1; // 0 left, 1 right
-    V3 aimPos{};   // ref space
+    int hand = -1;          // 0 left, 1 right
+    float triggers[2] = {}; // 0 = trigger, 1 = squeeze (0..1)
+    float axis[2] = {};     // stick x, y (-1..1)
+    bool buttons[2] = {};   // 0 = A, 1 = B (pressed)
+    V3 aimPos{};            // ref space
     V4 aimQuat{0, 0, 0, 1};
-    float trigger = 0.0f;
     bool active = false;
 };
 
-// a rigid body held by a controller: world-space offset from the aim point, and the smoothed aim
-// velocity imparted on release (throw). Attached to the grabbing controller entity.
-struct Grab {
-    bool active = false;
-    JPH::BodyID body{};
-    V3 offset{};
-    V4 offsetQuat{0, 0, 0, 1};
-    V3 prevAim{};
-    V3 throwVel{};
+// a kinematic Jolt body driven by the engine (controller hand anchor for joints)
+struct KinematicBody {
+    JPH::BodyID id{};
+};
+
+// mouse pointer state (window-relative); "mouse" entity
+struct MouseInput {
+    float x = 0.0f;
+    float y = 0.0f;
+    bool buttons[4] = {}; // L, R, M, back
+};
+
+// keyboard state (GLFW key codes); "keyboard" entity
+struct KeyboardInput {
+    bool keys[352] = {};
 };
 
 struct Renderable {

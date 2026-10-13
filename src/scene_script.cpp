@@ -207,6 +207,13 @@ void SceneScript::init(World& w) {
     reg("qaxis", lqAxis);
     reg("qrot", lqRot);
     reg("qfromto", lqFromTo);
+    reg("find", lFind);                  // find(name) -> handle | nil
+    reg("is_vr", lIsVr);                 // is_vr() -> bool
+    reg("key_down", lKeyDown);           // key_down(entity, code) -> bool
+    reg("raycast", lRaycast);            // raycast(origin, dir, maxDist) -> {hit,pos,dist,entity} | nil
+    reg("create_joint", lCreateJoint);   // create_joint(entA, entB, type) -> joint id
+    reg("destroy_joint", lDestroyJoint); // destroy_joint(id)
+    reg("is_dynamic", lIsDynamic);       // is_dynamic(entity) -> bool
     lua_setglobal(L, "scene");
     // global module loader (restricted to the assets dir, cached per path)
     lua_pushlightuserdata(L, this);
@@ -967,5 +974,104 @@ int SceneScript::lqRot(lua_State* L) {
 
 int SceneScript::lqFromTo(lua_State* L) {
     pushV4(L, quatFromTo(readV3(L, 1), readV3(L, 2)));
+    return 1;
+}
+
+int SceneScript::lFind(lua_State* L) {
+    auto* self = sSelf(L);
+    const std::string name = luaL_checkstring(L, 1);
+    const entt::entity e = findNamedEntity(self->w(), name);
+    if (e == entt::null) {
+        lua_pushnil(L);
+        return 1;
+    }
+    pushEnt(L, e);
+    return 1;
+}
+
+int SceneScript::lIsVr(lua_State* L) {
+    auto* self = sSelf(L);
+    lua_pushboolean(L, self->w().xrFrame.havePose && self->w().xrFrame.nEyes > 0);
+    return 1;
+}
+
+int SceneScript::lKeyDown(lua_State* L) {
+    auto* self = sSelf(L);
+    const entt::entity e = readEnt(L, 1);
+    const int code = (int)luaL_checknumber(L, 2);
+    if (code < 0 || code >= 352) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    const auto* ki = self->w().reg.try_get<KeyboardInput>(e);
+    lua_pushboolean(L, ki && ki->keys[code]);
+    return 1;
+}
+
+int SceneScript::lRaycast(lua_State* L) {
+    auto* self = sSelf(L);
+    const V3 origin = readV3(L, 1);
+    const V3 dir = readV3(L, 2);
+    const float maxDist = (float)luaL_checknumber(L, 3);
+    const RayHit hit = self->w().rigid.raycast(origin, dir, maxDist);
+    if (!hit.hit) {
+        lua_pushnil(L);
+        return 1;
+    }
+    // find the ECS entity for the hit body
+    entt::entity bodyEnt = entt::null;
+    for (auto [e, dyn] : self->w().reg.view<RigidDynamics>().each())
+        if (dyn.id == hit.body)
+            bodyEnt = e;
+    lua_newtable(L);
+    lua_pushboolean(L, true);
+    lua_setfield(L, -2, "hit");
+    pushV3(L, hit.pos);
+    lua_setfield(L, -2, "pos");
+    lua_pushnumber(L, maxDist); // dist (approx; Jolt doesn't return it directly in RayCastResult)
+    lua_setfield(L, -2, "dist");
+    if (bodyEnt != entt::null) {
+        pushEnt(L, bodyEnt);
+        lua_setfield(L, -2, "entity");
+    }
+    return 1;
+}
+
+int SceneScript::lCreateJoint(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity eA = readEnt(L, 1);
+    const entt::entity eB = readEnt(L, 2);
+    const char* type = luaL_checkstring(L, 3);
+    // resolve Jolt body IDs: from RigidDynamics or KinematicBody
+    auto getBodyId = [&](entt::entity e) -> JPH::BodyID {
+        if (auto* d = w.reg.try_get<RigidDynamics>(e))
+            return d->id;
+        if (auto* k = w.reg.try_get<KinematicBody>(e))
+            return k->id;
+        return {};
+    };
+    const JPH::BodyID idA = getBodyId(eA);
+    const JPH::BodyID idB = getBodyId(eB);
+    if (idA.IsInvalid() && idB.IsInvalid())
+        return luaL_error(L, "scene.create_joint: entity has no rigid/kinematic body");
+    const int jid = w.rigid.createJoint(idA, idB, type);
+    if (jid < 0)
+        return luaL_error(L, "scene.create_joint: unknown type '%s'", type);
+    lua_pushnumber(L, jid);
+    return 1;
+}
+
+int SceneScript::lDestroyJoint(lua_State* L) {
+    auto* self = sSelf(L);
+    self->w().rigid.destroyJoint((int)luaL_checknumber(L, 1));
+    return 0;
+}
+
+int SceneScript::lIsDynamic(lua_State* L) {
+    auto* self = sSelf(L);
+    const entt::entity e = readEnt(L, 1);
+    const auto* d = self->w().reg.try_get<RigidDynamics>(e);
+    lua_pushboolean(L, d && self->w().rigid.isDynamic(d->id));
     return 1;
 }

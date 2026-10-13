@@ -319,7 +319,10 @@ void Xr::initActions() {
     if (XR_FAILED(mk(m_gripPose, "grip", XR_ACTION_TYPE_POSE_INPUT)) ||
         XR_FAILED(mk(m_aimPose, "aim", XR_ACTION_TYPE_POSE_INPUT)) ||
         XR_FAILED(mk(m_trigger, "trigger", XR_ACTION_TYPE_FLOAT_INPUT)) ||
-        XR_FAILED(mk(m_stick, "stick", XR_ACTION_TYPE_VECTOR2F_INPUT))) {
+        XR_FAILED(mk(m_stick, "stick", XR_ACTION_TYPE_VECTOR2F_INPUT)) ||
+        XR_FAILED(mk(m_squeeze, "squeeze", XR_ACTION_TYPE_FLOAT_INPUT)) ||
+        XR_FAILED(mk(m_buttonA, "button_a", XR_ACTION_TYPE_BOOLEAN_INPUT)) ||
+        XR_FAILED(mk(m_buttonB, "button_b", XR_ACTION_TYPE_BOOLEAN_INPUT))) {
         std::printf("xr: createAction failed\n");
         return;
     }
@@ -370,17 +373,43 @@ void Xr::initActions() {
     const char* aim = "/input/aim/pose";
     const char* trig = "/input/trigger/value";
     const char* stick = "/input/thumbstick";
+    const char* sqz = "/input/squeeze/value";
+    const char* btnA = "/input/a/click";
+    const char* btnB = "/input/b/click";
     suggest("/interaction_profiles/khr/simple_controller", {{m_gripPose, grip}, {m_aimPose, aim}});
-    suggest("/interaction_profiles/htc/vive_controller",
-            {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}, {m_stick, "/input/trackpad"}});
-    suggest("/interaction_profiles/oculus/touch_controller",
-            {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}, {m_stick, stick}});
-    suggest("/interaction_profiles/valve/index_controller",
-            {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}, {m_stick, stick}});
-    suggest("/interaction_profiles/valve/knuckles_controller",
-            {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}});
-    suggest("/interaction_profiles/windows/mixed_reality_controller",
-            {{m_gripPose, grip}, {m_aimPose, aim}, {m_trigger, trig}});
+    suggest("/interaction_profiles/htc/vive_controller", {{m_gripPose, grip},
+                                                          {m_aimPose, aim},
+                                                          {m_trigger, trig},
+                                                          {m_stick, "/input/trackpad"},
+                                                          {m_squeeze, sqz},
+                                                          {m_buttonA, "/input/grip/click"},
+                                                          {m_buttonB, btnA}});
+    suggest("/interaction_profiles/oculus/touch_controller", {{m_gripPose, grip},
+                                                              {m_aimPose, aim},
+                                                              {m_trigger, trig},
+                                                              {m_stick, stick},
+                                                              {m_squeeze, sqz},
+                                                              {m_buttonA, btnA},
+                                                              {m_buttonB, btnB}});
+    suggest("/interaction_profiles/valve/index_controller", {{m_gripPose, grip},
+                                                             {m_aimPose, aim},
+                                                             {m_trigger, trig},
+                                                             {m_stick, stick},
+                                                             {m_squeeze, sqz},
+                                                             {m_buttonA, btnA},
+                                                             {m_buttonB, btnB}});
+    suggest("/interaction_profiles/valve/knuckles_controller", {{m_gripPose, grip},
+                                                                {m_aimPose, aim},
+                                                                {m_trigger, trig},
+                                                                {m_squeeze, sqz},
+                                                                {m_buttonA, btnA},
+                                                                {m_buttonB, btnB}});
+    suggest("/interaction_profiles/windows/mixed_reality_controller", {{m_gripPose, grip},
+                                                                       {m_aimPose, aim},
+                                                                       {m_trigger, trig},
+                                                                       {m_squeeze, sqz},
+                                                                       {m_buttonA, btnA},
+                                                                       {m_buttonB, btnB}});
 
     // attach after the suggestions so the runtime can bind the suggested sources to our actions
     XrSessionActionSetsAttachInfo att{};
@@ -501,15 +530,25 @@ void Xr::pollControllers(XrFrame& fr) {
         XrActionStateFloat tf{};
         tf.type = XR_TYPE_ACTION_STATE_FLOAT;
         if (XR_SUCCEEDED(m_loader.xrGetActionStateFloat(m_session, &gi, &tf)) && tf.isActive)
-            c.trigger = tf.currentState;
+            c.triggers[0] = tf.currentState;
+        gi.action = m_squeeze;
+        if (XR_SUCCEEDED(m_loader.xrGetActionStateFloat(m_session, &gi, &tf)) && tf.isActive)
+            c.triggers[1] = tf.currentState;
         gi.action = m_stick;
         XrActionStateVector2f tv{};
         tv.type = XR_TYPE_ACTION_STATE_VECTOR2F;
         if (XR_SUCCEEDED(m_loader.xrGetActionStateVector2f(m_session, &gi, &tv)) && tv.isActive) {
-            c.stickOn = true;
-            // standard stick: x=left/right, y=up/down; keep the contract x=right, y=forward
-            c.stick = {tv.currentState.x, tv.currentState.y};
+            c.axis[0] = tv.currentState.x;
+            c.axis[1] = tv.currentState.y;
         }
+        gi.action = m_buttonA;
+        XrActionStateBoolean bf{};
+        bf.type = XR_TYPE_ACTION_STATE_BOOLEAN;
+        if (XR_SUCCEEDED(m_loader.xrGetActionStateBoolean(m_session, &gi, &bf)) && bf.isActive)
+            c.buttons[0] = bf.currentState;
+        gi.action = m_buttonB;
+        if (XR_SUCCEEDED(m_loader.xrGetActionStateBoolean(m_session, &gi, &bf)) && bf.isActive)
+            c.buttons[1] = bf.currentState;
         // pose via a lazily-created action space, located against the reference space
         auto poseOf = [&](XrAction action, XrSpace* space, const char* name, V3& outP, V4& outQ) -> bool {
             if (*space == XR_NULL_HANDLE) {
@@ -613,13 +652,13 @@ void Xr::destroyActions() {
     for (auto& s : m_aimSpace)
         if (s != XR_NULL_HANDLE)
             m_loader.xrDestroySpace(s);
-    for (auto& a : {m_gripPose, m_aimPose, m_trigger, m_stick})
+    for (auto& a : {m_gripPose, m_aimPose, m_trigger, m_stick, m_squeeze, m_buttonA, m_buttonB})
         if (a != XR_NULL_HANDLE)
             m_loader.xrDestroyAction(a);
     if (m_actionSet != XR_NULL_HANDLE)
         m_loader.xrDestroyActionSet(m_actionSet);
     m_gripSpace[0] = m_gripSpace[1] = m_aimSpace[0] = m_aimSpace[1] = XR_NULL_HANDLE;
-    m_gripPose = m_aimPose = m_trigger = m_stick = XR_NULL_HANDLE;
+    m_gripPose = m_aimPose = m_trigger = m_stick = m_squeeze = m_buttonA = m_buttonB = XR_NULL_HANDLE;
     m_actionSet = XR_NULL_HANDLE;
 }
 

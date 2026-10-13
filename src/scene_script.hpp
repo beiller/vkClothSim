@@ -102,6 +102,13 @@ private:
     static int lqAxis(lua_State* L);
     static int lqRot(lua_State* L);
     static int lqFromTo(lua_State* L);
+    static int lFind(lua_State* L);
+    static int lIsVr(lua_State* L);
+    static int lKeyDown(lua_State* L);
+    static int lRaycast(lua_State* L);
+    static int lCreateJoint(lua_State* L);
+    static int lDestroyJoint(lua_State* L);
+    static int lIsDynamic(lua_State* L);
 
     World* m_w = nullptr;
     lua_State* L = nullptr;

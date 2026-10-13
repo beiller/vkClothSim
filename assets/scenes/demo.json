@@ -32,7 +32,8 @@
         { "name": "mat_ball", "baseColor": [0.22, 0.62, 0.6], "roughness": 0.4 }
     ],
     "objects": [
-        { "name": "demo", "script": "scenes/demo" }
+        { "name": "demo", "script": "scenes/demo" },
+        { "name": "vr", "script": "scenes/vr_controller" }
     ],
     "ui": {
         "title": "3dsim",

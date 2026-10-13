@@ -17,11 +17,6 @@ struct RenderSettings {
     float envIntensity = 1.0f;
 };
 
-// fly-cam input state (cursor history for delta-look)
-struct FlyCam {
-    double prevCX = 0.0, prevCY = 0.0;
-};
-
 struct World {
     entt::registry reg;
     VkApp* app = nullptr;
@@ -31,8 +26,7 @@ struct World {
     std::unique_ptr<IXrBackend> xr;
     XrFrame xrFrame;
     RenderSettings render;
-    entt::entity vrRoot = entt::null; // head-independent locomotion anchor (world pos = walkPos)
-    FlyCam flyCam;
+    entt::entity vrRoot = entt::null;    // head-independent locomotion anchor (world pos = walkPos)
     std::vector<Renderer::Light> lights; // per-frame scratch for syncSceneToRenderer
     SceneScript script;                  // Lua layer: std geometry library + optional scene behavior
     float fps = 0.0f;

@@ -30,6 +30,10 @@ namespace refl {
 
 static const FieldDesc kTransform[] = {
     {"pos", OFF(Transform, pos), FieldKind::DragV3},
+    {"qx", OFF(Transform, quat), FieldKind::SliderF, -1.0f, 1.0f},
+    {"qy", OFF(Transform, quat) + 4, FieldKind::SliderF, -1.0f, 1.0f},
+    {"qz", OFF(Transform, quat) + 8, FieldKind::SliderF, -1.0f, 1.0f},
+    {"qw", OFF(Transform, quat) + 12, FieldKind::SliderF, -1.0f, 1.0f},
 };
 static const FieldDesc kMaterial[] = {
     {"baseColor", OFF(Material, baseColor), FieldKind::Color},
@@ -74,6 +78,28 @@ static const FieldDesc kRigidDynamics[] = {
     {"props.restitution", OFF2(RigidDynamics, props, restitution), FieldKind::SliderF, 0.0f, 1.0f},
     {"props.damping", OFF2(RigidDynamics, props, damping), FieldKind::SliderF, 0.0f, 1.0f},
 };
+static const FieldDesc kControllerInput[] = {
+    {"trigger_0", OFF(ControllerInput, triggers), FieldKind::SliderF, 0.0f, 1.0f},
+    {"trigger_1", OFF(ControllerInput, triggers) + 4, FieldKind::SliderF, 0.0f, 1.0f},
+    {"axis_0", OFF(ControllerInput, axis), FieldKind::SliderF, -1.0f, 1.0f},
+    {"axis_1", OFF(ControllerInput, axis) + 4, FieldKind::SliderF, -1.0f, 1.0f},
+    {"button_0", OFF(ControllerInput, buttons), FieldKind::Checkbox},
+    {"button_1", OFF(ControllerInput, buttons) + 1, FieldKind::Checkbox},
+    {"active", OFF(ControllerInput, active), FieldKind::Checkbox},
+    {"aim_pos", OFF(ControllerInput, aimPos), FieldKind::DragV3},
+    {"aim_qx", OFF(ControllerInput, aimQuat), FieldKind::SliderF, -1.0f, 1.0f},
+    {"aim_qy", OFF(ControllerInput, aimQuat) + 4, FieldKind::SliderF, -1.0f, 1.0f},
+    {"aim_qz", OFF(ControllerInput, aimQuat) + 8, FieldKind::SliderF, -1.0f, 1.0f},
+    {"aim_qw", OFF(ControllerInput, aimQuat) + 12, FieldKind::SliderF, -1.0f, 1.0f},
+};
+static const FieldDesc kMouseInput[] = {
+    {"x", OFF(MouseInput, x), FieldKind::SliderF, 0.0f, 3840.0f},
+    {"y", OFF(MouseInput, y), FieldKind::SliderF, 0.0f, 2160.0f},
+    {"button_0", OFF(MouseInput, buttons), FieldKind::Checkbox},
+    {"button_1", OFF(MouseInput, buttons) + 1, FieldKind::Checkbox},
+    {"button_2", OFF(MouseInput, buttons) + 2, FieldKind::Checkbox},
+    {"button_3", OFF(MouseInput, buttons) + 3, FieldKind::Checkbox},
+};
 static const FieldDesc kRenderSettings[] = {
     {"bgColor", OFF(RenderSettings, bgColor), FieldKind::Color},
     {"exposure", OFF(RenderSettings, exposure), FieldKind::SliderF, 0.1f, 3.0f},
@@ -85,14 +111,11 @@ static const FieldDesc kRigidScene[] = {
 };
 
 static const TypeDesc kTypes[] = {
-    {"Transform", kTransform},
-    {"Material", kMaterial},
-    {"MaterialRef", kMaterialRef},
-    {"Camera", kCamera},
-    {"PointLight", kPointLight},
-    {"SoftBodyData", kSoftBodyData},
-    {"RigidDynamics", kRigidDynamics},
-    {"RenderSettings", kRenderSettings},
+    {"Transform", kTransform},         {"Material", kMaterial},
+    {"MaterialRef", kMaterialRef},     {"Camera", kCamera},
+    {"PointLight", kPointLight},       {"SoftBodyData", kSoftBodyData},
+    {"RigidDynamics", kRigidDynamics}, {"ControllerInput", kControllerInput},
+    {"MouseInput", kMouseInput},       {"RenderSettings", kRenderSettings},
     {"RigidScene", kRigidScene},
 };
 
@@ -120,6 +143,10 @@ inline std::vector<std::pair<const TypeDesc*, const void*>> entityFields(const e
         out.push_back({findType("SoftBodyData"), (const void*)p});
     if (auto* p = reg.try_get<RigidDynamics>(e))
         out.push_back({findType("RigidDynamics"), (const void*)p});
+    if (auto* p = reg.try_get<ControllerInput>(e))
+        out.push_back({findType("ControllerInput"), (const void*)p});
+    if (auto* p = reg.try_get<MouseInput>(e))
+        out.push_back({findType("MouseInput"), (const void*)p});
     return out;
 }
 

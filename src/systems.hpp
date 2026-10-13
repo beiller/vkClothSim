@@ -48,23 +48,20 @@ void stepSoft(World& w, VkCommandBuffer cmd);
 void syncSceneToRenderer(World& w);
 void draw(World& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui);
 
-// mouse/keyboard move/look on the active camera (fly camera, or the virtual head when the XR
-// session is not running); skipped while a headset pose is active
-void stepFlyCamera(World& w, float dt);
 // headset pose -> active camera's LOCAL Transform (the camera is a child of the VR root, so its
 // world = walkPos + head); synthesize per-eye poses (headset eyes + walkPos, or the camera's world
 // pose with virtual lens FOVs) -> setVrEyes
 void stepXr(World& w);
-// head-independent VR locomotion anchor: a root the head + grips are parented under. Its world
-// Transform is walkPos (stick-driven, never the head), so world = walkPos + pose -> no drift
+// head-independent VR locomotion anchor: a root the head + grips are parented under
 entt::entity spawnVrRoot(World& w, entt::entity head);
-// right-stick smooth locomotion: integrate walkPos along the head's horizontal facing
-void stepLocomotion(World& w, float dt);
-// create a tracked controller entity per hand, parented to the VR root (grip pose -> LOCAL
-// Transform, aim pose + trigger -> ControllerInput, Grab on the right hand); a resting pose
-// shows until a pose arrives
+// create a tracked controller entity per hand, parented to the VR root; right hand gets a
+// kinematic Jolt body (hand anchor for joints)
 void spawnControllers(World& w);
-// headset controller poses -> controller entities' local Transform + ControllerInput (ref space)
+// headset controller poses -> controller entities' local Transform + ControllerInput + drive hand body
 void stepControllers(World& w);
-// right-controller trigger: aim-ray grab of a dynamic rigid body, release to throw
-void stepGrab(World& w, float dt);
+// GLFW -> "mouse" entity (position + buttons)
+void stepMouse(World& w);
+// GLFW -> "keyboard" entity (key states)
+void stepKeyboard(World& w);
+// create the "mouse" and "keyboard" entities (call once at startup)
+void spawnInputEntities(World& w);
