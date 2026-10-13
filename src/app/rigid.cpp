@@ -67,25 +67,12 @@ JPH::BodyID RigidScene::addRigidBody(const RigidBody& body) {
     return bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
 }
 
-JPH::BodyID RigidScene::addStaticBody(const RigidBody& body) {
-    auto& bi = m_phys->GetBodyInterface();
-    JPH::BodyCreationSettings cs(new JPH::CapsuleShape(body.shape.halfLen, body.shape.radius),
-                                 JPH::RVec3(body.position.x, body.position.y, body.position.z), jQuat(body.orientation),
-                                 JPH::EMotionType::Static, 1);
-    return bi.CreateAndAddBody(cs, JPH::EActivation::DontActivate);
-}
-
 JPH::BodyID RigidScene::addKinematicBody(const V3& pos, const V4& quat, float radius) {
     // kinematic = user-driven anchor for joints; infinite mass in the solver, no integration
     auto& bi = m_phys->GetBodyInterface();
     JPH::BodyCreationSettings cs(new JPH::SphereShape(radius), JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat),
                                  JPH::EMotionType::Kinematic, 1);
     return bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
-}
-
-void RigidScene::setStaticPose(JPH::BodyID id, const Transform& t) {
-    auto& bi = m_phys->GetBodyInterface();
-    bi.SetPositionAndRotation(id, JPH::RVec3(t.pos.x, t.pos.y, t.pos.z), jQuat(t.quat), JPH::EActivation::DontActivate);
 }
 
 void RigidScene::setKinematicPose(JPH::BodyID id, const V3& pos, const V4& quat) {
@@ -150,11 +137,6 @@ RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist) const
     out.body = hit.mBodyID;
     out.pos = {hp.GetX(), hp.GetY(), hp.GetZ()};
     return out;
-}
-
-void RigidScene::setVelocity(JPH::BodyID id, const V3& linVel) {
-    auto& bi = m_phys->GetBodyInterface();
-    bi.SetLinearVelocity(id, JPH::Vec3(linVel.x, linVel.y, linVel.z));
 }
 
 bool RigidScene::isDynamic(JPH::BodyID id) const {

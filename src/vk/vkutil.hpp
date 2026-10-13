@@ -56,13 +56,6 @@ inline void vkWriteBuffer(VkDevice dev, VkDeviceMemory mem, const void* data, Vk
     vkUnmapMemory(dev, mem);
 }
 
-inline void vkZeroBuffer(VkDevice dev, VkDeviceMemory mem, VkDeviceSize size) {
-    void* p;
-    VK(vkMapMemory(dev, mem, 0, size, 0, &p));
-    std::memset(p, 0, size);
-    vkUnmapMemory(dev, mem);
-}
-
 inline void vkFreeBuffer(VkDevice dev, VkBuffer buf, VkDeviceMemory mem) {
     if (buf) {
         vkDestroyBuffer(dev, buf, nullptr);
@@ -158,55 +151,6 @@ inline void vkMakeSamplerEx(VkDevice dev, VkSamplerAddressMode addrU, VkSamplerA
     s.maxLod = maxLod;
     s.unnormalizedCoordinates = VK_FALSE;
     VK(vkCreateSampler(dev, &s, nullptr, &out));
-}
-
-inline void vkMakeImage2DF32(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint32_t h, const float* rgb,
-                             VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
-    VkImageCreateInfo ici{};
-    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VK_FORMAT_R32G32B32_SFLOAT;
-    ici.extent = {w, h, 1};
-    ici.mipLevels = 1;
-    ici.arrayLayers = 1;
-    ici.samples = VK_SAMPLE_COUNT_1_BIT;
-    ici.tiling = VK_IMAGE_TILING_LINEAR;
-    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
-    ici.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
-    VK(vkCreateImage(dev, &ici, nullptr, &img));
-    VkMemoryRequirements mr;
-    vkGetImageMemoryRequirements(dev, img, &mr);
-    VkMemoryAllocateInfo maa{};
-    maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    maa.allocationSize = mr.size;
-    maa.memoryTypeIndex =
-        vkFindMemoryType(pdev, mr, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    VK(vkAllocateMemory(dev, &maa, nullptr, &mem));
-    VK(vkBindImageMemory(dev, img, mem, 0));
-    if (rgb) {
-        VkImageSubresource sub{};
-        sub.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        sub.mipLevel = 0;
-        sub.arrayLayer = 0;
-        VkSubresourceLayout layout{};
-        vkGetImageSubresourceLayout(dev, img, &sub, &layout);
-        const VkDeviceSize rowBytes = (VkDeviceSize)w * 12;
-        const VkDeviceSize rowPitch = layout.rowPitch;
-        void* p;
-        VK(vkMapMemory(dev, mem, 0, mr.size, 0, &p));
-        char* dst = static_cast<char*>(p);
-        const char* src = reinterpret_cast<const char*>(rgb);
-        for (uint32_t y = 0; y < h; ++y)
-            std::memcpy(dst + (size_t)y * rowPitch, src + (size_t)y * rowBytes, (size_t)rowBytes);
-        vkUnmapMemory(dev, mem);
-    }
-    VkImageViewCreateInfo vci{};
-    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = img;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = VK_FORMAT_R32G32B32_SFLOAT;
-    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VK(vkCreateImageView(dev, &vci, nullptr, &view));
 }
 
 inline void vkMakeCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, uint32_t mipLevels, VkImage& img,

@@ -50,8 +50,6 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
         return;
     const uint32_t cubeSize = 256;
     const uint32_t mips = 5;
-    m_envCubeSize = cubeSize;
-    m_envMips = mips;
 
     // equirect HDR: upload via staging buffer. Metal rejects linear tiling for 16/32-bit float
     // and does not support R32G32B32_SFLOAT at all, so repack RGB->RGBA and use

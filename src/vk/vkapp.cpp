@@ -262,10 +262,6 @@ void VkApp::pollEvents() {
         recreateSwapchain();
 }
 
-bool VkApp::keyIsDown(int key) const {
-    return glfwGetKey(m_win, key) == GLFW_PRESS;
-}
-
 uint32_t VkApp::acquireNextImage() {
     uint32_t idx = 0;
     const VkResult r = vkAcquireNextImageKHR(m_dev, m_sc, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &idx);

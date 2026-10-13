@@ -19,7 +19,6 @@ public:
 
     bool windowShouldClose() const;
     void pollEvents();
-    bool keyIsDown(int key) const;
 
     GLFWwindow* glfwWindow() const { return m_win; }
     VkInstance instance() const { return m_inst; }
@@ -29,14 +28,12 @@ public:
     uint32_t queueFamily() const { return m_qf; }
     VkRenderPass renderPass() const { return m_rp; }
     VkRenderPass sceneRenderPass() const { return m_rpScene; }
-    VkSwapchainKHR swapchain() const { return m_sc; }
     VkFramebuffer frameBuffer(uint32_t i) const { return m_fbs[i]; }
     VkImageView view(uint32_t i) const { return m_views[i]; }
     VkFramebuffer sceneFramebuffer() const { return m_sceneFb; }
     VkImageView hdrView() const { return m_hdrView; }
     VkSampler hdrSampler() const { return m_hdrSampler; }
     VkImage hdrImage() const { return m_hdr; }
-    VkFormat hdrFormat() const { return m_hdrFmt; }
     VkFormat swapchainFormat() const { return m_scfmt; }
     VkExtent2D extent() const { return m_extent; }
     uint32_t imageCount() const { return (uint32_t)m_images.size(); }

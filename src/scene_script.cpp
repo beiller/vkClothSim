@@ -186,7 +186,6 @@ void SceneScript::init(World& w) {
     reg("set", lSet);                    // set(url, value | {values})
     reg("get", lGet);                    // get(url) -> number | {x, y, z}
     reg("time", lTime);                  // time() -> seconds since scene start
-    reg("entity", lEntity);              // entity(name) -> handle
     reg("button", lButton);              // button(name, fn())
     reg("set_pose", lSetPose);           // set_pose(entity, pos, quat)
     reg("attach_script", lAttachScript); // attach_script(entity, file, params?)
@@ -215,10 +214,6 @@ void SceneScript::init(World& w) {
     reg("destroy_joint", lDestroyJoint); // destroy_joint(id)
     reg("is_dynamic", lIsDynamic);       // is_dynamic(entity) -> bool
     lua_setglobal(L, "scene");
-    // global module loader (restricted to the assets dir, cached per path)
-    lua_pushlightuserdata(L, this);
-    lua_pushcclosure(L, lInclude, 1);
-    lua_setglobal(L, "include");
     // unref a script entity's Lua refs when it is destroyed
     w.reg.on_destroy<LuaScript>().connect<&SceneScript::onScriptDestroy>(this);
 }
@@ -252,17 +247,6 @@ int SceneScript::includeModule(const std::string& rel, std::string& err) {
     lua_pop(L, 1);
     m_modules[full] = ref;
     return ref;
-}
-
-int SceneScript::lInclude(lua_State* L) {
-    auto* self = sSelf(L);
-    const char* p = luaL_checkstring(L, 1);
-    std::string err;
-    const int ref = self->includeModule(p, err);
-    if (ref < 0)
-        return luaL_error(L, "include: %s", err.c_str());
-    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
-    return 1;
 }
 
 bool SceneScript::loadMeshStdlib(std::string& err) {
@@ -770,16 +754,6 @@ int SceneScript::lGet(lua_State* L) {
 
 int SceneScript::lTime(lua_State* L) {
     lua_pushnumber(L, sSelf(L)->m_time);
-    return 1;
-}
-
-int SceneScript::lEntity(lua_State* L) {
-    auto* self = sSelf(L);
-    const std::string name = luaL_checkstring(L, 1);
-    const entt::entity e = findNamedEntity(self->w(), name);
-    if (e == entt::null)
-        return luaL_error(L, "scene.entity: no entity named '%s'", name.c_str());
-    pushEnt(L, e);
     return 1;
 }
 

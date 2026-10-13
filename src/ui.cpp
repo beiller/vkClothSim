@@ -191,8 +191,6 @@ void drawUi(World& w) {
               [&](entt::entity a, entt::entity b) { return reg.get<UIWindow>(a).order < reg.get<UIWindow>(b).order; });
     for (entt::entity win : wins) {
         const UIWindow& cfg = reg.get<UIWindow>(win);
-        if (cfg.visible && !cfg.visible())
-            continue;
         // NoMove windows (like the fps HUD) track their pos every frame; others are placed once and
         // can be moved/resized freely (state persists in imgui.ini)
         const bool pin = cfg.flags & ImGuiWindowFlags_NoMove;

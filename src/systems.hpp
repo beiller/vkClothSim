@@ -38,8 +38,6 @@ Transform worldTransform(entt::registry& reg, entt::entity e);
 Mat4 cameraViewProj(World& w, entt::entity cam, float aspect);
 
 void stepRigid(World& w);
-// push each RigidStatic body's ECS Transform into its Jolt body (Transform is the source of truth)
-void stepStaticRigid(World& w);
 // compose each entity's Transform through its Parent chain into a WorldTransform
 void resolveWorldTransforms(World& w);
 void syncColliders(World& w);

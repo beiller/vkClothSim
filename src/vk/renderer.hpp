@@ -75,7 +75,7 @@ private:
         float metallic = 0.0f;
         float roughness = 0.5f;
         int tex[3] = {-2, -2, -2}; // per-channel texture id; -2 = descriptor not written yet
-        bool dead = false;          // removed from the scene graph; skipped by draw, buffer freed at shutdown
+        bool dead = false;         // removed from the scene graph; skipped by draw, buffer freed at shutdown
     };
 
     struct EnvPass {
@@ -136,7 +136,6 @@ private:
     VkSampler m_eqSampler = VK_NULL_HANDLE, m_cubeSampler = VK_NULL_HANDLE;
     EnvPass m_pcCube, m_pcPref, m_pcIrr;
     VkDescriptorImageInfo m_envSpecInfo{}, m_envIrrInfo{};
-    uint32_t m_envCubeSize = 0, m_envMips = 0;
     bool m_envReady = false;
 
     Mat4 m_viewProj{};

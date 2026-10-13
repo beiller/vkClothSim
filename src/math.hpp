@@ -3,7 +3,6 @@
 #include <numbers>
 
 inline constexpr float kPi = std::numbers::pi_v<float>;
-inline constexpr float kSqrt2 = std::numbers::sqrt2_v<float>;
 inline constexpr float kFrameDt = 1.0f / 60.0f;
 
 struct V2 {
@@ -76,16 +75,6 @@ inline V4 quatFromTo(const V3& from, const V3& to) {
     V4 q{c.x, c.y, c.z, d + 1.0f};
     const float l = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
     return {q.x / l, q.y / l, q.z / l, q.w / l};
-}
-inline V3 vAt(const float* p, int i) {
-    const int o = 3 * i;
-    return {p[o], p[o + 1], p[o + 2]};
-}
-inline void vStore(float* p, int i, V3 v) {
-    const int o = 3 * i;
-    p[o] = v.x;
-    p[o + 1] = v.y;
-    p[o + 2] = v.z;
 }
 struct Mat4 {
     float m[16];

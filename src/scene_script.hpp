@@ -23,7 +23,7 @@ public:
 
     void init(World& w);
     // restricted module loader: run a .lua file under the assets dir once and cache its
-    // (table) result; registry ref, or -1 on error. Exposed to scripts as include(path)
+    // (table) result; registry ref, or -1 on error
     int includeModule(const std::string& relPath, std::string& err);
     // load the geometry stdlib ("scenes/mesh") as the global `mesh` and the geometry module
     // used by callMeshGen (declarative meshes + VR controller grips); false on error
@@ -64,7 +64,6 @@ private:
     void reportError(const char* what);
 
     static SceneScript* sSelf(lua_State* L);
-    static int lInclude(lua_State* L); // global include(path) -> module table
     // geometry table at idx: {pos, nrm?, uv?, idx} -> Mesh; sets err on failure
     static Mesh readGeom(lua_State* L, int idx, std::string& err);
     // geometry table at stack slot 1; errors via luaL_error
@@ -81,7 +80,6 @@ private:
     static int lSet(lua_State* L);
     static int lGet(lua_State* L);
     static int lTime(lua_State* L);
-    static int lEntity(lua_State* L);
     static int lButton(lua_State* L);
     static int lSetPose(lua_State* L);
     static int lAttachScript(lua_State* L);

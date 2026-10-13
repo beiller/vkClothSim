@@ -83,12 +83,6 @@ struct RigidDynamics {
     JPH::BodyID id;
 };
 
-// user-driven rigid body: its Jolt pose is written from the ECS Transform each frame (the Transform is the source of
-// truth)
-struct RigidStatic {
-    JPH::BodyID id;
-};
-
 struct SoftBodyData {
     int softId = -1;
     int pinned = 0;
@@ -135,7 +129,6 @@ struct KeyboardInput {
 };
 
 struct Renderable {
-    int mesh = -1;
     int inst = -1;
 };
 
@@ -166,7 +159,6 @@ struct UIWindow {
     V2 size{};               // zero = no forced size
     int flags = 0;
     bool collapseOnAppear = false;
-    std::function<bool()> visible; // null = always visible
     int order = 0;
 };
 

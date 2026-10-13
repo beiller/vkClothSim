@@ -150,7 +150,8 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd) {
             vkCmdPushConstants(cmd, m_shadowPl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                sizeof(Pc), &pc);
             for (const auto& inst : m_insts)
-                drawInstance(cmd, m_shadowPl, m_geoms[inst.geom], inst);
+                if (!inst.dead)
+                    drawInstance(cmd, m_shadowPl, m_geoms[inst.geom], inst);
             vkCmdEndRenderPass(cmd);
         }
     }

@@ -131,7 +131,6 @@ int main(int argc, char** argv) {
         // animation)
         resolveWorldTransforms(w);
 
-        stepStaticRigid(w);
         w.renderer.setViewProj(makeVP(app.extent()), worldTransform(w.reg, cam).pos);
         imguiNewFrame();
         drawUi(w);

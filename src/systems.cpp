@@ -12,7 +12,7 @@ entt::entity spawnCapsule(World& w, const RigidBody& body, int geom) {
     w.reg.emplace<Transform>(e, body.position, body.orientation);
     w.reg.emplace<CapsuleCollider>(e, w.sim.addCapsule(body.shape));
     w.reg.emplace<RigidDynamics>(e, body.props, w.rigid.addRigidBody(body));
-    w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
+    w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
     return e;
 }
 
@@ -20,14 +20,14 @@ entt::entity spawnSoftBody(World& w, const Mesh& mesh, const std::vector<sim::Co
     entt::entity e = w.reg.create();
     const Renderer::GpuMeshRef ref = w.renderer.addMesh(mesh);
     w.reg.emplace<SoftBodyData>(e, w.sim.addSoftBody(mesh, cons, ref.rw));
-    w.reg.emplace<Renderable>(e, ref.geom, w.renderer.addInstance(ref.geom));
+    w.reg.emplace<Renderable>(e, w.renderer.addInstance(ref.geom));
     return e;
 }
 
 entt::entity spawnStaticGeom(World& w, int geom, const Transform& t) {
     entt::entity e = w.reg.create();
     w.reg.emplace<Transform>(e, t.pos, t.quat);
-    w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
+    w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
     return e;
 }
 
@@ -78,7 +78,7 @@ entt::entity spawnVisualCapsule(World& w, int geom, const Transform& t, entt::en
     w.reg.emplace<Transform>(e, t.pos, t.quat);
     if (parent != entt::null)
         w.reg.emplace<Parent>(e, parent);
-    w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
+    w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
     w.reg.emplace<MaterialRef>(e, mat);
     return e;
 }
@@ -223,7 +223,7 @@ void spawnControllers(World& w) {
             const JPH::BodyID bid = w.rigid.addKinematicBody(V3{0, 0, 0}, V4{0, 0, 0, 1}, 0.02f);
             w.reg.emplace<KinematicBody>(e, bid);
         }
-        w.reg.emplace<Renderable>(e, geom, w.renderer.addInstance(geom));
+        w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
         w.reg.emplace<MaterialRef>(e, gripMat);
         w.reg.emplace<Name>(e, h == 0 ? "controller L" : "controller R");
     }
@@ -307,11 +307,6 @@ void stepRigid(World& w) {
     w.rigid.step();
     for (auto [entity, dyn, t] : w.reg.view<RigidDynamics, Transform>().each())
         t = w.rigid.pose(dyn.id);
-}
-
-void stepStaticRigid(World& w) {
-    for (auto [entity, st, t] : w.reg.view<RigidStatic, Transform>().each())
-        w.rigid.setStaticPose(st.id, t);
 }
 
 void resolveWorldTransforms(World& w) {

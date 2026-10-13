@@ -23,17 +23,14 @@ struct RigidBody {
 struct RayHit {
     bool hit = false;
     JPH::BodyID body{};
-    V3 pos{};    // world hit point
-    V3 normal{}; // world hit normal
+    V3 pos{}; // world hit point
 };
 
 class RigidScene {
 public:
     void init();
     JPH::BodyID addRigidBody(const RigidBody& body);
-    JPH::BodyID addStaticBody(const RigidBody& body);
     JPH::BodyID addKinematicBody(const V3& pos, const V4& quat, float radius);
-    void setStaticPose(JPH::BodyID id, const Transform& t);
     void setKinematicPose(JPH::BodyID id, const V3& pos, const V4& quat);
     void step();
     Transform pose(JPH::BodyID id) const;
@@ -42,7 +39,6 @@ public:
     // joint anchors (the ray collision point); returns joint id or -1
     int createJoint(JPH::BodyID a, JPH::BodyID b, const char* type, const V3& grabPos);
     void destroyJoint(int jointId);
-    void setVelocity(JPH::BodyID id, const V3& linVel);
     bool isDynamic(JPH::BodyID id) const;
 
     int velocitySteps = 10; // applied in step(); the UI slider binds to it
