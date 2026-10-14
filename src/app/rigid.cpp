@@ -143,12 +143,16 @@ Transform RigidScene::pose(JPH::BodyID id) const {
     return {{p.GetX(), p.GetY(), p.GetZ()}, {q.GetX(), q.GetY(), q.GetZ(), q.GetW()}};
 }
 
-RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist) const {
+RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist,
+                           const std::vector<JPH::BodyID>& excludes) const {
     RayHit out{};
     // direction encodes the endpoint (length included): anything beyond maxDist is not reported
     JPH::RRayCast ray(JPH::RVec3(origin.x, origin.y, origin.z), JPH::Vec3(dir.x, dir.y, dir.z) * maxDist);
     JPH::RayCastResult hit;
-    if (!m_phys->GetNarrowPhaseQuery().CastRay(ray, hit))
+    JPH::IgnoreMultipleBodiesFilter filter; // a ray from inside a convex body hits it at 0; skip ours
+    for (const auto& id : excludes)
+        filter.IgnoreBody(id);
+    if (!m_phys->GetNarrowPhaseQuery().CastRay(ray, hit, {}, {}, filter))
         return out;
     const JPH::Vec3 hp = ray.GetPointOnRay(hit.mFraction);
     out.hit = true;

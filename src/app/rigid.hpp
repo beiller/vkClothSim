@@ -36,7 +36,7 @@ public:
     void setKinematicPose(JPH::BodyID id, const V3& pos, const V4& quat);
     void step();
     Transform pose(JPH::BodyID id) const;
-    RayHit raycast(const V3& origin, const V3& dir, float maxDist) const;
+    RayHit raycast(const V3& origin, const V3& dir, float maxDist, const std::vector<JPH::BodyID>& excludes = {}) const;
     // joint between two bodies; type = "point" (ball-socket); grabPos = world point the
     // joint anchors (the ray collision point); returns joint id or -1
     int createJoint(JPH::BodyID a, JPH::BodyID b, const char* type, const V3& grabPos);

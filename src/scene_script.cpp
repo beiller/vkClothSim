@@ -213,7 +213,7 @@ void SceneScript::init(World& w) {
     reg("shapeCapsule", lShapeCapsule);  // shapeCapsule(halfLen, radius) -> shared shape id
     reg("shapeBox", lShapeBox);          // shapeBox(hx, hy, hz) -> shared shape id
     reg("body", lBody);                  // body(entity, shape, {static = 1}?) -> rigid body
-    reg("raycast", lRaycast);            // raycast(origin, dir, maxDist) -> {hit,pos,dist,entity} | nil
+    reg("raycast", lRaycast);            // raycast(origin, dir, maxDist, excludes?) -> {hit,pos,dist,entity} | nil
     reg("create_joint", lCreateJoint);   // create_joint(entA, entB, type, grabPos) -> joint id
     reg("destroy_joint", lDestroyJoint); // destroy_joint(id)
     reg("is_dynamic", lIsDynamic);       // is_dynamic(entity) -> bool
@@ -1097,7 +1097,23 @@ int SceneScript::lRaycast(lua_State* L) {
     const V3 origin = readV3(L, 1);
     const V3 dir = readV3(L, 2);
     const float maxDist = (float)luaL_checknumber(L, 3);
-    const RayHit hit = self->w().rigid.raycast(origin, dir, maxDist);
+    // optional arg 4: a table of entities whose bodies (dynamic or kinematic) the ray skips
+    std::vector<JPH::BodyID> excludes;
+    if (lua_istable(L, 4))
+        for (int i = 1;; ++i) {
+            lua_geti(L, 4, i);
+            if (lua_isnoneornil(L, -1)) {
+                lua_pop(L, 1);
+                break;
+            }
+            const entt::entity e = readEnt(L, -1);
+            if (auto* d = self->w().reg.try_get<RigidDynamics>(e))
+                excludes.push_back(d->id);
+            else if (auto* k = self->w().reg.try_get<KinematicBody>(e))
+                excludes.push_back(k->id);
+            lua_pop(L, 1);
+        }
+    const RayHit hit = self->w().rigid.raycast(origin, dir, maxDist, excludes);
     if (!hit.hit) {
         lua_pushnil(L);
         return 1;

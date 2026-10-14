@@ -81,7 +81,9 @@ local function grab()
             scene.get(ctrlH, "aim_qz"), scene.get(ctrlH, "aim_qw"),
         }
         local fwd = scene.qrot(aq, {0, 0, -1})
-        local hit = physics.raycast(aimWorld, fwd, kGrabRange)
+        -- exclude the controller's own kinematic anchor: the ray starts at its center and a
+        -- convex self-hit would otherwise always win at fraction 0
+        local hit = physics.raycast(aimWorld, fwd, kGrabRange, { ctrlH })
         if hit and hit.entity and physics.is_dynamic(hit.entity) then
             joint = physics.create_joint(ctrlH, hit.entity, "point", hit.pos)
             spawnMarker(hit.entity, hit.pos)
