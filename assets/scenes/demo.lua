@@ -36,12 +36,14 @@ function M._on_ready(self)
 
     -- soft bodies; the entity's Transform is the pinned (spawn) pose, the cloth is released after PIN_SECS
     local clothSpan = 8.0 * world_scale
-    local clothGeom = mesh.plane({ cw = 64, ch = 64, span = clothSpan })
+    local clothDim = 128
+    local clothGeom = mesh.plane({ cw = clothDim, ch = clothDim, span = clothSpan })
     clothH = scene.entity("cloth")
     scene.emplace(clothH, "Transform", { pos = {0, 10, 0} })
-    soft.body(clothH, clothGeom, mesh.planeCons({ cw = 64, ch = 64, span = clothSpan }), "mat_cloth")
+    soft.body(clothH, clothGeom, mesh.planeCons({ cw = clothDim, ch = clothDim, span = clothSpan }), "mat_cloth", 1.0)
     scene.set(clothH, "pinned", 1)
-    local ballGeom = mesh.sphere({ subdiv = 2, radius = 1.5 * world_scale })
+
+    local ballGeom = mesh.sphere({ subdiv = 4, radius = 1.5 * world_scale })
     local ball = scene.entity("ball")
     scene.emplace(ball, "Transform", { pos = {0, 12, 0} })
     soft.body(ball, ballGeom, mesh.ballCons(ballGeom), "mat_ball", 2.0)

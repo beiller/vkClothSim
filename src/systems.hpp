@@ -16,7 +16,8 @@ void addMesh(World& w, entt::entity e, int geom, entt::entity mat, entt::entity 
 void addSoftBody(World& w, entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
                  float mass);
 // shared material entity (Material, optional Name); meshes reference it via MaterialRef
-entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float roughness, const char* name = nullptr);
+entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float roughness, const V3& emissive,
+                           const char* name = nullptr);
 // first entity with a matching Name (entt::null if none)
 entt::entity findNamedEntity(const World& w, const std::string& name);
 // add a rigid body to an entity (needs a Transform): Jolt body from a shared shape + soft-sim

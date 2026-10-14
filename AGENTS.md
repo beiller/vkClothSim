@@ -9,6 +9,13 @@ Rigid-body sim (Jolt) with a GPU soft-body layer (cloth + ball), rendered with V
 lives in `assets/scenes/` (JSON + per-entity Lua) — the engine holds no scene content and no
 mesh generators.
 
+## Code Style
+
+Push if statements towards the top of functions. For loops are below.
+Make function names and parameters fully descriptive
+Keep functions as short as possible.
+Use a functional style where possible.
+
 ## Layers (keep loosely coupled)
 
 - rendering: `src/vk` + `shaders/`

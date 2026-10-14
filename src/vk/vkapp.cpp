@@ -102,6 +102,12 @@ bool VkApp::initInstance(int width, int height, const char* title) {
         glfwTerminate();
         return false;
     }
+    {
+        VkPhysicalDeviceProperties pp{};
+        vkGetPhysicalDeviceProperties(m_pdev, &pp);
+        std::printf("3dsim: gpu %s (%s)\n", pp.deviceName,
+                    pp.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "discrete" : "integrated");
+    }
 
     // queue + extensions
     m_qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;

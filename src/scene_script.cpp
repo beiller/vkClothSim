@@ -205,7 +205,7 @@ void SceneScript::init(World& w) {
 
     lua_newtable(L);            // render: mesh assets, materials, and visuals
     reg("geometry", lGeometry); // geometry(geomTable) -> shared mesh id
-    reg("material", lMaterial); // material(name, color, metallic, roughness, texture?)
+    reg("material", lMaterial); // material(name, color, metallic, roughness, texture?, emissive?)
     reg("mesh", lMesh);         // mesh(entity, geom, mat, pos?, quat?, {parent?})
     lua_setglobal(L, "render");
 
@@ -598,9 +598,10 @@ int SceneScript::lMaterial(lua_State* L) {
     const float metallic = (float)luaL_optnumber(L, 3, 0.0);
     const float roughness = (float)luaL_optnumber(L, 4, 0.5);
     const char* tex = luaL_optstring(L, 5, nullptr);
+    const V3 emissive = readV3(L, 6);
     entt::entity e = findNamedEntity(w, name);
     if (e == entt::null || !w.reg.try_get<Material>(e))
-        e = spawnMaterial(w, color, metallic, roughness, name);
+        e = spawnMaterial(w, color, metallic, roughness, emissive, name);
     if (tex) {
         const int texId = loadAssetTexture(w, tex);
         if (texId < 0)

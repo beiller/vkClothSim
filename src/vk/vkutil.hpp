@@ -49,6 +49,84 @@ inline void vkMakeBuffer(VkDevice dev, VkPhysicalDevice pdev, VkBuffer& buf, VkD
     }
 }
 
+// device-local buffer (VRAM) with a one-shot upload through a transient host staging buffer
+inline void vkMakeBufferDev(VkDevice dev, VkPhysicalDevice pdev, VkBuffer& buf, VkDeviceMemory& mem, VkDeviceSize size,
+                            VkBufferUsageFlags usage, const void* data) {
+    VkBufferCreateInfo bci{};
+    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size = size;
+    bci.usage = usage;
+    VK(vkCreateBuffer(dev, &bci, nullptr, &buf));
+    VkMemoryRequirements mr;
+    vkGetBufferMemoryRequirements(dev, buf, &mr);
+    VkMemoryAllocateInfo maa{};
+    maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    maa.allocationSize = mr.size;
+    maa.memoryTypeIndex = vkFindMemoryType(pdev, mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK(vkAllocateMemory(dev, &maa, nullptr, &mem));
+    VK(vkBindBufferMemory(dev, buf, mem, 0));
+    if (!data)
+        return;
+    VkBuffer stage;
+    VkDeviceMemory stageMem;
+    VkBufferCreateInfo sbi{};
+    sbi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    sbi.size = size;
+    sbi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VK(vkCreateBuffer(dev, &sbi, nullptr, &stage));
+    vkGetBufferMemoryRequirements(dev, stage, &mr);
+    VkMemoryAllocateInfo smaa{};
+    smaa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    smaa.allocationSize = mr.size;
+    smaa.memoryTypeIndex =
+        vkFindMemoryType(pdev, mr, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VK(vkAllocateMemory(dev, &smaa, nullptr, &stageMem));
+    VK(vkBindBufferMemory(dev, stage, stageMem, 0));
+    void* p;
+    VK(vkMapMemory(dev, stageMem, 0, size, 0, &p));
+    std::memcpy(p, data, size);
+    vkUnmapMemory(dev, stageMem);
+    uint32_t fam = 0, famCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(pdev, &famCount, nullptr);
+    std::vector<VkQueueFamilyProperties> fams(famCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(pdev, &famCount, fams.data());
+    for (uint32_t i = 0; i < famCount; ++i)
+        if (fams[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) {
+            fam = i;
+            break;
+        }
+    VkQueue q;
+    vkGetDeviceQueue(dev, fam, 0, &q);
+    VkCommandPool pool;
+    VkCommandPoolCreateInfo cpci{};
+    cpci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    cpci.queueFamilyIndex = fam;
+    VK(vkCreateCommandPool(dev, &cpci, nullptr, &pool));
+    VkCommandBuffer cb;
+    VkCommandBufferAllocateInfo cba{};
+    cba.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cba.commandPool = pool;
+    cba.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cba.commandBufferCount = 1;
+    VK(vkAllocateCommandBuffers(dev, &cba, &cb));
+    VkCommandBufferBeginInfo cbi{};
+    cbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    VK(vkBeginCommandBuffer(cb, &cbi));
+    VkBufferCopy r{0, 0, size};
+    vkCmdCopyBuffer(cb, stage, buf, 1, &r);
+    VK(vkEndCommandBuffer(cb));
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cb;
+    VK(vkQueueSubmit(q, 1, &si, VK_NULL_HANDLE));
+    VK(vkQueueWaitIdle(q));
+    vkFreeCommandBuffers(dev, pool, 1, &cb);
+    vkDestroyCommandPool(dev, pool, nullptr);
+    vkDestroyBuffer(dev, stage, nullptr);
+    vkFreeMemory(dev, stageMem, nullptr);
+}
+
 inline void vkWriteBuffer(VkDevice dev, VkDeviceMemory mem, const void* data, VkDeviceSize size) {
     void* p;
     VK(vkMapMemory(dev, mem, 0, size, 0, &p));

@@ -139,7 +139,8 @@ struct Material {
     V3 baseColor{1.0f, 1.0f, 1.0f};
     float metallic = 0.0f;
     float roughness = 0.5f;
-    int texId = -1; // renderer texture (albedo); -1 = none
+    V3 emissive{0.0f, 0.0f, 0.0f}; // added to the lit color before tonemap (HDR values glow)
+    int texId = -1;                // renderer texture (albedo); -1 = none
 };
 
 // mesh -> shared material entity

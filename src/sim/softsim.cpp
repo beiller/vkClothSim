@@ -61,7 +61,7 @@ int SoftSim::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& c
     b.nrm = rw.nrm.buffer;
     b.nrmMem = rw.nrm.memory;
     auto mk = [this](VkBuffer& buf, VkDeviceMemory& mem, VkDeviceSize bytes, const void* data) {
-        vkMakeBuffer(m_dev, m_pdev, buf, mem, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, data);
+        vkMakeBufferDev(m_dev, m_pdev, buf, mem, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, data);
     };
     mk(b.prev, b.prevMem, 12 * vn, b.soft.pos0.data());
     mk(b.sub0, b.sub0Mem, 12 * vn, b.soft.pos0.data());
@@ -73,7 +73,8 @@ int SoftSim::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& c
     mk(b.tris, b.trisMem, 4 * mesh.indices.size(), mesh.indices.data());
     mk(b.triStart, b.triStartMem, 4 * (vn + 1), b.soft.triStart.data());
     mk(b.triList, b.triListMem, 4 * b.soft.triList.size(), b.soft.triList.data());
-    mk(b.paramsBuf, b.paramsMem, 40, nullptr);
+    // params stay host-visible: the CPU rewrites them every sim step
+    vkMakeBuffer(m_dev, m_pdev, b.paramsBuf, b.paramsMem, 40, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     m_body.push_back(std::move(b));
     return (int)m_body.size() - 1;
 }

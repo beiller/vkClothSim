@@ -3,18 +3,26 @@
 -- headset the controller is simply inactive and nothing moves.
 local M = {}
 
-local ctrlH, rootH, headH
+local ctrlH, ctrlL, rootH, headH
 local joint = nil
 local marker = nil
 local markerGeom = nil
+local laserGeom = nil
+local lasers = {} -- hand -> laser entity, parented to that hand's grip mesh
 local kSpeed = 2.0
 local kDead = 0.12
 local kGrabRange = 3.0
 local kMarkerRadius = 0.03
+local kLaserLen = 10.0
+local kLaserHalf = 0.002
 
 function M._on_ready(self)
     render.material("grab_marker", {1, 0.1, 0.1}, 0.0, 0.35)
     markerGeom = render.geometry(mesh.sphere({ radius = kMarkerRadius, subdiv = 2 }))
+    -- lasers: one very thin box per hand along its aim dir (aim = -z), lit by HDR emissive
+    laserGeom = render.geometry(mesh.box({kLaserHalf, kLaserHalf, kLaserLen / 2}))
+    render.material("laser R", {1, 0.05, 0.05}, 0, 1, nil, {3, 0.05, 0.05})
+    render.material("laser L", {0.05, 0.8, 1}, 0, 1, nil, {0.05, 2.5, 3})
 end
 
 -- place a small sphere on the grabbed capsule, at the joint anchor (Parent system)
@@ -91,10 +99,50 @@ local function grab()
     end
 end
 
-function M._physics(self, dt)
+-- pose of the beam (box centered on the aim ray) in the grip's frame: the aim and grip poses
+-- share the vr root's frame, so the local transform is grip^-1 * aim
+local function laserPoseInGrip(ctrl)
+    local grip = scene.component(ctrl, "Transform")
+    local gripInv = scene.qinv(grip.quat)
+    local aimPos = scene.get(ctrl, "aim_pos")
+    local aimQ = {scene.get(ctrl, "aim_qx"), scene.get(ctrl, "aim_qy"), scene.get(ctrl, "aim_qz"),
+                  scene.get(ctrl, "aim_qw")}
+    local fwd = scene.qrot(aimQ, {0, 0, -1})
+    local center = scene.vadd(aimPos, scene.vscale(fwd, kLaserLen / 2))
+    return scene.qrot(gripInv, scene.vsub(center, grip.pos)), scene.qmul(gripInv, aimQ)
+end
+
+local function updateLaser(hand, ctrl, matName)
+    if not ctrl or scene.get(ctrl, "active") < 0.5 then
+        if lasers[hand] then
+            scene.destroy(lasers[hand])
+            lasers[hand] = nil
+        end
+        return
+    end
+    if not lasers[hand] then
+        local e = scene.entity()
+        render.mesh(e, laserGeom, matName)
+        scene.add_child(ctrl, e)
+        lasers[hand] = e
+    end
+    local pos, quat = laserPoseInGrip(ctrl)
+    scene.replace(lasers[hand], "Transform", {pos = pos, quat = quat})
+end
+
+-- per render frame: the beam tracks the aim pose at render rate
+function M._animate(self)
     if not ctrlH then
         ctrlH = scene.find("controller R")
     end
+    if not ctrlL then
+        ctrlL = scene.find("controller L")
+    end
+    updateLaser("R", ctrlH, "laser R")
+    updateLaser("L", ctrlL, "laser L")
+end
+
+function M._physics(self, dt)
     if not rootH then
         rootH = scene.find("vr root")
     end

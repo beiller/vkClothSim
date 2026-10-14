@@ -13,13 +13,15 @@
 namespace {
 
 struct ModelUbo {
-    float model[16];
-    float baseColor[3];
-    float metallic;
-    float roughness;
-    float pad[3];
+    float model[16];    // 0
+    float baseColor[3]; // 64
+    float metallic;     // 76
+    float roughness;    // 80
+    float pad[3];       // 84 - std140 aligns the next vec3 to 16
+    float emissive[3];  // 96
+    float padEnd;       // 108 - pad the block to 112
 };
-static_assert(sizeof(ModelUbo) == 96, "ModelUbo must match the shader std430 layout");
+static_assert(sizeof(ModelUbo) == 112, "ModelUbo must match the shader std140 layout");
 
 struct ViewUbo {
     float viewProj[16];
@@ -53,7 +55,7 @@ struct LightsUbo {
 };
 static_assert(sizeof(LightsUbo) == 16 + Renderer::kMaxLights * 64, "LightsUbo must match the shader std430 layout");
 
-ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float roughness) {
+ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float roughness, const V3& emissive) {
     ModelUbo mb{};
     std::memcpy(mb.model, model.m, 64);
     mb.baseColor[0] = baseColor.x;
@@ -61,6 +63,9 @@ ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float
     mb.baseColor[2] = baseColor.z;
     mb.metallic = metallic;
     mb.roughness = roughness;
+    mb.emissive[0] = emissive.x;
+    mb.emissive[1] = emissive.y;
+    mb.emissive[2] = emissive.z;
     return mb;
 }
 
@@ -150,11 +155,12 @@ Renderer::GpuMeshRef Renderer::addMesh(const Mesh& mesh) {
     GpuMesh g;
     g.vtxCount = n;
     g.idxCount = (uint32_t)mesh.indices.size();
-    vkMakeBuffer(m_dev, m_pdev, g.pos, g.posMem, attrSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.pos.data());
-    vkMakeBuffer(m_dev, m_pdev, g.nrm, g.nrmMem, attrSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.nrm.data());
-    vkMakeBuffer(m_dev, m_pdev, g.uv, g.uvMem, (VkDeviceSize)8 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.uv.data());
-    vkMakeBuffer(m_dev, m_pdev, g.ibuf, g.ibmem, (VkDeviceSize)g.idxCount * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                 mesh.indices.data());
+    vkMakeBufferDev(m_dev, m_pdev, g.pos, g.posMem, attrSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.pos.data());
+    vkMakeBufferDev(m_dev, m_pdev, g.nrm, g.nrmMem, attrSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.nrm.data());
+    vkMakeBufferDev(m_dev, m_pdev, g.uv, g.uvMem, (VkDeviceSize)8 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                    mesh.uv.data());
+    vkMakeBufferDev(m_dev, m_pdev, g.ibuf, g.ibmem, (VkDeviceSize)g.idxCount * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                    mesh.indices.data());
     m_geoms.push_back(g);
     return {(int)m_geoms.size() - 1, MeshGpu{VertexStore{g.pos, g.posMem, n}, VertexStore{g.nrm, g.nrmMem, n}}};
 }
@@ -164,7 +170,7 @@ int Renderer::addInstance(int geom) {
     InstancedMesh inst;
     inst.geom = geom;
     // prepBuffers rewrites this from the ECS every frame; identity + defaults just keep it valid
-    const ModelUbo modelInit = packModel(mat4Identity(), V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.5f);
+    const ModelUbo modelInit = packModel(mat4Identity(), V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, V3{0.0f, 0.0f, 0.0f});
     vkMakeBuffer(m_dev, m_pdev, inst.modelUbuf, inst.modelMem, sizeof(ModelUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                  &modelInit);
     const VkDeviceSize attrSize = (VkDeviceSize)12 * g.vtxCount;
@@ -253,11 +259,12 @@ void Renderer::prepBuffers(const entt::registry& reg) {
     writeLights(reg);
     for (auto [e, rend] : reg.view<Renderable>().each()) {
         InstancedMesh& inst = m_insts[rend.inst];
-        V3 base{1.0f, 1.0f, 1.0f};
+        V3 base{1.0f, 1.0f, 1.0f}, emissive{0.0f, 0.0f, 0.0f};
         float metallic = 0.0f, roughness = 0.5f;
         if (const auto* ref = reg.try_get<MaterialRef>(e))
             if (const auto* mat = reg.try_get<Material>(ref->mat)) {
                 base = mat->baseColor;
+                emissive = mat->emissive;
                 metallic = mat->metallic;
                 roughness = mat->roughness;
                 if (mat->texId >= 0 && inst.tex[0] != mat->texId)
@@ -267,7 +274,7 @@ void Renderer::prepBuffers(const entt::registry& reg) {
         Mat4 model = mat4Identity();
         if (const auto* wt = reg.try_get<WorldTransform>(e))
             model = wt->toMat4();
-        const ModelUbo mb = packModel(model, base, metallic, roughness);
+        const ModelUbo mb = packModel(model, base, metallic, roughness, emissive);
         vkWriteBuffer(m_dev, inst.modelMem, &mb, sizeof(ModelUbo));
     }
 }

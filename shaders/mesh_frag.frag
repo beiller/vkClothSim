@@ -12,7 +12,8 @@ layout(binding = 3) uniform UBO {
     float shadowTexels;
     float pad[2];
 } ubo;
-layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; } modelU;
+layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; vec3 emissive; }
+    modelU;
 layout(binding = 6) uniform sampler2D albedoTex;
 layout(binding = 7) uniform sampler2D roughTex;
 layout(binding = 8) uniform sampler2D metalTex;
@@ -161,5 +162,6 @@ void main() {
         color += radiance * NoL * (spec + diff) * shadow;
     }
 
+    color += modelU.emissive; // unlit HDR emission, tonemapped with the rest
     outColor = vec4(color, 1.0);
 }

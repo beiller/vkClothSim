@@ -13,6 +13,10 @@
 #include <cstring>
 #include <imgui.h>
 
+static float msBetween(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
+    return std::chrono::duration<float, std::milli>(b - a).count();
+}
+
 int main(int argc, char** argv) {
     VkApp app;
     if (!app.initInstance(900, 900, "3dsim"))
@@ -82,6 +86,7 @@ int main(int argc, char** argv) {
     int fpsFrames = 0;
     float fps = 0.0f;
     float simAccum = 0.0f;
+    float msPoll = 0.0f, msSim = 0.0f, msRender = 0.0f, msXrEnd = 0.0f, msPresent = 0.0f;
     while (!app.windowShouldClose()) {
         const auto nowFrame = std::chrono::steady_clock::now();
         const float dt = std::chrono::duration<float>(nowFrame - lastFrame).count();
@@ -90,6 +95,9 @@ int main(int argc, char** argv) {
         ++fpsFrames;
         if (fpsAccum >= 0.5f) {
             fps = (float)fpsFrames / fpsAccum;
+            w.phase = {msPoll / fpsFrames, msSim / fpsFrames, msRender / fpsFrames, msXrEnd / fpsFrames,
+                       msPresent / fpsFrames};
+            msPoll = msSim = msRender = msXrEnd = msPresent = 0.0f;
             fpsAccum = 0.0f;
             fpsFrames = 0;
         }
@@ -98,6 +106,7 @@ int main(int argc, char** argv) {
         app.pollEvents();
         if (w.xr)
             w.xrFrame = w.xr->poll();
+        const auto tPoll = std::chrono::steady_clock::now();
         stepMouse(w);
         stepKeyboard(w);
         if (w.xr)
@@ -126,6 +135,7 @@ int main(int argc, char** argv) {
         // 0-step frames still need fresh world transforms for the renderer (camera, VR head,
         // animation)
         resolveWorldTransforms(w);
+        const auto tSim = std::chrono::steady_clock::now();
 
         const entt::entity cam = findActiveCamera(w); // current camera (swapped by display mode)
         if (cam != entt::null)
@@ -151,11 +161,19 @@ int main(int argc, char** argv) {
             if (w.xrFrame.shouldRender)
                 for (int i = 0; i < w.xr->eyeCount(); ++i)
                     w.xr->releaseImage(i);
-            w.xr->endFrame(w.xrFrame.shouldRender);
         } else {
             draw(w, cmd, idx, ImGui::GetDrawData());
         }
+        const auto tRender = std::chrono::steady_clock::now();
+        if (w.xr)
+            w.xr->endFrame(w.xrFrame.shouldRender);
+        const auto tXrEnd = std::chrono::steady_clock::now();
         app.present(idx);
+        msPoll += msBetween(nowFrame, tPoll);
+        msSim += msBetween(tPoll, tSim);
+        msRender += msBetween(tSim, tRender);
+        msXrEnd += msBetween(tRender, tXrEnd);
+        msPresent += msBetween(tXrEnd, std::chrono::steady_clock::now());
     }
 
     shutdownImGui();

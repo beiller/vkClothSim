@@ -52,9 +52,10 @@ void addSoftBody(World& w, entt::entity e, const Mesh& mesh, const std::vector<s
     w.reg.emplace<MaterialRef>(e, mat);
 }
 
-entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float roughness, const char* name) {
+entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float roughness, const V3& emissive,
+                           const char* name) {
     entt::entity e = w.reg.create();
-    w.reg.emplace<Material>(e, baseColor, metallic, roughness);
+    w.reg.emplace<Material>(e, baseColor, metallic, roughness, emissive);
     if (name)
         w.reg.emplace<Name>(e, name);
     return e;
@@ -194,7 +195,7 @@ void spawnControllers(World& w) {
         std::fprintf(stderr, "3dsim: controller grip geometry: %s\n", err.c_str());
         std::exit(1);
     }
-    const entt::entity gripMat = spawnMaterial(w, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f);
+    const entt::entity gripMat = spawnMaterial(w, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f, V3{0.0f, 0.0f, 0.0f});
     for (int h = 0; h < 2; ++h) {
         entt::entity e = w.reg.create();
         w.reg.emplace<Transform>(e, V3{0, 0, 0}, V4{0, 0, 0, 1}); // local rel. to vr root; per frame

@@ -59,14 +59,22 @@ void spawnFpsHud(World& w) {
         spawnUiWindow(w, UIWindow{"##fps",
                                   [&w] {
                                       const VkExtent2D ext = w.app->extent();
-                                      return V2{(float)ext.width - 120.0f, 8.0f};
+                                      return V2{(float)ext.width - 136.0f, 8.0f};
                                   },
-                                  V2{112.0f, 26.0f},
+                                  V2{128.0f, 118.0f},
                                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus});
     spawnWidget(w, fpsWin, UIText{"", [&w] {
-                                      char buf[32];
-                                      std::snprintf(buf, sizeof(buf), "%.0f fps", w.fps);
+                                      char buf[128];
+                                      std::snprintf(buf, sizeof(buf),
+                                                    "%.1f fps  %.1f ms\n"
+                                                    "poll  %6.1f\n"
+                                                    "sim   %6.1f\n"
+                                                    "rend  %6.1f\n"
+                                                    "xrend %6.1f\n"
+                                                    "pres  %6.1f",
+                                                    w.fps, 1000.0f / (w.fps > 1.0f ? w.fps : 1.0f), w.phase.poll,
+                                                    w.phase.sim, w.phase.render, w.phase.xrEnd, w.phase.present);
                                       return std::string(buf);
                                   }});
 }
