@@ -114,6 +114,9 @@ static const FieldDesc kMouseInput[] = {
     {"button_2", OFF(MouseInput, buttons) + 2, FieldKind::Checkbox},
     {"button_3", OFF(MouseInput, buttons) + 3, FieldKind::Checkbox},
 };
+static const FieldDesc kRenderable[] = {
+    {"noShadow", OFF(Renderable, noShadow), FieldKind::Checkbox},
+};
 static const FieldDesc kRenderSettings[] = {
     {"bgColor", OFF(RenderSettings, bgColor), FieldKind::Color},
     {"exposure", OFF(RenderSettings, exposure), FieldKind::SliderF, 0.1f, 3.0f},
@@ -137,6 +140,7 @@ static const TypeDesc kTypes[] = {
     {"Collider", kCollider},
     {"ControllerInput", kControllerInput},
     {"MouseInput", kMouseInput},
+    {"Renderable", kRenderable},
     {"RenderSettings", kRenderSettings},
     {"RigidScene", kRigidScene},
 };
@@ -173,6 +177,8 @@ inline std::vector<std::pair<const TypeDesc*, const void*>> entityFields(const e
         out.push_back({findType("Collider"), (const void*)p});
     if (auto* p = reg.try_get<ControllerInput>(e))
         out.push_back({findType("ControllerInput"), (const void*)p});
+    if (auto* p = reg.try_get<Renderable>(e))
+        out.push_back({findType("Renderable"), (const void*)p});
     if (auto* p = reg.try_get<MouseInput>(e))
         out.push_back({findType("MouseInput"), (const void*)p});
     return out;

@@ -122,7 +122,7 @@ local function updateLaser(hand, ctrl, matName)
     end
     if not lasers[hand] then
         local e = scene.entity()
-        render.mesh(e, laserGeom, matName)
+        render.mesh(e, laserGeom, matName, nil, nil, { noShadow = true })
         scene.add_child(ctrl, e)
         lasers[hand] = e
     end

@@ -10,10 +10,10 @@
 #include <cstdlib>
 #include <unordered_map>
 
-void addMesh(World& w, entt::entity e, int geom, entt::entity mat, entt::entity parent) {
+void addMesh(World& w, entt::entity e, int geom, entt::entity mat, entt::entity parent, bool noShadow) {
     if (!w.reg.try_get<Transform>(e))
         w.reg.emplace<Transform>(e); // identity: a mesh with no explicit pose sits at the origin
-    w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
+    w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom), noShadow);
     w.reg.emplace<MaterialRef>(e, mat);
     if (parent != entt::null)
         w.reg.emplace<Parent>(e, parent);

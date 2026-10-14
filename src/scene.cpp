@@ -230,7 +230,7 @@ void buildObject(World& w, const json& o, const std::string& p, bool allowMesh) 
         auto matE = findNamedEntity(w, matName);
         if (matE == entt::null || !w.reg.try_get<Material>(matE))
             fail(p, what + ": unknown material '" + matName + "'");
-        addMesh(w, e, geom, matE, entt::null);
+        addMesh(w, e, geom, matE, entt::null, o.value("noShadow", false));
     }
 
     if (o.contains("script")) {

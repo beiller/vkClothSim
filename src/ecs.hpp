@@ -149,6 +149,7 @@ struct KeyboardInput {
 
 struct Renderable {
     int inst = -1;
+    bool noShadow = false; // skip in the shadow pass (still drawn in the scene pass)
 };
 
 // shared texture entity: one per asset path; materials link by entity ref, so users share one

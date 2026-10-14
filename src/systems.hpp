@@ -9,9 +9,9 @@
 #include <imgui.h>
 #include <vector>
 
-// add a visual to an entity: Renderable + MaterialRef + optional Parent; ensures the entity has
-// a Transform (identity if absent) since a mesh without a pose sits at the origin
-void addMesh(World& w, entt::entity e, int geom, entt::entity mat, entt::entity parent);
+// add a visual to an entity: Renderable + MaterialRef + optional Parent (noShadow skips the shadow
+// pass); ensures a Transform (identity if absent) since a mesh without a pose sits at the origin
+void addMesh(World& w, entt::entity e, int geom, entt::entity mat, entt::entity parent, bool noShadow = false);
 // add a soft body to an entity: SoftBodyData + Renderable + MaterialRef; mass > 0 overrides the default
 void addSoftBody(World& w, entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
                  float mass);

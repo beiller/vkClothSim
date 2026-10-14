@@ -148,6 +148,13 @@ entt::entity optEnt(lua_State* L, int tidx, const char* key) {
     return e;
 }
 
+bool optBool(lua_State* L, int tidx, const char* key) {
+    lua_getfield(L, tidx, key);
+    const bool b = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    return b;
+}
+
 } // namespace
 
 SceneScript* SceneScript::sSelf(lua_State* L) {
@@ -207,7 +214,7 @@ void SceneScript::init(World& w) {
     reg("geometry", lGeometry); // geometry(geomTable) -> shared mesh id
     reg("texture", lTexture);   // texture(path) -> shared texture entity (one per path)
     reg("material", lMaterial); // material(name, color, metallic, roughness, texEntity?, emissive?)
-    reg("mesh", lMesh);         // mesh(entity, geom, mat, pos?, quat?, {parent?})
+    reg("mesh", lMesh);         // mesh(entity, geom, mat, pos?, quat?, {parent?, noShadow?})
     lua_setglobal(L, "render");
 
     lua_newtable(L);                     // physics: shapes, rigid + kinematic bodies, raycasts, joints
@@ -739,7 +746,9 @@ int SceneScript::lMesh(lua_State* L) {
     const entt::entity e = readEnt(L, 1);
     const int geom = (int)luaL_checkinteger(L, 2);
     const char* matName = luaL_checkstring(L, 3);
-    const entt::entity parent = lua_istable(L, 6) ? optEnt(L, 6, "parent") : entt::null;
+    const bool hasOpts = lua_istable(L, 6);
+    const entt::entity parent = hasOpts ? optEnt(L, 6, "parent") : entt::null;
+    const bool noShadow = hasOpts ? optBool(L, 6, "noShadow") : false;
     const entt::entity mat = findNamedEntity(w, matName);
     if (mat == entt::null)
         return luaL_error(L, "render.mesh: unknown material '%s'", matName);
@@ -759,7 +768,7 @@ int SceneScript::lMesh(lua_State* L) {
         if (!compReplace(w.reg, e, "Transform", tf, err))
             return luaL_error(L, "render.mesh: %s", err.c_str());
     }
-    addMesh(w, e, geom, mat, parent);
+    addMesh(w, e, geom, mat, parent, noShadow);
     pushEnt(L, e);
     return 1;
 }
