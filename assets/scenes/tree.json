@@ -2,21 +2,23 @@
     "name": "hierarchy",
     "env": "fly-studio-03_1K.exr",
     "envIntensity": 0.0,
-    "camera": {
-        "name": "cam",
-        "pos": [0, 4.5, 15],
-        "quat": [-0.049814, 0, 0, 0.998759],
-        "fov": 50,
-        "active": true,
-        "script": "scenes/camera"
-    },
-    "lights": [
-        { "name": "sun", "pos": [7, 12, 5], "color": [1, 0.97, 0.92], "intensity": 200, "radius": 0.6 }
-    ],
-    "materials": [
-        { "name": "mat_ground", "baseColor": [0.16, 0.2, 0.14], "roughness": 0.9 }
-    ],
     "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 4.5, 15], "quat": [-0.049814, 0, 0, 0.998759] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/camera"
+        },
+        {
+            "name": "sun",
+            "components": {
+                "Transform": { "pos": [7, 12, 5] },
+                "PointLight": { "color": [1, 0.97, 0.92], "intensity": 200, "radius": 0.6 }
+            }
+        },
+        { "name": "mat_ground", "components": { "Material": { "baseColor": [0.16, 0.2, 0.14], "roughness": 0.9 } } },
         { "name": "tree", "script": "scenes/tree" },
         { "name": "vr", "script": "scenes/vr_controller" }
     ],

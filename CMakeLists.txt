@@ -89,6 +89,7 @@ endif()
 
 add_executable(vksim
     src/main.cpp
+    src/components.cpp
     src/scene.cpp
     src/scene_script.cpp
     src/systems.cpp

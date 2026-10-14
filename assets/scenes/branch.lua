@@ -22,7 +22,7 @@ function M._animate(self, dt)
         windTime = windTime + dt
     end
     local sway = scene.qaxis(windAxis, self.amp * math.sin(windFreq * windTime + self.phase))
-    scene.set_pose(self.entity, scene.qrot(sway, self.basePos), scene.qmul(sway, self.baseQuat))
+    scene.replace(self.entity, "Transform", { pos = scene.qrot(sway, self.basePos), quat = scene.qmul(sway, self.baseQuat) })
 end
 
 return M

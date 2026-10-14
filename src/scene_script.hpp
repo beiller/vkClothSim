@@ -1,4 +1,5 @@
 #pragma once
+#include "components.hpp"
 #include "math.hpp"
 #include "mesh.hpp"
 #include "sim/sim.hpp"
@@ -71,19 +72,25 @@ private:
     // flat constraint array at idx: {a, b, rest, k, ...} with 1-based vertices; sets err
     static std::vector<sim::Constraint> readCons(lua_State* L, int idx, int nVerts, std::string& err);
 
+    // {field = number | boolean | {n, ...}} at idx -> CompFields (struct-form vocabulary); sets err
+    static bool readCompFields(lua_State* L, int idx, CompFields& out, std::string& err);
     static int lEntity(lua_State* L);
     static int lMaterial(lua_State* L);
     static int lGeometry(lua_State* L);
     static int lMesh(lua_State* L);
+    static int lCompEmplace(lua_State* L);
+    static int lCompReplace(lua_State* L);
+    static int lComponent(lua_State* L);
+    static int lCompRemove(lua_State* L);
     static int lShapeCapsule(lua_State* L);
+    static int lShapeBox(lua_State* L);
     static int lBody(lua_State* L);
-    static int lBox(lua_State* L);
     static int lSoftBody(lua_State* L);
+    static int lSoftFloor(lua_State* L);
     static int lSet(lua_State* L);
     static int lGet(lua_State* L);
     static int lTime(lua_State* L);
     static int lButton(lua_State* L);
-    static int lSetPose(lua_State* L);
     static int lAttachScript(lua_State* L);
     static int lDestroy(lua_State* L);
     static int lAddChild(lua_State* L);

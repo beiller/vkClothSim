@@ -263,7 +263,7 @@ void Renderer::prepBuffers(const entt::registry& reg) {
                 if (mat->texId >= 0 && inst.tex[0] != mat->texId)
                     setTexture(rend.inst, 0, mat->texId);
             }
-        // soft bodies have no Transform (geometry is world-space in the GPU buffer) -> identity
+        // soft bodies resolve no WorldTransform (geometry is world-space in the GPU buffer) -> identity
         Mat4 model = mat4Identity();
         if (const auto* wt = reg.try_get<WorldTransform>(e))
             model = wt->toMat4();

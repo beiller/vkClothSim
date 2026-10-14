@@ -9,22 +9,19 @@
 #include <imgui.h>
 #include <vector>
 
-// add a visual to an entity: Transform (if unset) + Renderable + MaterialRef + optional Parent
-void addMesh(World& w, entt::entity e, int geom, entt::entity mat, const V3& pos, const V4& quat, entt::entity parent);
+// add a visual to an entity: Renderable + MaterialRef + optional Parent; ensures the entity has
+// a Transform (identity if absent) since a mesh without a pose sits at the origin
+void addMesh(World& w, entt::entity e, int geom, entt::entity mat, entt::entity parent);
 // add a soft body to an entity: SoftBodyData + Renderable + MaterialRef; mass > 0 overrides the default
 void addSoftBody(World& w, entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
                  float mass);
 // shared material entity (Material, optional Name); meshes reference it via MaterialRef
 entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float roughness, const char* name = nullptr);
-entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char* name);
-// a plain camera entity (Transform + Camera). active = the window renders it; one by convention
-entt::entity spawnCamera(World& w, const V3& pos, const V4& quat, float fovDeg, bool active = true);
 // first entity with a matching Name (entt::null if none)
 entt::entity findNamedEntity(const World& w, const std::string& name);
-// add a dynamic rigid body to an entity (needs a Transform): Jolt body + soft-sim capsule collider
-void addRigidBody(World& w, entt::entity e, int shapeId);
-// add a static box collider to an entity (needs a Transform): Jolt static box + soft-body floor
-void addStaticBox(World& w, entt::entity e, const V3& half);
+// add a rigid body to an entity (needs a Transform): Jolt body from a shared shape + soft-sim
+// capsule collider (capsule shapes); isStatic = fixed collider (ground) vs integrated
+void addRigidBody(World& w, entt::entity e, int shapeId, bool isStatic);
 // texture from assets/ (or assets/ relative to the exe); renderer texture id or -1
 int loadAssetTexture(World& w, const std::string& path);
 // the active camera (entt::null if none)

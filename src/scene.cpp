@@ -1,6 +1,7 @@
 #include "scene.hpp"
 
 #include "assets.hpp"
+#include "components.hpp"
 #include "json.hpp"
 #include "reflect.hpp"
 #include "systems.hpp"
@@ -24,22 +25,10 @@ void fail(const std::string& path, const std::string& msg) {
     std::exit(1);
 }
 
-V3 v3(const json& a, const char* what) {
-    if (!a.is_array() || a.size() != 3)
-        fail(what, "expected [x, y, z]");
-    return {a[0].get<float>(), a[1].get<float>(), a[2].get<float>()};
-}
-
 V2 v2(const json& a, const char* what) {
     if (!a.is_array() || a.size() != 2)
         fail(what, "expected [x, y]");
     return {a[0].get<float>(), a[1].get<float>()};
-}
-
-V4 v4(const json& a, const char* what) {
-    if (!a.is_array() || a.size() != 4)
-        fail(what, "expected [x, y, z, w]");
-    return {a[0].get<float>(), a[1].get<float>(), a[2].get<float>(), a[3].get<float>()};
 }
 
 UrlRef urlBind(World& w, const std::string& url, const std::string& path) {
@@ -160,6 +149,94 @@ void buildUi(World& w, const json& j, const std::string& path) {
     spawnEditorUi(w, tab);
 }
 
+// ---- scene objects
+
+// a "components" block: emplace each named component (struct-shape fields, the same
+// vocabulary as Lua scene.emplace; omitted fields keep the C++ struct defaults)
+void addComponents(entt::registry& reg, entt::entity e, const json& cj, const std::string& p, const std::string& what) {
+    for (const auto& [tn, fj] : cj.items()) {
+        CompFields fields;
+        for (const auto& [fn, fv] : fj.items()) {
+            CompField f;
+            f.name = fn;
+            if (fv.is_number() || fv.is_boolean()) {
+                f.v[0] = fv.is_boolean() ? (fv.get<bool>() ? 1.0f : 0.0f) : fv.get<float>();
+                f.n = 1;
+            } else if (fv.is_array()) {
+                if (fv.size() > 4)
+                    fail(p, what + " field '" + fn + "': expected at most 4 values");
+                for (size_t i = 0; i < fv.size(); ++i) {
+                    if (!fv[i].is_number())
+                        fail(p, what + " field '" + fn + "': values must be numbers");
+                    f.v[i] = fv[i].get<float>();
+                }
+                f.n = (int)fv.size();
+            } else {
+                fail(p, what + " field '" + fn + "': expected a number, boolean, or array");
+            }
+            fields.push_back(f);
+        }
+        std::string err;
+        if (!compEmplace(reg, e, tn, fields, err))
+            fail(p, what + " component '" + tn + "': " + err);
+    }
+}
+
+// one scene object: Name + "components" + optional "texture" (material objects) + "mesh"
+// (render.mesh equivalent; placed by the components' Transform) + "script" (behavior).
+// Referenced names must be defined earlier in "objects" (define before use)
+void buildObject(World& w, const json& o, const std::string& p, bool allowMesh) {
+    const auto name = o.at("name").get<std::string>();
+    const std::string what = "object '" + name + "'";
+    const entt::entity e = w.reg.create();
+    w.reg.emplace<Name>(e, name);
+
+    if (o.contains("components"))
+        addComponents(w.reg, e, o["components"], p, what + ":");
+
+    if (o.contains("texture")) {
+        const auto texName = o["texture"].get<std::string>();
+        if (!w.reg.try_get<Material>(e))
+            fail(p, what + ": 'texture' requires a Material component");
+        const int texId = loadAssetTexture(w, texName);
+        if (texId < 0)
+            fail(p, what + ": cannot load texture '" + texName + "'");
+        w.reg.get<Material>(e).texId = texId;
+    }
+
+    if (o.contains("mesh")) {
+        if (!allowMesh)
+            fail(p, what + ": the camera object cannot have a mesh");
+        const json& mj = o.at("mesh");
+        const auto type = mj.at("type").get<std::string>();
+        // mesh params (everything but "type") go to the std generator as a table
+        std::vector<std::pair<std::string, double>> params;
+        for (const auto& [k, v] : mj.items()) {
+            if (k == "type")
+                continue;
+            if (!v.is_number())
+                fail(p, what + ": mesh param '" + k + "' must be a number");
+            params.emplace_back(k, v.get<double>());
+        }
+        std::string err;
+        const int geom = w.script.callMeshGen(type, params, err);
+        if (geom < 0)
+            fail(p, what + ": mesh '" + type + "': " + err);
+        const auto matName = o.at("material").get<std::string>();
+        auto matE = findNamedEntity(w, matName);
+        if (matE == entt::null || !w.reg.try_get<Material>(matE))
+            fail(p, what + ": unknown material '" + matName + "'");
+        addMesh(w, e, geom, matE, entt::null);
+    }
+
+    if (o.contains("script")) {
+        auto& ls = w.reg.emplace<LuaScript>(e);
+        ls.file = o["script"].get<std::string>();
+    } else if (!o.contains("mesh") && !w.reg.try_get<Transform>(e)) {
+        w.reg.emplace<Transform>(e); // identity; lets a plain container parent children
+    }
+}
+
 } // namespace
 
 void createSceneWorld(World& w, const std::string& path) {
@@ -174,23 +251,28 @@ void createSceneWorld(World& w, const std::string& path) {
         fail(p, e.what());
     }
 
-    const json& c = j.at("camera");
-    w.cam = spawnCamera(w, v3(c.at("pos"), (p + " camera.pos").c_str()), v4(c.at("quat"), (p + " camera.quat").c_str()),
-                        c.value("fov", 50.0f), c.value("active", true));
-    const entt::entity cam = w.cam;
-    if (c.contains("name"))
-        w.reg.emplace<Name>(cam, c["name"].get<std::string>());
-    if (c.contains("script")) {
-        // the camera's behavior script (e.g. fly controls); self.entity is the camera itself
-        auto& ls = w.reg.emplace<LuaScript>(cam);
-        ls.file = c["script"].get<std::string>();
-    }
     w.render.envIntensity = j.value("envIntensity", 1.0f);
+    const json& objects = j.value("objects", json::array());
+
+    // the scene's camera: exactly one object with a Camera component. It is built first so the
+    // renderer can start from its pose (VR later spawns its own "vr cam")
+    const json* camObj = nullptr;
+    for (const auto& o : objects)
+        if (o.contains("components") && o["components"].contains("Camera")) {
+            if (camObj)
+                fail(p, "scene must declare exactly one camera object (an object with a 'Camera' component)");
+            camObj = &o;
+        }
+    if (!camObj)
+        fail(p, "scene must declare exactly one camera object (an object with a 'Camera' component)");
+    buildObject(w, *camObj, p, false);
+    for (auto e : w.reg.view<Camera>())
+        w.cam = e;
 
     const VkExtent2D ext = w.app->extent();
     w.rigid.init();
     w.sim.init(w.app->device(), w.app->pdev());
-    w.renderer.init(*w.app, (int)j["objects"].size() + 2, cameraViewProj(w, cam, (float)ext.width / (float)ext.height));
+    w.renderer.init(*w.app, (int)objects.size() + 2, cameraViewProj(w, w.cam, (float)ext.width / (float)ext.height));
 
     // geometry stdlib: the engine always loads "scenes/mesh" as the global `mesh` and the
     // geometry module (for declarative meshes + VR controller grips); scene scripts use the
@@ -200,84 +282,9 @@ void createSceneWorld(World& w, const std::string& path) {
     if (!w.script.loadMeshStdlib(err))
         fail(p, "geometry stdlib: " + err);
 
-    for (const auto& L : j["lights"]) {
-        const auto name = L.at("name").get<std::string>();
-        PointLight pl;
-        if (L.contains("color"))
-            pl.color = v3(L["color"], (p + " light color").c_str());
-        pl.intensity = L.value("intensity", 25.0f);
-        pl.radius = L.value("radius", 0.25f);
-        pl.on = L.value("on", 1.0f);
-        pl.shadowNear = L.value("shadowNear", 0.01f);
-        pl.shadowFar = L.value("shadowFar", 30.0f);
-        pl.shadowNormalBias = L.value("shadowNormalBias", 0.05f);
-        pl.shadowBiasBase = L.value("shadowBiasBase", 0.3f);
-        pl.shadowBiasSlope = L.value("shadowBiasSlope", 0.3f);
-        pl.shadowSearchScale = L.value("shadowSearchScale", 2.0f);
-        pl.shadowMaxRadius = L.value("shadowMaxRadius", 16.0f);
-        spawnLight(w, v3(L.at("pos"), (p + " light pos").c_str()), pl, name.c_str());
-    }
-
-    // one shared material entity per def; objects reference it (editing one updates all users)
-    std::map<std::string, entt::entity> mats;
-    for (const auto& m : j.value("materials", json::array())) {
-        const auto name = m.at("name").get<std::string>();
-        std::string mp = p + " material " + name;
-        V3 color{1, 1, 1};
-        if (m.contains("baseColor"))
-            color = v3(m["baseColor"], mp.c_str());
-        const entt::entity me =
-            spawnMaterial(w, color, m.value("metallic", 0.0f), m.value("roughness", 0.5f), name.c_str());
-        if (m.contains("texture")) {
-            const int texId = loadAssetTexture(w, m["texture"].get<std::string>());
-            if (texId < 0)
-                fail(p, "material '" + name + "': cannot load texture '" + m["texture"].get<std::string>() + "'");
-            w.reg.get<Material>(me).texId = texId;
-        }
-        mats[name] = me;
-    }
-
-    for (const auto& o : j["objects"]) {
-        const auto name = o.at("name").get<std::string>();
-        if (o.contains("script")) {
-            // a script entity: no mesh, attaches a per-entity behavior script. "script" is a
-            // module path (same convention as the attach_script verb)
-            const entt::entity e = w.reg.create();
-            auto& ls = w.reg.emplace<LuaScript>(e);
-            ls.file = o["script"].get<std::string>();
-            w.reg.emplace<Name>(e, name);
-            w.reg.emplace<Transform>(e); // identity; lets the entity parent children
-            continue;
-        }
-        const json& mj = o.at("mesh");
-        const auto type = mj.at("type").get<std::string>();
-        // mesh params (everything but "type") go to the std generator as a table
-        std::vector<std::pair<std::string, double>> params;
-        for (const auto& [k, v] : mj.items()) {
-            if (k == "type")
-                continue;
-            if (!v.is_number())
-                fail(p, "object '" + name + "': mesh param '" + k + "' must be a number");
-            params.emplace_back(k, v.get<double>());
-        }
-        const int geom = w.script.callMeshGen(type, params, err);
-        if (geom < 0)
-            fail(p, "object '" + name + "': mesh '" + type + "': " + err);
-
-        Transform t{};
-        if (o.contains("pos"))
-            t.pos = v3(o["pos"], (p + " object " + name + " pos").c_str());
-        if (o.contains("quat"))
-            t.quat = v4(o["quat"], (p + " object " + name + " quat").c_str());
-
-        const auto matName = o.at("material").get<std::string>();
-        auto it = mats.find(matName);
-        if (it == mats.end())
-            fail(p, "object '" + name + "': unknown material '" + matName + "'");
-        const entt::entity e = w.reg.create();
-        addMesh(w, e, geom, it->second, t.pos, t.quat, entt::null);
-        w.reg.emplace<Name>(e, name);
-    }
+    for (const auto& o : objects)
+        if (&o != camObj)
+            buildObject(w, o, p, true);
 
     // activate every script entity to fixpoint; a _on_ready may spawn more script entities,
     // which activate in the same pass. Script entities are declared per-object in the JSON

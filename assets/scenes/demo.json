@@ -1,38 +1,41 @@
 {
     "name": "3dsim",
     "env": "fly-studio-03_1K.exr",
-    "envIntensity": 0.0,
-    "camera": {
-        "name": "cam",
-        "pos": [0, 9, 14],
-        "quat": [-0.201066, 0, 0, 0.979578],
-        "fov": 50,
-        "active": true,
-        "script": "scenes/camera"
-    },
-    "lights": [
+    "envIntensity": 0.1,
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 9, 14], "quat": [-0.201066, 0, 0, 0.979578] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/camera"
+        },
         {
             "name": "key light",
-            "pos": [0, 12, 0],
-            "color": [1, 0.95, 0.9],
-            "intensity": 120,
-            "radius": 0.5
+            "components": {
+                "Transform": { "pos": [0, 12, 0] },
+                "PointLight": { "color": [1, 0.95, 0.9], "intensity": 120, "radius": 0.5 }
+            }
         },
         {
             "name": "rim light",
-            "pos": [-9, 6, -7],
-            "color": [0.4, 0.6, 1],
-            "intensity": 60,
-            "radius": 0.5
-        }
-    ],
-    "materials": [
-        { "name": "mat_ground", "baseColor": [0.19, 0.21, 0.17], "roughness": 0.85 },
-        { "name": "mat_capsule", "baseColor": [0.85, 0.35, 0.3], "metallic": 0.9, "roughness": 0.25 },
-        { "name": "mat_cloth", "baseColor": [1, 1, 1], "roughness": 0.8, "texture": "cloth_albedo.png" },
-        { "name": "mat_ball", "baseColor": [0.22, 0.62, 0.6], "roughness": 0.4 }
-    ],
-    "objects": [
+            "components": {
+                "Transform": { "pos": [-9, 6, -7] },
+                "PointLight": { "color": [0.4, 0.6, 1], "intensity": 60, "radius": 0.5 }
+            }
+        },
+        { "name": "mat_ground", "components": { "Material": { "baseColor": [0.19, 0.21, 0.17], "roughness": 0.85 } } },
+        {
+            "name": "mat_capsule",
+            "components": { "Material": { "baseColor": [0.85, 0.35, 0.3], "metallic": 0.9, "roughness": 0.25 } }
+        },
+        {
+            "name": "mat_cloth",
+            "components": { "Material": { "baseColor": [1, 1, 1], "roughness": 0.8 } },
+            "texture": "cloth_albedo.png"
+        },
+        { "name": "mat_ball", "components": { "Material": { "baseColor": [0.22, 0.62, 0.6], "roughness": 0.4 } } },
         { "name": "demo", "script": "scenes/demo" },
         { "name": "vr", "script": "scenes/vr_controller" }
     ],

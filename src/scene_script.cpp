@@ -170,13 +170,16 @@ void SceneScript::init(World& w) {
         lua_setfield(L, -2, name);
     };
 
-    lua_newtable(L);                     // scene: the ECS graph, scripts, transforms, time, UI, and the math kit
+    lua_newtable(L);                     // scene: the ECS graph, components, scripts, time, UI, and the math kit
     reg("entity", lEntity);              // entity(name?) -> new empty entity
-    reg("set", lSet);                    // set(url, value | {values})
-    reg("get", lGet);                    // get(url) -> number | {x, y, z}
+    reg("emplace", lCompEmplace);        // emplace(entity, "Type", {field = ...}) - create; error if present
+    reg("replace", lCompReplace);        // replace(entity, "Type", {field = ...}) - create or assign
+    reg("component", lComponent);        // component(entity, "Type") -> {field = ...} | nil
+    reg("remove", lCompRemove);          // remove(entity, "Type") - pure-data components
+    reg("set", lSet);                    // set(url | entity, field, value | {values})
+    reg("get", lGet);                    // get(url | entity, field) -> number | {x, y, z}
     reg("time", lTime);                  // time() -> seconds since scene start
     reg("button", lButton);              // button(name, fn())
-    reg("set_pose", lSetPose);           // set_pose(entity, pos, quat)
     reg("attach_script", lAttachScript); // attach_script(entity, file, params?)
     reg("destroy", lDestroy);            // destroy(entity)
     reg("add_child", lAddChild);         // add_child(parent, child)
@@ -208,16 +211,17 @@ void SceneScript::init(World& w) {
 
     lua_newtable(L);                     // physics: Jolt shapes, rigid bodies, colliders, raycasts, joints
     reg("shapeCapsule", lShapeCapsule);  // shapeCapsule(halfLen, radius) -> shared shape id
-    reg("body", lBody);                  // body(entity, shape) -> dynamic rigid body
-    reg("box", lBox);                    // box(entity, halfExtents) -> static box collider + soft floor
+    reg("shapeBox", lShapeBox);          // shapeBox(hx, hy, hz) -> shared shape id
+    reg("body", lBody);                  // body(entity, shape, {static = 1}?) -> rigid body
     reg("raycast", lRaycast);            // raycast(origin, dir, maxDist) -> {hit,pos,dist,entity} | nil
     reg("create_joint", lCreateJoint);   // create_joint(entA, entB, type, grabPos) -> joint id
     reg("destroy_joint", lDestroyJoint); // destroy_joint(id)
     reg("is_dynamic", lIsDynamic);       // is_dynamic(entity) -> bool
     lua_setglobal(L, "physics");
 
-    lua_newtable(L);        // soft: GPU soft bodies (a mesh + its constraints)
-    reg("body", lSoftBody); // body(entity, geom, cons, mat, mass?)
+    lua_newtable(L);          // soft: GPU soft bodies (a mesh + its constraints)
+    reg("body", lSoftBody);   // body(entity, geom, cons, mat, mass?) - entity's Transform = rest pose
+    reg("floor", lSoftFloor); // floor(y) - the sim's floor plane height
     lua_setglobal(L, "soft");
     // unref a script entity's Lua refs when it is destroyed
     w.reg.on_destroy<LuaScript>().connect<&SceneScript::onScriptDestroy>(this);
@@ -622,16 +626,122 @@ int SceneScript::lShapeCapsule(lua_State* L) {
     return 1;
 }
 
+int SceneScript::lShapeBox(lua_State* L) {
+    auto* self = sSelf(L);
+    const V3 half{(float)luaL_checknumber(L, 1), (float)luaL_checknumber(L, 2), (float)luaL_checknumber(L, 3)};
+    lua_pushinteger(L, self->w().rigid.addBoxShape(half));
+    return 1;
+}
+
+// {field = number | boolean | {n, ...}} at idx -> CompFields (struct-form vocabulary); sets err
+bool SceneScript::readCompFields(lua_State* L, int idx, CompFields& out, std::string& err) {
+    lua_pushnil(L);
+    while (lua_next(L, idx) != 0) {
+        const char* name = luaL_checkstring(L, -2);
+        CompField f;
+        f.name = name;
+        if (lua_isboolean(L, -1)) {
+            f.v[0] = lua_toboolean(L, -1) ? 1.0f : 0.0f;
+            f.n = 1;
+        } else if (lua_isnumber(L, -1)) {
+            f.v[0] = (float)lua_tonumber(L, -1);
+            f.n = 1;
+        } else if (lua_istable(L, -1)) {
+            for (int i = 1; i <= 4; ++i) {
+                lua_geti(L, -1, i);
+                if (!lua_isnumber(L, -1)) {
+                    lua_pop(L, 1);
+                    break;
+                }
+                f.v[i - 1] = (float)lua_tonumber(L, -1);
+                lua_pop(L, 1);
+                f.n = i;
+            }
+        } else {
+            lua_pop(L, 1);
+            err = "field '" + std::string(name) + "' must be a number, boolean, or array";
+            return false;
+        }
+        out.push_back(f);
+        lua_pop(L, 1); // value; the key stays for lua_next
+    }
+    return true;
+}
+
 int SceneScript::lEntity(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
     const entt::entity e = w.reg.create();
-    w.reg.emplace<Transform>(e); // identity pose; scripts set it before use (e.g. soft-body spawn)
     const char* name = luaL_optstring(L, 1, nullptr);
     if (name)
         w.reg.emplace<Name>(e, name);
     pushEnt(L, e);
     return 1;
+}
+
+int SceneScript::lCompEmplace(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = readEnt(L, 1);
+    const std::string type = luaL_checkstring(L, 2);
+    CompFields fields;
+    std::string err;
+    if (lua_istable(L, 3) && !readCompFields(L, 3, fields, err))
+        return luaL_error(L, "scene.emplace %s: %s", type.c_str(), err.c_str());
+    if (!compEmplace(w.reg, e, type, fields, err))
+        return luaL_error(L, "scene.emplace %s: %s", type.c_str(), err.c_str());
+    return 0;
+}
+
+int SceneScript::lCompReplace(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = readEnt(L, 1);
+    const std::string type = luaL_checkstring(L, 2);
+    CompFields fields;
+    std::string err;
+    if (lua_istable(L, 3) && !readCompFields(L, 3, fields, err))
+        return luaL_error(L, "scene.replace %s: %s", type.c_str(), err.c_str());
+    if (!compReplace(w.reg, e, type, fields, err))
+        return luaL_error(L, "scene.replace %s: %s", type.c_str(), err.c_str());
+    return 0;
+}
+
+int SceneScript::lComponent(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = readEnt(L, 1);
+    const std::string type = luaL_checkstring(L, 2);
+    CompFields out;
+    if (!compGet(w.reg, e, type, out)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_newtable(L);
+    for (const auto& f : out) {
+        if (f.n == 1) {
+            lua_pushnumber(L, f.v[0]);
+        } else {
+            lua_createtable(L, f.n, 0);
+            for (int i = 0; i < f.n; ++i) {
+                lua_pushnumber(L, f.v[i]);
+                lua_seti(L, -2, i + 1);
+            }
+        }
+        lua_setfield(L, -2, f.name.c_str());
+    }
+    return 1;
+}
+
+int SceneScript::lCompRemove(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = readEnt(L, 1);
+    const std::string type = luaL_checkstring(L, 2);
+    std::string err;
+    if (!compRemove(w.reg, e, type, err))
+        return luaL_error(L, "scene.remove %s: %s", type.c_str(), err.c_str());
+    return 0;
 }
 
 int SceneScript::lMesh(lua_State* L) {
@@ -640,13 +750,27 @@ int SceneScript::lMesh(lua_State* L) {
     const entt::entity e = readEnt(L, 1);
     const int geom = (int)luaL_checkinteger(L, 2);
     const char* matName = luaL_checkstring(L, 3);
-    const V3 pos = readV3(L, 4);
-    const V4 quat = readQuat(L, 5);
     const entt::entity parent = lua_istable(L, 6) ? optEnt(L, 6, "parent") : entt::null;
     const entt::entity mat = findNamedEntity(w, matName);
     if (mat == entt::null)
         return luaL_error(L, "render.mesh: unknown material '%s'", matName);
-    addMesh(w, e, geom, mat, pos, quat, parent);
+    // placement: create-or-assign the Transform with the given fields; the mesh core ensures a
+    // pose (identity) when none is given
+    CompFields tf;
+    if (lua_istable(L, 4)) {
+        const V3 pos = readV3(L, 4);
+        tf.push_back(CompField{"pos", {pos.x, pos.y, pos.z}, 3});
+    }
+    if (lua_istable(L, 5)) {
+        const V4 quat = readQuat(L, 5);
+        tf.push_back(CompField{"quat", {quat.x, quat.y, quat.z, quat.w}, 4});
+    }
+    if (!tf.empty()) {
+        std::string err;
+        if (!compReplace(w.reg, e, "Transform", tf, err))
+            return luaL_error(L, "render.mesh: %s", err.c_str());
+    }
+    addMesh(w, e, geom, mat, parent);
     pushEnt(L, e);
     return 1;
 }
@@ -657,22 +781,14 @@ int SceneScript::lBody(lua_State* L) {
     const entt::entity e = readEnt(L, 1);
     const int shapeId = (int)luaL_checkinteger(L, 2);
     if (!w.reg.try_get<Transform>(e))
-        return luaL_error(L, "physics.body: entity has no transform (add a mesh first)");
-    addRigidBody(w, e, shapeId);
-    pushEnt(L, e);
-    return 1;
-}
-
-// a static box collider (rigid capsules) whose top face is the soft-body floor; the box is
-// axis-aligned around the entity's pose
-int SceneScript::lBox(lua_State* L) {
-    auto* self = sSelf(L);
-    World& w = self->w();
-    const entt::entity e = readEnt(L, 1);
-    const V3 half = readV3(L, 2);
-    if (!w.reg.try_get<Transform>(e))
-        return luaL_error(L, "physics.box: entity has no transform (add a mesh first)");
-    addStaticBox(w, e, half);
+        return luaL_error(L, "physics.body: entity has no transform (add a mesh or set a pose first)");
+    bool isStatic = false;
+    if (lua_istable(L, 3)) {
+        lua_getfield(L, 3, "static");
+        isStatic = lua_toboolean(L, -1);
+        lua_pop(L, 1);
+    }
+    addRigidBody(w, e, shapeId, isStatic);
     pushEnt(L, e);
     return 1;
 }
@@ -696,6 +812,12 @@ int SceneScript::lSoftBody(lua_State* L) {
     addSoftBody(w, e, m, cons, mat, mass);
     pushEnt(L, e);
     return 1;
+}
+
+int SceneScript::lSoftFloor(lua_State* L) {
+    auto* self = sSelf(L);
+    self->w().sim.setFloor((float)luaL_checknumber(L, 1));
+    return 0;
 }
 
 int SceneScript::lSet(lua_State* L) {
@@ -764,21 +886,6 @@ int SceneScript::lButton(lua_State* L) {
     const std::string name = luaL_checkstring(L, 1);
     luaL_checktype(L, 2, LUA_TFUNCTION);
     self->m_buttons[name] = self->newRef(L, 2);
-    return 0;
-}
-
-int SceneScript::lSetPose(lua_State* L) {
-    auto* self = sSelf(L);
-    World& w = self->w();
-    const entt::entity e = readEnt(L, 1);
-    const auto pos = readV3(L, 2);
-    const auto quat = readQuat(L, 3);
-    if (auto* t = w.reg.try_get<Transform>(e)) {
-        t->pos = pos;
-        t->quat = quat;
-    } else {
-        return luaL_error(L, "scene.set_pose: entity has no Transform");
-    }
     return 0;
 }
 

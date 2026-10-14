@@ -23,8 +23,8 @@ local function spawnMarker(capEnt, hitPos)
         scene.destroy(marker)
         marker = nil
     end
-    local capPos = scene.get(capEnt, "pos")
-    local capQ = {scene.get(capEnt, "qx"), scene.get(capEnt, "qy"), scene.get(capEnt, "qz"), scene.get(capEnt, "qw")}
+    local ct = scene.component(capEnt, "Transform")
+    local capPos, capQ = ct.pos, ct.quat
     -- joint anchor (world hitPos) in the capsule's local frame
     local localPos = scene.qrot(scene.qinv(capQ), scene.vsub(hitPos, capPos))
     marker = scene.entity()
@@ -49,14 +49,14 @@ local function walk(dt)
     if sx * sx + sy * sy < kDead * kDead then
         return
     end
-    local q = {scene.get(headH, "qx"), scene.get(headH, "qy"), scene.get(headH, "qz"), scene.get(headH, "qw")}
+    local q = scene.component(headH, "Transform").quat
     local fwd = scene.qrot(q, {0, 0, -1})
     local rgt = scene.qrot(q, {1, 0, 0})
     fwd[2] = 0
     rgt[2] = 0
     local d = scene.vadd(scene.vscale(scene.vnorm(fwd), sy), scene.vscale(scene.vnorm(rgt), sx))
-    local p = scene.get(rootH, "pos")
-    scene.set(rootH, "pos", {p[1] + d[1] * kSpeed * dt, 0, p[3] + d[3] * kSpeed * dt})
+    local p = scene.component(rootH, "Transform").pos
+    scene.replace(rootH, "Transform", { pos = {p[1] + d[1] * kSpeed * dt, 0, p[3] + d[3] * kSpeed * dt} })
 end
 
 local function grab()
@@ -73,7 +73,7 @@ local function grab()
         return
     end
     if trig > 0.5 then
-        local rootPos = scene.get(rootH, "pos")
+        local rootPos = scene.component(rootH, "Transform").pos
         local aimPos = scene.get(ctrlH, "aim_pos")
         local aimWorld = {rootPos[1] + aimPos[1], rootPos[2] + aimPos[2], rootPos[3] + aimPos[3]}
         local aq = {

@@ -20,16 +20,18 @@ struct RayHit {
     V3 pos{}; // world hit point
 };
 
+enum class ShapeKind { Capsule, Box };
+
 class RigidScene {
 public:
     void init();
-    // a reusable collision shape (Jolt shape + params): create once, build many bodies from it
+    // reusable collision shapes (Jolt shape + params): create once, build many bodies from them
     int addCapsuleShape(const CapsuleParams& params);
-    const CapsuleParams& shapeParams(int shapeId) const;
-    // dynamic rigid body from a shared shape
-    JPH::BodyID addRigidBody(int shapeId, const V3& pos, const V4& quat, const RigidBodyProps& props);
-    // static box collider (e.g. the scene ground); half = box half-extents, center = box center
-    JPH::BodyID addStaticBox(const V3& center, const V3& half);
+    int addBoxShape(const V3& half);
+    ShapeKind shapeKind(int shapeId) const;
+    const CapsuleParams& shapeParams(int shapeId) const; // capsule shapes only
+    // rigid body from a shared shape; isStatic = fixed collider (ground) vs integrated
+    JPH::BodyID addRigidBody(int shapeId, const V3& pos, const V4& quat, const RigidBodyProps& props, bool isStatic);
     JPH::BodyID addKinematicBody(const V3& pos, const V4& quat, float radius);
     void setKinematicPose(JPH::BodyID id, const V3& pos, const V4& quat);
     void step();
@@ -46,7 +48,8 @@ public:
 private:
     struct ShapeEntry {
         JPH::ShapeRefC shape; // owning ref so a shape outlives its bodies and can be reused
-        CapsuleParams params;
+        ShapeKind kind = ShapeKind::Capsule;
+        CapsuleParams params; // capsule shapes only
     };
     struct JointEntry {
         JPH::Ref<JPH::Constraint> constraint; // owning ref; RemoveConstraint drops the manager's, we drop ours

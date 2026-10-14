@@ -2,28 +2,28 @@
     "name": "shadow test",
     "env": "fly-studio-03_1K.exr",
     "envIntensity": 0.0,
-    "camera": {
-        "name": "cam",
-        "pos": [0, 4, 11],
-        "quat": [-0.088866, 0, 0, 0.996047],
-        "fov": 50,
-        "active": true,
-        "script": "scenes/camera"
-    },
-    "lights": [
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 4, 11], "quat": [-0.088866, 0, 0, 0.996047] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/camera"
+        },
         {
             "name": "key light",
-            "pos": [0, 7, 0],
-            "color": [1.0, 0.97, 0.92],
-            "intensity": 300,
-            "radius": 0.5
-        }
-    ],
-    "materials": [
-        { "name": "white", "baseColor": [1, 1, 1], "roughness": 0.9 },
-        { "name": "plaid", "baseColor": [1, 1, 1], "roughness": 0.35, "texture": "cloth_albedo.png" }
-    ],
-    "objects": [
+            "components": {
+                "Transform": { "pos": [0, 7, 0] },
+                "PointLight": { "color": [1.0, 0.97, 0.92], "intensity": 300, "radius": 0.5 }
+            }
+        },
+        { "name": "white", "components": { "Material": { "baseColor": [1, 1, 1], "roughness": 0.9 } } },
+        {
+            "name": "plaid",
+            "components": { "Material": { "baseColor": [1, 1, 1], "roughness": 0.35 } },
+            "texture": "cloth_albedo.png"
+        },
         { "name": "shadow", "script": "scenes/shadow" },
         { "name": "vr", "script": "scenes/vr_controller" }
     ],

@@ -2,21 +2,26 @@
     "name": "hdri",
     "env": "fly-studio-03_1K.exr",
     "envIntensity": 1.0,
-    "camera": {
-        "name": "cam",
-        "pos": [0, 0, 6],
-        "quat": [0, 0, 0, 1],
-        "fov": 50,
-        "active": true,
-        "script": "scenes/camera"
-    },
-    "lights": [
-        { "name": "light", "pos": [2, 2, 3], "color": [1, 1, 1], "intensity": 20, "radius": 0.15 }
-    ],
-    "materials": [
-        { "name": "mat_sphere", "baseColor": [0.25, 0.25, 0.25], "roughness": 1.0 }
-    ],
     "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 0, 6], "quat": [0, 0, 0, 1] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/camera"
+        },
+        {
+            "name": "light",
+            "components": {
+                "Transform": { "pos": [2, 2, 3] },
+                "PointLight": { "color": [1, 1, 1], "intensity": 20, "radius": 0.15 }
+            }
+        },
+        {
+            "name": "mat_sphere",
+            "components": { "Material": { "baseColor": [0.25, 0.25, 0.25], "roughness": 1.0 } }
+        },
         { "name": "hdri", "script": "scenes/hdri" },
         { "name": "vr", "script": "scenes/vr_controller" }
     ],

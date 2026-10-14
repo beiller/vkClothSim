@@ -7,26 +7,21 @@
 #include <cstdlib>
 #include <unordered_map>
 
-void addMesh(World& w, entt::entity e, int geom, entt::entity mat, const V3& pos, const V4& quat, entt::entity parent) {
-    w.reg.emplace_or_replace<Transform>(e, pos, quat);
+void addMesh(World& w, entt::entity e, int geom, entt::entity mat, entt::entity parent) {
+    if (!w.reg.try_get<Transform>(e))
+        w.reg.emplace<Transform>(e); // identity: a mesh with no explicit pose sits at the origin
     w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
     w.reg.emplace<MaterialRef>(e, mat);
     if (parent != entt::null)
         w.reg.emplace<Parent>(e, parent);
 }
 
-void addRigidBody(World& w, entt::entity e, int shapeId) {
+void addRigidBody(World& w, entt::entity e, int shapeId, bool isStatic) {
     const Transform& t = w.reg.get<Transform>(e);
     const RigidBodyProps props{};
-    w.reg.emplace<CapsuleCollider>(e, w.sim.addCapsule(w.rigid.shapeParams(shapeId)));
-    w.reg.emplace<RigidDynamics>(e, props, w.rigid.addRigidBody(shapeId, t.pos, t.quat, props));
-}
-
-void addStaticBox(World& w, entt::entity e, const V3& half) {
-    const Transform& t = w.reg.get<Transform>(e);
-    const RigidBodyProps props{};
-    w.reg.emplace<RigidDynamics>(e, props, w.rigid.addStaticBox(t.pos, half));
-    w.sim.setFloor(t.pos.y + half.y);
+    if (w.rigid.shapeKind(shapeId) == ShapeKind::Capsule)
+        w.reg.emplace<CapsuleCollider>(e, w.sim.addCapsule(w.rigid.shapeParams(shapeId)));
+    w.reg.emplace<RigidDynamics>(e, props, w.rigid.addRigidBody(shapeId, t.pos, t.quat, props, isStatic));
 }
 
 void addSoftBody(World& w, entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
@@ -62,24 +57,6 @@ entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float 
     w.reg.emplace<Material>(e, baseColor, metallic, roughness);
     if (name)
         w.reg.emplace<Name>(e, name);
-    return e;
-}
-
-entt::entity spawnLight(World& w, const V3& pos, const PointLight& p, const char* name) {
-    entt::entity e = w.reg.create();
-    w.reg.emplace<Transform>(e, pos, V4{0.0f, 0.0f, 0.0f, 1.0f});
-    w.reg.emplace<PointLight>(e, p);
-    w.reg.emplace<Name>(e, name);
-    return e;
-}
-
-entt::entity spawnCamera(World& w, const V3& pos, const V4& quat, float fovDeg, bool active) {
-    entt::entity e = w.reg.create();
-    w.reg.emplace<Transform>(e, pos, quat);
-    Camera c;
-    c.fovDeg = fovDeg;
-    c.active = active;
-    w.reg.emplace<Camera>(e, c);
     return e;
 }
 
