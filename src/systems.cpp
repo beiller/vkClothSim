@@ -19,8 +19,10 @@ void addMesh(World& w, entt::entity e, int geom, entt::entity mat, entt::entity 
 void addRigidBody(World& w, entt::entity e, int shapeId, bool isStatic) {
     const Transform& t = w.reg.get<Transform>(e);
     const RigidBodyProps props{};
-    if (w.rigid.shapeKind(shapeId) == ShapeKind::Capsule)
-        w.reg.emplace<CapsuleCollider>(e, w.sim.addCapsule(w.rigid.shapeParams(shapeId)));
+    if (w.rigid.shapeKind(shapeId) == ShapeKind::Capsule) {
+        const CapsuleParams& p = w.rigid.shapeParams(shapeId);
+        w.reg.emplace<CapsuleCollider>(e, p.halfLen, p.radius);
+    }
     w.reg.emplace<RigidDynamics>(e, props, w.rigid.addRigidBody(shapeId, t.pos, t.quat, props, isStatic));
 }
 
@@ -357,8 +359,12 @@ void resolveWorldTransforms(World& w) {
 }
 
 void syncColliders(World& w) {
-    for (auto [entity, col, wt] : w.reg.view<CapsuleCollider, WorldTransform>().each())
-        w.sim.setCapsulePose(col.slot, wt);
+    CapsuleGPU* caps = w.sim.caps();
+    int n = 0;
+    for (auto [e, col, wt] : w.reg.view<CapsuleCollider, WorldTransform>().each())
+        if (n < SoftSim::kMaxCapsules)
+            fillCapsule(caps[n++], wt.pos, wt.quat, col.halfLen, col.radius);
+    w.sim.uploadCapsules(n);
 }
 
 void stepSoft(World& w, VkCommandBuffer cmd) {

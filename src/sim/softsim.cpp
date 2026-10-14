@@ -43,11 +43,6 @@ void SoftSim::init(VkDevice dev, VkPhysicalDevice pdev) {
     m_pdev = pdev;
 }
 
-int SoftSim::addCapsule(const CapsuleParams& params) {
-    m_colliders.push_back(params);
-    return (int)m_colliders.size() - 1;
-}
-
 void SoftSim::setFloor(float y) {
     m_floorY = y;
 }
@@ -80,9 +75,9 @@ int SoftSim::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& c
 }
 
 void SoftSim::build() {
-    const VkDeviceSize nCaps = std::max<uint32_t>(1, (uint32_t)m_colliders.size());
-    vkMakeBuffer(m_dev, m_pdev, m_capsInstances, m_capsInstancesMem, 48 * nCaps, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                 nullptr);
+    m_caps.resize(kMaxCapsules);
+    vkMakeBuffer(m_dev, m_pdev, m_capsInstances, m_capsInstancesMem, 48 * kMaxCapsules,
+                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     const auto binds = softBinds();
     auto maxSets = (uint32_t)m_body.size();
     if (maxSets == 0)
@@ -111,7 +106,7 @@ void SoftSim::makeBodySet(GpuBody& b) {
         {b.pos, 0, (VkDeviceSize)12 * n},
         {b.nrm, 0, (VkDeviceSize)12 * n},
         {b.prev, 0, (VkDeviceSize)12 * n},
-        {m_capsInstances, 0, 48 * (VkDeviceSize)m_colliders.size()},
+        {m_capsInstances, 0, 48 * (VkDeviceSize)kMaxCapsules},
         {b.entries, 0, (VkDeviceSize)16 * b.soft.entries.size()},
         {b.entryStart, 0, (VkDeviceSize)4 * (n + 1)},
         {b.colorVerts, 0, (VkDeviceSize)4 * n},
@@ -193,7 +188,7 @@ void SoftSim::setParams(int softId, const SimParams& params, int steps) {
 void SoftSim::record(VkCommandBuffer cmd) {
     for (GpuBody& b : m_body) {
         PhysParams phys{};
-        phys.nCaps = (int)m_colliders.size();
+        phys.nCaps = m_nCaps;
         phys.dt = kFrameDt / (float)b.steps;
         phys.damping = std::pow(b.params.damping, 1.0f / (float)b.steps);
         phys.gravity = sim::kGravity * b.params.mass;
@@ -226,23 +221,11 @@ void SoftSim::record(VkCommandBuffer cmd) {
     }
 }
 
-void SoftSim::setCapsulePose(int slot, const Transform& p) {
-    const CapsuleParams& c = m_colliders[slot];
-    CapsuleGPU o{};
-    o.centerRadius[0] = p.pos.x;
-    o.centerRadius[1] = p.pos.y;
-    o.centerRadius[2] = p.pos.z;
-    o.centerRadius[3] = c.radius;
-    o.quat[0] = p.quat.x;
-    o.quat[1] = p.quat.y;
-    o.quat[2] = p.quat.z;
-    o.quat[3] = p.quat.w;
-    o.halfLen[0] = c.halfLen;
-    const VkDeviceSize off = 48 * (VkDeviceSize)slot;
-    void* mem;
-    VK(vkMapMemory(m_dev, m_capsInstancesMem, off, 48, 0, &mem));
-    std::memcpy(mem, &o, sizeof(o));
-    vkUnmapMemory(m_dev, m_capsInstancesMem);
+void SoftSim::uploadCapsules(int n) {
+    m_nCaps = n;
+    if (n == 0)
+        return;
+    vkWriteBuffer(m_dev, m_capsInstancesMem, m_caps.data(), 48 * (VkDeviceSize)n);
 }
 
 void SoftSim::shutdown() {

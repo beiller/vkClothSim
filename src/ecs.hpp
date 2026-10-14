@@ -75,7 +75,8 @@ struct RigidBodyProps {
 };
 
 struct CapsuleCollider {
-    int slot = -1;
+    float halfLen = 0.0f;
+    float radius = 0.0f;
 };
 
 struct RigidDynamics {

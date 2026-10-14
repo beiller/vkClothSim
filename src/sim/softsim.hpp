@@ -2,7 +2,6 @@
 #include <vulkan/vulkan.h>
 
 #include "capsule.hpp"
-#include "ecs.hpp"
 #include "gpuverts.hpp"
 #include "mesh.hpp"
 #include "sim/params.hpp"
@@ -14,10 +13,13 @@
 class SoftSim {
 public:
     void init(VkDevice dev, VkPhysicalDevice pdev);
-    int addCapsule(const CapsuleParams& params);
     // scene ground: the soft-body floor plane (top face of the ground box); -inf = no floor
     void setFloor(float y);
-    void setCapsulePose(int slot, const Transform& pose);
+    // live capsule list: the caller fills the staging array (any order, capped) then uploads;
+    // identity-free, so destroyed capsules just fall out next step
+    static constexpr int kMaxCapsules = 16384;
+    CapsuleGPU* caps() { return m_caps.data(); }
+    void uploadCapsules(int n);
     int addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw);
     void build();
     void shutdown();
@@ -53,7 +55,8 @@ private:
 
     VkDevice m_dev = VK_NULL_HANDLE;
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;
-    std::vector<CapsuleParams> m_colliders;
+    std::vector<CapsuleGPU> m_caps; // per-step staging for m_capsInstances
+    int m_nCaps = 0;
     std::vector<GpuBody> m_body;
     VkPipeline m_softPipe = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_softDsl = VK_NULL_HANDLE;
