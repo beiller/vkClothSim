@@ -86,7 +86,10 @@ private:
     static int lCompReplace(lua_State* L);
     static int lComponent(lua_State* L);
     static int lCompRemove(lua_State* L);
+    static int lCapsuleShape(lua_State* L);
+    static int lBoxShape(lua_State* L);
     static int lBody(lua_State* L);
+    static int lKinematic(lua_State* L);
     static int lSoftBody(lua_State* L);
     static int lSoftFloor(lua_State* L);
     static int lSet(lua_State* L);

@@ -209,8 +209,11 @@ void SceneScript::init(World& w) {
     reg("mesh", lMesh);         // mesh(entity, geom, mat, pos?, quat?, {parent?})
     lua_setglobal(L, "render");
 
-    lua_newtable(L);                     // physics: rigid bodies, colliders, raycasts, joints
+    lua_newtable(L);                     // physics: shapes, rigid + kinematic bodies, raycasts, joints
+    reg("capsule", lCapsuleShape);       // capsule(halfLen, radius) -> shared shape entity
+    reg("box", lBoxShape);               // box(hx, hy, hz) -> shared shape entity
     reg("body", lBody);                  // body(entity, colliders, {static = 1}?) -> rigid body + collider children
+    reg("kinematic", lKinematic);        // kinematic(entity, colliders) -> kinematic body + collider children
     reg("raycast", lRaycast);            // raycast(origin, dir, maxDist, excludes?) -> {hit,pos,dist,entity} | nil
     reg("create_joint", lCreateJoint);   // create_joint(entA, entB, type, grabPos) -> joint id
     reg("destroy_joint", lDestroyJoint); // destroy_joint(id)
@@ -756,29 +759,20 @@ static float tableNum(lua_State* L, int i) {
     return v;
 }
 
-// one collider spec: { capsule = {halfLen, radius} } or { box = {hx, hy, hz} }, optionally
-// at = {x, y, z} (local offset) and rot = {x, y, z, w} (local rotation)
-static ColliderDesc readColliderSpec(lua_State* L, int idx) {
-    ColliderDesc d{};
+// one collider spec: {shape = <shape entity>}, optionally at = {x, y, z} (local offset) and
+// rot = {x, y, z, w} (local rotation)
+static ColliderSpec readColliderSpec(World& w, lua_State* L, int idx) {
+    ColliderSpec d{};
     const int t = lua_absindex(L, idx); // absolute: field pushes shift negative indexes
-    lua_getfield(L, t, "capsule");
-    if (lua_istable(L, -1)) {
-        d.kind = ShapeKind::Capsule;
-        d.halfLen = tableNum(L, 1);
-        d.radius = tableNum(L, 2);
+    lua_getfield(L, t, "shape");
+    if (!lua_isinteger(L, -1)) {
         lua_pop(L, 1);
-    } else {
-        lua_pop(L, 1);
-        lua_getfield(L, t, "box");
-        if (lua_istable(L, -1)) {
-            d.kind = ShapeKind::Box;
-            d.half = V3{tableNum(L, 1), tableNum(L, 2), tableNum(L, 3)};
-            lua_pop(L, 1);
-        } else {
-            lua_pop(L, 1);
-            luaL_error(L, "physics.body: collider needs {capsule = {halfLen, radius}} or {box = {hx, hy, hz}}");
-        }
+        luaL_error(L, "physics: collider needs shape = <shape entity>");
     }
+    d.shape = readEnt(L, -1);
+    lua_pop(L, 1);
+    if (!w.reg.try_get<CapsuleShape>(d.shape) && !w.reg.try_get<BoxShape>(d.shape))
+        luaL_error(L, "physics: shape entity has no capsule/box shape");
     lua_getfield(L, t, "at");
     if (lua_istable(L, -1)) {
         d.local.pos = V3{tableNum(L, 1), tableNum(L, 2), tableNum(L, 3)};
@@ -796,26 +790,49 @@ static ColliderDesc readColliderSpec(lua_State* L, int idx) {
     return d;
 }
 
+// collider list at idx: a list of {shape = ..., at?, rot?} specs
+static std::vector<ColliderSpec> readColliderList(World& w, lua_State* L, int idx, const char* what) {
+    std::vector<ColliderSpec> out;
+    if (!lua_istable(L, idx))
+        luaL_error(L, "%s: colliders must be a list of {shape = ...} specs", what);
+    for (lua_Integer i = 1;; ++i) {
+        lua_geti(L, idx, i);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            break;
+        }
+        out.push_back(readColliderSpec(w, L, -1));
+        lua_pop(L, 1);
+    }
+    if (out.empty())
+        luaL_error(L, "%s: at least one collider", what);
+    return out;
+}
+
+int SceneScript::lCapsuleShape(lua_State* L) {
+    auto* self = sSelf(L);
+    entt::entity e = self->w().reg.create();
+    self->w().reg.emplace<CapsuleShape>(e, (float)luaL_checknumber(L, 1), (float)luaL_checknumber(L, 2));
+    pushEnt(L, e);
+    return 1;
+}
+
+int SceneScript::lBoxShape(lua_State* L) {
+    auto* self = sSelf(L);
+    entt::entity e = self->w().reg.create();
+    self->w().reg.emplace<BoxShape>(
+        e, V3{(float)luaL_checknumber(L, 1), (float)luaL_checknumber(L, 2), (float)luaL_checknumber(L, 3)});
+    pushEnt(L, e);
+    return 1;
+}
+
 int SceneScript::lBody(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
     const entt::entity e = readEnt(L, 1);
     if (!w.reg.try_get<Transform>(e))
         return luaL_error(L, "physics.body: entity has no transform (add a mesh or set a pose first)");
-    if (!lua_istable(L, 2))
-        return luaL_error(L, "physics.body: colliders must be a list of {capsule = {…}} / {box = {…}} specs");
-    std::vector<ColliderDesc> colliders;
-    for (lua_Integer i = 1;; ++i) {
-        lua_geti(L, 2, i);
-        if (!lua_istable(L, -1)) {
-            lua_pop(L, 1);
-            break;
-        }
-        colliders.push_back(readColliderSpec(L, -1));
-        lua_pop(L, 1);
-    }
-    if (colliders.empty())
-        return luaL_error(L, "physics.body: at least one collider");
+    const std::vector<ColliderSpec> colliders = readColliderList(w, L, 2, "physics.body");
     bool isStatic = false;
     if (lua_istable(L, 3)) {
         lua_getfield(L, 3, "static");
@@ -823,6 +840,17 @@ int SceneScript::lBody(lua_State* L) {
         lua_pop(L, 1);
     }
     addRigidBody(w, e, colliders, isStatic);
+    pushEnt(L, e);
+    return 1;
+}
+
+int SceneScript::lKinematic(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = readEnt(L, 1);
+    if (!w.reg.try_get<Transform>(e))
+        return luaL_error(L, "physics.kinematic: entity has no transform");
+    addKinematicBody(w, e, readColliderList(w, L, 2, "physics.kinematic"));
     pushEnt(L, e);
     return 1;
 }
@@ -966,6 +994,10 @@ int SceneScript::lDestroy(lua_State* L) {
     const entt::entity e = readEnt(L, 1);
     if (!w.reg.valid(e))
         return 0;
+    if (w.reg.try_get<CapsuleShape>(e) || w.reg.try_get<BoxShape>(e))
+        for (auto [c, col] : w.reg.view<Collider>().each())
+            if (col.shape == e)
+                return luaL_error(L, "scene.destroy: shape is referenced by a collider");
     const auto subtree = subtreeEntities(w.reg, e);
     for (const auto c : subtree)
         w.reg.destroy(c); // destroyed entities fall out of the renderer's ECS query; buffers freed at shutdown

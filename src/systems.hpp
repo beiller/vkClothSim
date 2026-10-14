@@ -20,11 +20,18 @@ entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float 
                            const char* name = nullptr);
 // first entity with a matching Name (entt::null if none)
 entt::entity findNamedEntity(const World& w, const std::string& name);
-// add a rigid body to an entity (needs a Transform): a Jolt body built from the colliders + one
-// collider child entity per collider; isStatic = fixed collider (ground) vs integrated
-void addRigidBody(World& w, entt::entity e, const std::vector<ColliderDesc>& colliders, bool isStatic);
-// one collider child entity: local Transform + shape component + Parent -> the body
-entt::entity addCollider(World& w, entt::entity body, const ColliderDesc& c);
+// one collider of a body: a shared shape entity + pose in the body's frame
+struct ColliderSpec {
+    entt::entity shape = entt::null;
+    Transform local{};
+};
+// add a rigid body to an entity (needs a Transform): a Jolt body built from the colliders' shared
+// shapes + one collider child entity per collider; isStatic = fixed collider (ground) vs integrated
+void addRigidBody(World& w, entt::entity e, const std::vector<ColliderSpec>& colliders, bool isStatic);
+// kinematic body: same collider children; the Jolt body follows the entity's pose each step
+void addKinematicBody(World& w, entt::entity e, const std::vector<ColliderSpec>& colliders);
+// one collider child entity: local Transform + Collider(shape) + Parent -> the body
+entt::entity addCollider(World& w, entt::entity body, entt::entity shape, const Transform& local);
 // texture from assets/ (or assets/ relative to the exe); renderer texture id or -1
 int loadAssetTexture(World& w, const std::string& path);
 // the active camera (entt::null if none)

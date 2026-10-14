@@ -1,12 +1,6 @@
 #pragma once
 #include "math.hpp"
 
-struct CapsuleParams {
-    float halfLen;
-    float radius;
-    bool operator==(const CapsuleParams& o) const { return halfLen == o.halfLen && radius == o.radius; }
-};
-
 // one soft-body collision capsule, 48 bytes, packed for the compute shader
 struct CapsuleGPU {
     float centerRadius[4]; // xyz = center, w = radius

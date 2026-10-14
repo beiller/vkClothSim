@@ -1,5 +1,8 @@
 #include "systems.hpp"
 
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+
 #include "assets.hpp"
 #include "vk/vkapp.hpp"
 #include <cmath>
@@ -16,26 +19,59 @@ void addMesh(World& w, entt::entity e, int geom, entt::entity mat, entt::entity 
         w.reg.emplace<Parent>(e, parent);
 }
 
-void addRigidBody(World& w, entt::entity e, const std::vector<ColliderDesc>& colliders, bool isStatic) {
+// one collider child entity: local Transform + Collider(shape) + Parent -> the body
+entt::entity addCollider(World& w, entt::entity body, entt::entity shape, const Transform& local) {
+    entt::entity e = w.reg.create();
+    w.reg.emplace<Transform>(e, local);
+    w.reg.emplace<Collider>(e, shape);
+    w.reg.emplace<Parent>(e, body);
+    return e;
+}
+
+// the Jolt projection of a shape entity: built on first use, held by the component
+static const JPH::Shape* shapeHandle(World& w, entt::entity e) {
+    if (auto* cs = w.reg.try_get<CapsuleShape>(e)) {
+        if (cs->shape == nullptr)
+            cs->shape = JPH::ShapeRefC(new JPH::CapsuleShape(cs->halfLen, cs->radius));
+        return cs->shape.GetPtr();
+    }
+    if (auto* bs = w.reg.try_get<BoxShape>(e)) {
+        if (bs->shape == nullptr)
+            bs->shape = JPH::ShapeRefC(new JPH::BoxShape(JPH::Vec3(bs->half.x, bs->half.y, bs->half.z)));
+        return bs->shape.GetPtr();
+    }
+    return nullptr;
+}
+
+static std::vector<ColliderDesc> shapeDescs(World& w, const std::vector<ColliderSpec>& specs) {
+    std::vector<ColliderDesc> out;
+    out.reserve(specs.size());
+    for (const ColliderSpec& s : specs)
+        out.push_back({shapeHandle(w, s.shape), s.local});
+    return out;
+}
+
+static void spawnColliders(World& w, entt::entity body, const std::vector<ColliderSpec>& specs) {
+    for (const ColliderSpec& s : specs)
+        addCollider(w, body, s.shape, s.local);
+}
+
+void addRigidBody(World& w, entt::entity e, const std::vector<ColliderSpec>& colliders, bool isStatic) {
     if (colliders.empty())
         return;
     const Transform& t = w.reg.get<Transform>(e);
     RigidBody body{}; // default material params
-    body.id = w.rigid.addRigidBody(body, colliders, t.pos, t.quat, isStatic);
+    body.id = w.rigid.addRigidBody(body, shapeDescs(w, colliders), t.pos, t.quat, isStatic);
     w.reg.emplace<RigidBody>(e, body);
-    for (const ColliderDesc& c : colliders)
-        addCollider(w, e, c);
+    spawnColliders(w, e, colliders);
 }
 
-entt::entity addCollider(World& w, entt::entity body, const ColliderDesc& c) {
-    entt::entity e = w.reg.create();
-    w.reg.emplace<Transform>(e, c.local);
-    if (c.kind == ShapeKind::Capsule)
-        w.reg.emplace<CapsuleCollider>(e, c.halfLen, c.radius);
-    else
-        w.reg.emplace<BoxCollider>(e, c.half);
-    w.reg.emplace<Parent>(e, body);
-    return e;
+void addKinematicBody(World& w, entt::entity e, const std::vector<ColliderSpec>& colliders) {
+    if (colliders.empty())
+        return;
+    const Transform& t = w.reg.get<Transform>(e);
+    w.reg.emplace<KinematicBody>(e, w.rigid.addKinematicBody(shapeDescs(w, colliders), t.pos, t.quat));
+    spawnColliders(w, e, colliders);
 }
 
 void addSoftBody(World& w, entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
@@ -210,16 +246,16 @@ void spawnControllers(World& w) {
         std::exit(1);
     }
     const entt::entity gripMat = spawnMaterial(w, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f, V3{0.0f, 0.0f, 0.0f});
+    const entt::entity handShape = w.reg.create();
+    w.reg.emplace<CapsuleShape>(handShape, 0.06f, 0.03f); // matches the grip visual
     for (int h = 0; h < 2; ++h) {
         entt::entity e = w.reg.create();
         w.reg.emplace<Transform>(e, V3{0, 0, 0}, V4{0, 0, 0, 1}); // local rel. to vr root; per frame
         if (w.vrRoot != entt::null)
             w.reg.emplace<Parent>(e, w.vrRoot);
         w.reg.emplace<ControllerInput>(e, ControllerInput{h});
-        if (h == 1) {
-            const JPH::BodyID bid = w.rigid.addKinematicBody(V3{0, 0, 0}, V4{0, 0, 0, 1}, 0.02f);
-            w.reg.emplace<KinematicBody>(e, bid);
-        }
+        if (h == 1)
+            addKinematicBody(w, e, {ColliderSpec{handShape, {}}}); // hand: joints + soft-sim collision
         w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
         w.reg.emplace<MaterialRef>(e, gripMat);
         w.reg.emplace<Name>(e, h == 0 ? "controller L" : "controller R");
@@ -373,9 +409,12 @@ void resolveWorldTransforms(World& w) {
 void syncColliders(World& w) {
     CapsuleGPU* caps = w.sim.caps();
     int n = 0;
-    for (auto [e, col, wt] : w.reg.view<CapsuleCollider, WorldTransform>().each())
-        if (n < SoftSim::kMaxCapsules)
-            fillCapsule(caps[n++], wt.pos, wt.quat, col.halfLen, col.radius);
+    for (auto [e, col, wt] : w.reg.view<Collider, WorldTransform>().each()) {
+        auto* cs = w.reg.try_get<CapsuleShape>(col.shape); // box shapes are CPU-sim only
+        if (!cs || n >= SoftSim::kMaxCapsules)
+            continue;
+        fillCapsule(caps[n++], wt.pos, wt.quat, cs->halfLen, cs->radius);
+    }
     w.sim.uploadCapsules(n);
 }
 

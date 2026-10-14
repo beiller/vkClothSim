@@ -79,14 +79,17 @@ static const FieldDesc kRigidBody[] = {
     {"restitution", OFF(RigidBody, restitution), FieldKind::SliderF, 0.0f, 1.0f},
     {"damping", OFF(RigidBody, damping), FieldKind::SliderF, 0.0f, 1.0f},
 };
-static const FieldDesc kCapsuleCollider[] = {
-    {"halfLen", OFF(CapsuleCollider, halfLen), FieldKind::SliderF, 0.0f, 10.0f},
-    {"radius", OFF(CapsuleCollider, radius), FieldKind::SliderF, 0.0f, 5.0f},
+static const FieldDesc kCapsuleShape[] = {
+    {"halfLen", OFF(CapsuleShape, halfLen), FieldKind::SliderF, 0.0f, 10.0f},
+    {"radius", OFF(CapsuleShape, radius), FieldKind::SliderF, 0.0f, 5.0f},
 };
-static const FieldDesc kBoxCollider[] = {
-    {"hx", OFF(BoxCollider, half), FieldKind::SliderF, 0.0f, 100.0f},
-    {"hy", OFF(BoxCollider, half) + 4, FieldKind::SliderF, 0.0f, 100.0f},
-    {"hz", OFF(BoxCollider, half) + 8, FieldKind::SliderF, 0.0f, 100.0f},
+static const FieldDesc kBoxShape[] = {
+    {"hx", OFF(BoxShape, half), FieldKind::SliderF, 0.0f, 100.0f},
+    {"hy", OFF(BoxShape, half) + 4, FieldKind::SliderF, 0.0f, 100.0f},
+    {"hz", OFF(BoxShape, half) + 8, FieldKind::SliderF, 0.0f, 100.0f},
+};
+static const FieldDesc kCollider[] = {
+    {"shape", OFF(Collider, shape), FieldKind::Ref},
 };
 static const FieldDesc kControllerInput[] = {
     {"trigger_0", OFF(ControllerInput, triggers), FieldKind::SliderF, 0.0f, 1.0f},
@@ -121,12 +124,19 @@ static const FieldDesc kRigidScene[] = {
 };
 
 static const TypeDesc kTypes[] = {
-    {"Transform", kTransform},     {"Material", kMaterial},
-    {"MaterialRef", kMaterialRef}, {"Camera", kCamera},
-    {"PointLight", kPointLight},   {"SoftBodyData", kSoftBodyData},
-    {"RigidBody", kRigidBody},     {"CapsuleCollider", kCapsuleCollider},
-    {"BoxCollider", kBoxCollider}, {"ControllerInput", kControllerInput},
-    {"MouseInput", kMouseInput},   {"RenderSettings", kRenderSettings},
+    {"Transform", kTransform},
+    {"Material", kMaterial},
+    {"MaterialRef", kMaterialRef},
+    {"Camera", kCamera},
+    {"PointLight", kPointLight},
+    {"SoftBodyData", kSoftBodyData},
+    {"RigidBody", kRigidBody},
+    {"CapsuleShape", kCapsuleShape},
+    {"BoxShape", kBoxShape},
+    {"Collider", kCollider},
+    {"ControllerInput", kControllerInput},
+    {"MouseInput", kMouseInput},
+    {"RenderSettings", kRenderSettings},
     {"RigidScene", kRigidScene},
 };
 
@@ -154,10 +164,12 @@ inline std::vector<std::pair<const TypeDesc*, const void*>> entityFields(const e
         out.push_back({findType("SoftBodyData"), (const void*)p});
     if (auto* p = reg.try_get<RigidBody>(e))
         out.push_back({findType("RigidBody"), (const void*)p});
-    if (auto* p = reg.try_get<CapsuleCollider>(e))
-        out.push_back({findType("CapsuleCollider"), (const void*)p});
-    if (auto* p = reg.try_get<BoxCollider>(e))
-        out.push_back({findType("BoxCollider"), (const void*)p});
+    if (auto* p = reg.try_get<CapsuleShape>(e))
+        out.push_back({findType("CapsuleShape"), (const void*)p});
+    if (auto* p = reg.try_get<BoxShape>(e))
+        out.push_back({findType("BoxShape"), (const void*)p});
+    if (auto* p = reg.try_get<Collider>(e))
+        out.push_back({findType("Collider"), (const void*)p});
     if (auto* p = reg.try_get<ControllerInput>(e))
         out.push_back({findType("ControllerInput"), (const void*)p});
     if (auto* p = reg.try_get<MouseInput>(e))

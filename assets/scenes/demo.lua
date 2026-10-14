@@ -14,12 +14,13 @@ function M._on_ready(self)
     -- ground: one entity with a visual box + static box collider; the soft sim's floor is explicit
     local ground = scene.entity("ground")
     render.mesh(ground, render.geometry(mesh.box({ 55, 1, 55 })), "mat_ground", { 0, -1, 0 })
-    physics.body(ground, { { box = {40, 1, 40} } }, { static = 1 })
+    physics.body(ground, { {shape = physics.box(40, 1, 40)} }, { static = 1 })
     soft.floor(0.0001)
 
     -- 50 scattered dynamic capsules, all sharing one shape, one material, one geometry
     local cap_length = 0.9 * world_scale
     local cap_r = 0.5 * world_scale
+    local cap = physics.capsule(cap_length, cap_r)
     local capGeom = render.geometry(mesh.capsule({ halfLen = cap_length, radius = cap_r }))
     math.randomseed(12345)
     for i = 1, 50 do
@@ -30,7 +31,7 @@ function M._on_ready(self)
                              scene.qaxis({1, 0, 0}, (math.random() * 2 - 1) * 0.9))
         local e = scene.entity()
         render.mesh(e, capGeom, "mat_capsule", {px, py, pz}, q)
-        physics.body(e, { { capsule = {cap_length, cap_r} } })
+        physics.body(e, { {shape = cap} })
     end
 
     -- soft bodies; the entity's Transform is the pinned (spawn) pose, the cloth is released after PIN_SECS

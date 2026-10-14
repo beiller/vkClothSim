@@ -10,7 +10,6 @@
 #include <Jolt/Physics/Constraints/Constraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
-#include "capsule.hpp"
 #include "ecs.hpp"
 #include "math.hpp"
 
@@ -20,13 +19,9 @@ struct RayHit {
     V3 pos{}; // world hit point
 };
 
-enum class ShapeKind { Capsule, Box };
-
-// one collider of a rigid body: shape + pose in the body's frame
+// one collider of a body: a (shared) Jolt shape + pose in the body's frame
 struct ColliderDesc {
-    ShapeKind kind = ShapeKind::Capsule;
-    float halfLen = 0.0f, radius = 0.0f; // capsule
-    V3 half{};                           // box
+    const JPH::Shape* shape = nullptr;
     Transform local{};
 };
 
@@ -37,7 +32,8 @@ public:
     // anything else builds a compound. isStatic = fixed collider (ground) vs integrated
     JPH::BodyID addRigidBody(const RigidBody& body, const std::vector<ColliderDesc>& colliders, const V3& pos,
                              const V4& quat, bool isStatic);
-    JPH::BodyID addKinematicBody(const V3& pos, const V4& quat, float radius);
+    // kinematic body = user-driven anchor for joints; infinite mass, pose set via setKinematicPose
+    JPH::BodyID addKinematicBody(const std::vector<ColliderDesc>& colliders, const V3& pos, const V4& quat);
     void setKinematicPose(JPH::BodyID id, const V3& pos, const V4& quat);
     void step();
     Transform pose(JPH::BodyID id) const;
@@ -51,15 +47,7 @@ public:
     int velocitySteps = 10; // applied in step(); the UI slider binds to it
 
 private:
-    struct ShapeEntry {
-        JPH::ShapeRefC shape; // owning ref so a shape outlives its bodies and can be reused
-        ShapeKind kind = ShapeKind::Capsule;
-        CapsuleParams params; // capsule shapes only
-        V3 boxHalf{};         // box shapes only
-    };
-    // shared-shape cache: identical params reuse one Jolt shape (returns the table index)
-    int addCapsuleShape(const CapsuleParams& params);
-    int addBoxShape(const V3& half);
+    // a single identity-local collider -> the shared shape directly; anything else a compound
     JPH::ShapeRefC buildShape(const std::vector<ColliderDesc>& colliders);
     struct JointEntry {
         JPH::Ref<JPH::Constraint> constraint; // owning ref; RemoveConstraint drops the manager's, we drop ours
@@ -73,6 +61,5 @@ private:
     JPH::ObjectLayerPairFilterTable* m_pair = nullptr;
     JPH::BroadPhaseLayerInterfaceTable* m_bpl = nullptr;
     JPH::ObjectVsBroadPhaseLayerFilterTable* m_ovb = nullptr;
-    std::vector<ShapeEntry> m_shapes;
     std::vector<JointEntry> m_joints;
 };

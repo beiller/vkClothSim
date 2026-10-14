@@ -2,6 +2,7 @@
 #include <Jolt/Jolt.h>
 
 #include <Jolt/Physics/Body/BodyID.h>
+#include <Jolt/Physics/Collision/Shape/Shape.h>
 
 #include "math.hpp"
 #include "sim/params.hpp"
@@ -68,16 +69,25 @@ struct LuaScript {
     bool ready = false;
 };
 
-// collision shapes: collider entities are children of a RigidBody entity; their local Transform
-// places the shape in the body's frame. The CPU sim builds the Jolt body from them; the GPU soft
-// sim reads the capsule colliders (boxes are ignored there)
-struct CapsuleCollider {
+// shared collision geometry: one shape entity referenced by many bodies' colliders. The Jolt
+// shape is a lazy projection built on first use; the soft sim reads the geometry live each step
+// (Jolt stays as built at spawn)
+struct CapsuleShape {
     float halfLen = 0.0f;
     float radius = 0.0f;
+    JPH::ShapeRefC shape; // lazy; the component's ref keeps it alive
 };
 
-struct BoxCollider {
+struct BoxShape {
     V3 half{};
+    JPH::ShapeRefC shape;
+};
+
+// a body's collision: a shared shape entity + a local Transform placing it in the body's frame.
+// Collider entities are children of a RigidBody or KinematicBody entity; the CPU sim builds the
+// Jolt body from them at spawn, the GPU soft sim reads the capsule ones (boxes are CPU-sim only)
+struct Collider {
+    entt::entity shape = entt::null;
 };
 
 // a Jolt rigid body integrated by the CPU sim: its pose is written back to the entity's Transform
