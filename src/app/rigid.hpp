@@ -22,16 +22,21 @@ struct RayHit {
 
 enum class ShapeKind { Capsule, Box };
 
+// one collider of a rigid body: shape + pose in the body's frame
+struct ColliderDesc {
+    ShapeKind kind = ShapeKind::Capsule;
+    float halfLen = 0.0f, radius = 0.0f; // capsule
+    V3 half{};                           // box
+    Transform local{};
+};
+
 class RigidScene {
 public:
     void init();
-    // reusable collision shapes (Jolt shape + params): create once, build many bodies from them
-    int addCapsuleShape(const CapsuleParams& params);
-    int addBoxShape(const V3& half);
-    ShapeKind shapeKind(int shapeId) const;
-    const CapsuleParams& shapeParams(int shapeId) const; // capsule shapes only
-    // rigid body from a shared shape; isStatic = fixed collider (ground) vs integrated
-    JPH::BodyID addRigidBody(int shapeId, const V3& pos, const V4& quat, const RigidBodyProps& props, bool isStatic);
+    // rigid body from its colliders: a single identity-local collider reuses a shared shape,
+    // anything else builds a compound. isStatic = fixed collider (ground) vs integrated
+    JPH::BodyID addRigidBody(const RigidBody& body, const std::vector<ColliderDesc>& colliders, const V3& pos,
+                             const V4& quat, bool isStatic);
     JPH::BodyID addKinematicBody(const V3& pos, const V4& quat, float radius);
     void setKinematicPose(JPH::BodyID id, const V3& pos, const V4& quat);
     void step();
@@ -50,7 +55,12 @@ private:
         JPH::ShapeRefC shape; // owning ref so a shape outlives its bodies and can be reused
         ShapeKind kind = ShapeKind::Capsule;
         CapsuleParams params; // capsule shapes only
+        V3 boxHalf{};         // box shapes only
     };
+    // shared-shape cache: identical params reuse one Jolt shape (returns the table index)
+    int addCapsuleShape(const CapsuleParams& params);
+    int addBoxShape(const V3& half);
+    JPH::ShapeRefC buildShape(const std::vector<ColliderDesc>& colliders);
     struct JointEntry {
         JPH::Ref<JPH::Constraint> constraint; // owning ref; RemoveConstraint drops the manager's, we drop ours
         bool alive = false;

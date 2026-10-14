@@ -16,14 +16,26 @@ void addMesh(World& w, entt::entity e, int geom, entt::entity mat, entt::entity 
         w.reg.emplace<Parent>(e, parent);
 }
 
-void addRigidBody(World& w, entt::entity e, int shapeId, bool isStatic) {
+void addRigidBody(World& w, entt::entity e, const std::vector<ColliderDesc>& colliders, bool isStatic) {
+    if (colliders.empty())
+        return;
     const Transform& t = w.reg.get<Transform>(e);
-    const RigidBodyProps props{};
-    if (w.rigid.shapeKind(shapeId) == ShapeKind::Capsule) {
-        const CapsuleParams& p = w.rigid.shapeParams(shapeId);
-        w.reg.emplace<CapsuleCollider>(e, p.halfLen, p.radius);
-    }
-    w.reg.emplace<RigidDynamics>(e, props, w.rigid.addRigidBody(shapeId, t.pos, t.quat, props, isStatic));
+    RigidBody body{}; // default material params
+    body.id = w.rigid.addRigidBody(body, colliders, t.pos, t.quat, isStatic);
+    w.reg.emplace<RigidBody>(e, body);
+    for (const ColliderDesc& c : colliders)
+        addCollider(w, e, c);
+}
+
+entt::entity addCollider(World& w, entt::entity body, const ColliderDesc& c) {
+    entt::entity e = w.reg.create();
+    w.reg.emplace<Transform>(e, c.local);
+    if (c.kind == ShapeKind::Capsule)
+        w.reg.emplace<CapsuleCollider>(e, c.halfLen, c.radius);
+    else
+        w.reg.emplace<BoxCollider>(e, c.half);
+    w.reg.emplace<Parent>(e, body);
+    return e;
 }
 
 void addSoftBody(World& w, entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
@@ -293,8 +305,8 @@ void stepKeyboard(World& w) {
 
 void stepRigid(World& w) {
     w.rigid.step();
-    for (auto [entity, dyn, t] : w.reg.view<RigidDynamics, Transform>().each())
-        t = w.rigid.pose(dyn.id);
+    for (auto [entity, body, t] : w.reg.view<RigidBody, Transform>().each())
+        t = w.rigid.pose(body.id);
 }
 
 void resolveWorldTransforms(World& w) {

@@ -209,10 +209,8 @@ void SceneScript::init(World& w) {
     reg("mesh", lMesh);         // mesh(entity, geom, mat, pos?, quat?, {parent?})
     lua_setglobal(L, "render");
 
-    lua_newtable(L);                     // physics: Jolt shapes, rigid bodies, colliders, raycasts, joints
-    reg("shapeCapsule", lShapeCapsule);  // shapeCapsule(halfLen, radius) -> shared shape id
-    reg("shapeBox", lShapeBox);          // shapeBox(hx, hy, hz) -> shared shape id
-    reg("body", lBody);                  // body(entity, shape, {static = 1}?) -> rigid body
+    lua_newtable(L);                     // physics: rigid bodies, colliders, raycasts, joints
+    reg("body", lBody);                  // body(entity, colliders, {static = 1}?) -> rigid body + collider children
     reg("raycast", lRaycast);            // raycast(origin, dir, maxDist, excludes?) -> {hit,pos,dist,entity} | nil
     reg("create_joint", lCreateJoint);   // create_joint(entA, entB, type, grabPos) -> joint id
     reg("destroy_joint", lDestroyJoint); // destroy_joint(id)
@@ -608,20 +606,6 @@ int SceneScript::lGeometry(lua_State* L) {
     return 1;
 }
 
-int SceneScript::lShapeCapsule(lua_State* L) {
-    auto* self = sSelf(L);
-    const CapsuleParams shape{(float)luaL_checknumber(L, 1), (float)luaL_checknumber(L, 2)};
-    lua_pushinteger(L, self->w().rigid.addCapsuleShape(shape));
-    return 1;
-}
-
-int SceneScript::lShapeBox(lua_State* L) {
-    auto* self = sSelf(L);
-    const V3 half{(float)luaL_checknumber(L, 1), (float)luaL_checknumber(L, 2), (float)luaL_checknumber(L, 3)};
-    lua_pushinteger(L, self->w().rigid.addBoxShape(half));
-    return 1;
-}
-
 // {field = number | boolean | {n, ...}} at idx -> CompFields (struct-form vocabulary); sets err
 bool SceneScript::readCompFields(lua_State* L, int idx, CompFields& out, std::string& err) {
     lua_pushnil(L);
@@ -764,20 +748,81 @@ int SceneScript::lMesh(lua_State* L) {
     return 1;
 }
 
+// table on top of the stack: its ith numeric value
+static float tableNum(lua_State* L, int i) {
+    lua_geti(L, -1, i);
+    const float v = (float)lua_tonumber(L, -1);
+    lua_pop(L, 1);
+    return v;
+}
+
+// one collider spec: { capsule = {halfLen, radius} } or { box = {hx, hy, hz} }, optionally
+// at = {x, y, z} (local offset) and rot = {x, y, z, w} (local rotation)
+static ColliderDesc readColliderSpec(lua_State* L, int idx) {
+    ColliderDesc d{};
+    const int t = lua_absindex(L, idx); // absolute: field pushes shift negative indexes
+    lua_getfield(L, t, "capsule");
+    if (lua_istable(L, -1)) {
+        d.kind = ShapeKind::Capsule;
+        d.halfLen = tableNum(L, 1);
+        d.radius = tableNum(L, 2);
+        lua_pop(L, 1);
+    } else {
+        lua_pop(L, 1);
+        lua_getfield(L, t, "box");
+        if (lua_istable(L, -1)) {
+            d.kind = ShapeKind::Box;
+            d.half = V3{tableNum(L, 1), tableNum(L, 2), tableNum(L, 3)};
+            lua_pop(L, 1);
+        } else {
+            lua_pop(L, 1);
+            luaL_error(L, "physics.body: collider needs {capsule = {halfLen, radius}} or {box = {hx, hy, hz}}");
+        }
+    }
+    lua_getfield(L, t, "at");
+    if (lua_istable(L, -1)) {
+        d.local.pos = V3{tableNum(L, 1), tableNum(L, 2), tableNum(L, 3)};
+        lua_pop(L, 1);
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_getfield(L, t, "rot");
+    if (lua_istable(L, -1)) {
+        d.local.quat = V4{tableNum(L, 1), tableNum(L, 2), tableNum(L, 3), tableNum(L, 4)};
+        lua_pop(L, 1);
+    } else {
+        lua_pop(L, 1);
+    }
+    return d;
+}
+
 int SceneScript::lBody(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
     const entt::entity e = readEnt(L, 1);
-    const int shapeId = (int)luaL_checkinteger(L, 2);
     if (!w.reg.try_get<Transform>(e))
         return luaL_error(L, "physics.body: entity has no transform (add a mesh or set a pose first)");
+    if (!lua_istable(L, 2))
+        return luaL_error(L, "physics.body: colliders must be a list of {capsule = {…}} / {box = {…}} specs");
+    std::vector<ColliderDesc> colliders;
+    for (lua_Integer i = 1;; ++i) {
+        lua_geti(L, 2, i);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            break;
+        }
+        colliders.push_back(readColliderSpec(L, -1));
+        lua_pop(L, 1);
+    }
+    if (colliders.empty())
+        return luaL_error(L, "physics.body: at least one collider");
     bool isStatic = false;
     if (lua_istable(L, 3)) {
         lua_getfield(L, 3, "static");
         isStatic = lua_toboolean(L, -1);
         lua_pop(L, 1);
     }
-    addRigidBody(w, e, shapeId, isStatic);
+    addRigidBody(w, e, colliders, isStatic);
     pushEnt(L, e);
     return 1;
 }
@@ -1096,8 +1141,8 @@ int SceneScript::lRaycast(lua_State* L) {
                 break;
             }
             const entt::entity e = readEnt(L, -1);
-            if (auto* d = self->w().reg.try_get<RigidDynamics>(e))
-                excludes.push_back(d->id);
+            if (auto* b = self->w().reg.try_get<RigidBody>(e))
+                excludes.push_back(b->id);
             else if (auto* k = self->w().reg.try_get<KinematicBody>(e))
                 excludes.push_back(k->id);
             lua_pop(L, 1);
@@ -1109,8 +1154,8 @@ int SceneScript::lRaycast(lua_State* L) {
     }
     // find the ECS entity for the hit body
     entt::entity bodyEnt = entt::null;
-    for (auto [e, dyn] : self->w().reg.view<RigidDynamics>().each())
-        if (dyn.id == hit.body)
+    for (auto [e, body] : self->w().reg.view<RigidBody>().each())
+        if (body.id == hit.body)
             bodyEnt = e;
     lua_newtable(L);
     lua_pushboolean(L, true);
@@ -1132,10 +1177,10 @@ int SceneScript::lCreateJoint(lua_State* L) {
     const entt::entity eA = readEnt(L, 1);
     const entt::entity eB = readEnt(L, 2);
     const char* type = luaL_checkstring(L, 3);
-    // resolve Jolt body IDs: from RigidDynamics or KinematicBody
+    // resolve Jolt body IDs: from RigidBody or KinematicBody
     auto getBodyId = [&](entt::entity e) -> JPH::BodyID {
-        if (auto* d = w.reg.try_get<RigidDynamics>(e))
-            return d->id;
+        if (auto* b = w.reg.try_get<RigidBody>(e))
+            return b->id;
         if (auto* k = w.reg.try_get<KinematicBody>(e))
             return k->id;
         return {};
@@ -1161,7 +1206,7 @@ int SceneScript::lDestroyJoint(lua_State* L) {
 int SceneScript::lIsDynamic(lua_State* L) {
     auto* self = sSelf(L);
     const entt::entity e = readEnt(L, 1);
-    const auto* d = self->w().reg.try_get<RigidDynamics>(e);
-    lua_pushboolean(L, d && self->w().rigid.isDynamic(d->id));
+    const auto* b = self->w().reg.try_get<RigidBody>(e);
+    lua_pushboolean(L, b && self->w().rigid.isDynamic(b->id));
     return 1;
 }

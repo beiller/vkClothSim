@@ -68,19 +68,25 @@ struct LuaScript {
     bool ready = false;
 };
 
-struct RigidBodyProps {
-    float friction = 0.7f;
-    float restitution = 0.05f;
-    float damping = 0.05f;
-};
-
+// collision shapes: collider entities are children of a RigidBody entity; their local Transform
+// places the shape in the body's frame. The CPU sim builds the Jolt body from them; the GPU soft
+// sim reads the capsule colliders (boxes are ignored there)
 struct CapsuleCollider {
     float halfLen = 0.0f;
     float radius = 0.0f;
 };
 
-struct RigidDynamics {
-    RigidBodyProps props;
+struct BoxCollider {
+    V3 half{};
+};
+
+// a Jolt rigid body integrated by the CPU sim: its pose is written back to the entity's Transform
+// each step (the collider children's world poses then feed the GPU soft sim). The material
+// params apply at spawn; the Jolt body is not updated after creation
+struct RigidBody {
+    float friction = 0.7f;
+    float restitution = 0.05f;
+    float damping = 0.05f;
     JPH::BodyID id;
 };
 

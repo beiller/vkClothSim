@@ -20,9 +20,11 @@ entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float 
                            const char* name = nullptr);
 // first entity with a matching Name (entt::null if none)
 entt::entity findNamedEntity(const World& w, const std::string& name);
-// add a rigid body to an entity (needs a Transform): Jolt body from a shared shape + soft-sim
-// capsule collider (capsule shapes); isStatic = fixed collider (ground) vs integrated
-void addRigidBody(World& w, entt::entity e, int shapeId, bool isStatic);
+// add a rigid body to an entity (needs a Transform): a Jolt body built from the colliders + one
+// collider child entity per collider; isStatic = fixed collider (ground) vs integrated
+void addRigidBody(World& w, entt::entity e, const std::vector<ColliderDesc>& colliders, bool isStatic);
+// one collider child entity: local Transform + shape component + Parent -> the body
+entt::entity addCollider(World& w, entt::entity body, const ColliderDesc& c);
 // texture from assets/ (or assets/ relative to the exe); renderer texture id or -1
 int loadAssetTexture(World& w, const std::string& path);
 // the active camera (entt::null if none)

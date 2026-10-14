@@ -8,6 +8,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
 #include <Jolt/RegisterTypes.h>
@@ -47,35 +48,55 @@ void RigidScene::init() {
 }
 
 int RigidScene::addCapsuleShape(const CapsuleParams& params) {
+    for (size_t i = 0; i < m_shapes.size(); ++i)
+        if (m_shapes[i].kind == ShapeKind::Capsule && m_shapes[i].params == params)
+            return (int)i;
     JPH::ShapeRefC shape(new JPH::CapsuleShape(params.halfLen, params.radius));
     m_shapes.push_back({shape, ShapeKind::Capsule, params});
     return (int)m_shapes.size() - 1;
 }
 
 int RigidScene::addBoxShape(const V3& half) {
+    for (size_t i = 0; i < m_shapes.size(); ++i)
+        if (m_shapes[i].kind == ShapeKind::Box && vLen(vSub(m_shapes[i].boxHalf, half)) < 1e-6f)
+            return (int)i;
     JPH::BoxShapeSettings bs(JPH::Vec3(half.x, half.y, half.z));
     bs.SetEmbedded(); // shape outlives the scene; not released with the last body
     JPH::ShapeRefC shape = bs.Create().Get();
-    m_shapes.push_back({shape, ShapeKind::Box, CapsuleParams{}});
+    m_shapes.push_back({shape, ShapeKind::Box, CapsuleParams{}, half});
     return (int)m_shapes.size() - 1;
 }
 
-ShapeKind RigidScene::shapeKind(int shapeId) const {
-    return m_shapes[shapeId].kind;
+// one identity-local collider -> the shared shape; otherwise a compound of the sub-shapes
+JPH::ShapeRefC RigidScene::buildShape(const std::vector<ColliderDesc>& colliders) {
+    const auto isIdentity = [](const Transform& t) {
+        return t.pos.x == 0.0f && t.pos.y == 0.0f && t.pos.z == 0.0f && t.quat.x == 0.0f && t.quat.y == 0.0f &&
+               t.quat.z == 0.0f && t.quat.w == 1.0f;
+    };
+    if (colliders.size() == 1 && isIdentity(colliders[0].local)) {
+        const ColliderDesc& c = colliders[0];
+        const int id = c.kind == ShapeKind::Capsule ? addCapsuleShape({c.halfLen, c.radius}) : addBoxShape(c.half);
+        return m_shapes[id].shape;
+    }
+    JPH::StaticCompoundShapeSettings compound;
+    for (const ColliderDesc& c : colliders) {
+        const JPH::ShapeRefC sub = c.kind == ShapeKind::Capsule
+                                       ? JPH::ShapeRefC(new JPH::CapsuleShape(c.halfLen, c.radius))
+                                       : JPH::ShapeRefC(new JPH::BoxShape(JPH::Vec3(c.half.x, c.half.y, c.half.z)));
+        compound.AddShape(JPH::Vec3(c.local.pos.x, c.local.pos.y, c.local.pos.z), jQuat(c.local.quat), sub.GetPtr());
+    }
+    return compound.Create().Get();
 }
 
-const CapsuleParams& RigidScene::shapeParams(int shapeId) const {
-    return m_shapes[shapeId].params;
-}
-
-JPH::BodyID RigidScene::addRigidBody(int shapeId, const V3& pos, const V4& quat, const RigidBodyProps& props,
-                                     bool isStatic) {
+JPH::BodyID RigidScene::addRigidBody(const RigidBody& body, const std::vector<ColliderDesc>& colliders, const V3& pos,
+                                     const V4& quat, bool isStatic) {
     auto& bi = m_phys->GetBodyInterface();
-    JPH::BodyCreationSettings cs(m_shapes[shapeId].shape, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat),
+    JPH::ShapeRefC shape = buildShape(colliders);
+    JPH::BodyCreationSettings cs(shape, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat),
                                  isStatic ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic, isStatic ? 0 : 1);
-    cs.mFriction = props.friction;
-    cs.mRestitution = props.restitution;
-    cs.mLinearDamping = props.damping;
+    cs.mFriction = body.friction;
+    cs.mRestitution = body.restitution;
+    cs.mLinearDamping = body.damping;
     if (isStatic) {
         JPH::Body* b = bi.CreateBody(cs);
         bi.AddBody(b->GetID(), JPH::EActivation::DontActivate);
