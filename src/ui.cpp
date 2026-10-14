@@ -72,9 +72,9 @@ void spawnFpsHud(World& w) {
                                                     "sim   %6.1f\n"
                                                     "rend  %6.1f\n"
                                                     "xrend %6.1f\n"
-                                                    "pres  %6.1f",
+                                                    "idle  %6.1f",
                                                     w.fps, 1000.0f / (w.fps > 1.0f ? w.fps : 1.0f), w.phase.poll,
-                                                    w.phase.sim, w.phase.render, w.phase.xrEnd, w.phase.present);
+                                                    w.phase.sim, w.phase.render, w.phase.xrEnd, w.phase.idle);
                                       return std::string(buf);
                                   }});
 }

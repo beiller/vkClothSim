@@ -41,7 +41,7 @@ public:
     uint32_t acquireNextImage();
     VkCommandBuffer beginCommands();
     void submit(VkCommandBuffer cmd);
-    void present(uint32_t idx);
+    void present(uint32_t idx, bool wait); // wait = block until the display has presented (vsync)
 
 private:
     void createAttachment(VkExtent2D ext, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlagBits aspect,

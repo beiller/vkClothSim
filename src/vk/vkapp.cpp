@@ -294,7 +294,7 @@ void VkApp::submit(VkCommandBuffer cmd) {
     VK(vkResetFences(m_dev, 1, &m_fence));
 }
 
-void VkApp::present(uint32_t idx) {
+void VkApp::present(uint32_t idx, bool wait) {
     VkPresentInfoKHR pi{};
     pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     pi.waitSemaphoreCount = 0;
@@ -302,6 +302,8 @@ void VkApp::present(uint32_t idx) {
     pi.pSwapchains = &m_sc;
     pi.pImageIndices = &idx;
     checkResult(vkQueuePresentKHR(m_queue, &pi), "present");
+    if (wait) // vsync pacing lands here, not in the next frame's sim fence wait
+        VK(vkQueueWaitIdle(m_queue));
 }
 
 void VkApp::recreateSwapchain() {

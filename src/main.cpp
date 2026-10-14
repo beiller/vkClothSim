@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
     int fpsFrames = 0;
     float fps = 0.0f;
     float simAccum = 0.0f;
-    float msPoll = 0.0f, msSim = 0.0f, msRender = 0.0f, msXrEnd = 0.0f, msPresent = 0.0f;
+    float msPoll = 0.0f, msSim = 0.0f, msRender = 0.0f, msXrEnd = 0.0f, msIdle = 0.0f;
     while (!app.windowShouldClose()) {
         const auto nowFrame = std::chrono::steady_clock::now();
         const float dt = std::chrono::duration<float>(nowFrame - lastFrame).count();
@@ -93,8 +93,8 @@ int main(int argc, char** argv) {
         if (fpsAccum >= 0.5f) {
             fps = (float)fpsFrames / fpsAccum;
             w.phase = {msPoll / fpsFrames, msSim / fpsFrames, msRender / fpsFrames, msXrEnd / fpsFrames,
-                       msPresent / fpsFrames};
-            msPoll = msSim = msRender = msXrEnd = msPresent = 0.0f;
+                       msIdle / fpsFrames};
+            msPoll = msSim = msRender = msXrEnd = msIdle = 0.0f;
             fpsAccum = 0.0f;
             fpsFrames = 0;
         }
@@ -165,12 +165,13 @@ int main(int argc, char** argv) {
         if (w.xr)
             w.xr->endFrame(w.xrFrame.shouldRender);
         const auto tXrEnd = std::chrono::steady_clock::now();
-        app.present(idx);
+        app.present(idx,
+                    !w.xr); // window: sync present (vsync wait shows in 'idle'); VR: compositor paces via waitFrame
         msPoll += msBetween(nowFrame, tPoll);
         msSim += msBetween(tPoll, tSim);
         msRender += msBetween(tSim, tRender);
         msXrEnd += msBetween(tRender, tXrEnd);
-        msPresent += msBetween(tXrEnd, std::chrono::steady_clock::now());
+        msIdle += msBetween(tXrEnd, std::chrono::steady_clock::now());
     }
 
     shutdownImGui();
