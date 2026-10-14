@@ -7,7 +7,7 @@
 #include "tonemap_vert_spv.hpp"
 #include "vk/vkapp.hpp"
 #include "vk/vkutil.hpp"
-#include <cstdlib>
+#include <cstring>
 #include <imgui_impl_vulkan.h>
 
 namespace {
@@ -117,7 +117,8 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
 
     const uint8_t white[4] = {255, 255, 255, 255};
     vkMakeImage2D(m_dev, m_pdev, 1, 1, white, m_white.img, m_white.mem, m_white.view);
-    vkMakeSampler(m_dev, VK_SAMPLER_ADDRESS_MODE_REPEAT, m_texSampler);
+    vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, false, 0.0f, 1.0f,
+                    m_texSampler);
 
     vkMakeBuffer(m_dev, m_pdev, m_tmUbuf, m_tmMem, 32, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
     const auto tmBinds = tonemapBinds();
@@ -188,9 +189,8 @@ int Renderer::addInstance(int geom) {
     ++m_poolUsed;
     m_insts.push_back(inst);
     const int id = (int)m_insts.size() - 1;
-    setTexture(id, 0, -1);
-    setTexture(id, 1, -1);
-    setTexture(id, 2, -1);
+    for (int c = 0; c < 3; ++c)
+        setTexture(id, c, -1);
     VkDescriptorBufferInfo lb{m_lightsUbuf, 0, sizeof(LightsUbo)};
     VkWriteDescriptorSet sw[2]{};
     sw[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -322,6 +322,28 @@ void Renderer::writeTonemapUbo(float ox, float oy, float sx, float sy) {
     vkWriteBuffer(m_dev, m_tmMem, tm, 32);
 }
 
+// tonemap the HDR buffer into a region of the swapchain image. clear = the first eye gets the
+// clearing pass/framebuffer, later eyes the no-clear ones. No EndRenderPass: the caller draws
+// imgui inside the same pass, then ends it
+void Renderer::drawTonemapRegion(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const VkRect2D& region, bool clear) {
+    const VkExtent2D ext = app.extent();
+    VkClearValue bcv{}; // black
+    VkRenderPassBeginInfo bpb{};
+    bpb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    bpb.renderPass = clear ? app.renderPass() : m_noClearRp;
+    bpb.framebuffer = clear ? app.frameBuffer(fb) : m_noClearFbs[fb];
+    bpb.renderArea = {{0, 0}, ext};
+    bpb.clearValueCount = 1;
+    bpb.pClearValues = &bcv;
+    vkCmdBeginRenderPass(cmd, &bpb, VK_SUBPASS_CONTENTS_INLINE);
+    VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
+    vkCmdSetViewport(cmd, 0, 1, &vpt);
+    vkCmdSetScissor(cmd, 0, 1, &region);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPl, 0, 1, &m_tmSet, 0, nullptr);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+}
+
 void Renderer::writeLights(const entt::registry& reg) {
     LightsUbo u{};
     int n = 0;
@@ -408,23 +430,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::re
     if (app.hdrView() != m_tmSrcView)
         rebuildTonemapSet(app);
     writeTonemapUbo(0.0f, 0.0f, (float)ext.width, (float)ext.height);
-    VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
-    VkRect2D sc{0, 0, ext.width, ext.height};
-    VkClearValue bcv[1]{};
-    bcv[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
-    VkRenderPassBeginInfo bpb{};
-    bpb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    bpb.renderPass = app.renderPass();
-    bpb.framebuffer = app.frameBuffer(fb);
-    bpb.renderArea = {{0, 0}, ext};
-    bpb.clearValueCount = 1;
-    bpb.pClearValues = bcv;
-    vkCmdBeginRenderPass(cmd, &bpb, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdSetViewport(cmd, 0, 1, &vpt);
-    vkCmdSetScissor(cmd, 0, 1, &sc);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPipe);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPl, 0, 1, &m_tmSet, 0, nullptr);
-    vkCmdDraw(cmd, 3, 1, 0, 0);
+    drawTonemapRegion(cmd, app, fb, {0, 0, ext.width, ext.height}, true);
     if (imgui && imgui->CmdLists.Size > 0)
         ImGui_ImplVulkan_RenderDrawData(imgui, cmd);
     vkCmdEndRenderPass(cmd);
@@ -491,10 +497,7 @@ void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::
     const VkExtent2D ext = app.extent();
     renderShadowCubes(cmd, reg);
     ensureNoClearFbs(app);
-    VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
     VkRect2D full{0, 0, ext.width, ext.height};
-    VkClearValue bcv[1]{};
-    bcv[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
     for (int eye = 0; eye < m_vrEyesN; ++eye) {
         // the view + tonemap UBOs are single-slot host buffers, so each eye is
         // its own fence-waited submit to avoid the next eye clobbering this one
@@ -507,19 +510,7 @@ void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::
         writeTonemapUbo((float)r.offset.x, (float)r.offset.y, (float)r.extent.width, (float)r.extent.height);
         const bool first = eye == 0;
         const bool last = eye == m_vrEyesN - 1;
-        VkRenderPassBeginInfo bpb{};
-        bpb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        bpb.renderPass = first ? app.renderPass() : m_noClearRp;
-        bpb.framebuffer = first ? app.frameBuffer(fb) : m_noClearFbs[fb];
-        bpb.renderArea = {{0, 0}, ext};
-        bpb.clearValueCount = 1;
-        bpb.pClearValues = bcv;
-        vkCmdBeginRenderPass(cmd, &bpb, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdSetViewport(cmd, 0, 1, &vpt);
-        vkCmdSetScissor(cmd, 0, 1, &r);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPipe);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPl, 0, 1, &m_tmSet, 0, nullptr);
-        vkCmdDraw(cmd, 3, 1, 0, 0);
+        drawTonemapRegion(cmd, app, fb, r, first);
         if (last && imgui && imgui->CmdLists.Size > 0) {
             vkCmdSetScissor(cmd, 0, 1, &full);
             ImGui_ImplVulkan_RenderDrawData(imgui, cmd);

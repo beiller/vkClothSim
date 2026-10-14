@@ -19,8 +19,6 @@ void Renderer::initShadow(VkApp& app) {
                            m_shadowDepthFace[f]);
     vkMakeCubeArrayView(m_dev, m_shadowCube, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 0, nLayers,
                         m_shadowSampleView);
-    VkPhysicalDeviceProperties props;
-    vkGetPhysicalDeviceProperties(m_pdev, &props);
     vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false, 0.0f,
                     1.0f, m_shadowSampler);
     m_shadowInfo = {m_shadowSampler, m_shadowSampleView, VK_IMAGE_LAYOUT_GENERAL};

@@ -126,7 +126,8 @@ struct MouseInput {
 
 // keyboard state (GLFW key codes); "keyboard" entity
 struct KeyboardInput {
-    bool keys[352] = {};
+    static constexpr int kMaxKeys = 352; // past GLFW_KEY_LAST (349)
+    bool keys[kMaxKeys] = {};
 };
 
 struct Renderable {

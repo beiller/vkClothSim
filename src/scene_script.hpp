@@ -10,6 +10,7 @@
 #include <vector>
 
 struct lua_State;
+struct LuaScript;
 struct World;
 
 // Embedded Lua 5.4 host for scene behavior scripts (scene .json + .lua).
@@ -52,6 +53,9 @@ public:
 private:
     // call a hook fn(self, dt) via its registry ref; reports an error once; false on failure
     bool callHook(int fnRef, int instRef, float dt);
+    // run one hook field (_animate or _physics) over every ready script; a hook that errors is
+    // unrefed and disabled
+    void stepHook(float dt, int LuaScript::* hook);
     // call a hook fn(self) (no dt); reports an error once; false on failure
     bool callOnReady(int fnRef, int instRef);
     // on_destroy<LuaScript> handler: unref the destroyed entity's script refs

@@ -33,20 +33,6 @@ const char* compName(Comp c) {
     return nullptr;
 }
 
-bool present(const entt::registry& reg, entt::entity e, Comp c) {
-    switch (c) {
-    case Comp::Transform:
-        return reg.try_get<Transform>(e) != nullptr;
-    case Comp::Material:
-        return reg.try_get<Material>(e) != nullptr;
-    case Comp::Camera:
-        return reg.try_get<Camera>(e) != nullptr;
-    case Comp::PointLight:
-        return reg.try_get<PointLight>(e) != nullptr;
-    }
-    return false;
-}
-
 void emplaceDefault(entt::registry& reg, entt::entity e, Comp c) {
     switch (c) {
     case Comp::Transform:
@@ -161,11 +147,11 @@ bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typ
                   : "unknown component '" + typeName + "'";
         return false;
     }
-    if (strict && present(reg, e, c)) {
+    if (strict && base(reg, e, c) != nullptr) {
         err = "component '" + typeName + "' already present on the entity";
         return false;
     }
-    if (!present(reg, e, c))
+    if (!base(reg, e, c))
         emplaceDefault(reg, e, c);
     void* b = base(reg, e, c);
     for (const auto& f : fields)
@@ -240,7 +226,7 @@ bool compRemove(entt::registry& reg, entt::entity e, const std::string& type, st
                   : "unknown component '" + type + "'";
         return false;
     }
-    if (!present(reg, e, c)) {
+    if (!base(reg, e, c)) {
         err = "component '" + type + "' not present on the entity";
         return false;
     }

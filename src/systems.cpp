@@ -265,17 +265,13 @@ void stepMouse(World& w) {
     double cx, cy;
     glfwGetCursorPos(app->glfwWindow(), &cx, &cy);
     ImGuiIO& io = ImGui::GetIO();
+    const int btns[4] = {GLFW_MOUSE_BUTTON_LEFT, GLFW_MOUSE_BUTTON_RIGHT, GLFW_MOUSE_BUTTON_MIDDLE,
+                         GLFW_MOUSE_BUTTON_4};
     reg.view<MouseInput>().each([&](auto, MouseInput& mi) {
         mi.x = (float)cx;
         mi.y = (float)cy;
-        mi.buttons[0] =
-            glfwGetMouseButton(app->glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS && !io.WantCaptureMouse;
-        mi.buttons[1] =
-            glfwGetMouseButton(app->glfwWindow(), GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS && !io.WantCaptureMouse;
-        mi.buttons[2] =
-            glfwGetMouseButton(app->glfwWindow(), GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS && !io.WantCaptureMouse;
-        mi.buttons[3] =
-            glfwGetMouseButton(app->glfwWindow(), GLFW_MOUSE_BUTTON_4) == GLFW_PRESS && !io.WantCaptureMouse;
+        for (int i = 0; i < 4; ++i)
+            mi.buttons[i] = glfwGetMouseButton(app->glfwWindow(), btns[i]) == GLFW_PRESS && !io.WantCaptureMouse;
     });
 }
 
@@ -288,7 +284,7 @@ void stepKeyboard(World& w) {
         return;
     auto& reg = w.reg;
     reg.view<KeyboardInput>().each([&](auto, KeyboardInput& ki) {
-        for (int k = 0; k < 352; ++k)
+        for (int k = 0; k < KeyboardInput::kMaxKeys; ++k)
             ki.keys[k] = glfwGetKey(app->glfwWindow(), k) == GLFW_PRESS;
     });
 }

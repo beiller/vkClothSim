@@ -151,21 +151,6 @@ inline VkShaderModule vkMakeModule(VkDevice dev, const void* code, uint32_t nwor
     return m;
 }
 
-inline void vkMakeSampler(VkDevice dev, VkSamplerAddressMode addr, VkSampler& out) {
-    VkSamplerCreateInfo s{};
-    s.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    s.magFilter = VK_FILTER_LINEAR;
-    s.minFilter = VK_FILTER_LINEAR;
-    s.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    s.addressModeU = addr;
-    s.addressModeV = addr;
-    s.addressModeW = addr;
-    s.anisotropyEnable = VK_FALSE;
-    s.compareEnable = VK_FALSE;
-    s.unnormalizedCoordinates = VK_FALSE;
-    VK(vkCreateSampler(dev, &s, nullptr, &out));
-}
-
 inline void vkMakeImage2D(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint32_t h, const void* rgba8, VkImage& img,
                           VkDeviceMemory& mem, VkImageView& view) {
     VkImageCreateInfo ici{};

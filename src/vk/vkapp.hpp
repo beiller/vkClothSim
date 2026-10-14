@@ -44,8 +44,8 @@ public:
     void present(uint32_t idx);
 
 private:
-    void createDepth(VkExtent2D ext);
-    void createHDR(VkExtent2D ext);
+    void createAttachment(VkExtent2D ext, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlagBits aspect,
+                          VkImage& img, VkDeviceMemory& mem, VkImageView& view);
     void recreateSwapchain();
     void destroySwapchainResources();
 

@@ -89,6 +89,9 @@ private:
     void setTexture(int inst, int channel, int texId); // rewrite the descriptor only when the id changes
     void hdrBarrier(VkCommandBuffer cmd, VkApp& app);
     void writeTonemapUbo(float ox, float oy, float sx, float sy);
+    // tonemap the HDR buffer into a swapchain-image region (no EndRenderPass; the caller draws
+    // imgui and closes the pass); clear = first eye gets the clearing pass
+    void drawTonemapRegion(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const VkRect2D& region, bool clear);
     void ensureNoClearFbs(VkApp& app);
     Mat4 eyeVP(int eye) const;
     VkRect2D eyeRegion(int eye, VkExtent2D ext) const;

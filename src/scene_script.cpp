@@ -513,10 +513,7 @@ void SceneScript::activateScripts() {
     }
 }
 
-void SceneScript::animateAll(float dt) {
-    if (!L)
-        return;
-    m_time += dt; // scene time (render-rate), read by scene.time()
+void SceneScript::stepHook(float dt, int LuaScript::* hook) {
     struct Call {
         entt::entity e;
         int fn;
@@ -524,38 +521,29 @@ void SceneScript::animateAll(float dt) {
     };
     std::vector<Call> calls;
     for (auto [e, ls] : w().reg.view<LuaScript>().each())
-        if (ls.ready && ls.animate > 0)
-            calls.push_back({e, ls.animate, ls.inst});
+        if (ls.ready && ls.*hook > 0)
+            calls.push_back({e, ls.*hook, ls.inst});
     for (auto& c : calls) {
         if (callHook(c.fn, c.inst, dt))
             continue;
         if (auto* ls = w().reg.try_get<LuaScript>(c.e)) {
-            dropRef(ls->animate);
-            ls->animate = -1;
+            dropRef(ls->*hook); // the hook that just errored is dropped and disabled
+            ls->*hook = -1;
         }
     }
+}
+
+void SceneScript::animateAll(float dt) {
+    if (!L)
+        return;
+    m_time += dt; // scene time (render-rate), read by scene.time()
+    stepHook(dt, &LuaScript::animate);
 }
 
 void SceneScript::physicsAll(float dt) {
     if (!L)
         return;
-    struct Call {
-        entt::entity e;
-        int fn;
-        int inst;
-    };
-    std::vector<Call> calls;
-    for (auto [e, ls] : w().reg.view<LuaScript>().each())
-        if (ls.ready && ls.physics > 0)
-            calls.push_back({e, ls.physics, ls.inst});
-    for (auto& c : calls) {
-        if (callHook(c.fn, c.inst, dt))
-            continue;
-        if (auto* ls = w().reg.try_get<LuaScript>(c.e)) {
-            dropRef(ls->physics);
-            ls->physics = -1;
-        }
-    }
+    stepHook(dt, &LuaScript::physics);
 }
 
 void SceneScript::shutdown() {
@@ -1084,7 +1072,7 @@ int SceneScript::lKeyDown(lua_State* L) {
     auto* self = sSelf(L);
     const entt::entity e = readEnt(L, 1);
     const int code = (int)luaL_checknumber(L, 2);
-    if (code < 0 || code >= 352) {
+    if (code < 0 || code >= KeyboardInput::kMaxKeys) {
         lua_pushboolean(L, false);
         return 1;
     }

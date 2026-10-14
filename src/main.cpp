@@ -1,14 +1,11 @@
 #include <vulkan/vulkan.h>
 
-#include <GLFW/glfw3.h>
-
 #include "scene.hpp"
 #include "systems.hpp"
 #include "vk/vkapp.hpp"
 #include "world.hpp"
 #include "xr/xr.hpp"
 #include <chrono>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <imgui.h>

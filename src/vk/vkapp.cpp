@@ -363,8 +363,10 @@ void VkApp::recreateSwapchain() {
     m_images.resize(icnt);
     vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, m_images.data());
 
-    createDepth(m_extent);
-    createHDR(m_extent);
+    createAttachment(m_extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                     VK_IMAGE_ASPECT_DEPTH_BIT, m_depth, m_depthMem, m_depthView);
+    createAttachment(m_extent, m_hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     VK_IMAGE_ASPECT_COLOR_BIT, m_hdr, m_hdrMem, m_hdrView);
 
     VkImageView satts[2] = {m_hdrView, m_depthView};
     VkFramebufferCreateInfo sfci{};
@@ -427,64 +429,34 @@ void VkApp::destroySwapchainResources() {
     m_hdrView = VK_NULL_HANDLE;
 }
 
-void VkApp::createDepth(VkExtent2D ext) {
-    VkImageCreateInfo dci{};
-    dci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    dci.imageType = VK_IMAGE_TYPE_2D;
-    dci.extent = {ext.width, ext.height, 1};
-    dci.mipLevels = 1;
-    dci.arrayLayers = 1;
-    dci.format = VK_FORMAT_D32_SFLOAT;
-    dci.tiling = VK_IMAGE_TILING_OPTIMAL;
-    dci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    dci.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    dci.samples = VK_SAMPLE_COUNT_1_BIT;
-    dci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    VK(vkCreateImage(m_dev, &dci, nullptr, &m_depth));
+void VkApp::createAttachment(VkExtent2D ext, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlagBits aspect,
+                             VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.extent = {ext.width, ext.height, 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.format = fmt;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    ici.usage = usage;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VK(vkCreateImage(m_dev, &ici, nullptr, &img));
     VkMemoryRequirements mr;
-    vkGetImageMemoryRequirements(m_dev, m_depth, &mr);
+    vkGetImageMemoryRequirements(m_dev, img, &mr);
     VkMemoryAllocateInfo maa{};
     maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     maa.allocationSize = mr.size;
     maa.memoryTypeIndex = vkFindMemoryType(m_pdev, mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VK(vkAllocateMemory(m_dev, &maa, nullptr, &m_depthMem));
-    VK(vkBindImageMemory(m_dev, m_depth, m_depthMem, 0));
+    VK(vkAllocateMemory(m_dev, &maa, nullptr, &mem));
+    VK(vkBindImageMemory(m_dev, img, mem, 0));
     VkImageViewCreateInfo vci{};
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = m_depth;
+    vci.image = img;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = VK_FORMAT_D32_SFLOAT;
-    vci.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-    VK(vkCreateImageView(m_dev, &vci, nullptr, &m_depthView));
-}
-
-void VkApp::createHDR(VkExtent2D ext) {
-    VkImageCreateInfo dci{};
-    dci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    dci.imageType = VK_IMAGE_TYPE_2D;
-    dci.extent = {ext.width, ext.height, 1};
-    dci.mipLevels = 1;
-    dci.arrayLayers = 1;
-    dci.format = m_hdrFmt;
-    dci.tiling = VK_IMAGE_TILING_OPTIMAL;
-    dci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    dci.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    dci.samples = VK_SAMPLE_COUNT_1_BIT;
-    dci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    VK(vkCreateImage(m_dev, &dci, nullptr, &m_hdr));
-    VkMemoryRequirements mr;
-    vkGetImageMemoryRequirements(m_dev, m_hdr, &mr);
-    VkMemoryAllocateInfo maa{};
-    maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    maa.allocationSize = mr.size;
-    maa.memoryTypeIndex = vkFindMemoryType(m_pdev, mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VK(vkAllocateMemory(m_dev, &maa, nullptr, &m_hdrMem));
-    VK(vkBindImageMemory(m_dev, m_hdr, m_hdrMem, 0));
-    VkImageViewCreateInfo vci{};
-    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = m_hdr;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = m_hdrFmt;
-    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VK(vkCreateImageView(m_dev, &vci, nullptr, &m_hdrView));
+    vci.format = fmt;
+    vci.subresourceRange = {aspect, 0, 1, 0, 1};
+    VK(vkCreateImageView(m_dev, &vci, nullptr, &view));
 }
