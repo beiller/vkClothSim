@@ -182,8 +182,9 @@ void addComponents(entt::registry& reg, entt::entity e, const json& cj, const st
     }
 }
 
-// one scene object: Name + "components" + optional "texture" (material objects) + "mesh"
-// (render.mesh equivalent; placed by the components' Transform) + "script" (behavior).
+// one scene object: Name + "components" + "texture" (a path on a texture object = shared texture
+// entity; a name on a material object = reference to an earlier texture object) + "mesh" (render.mesh
+// equivalent; placed by the components' Transform) + "script" (behavior).
 // Referenced names must be defined earlier in "objects" (define before use)
 void buildObject(World& w, const json& o, const std::string& p, bool allowMesh) {
     const auto name = o.at("name").get<std::string>();
@@ -195,13 +196,16 @@ void buildObject(World& w, const json& o, const std::string& p, bool allowMesh) 
         addComponents(w.reg, e, o["components"], p, what + ":");
 
     if (o.contains("texture")) {
-        const auto texName = o["texture"].get<std::string>();
-        if (!w.reg.try_get<Material>(e))
-            fail(p, what + ": 'texture' requires a Material component");
-        const int texId = loadAssetTexture(w, texName);
-        if (texId < 0)
-            fail(p, what + ": cannot load texture '" + texName + "'");
-        w.reg.get<Material>(e).texId = texId;
+        const auto tex = o["texture"].get<std::string>();
+        if (w.reg.try_get<Material>(e)) {
+            // a material references an earlier texture object by name (define before use)
+            const entt::entity texE = findNamedEntity(w, tex);
+            if (texE == entt::null || !w.reg.try_get<Texture>(texE))
+                fail(p, what + ": unknown texture '" + tex + "' (define the texture object first)");
+            w.reg.get<Material>(e).tex = texE;
+        } else if (!textureFor(w, e, tex)) { // texture object: a top-level entity from an asset path
+            fail(p, what + ": cannot load texture '" + tex + "'");
+        }
     }
 
     if (o.contains("mesh")) {

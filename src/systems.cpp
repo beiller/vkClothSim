@@ -120,13 +120,27 @@ entt::entity findNamedEntity(const World& w, const std::string& name) {
     return out;
 }
 
-int loadAssetTexture(World& w, const std::string& path) {
+bool textureFor(World& w, entt::entity e, const std::string& path) {
     TextureData td;
     if (!loadTexture(exeDir() + "/../assets/" + path, td))
         loadTexture("assets/" + path, td);
     if (td.rgba.empty())
-        return -1;
-    return w.renderer.addTexture(td.rgba.data(), (uint32_t)td.w, (uint32_t)td.h);
+        return false;
+    w.reg.emplace<Texture>(e, path, w.renderer.addTexture(td.rgba.data(), (uint32_t)td.w, (uint32_t)td.h));
+    return true;
+}
+
+entt::entity textureEntity(World& w, const std::string& path) {
+    for (auto [e, tx] : w.reg.view<Texture>().each())
+        if (tx.path == path)
+            return e;
+    entt::entity e = w.reg.create();
+    if (!textureFor(w, e, path)) {
+        w.reg.destroy(e);
+        return entt::null;
+    }
+    w.reg.emplace<Name>(e, path);
+    return e;
 }
 
 entt::entity findActiveCamera(const World& w) {

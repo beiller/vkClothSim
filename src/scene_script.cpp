@@ -205,7 +205,8 @@ void SceneScript::init(World& w) {
 
     lua_newtable(L);            // render: mesh assets, materials, and visuals
     reg("geometry", lGeometry); // geometry(geomTable) -> shared mesh id
-    reg("material", lMaterial); // material(name, color, metallic, roughness, texture?, emissive?)
+    reg("texture", lTexture);   // texture(path) -> shared texture entity (one per path)
+    reg("material", lMaterial); // material(name, color, metallic, roughness, texEntity?, emissive?)
     reg("mesh", lMesh);         // mesh(entity, geom, mat, pos?, quat?, {parent?})
     lua_setglobal(L, "render");
 
@@ -579,6 +580,17 @@ void SceneScript::reportError(const char* what) {
     lua_pop(L, 2); // traceback + error object
 }
 
+int SceneScript::lTexture(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const char* path = luaL_checkstring(L, 1);
+    const entt::entity e = textureEntity(w, path);
+    if (e == entt::null)
+        return luaL_error(L, "render.texture: cannot load texture '%s'", path);
+    pushEnt(L, e);
+    return 1;
+}
+
 int SceneScript::lMaterial(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
@@ -586,17 +598,18 @@ int SceneScript::lMaterial(lua_State* L) {
     auto color = readV3(L, 2);
     const float metallic = (float)luaL_optnumber(L, 3, 0.0);
     const float roughness = (float)luaL_optnumber(L, 4, 0.5);
-    const char* tex = luaL_optstring(L, 5, nullptr);
+    entt::entity tex = entt::null;
+    if (!lua_isnoneornil(L, 5)) {
+        tex = readEnt(L, 5);
+        if (!w.reg.try_get<Texture>(tex))
+            return luaL_error(L, "scene.material '%s': texture must be a texture entity (render.texture)", name);
+    }
     const V3 emissive = readV3(L, 6);
     entt::entity e = findNamedEntity(w, name);
     if (e == entt::null || !w.reg.try_get<Material>(e))
         e = spawnMaterial(w, color, metallic, roughness, emissive, name);
-    if (tex) {
-        const int texId = loadAssetTexture(w, tex);
-        if (texId < 0)
-            return luaL_error(L, "scene.material '%s': cannot load texture '%s'", name, tex);
-        w.reg.get<Material>(e).texId = texId;
-    }
+    if (tex != entt::null)
+        w.reg.get<Material>(e).tex = tex;
     pushEnt(L, e);
     return 1;
 }
@@ -998,6 +1011,10 @@ int SceneScript::lDestroy(lua_State* L) {
         for (auto [c, col] : w.reg.view<Collider>().each())
             if (col.shape == e)
                 return luaL_error(L, "scene.destroy: shape is referenced by a collider");
+    if (w.reg.try_get<Texture>(e))
+        for (auto [m, mat] : w.reg.view<Material>().each())
+            if (mat.tex == e)
+                return luaL_error(L, "scene.destroy: texture is referenced by a material");
     const auto subtree = subtreeEntities(w.reg, e);
     for (const auto c : subtree)
         w.reg.destroy(c); // destroyed entities fall out of the renderer's ECS query; buffers freed at shutdown

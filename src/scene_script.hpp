@@ -80,6 +80,7 @@ private:
     static bool readCompFields(lua_State* L, int idx, CompFields& out, std::string& err);
     static int lEntity(lua_State* L);
     static int lMaterial(lua_State* L);
+    static int lTexture(lua_State* L);
     static int lGeometry(lua_State* L);
     static int lMesh(lua_State* L);
     static int lCompEmplace(lua_State* L);

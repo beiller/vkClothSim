@@ -32,8 +32,10 @@ void addRigidBody(World& w, entt::entity e, const std::vector<ColliderSpec>& col
 void addKinematicBody(World& w, entt::entity e, const std::vector<ColliderSpec>& colliders);
 // one collider child entity: local Transform + Collider(shape) + Parent -> the body
 entt::entity addCollider(World& w, entt::entity body, entt::entity shape, const Transform& local);
-// texture from assets/ (or assets/ relative to the exe); renderer texture id or -1
-int loadAssetTexture(World& w, const std::string& path);
+// load + upload a texture asset; emplace Texture on e; false if the asset is missing
+bool textureFor(World& w, entt::entity e, const std::string& path);
+// shared texture entity for a path (deduped, Name = path); null on failure — render.texture
+entt::entity textureEntity(World& w, const std::string& path);
 // the active camera (entt::null if none)
 entt::entity findActiveCamera(const World& w);
 // compose an entity's Transform through its Parent chain (world space); valid before/after resolve

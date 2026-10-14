@@ -267,8 +267,12 @@ void Renderer::prepBuffers(const entt::registry& reg) {
                 emissive = mat->emissive;
                 metallic = mat->metallic;
                 roughness = mat->roughness;
-                if (mat->texId >= 0 && inst.tex[0] != mat->texId)
-                    setTexture(rend.inst, 0, mat->texId);
+                int texId = -1;
+                if (mat->tex != entt::null)
+                    if (const auto* tx = reg.try_get<Texture>(mat->tex))
+                        texId = tx->texId;
+                if (texId >= 0 && inst.tex[0] != texId)
+                    setTexture(rend.inst, 0, texId);
             }
         // soft bodies resolve no WorldTransform (geometry is world-space in the GPU buffer) -> identity
         Mat4 model = mat4Identity();

@@ -151,6 +151,13 @@ struct Renderable {
     int inst = -1;
 };
 
+// shared texture entity: one per asset path; materials link by entity ref, so users share one
+// GPU copy. texId is the renderer's upload (eager, at entity creation)
+struct Texture {
+    std::string path;
+    int texId = -1;
+};
+
 // owned by material entities only; meshes point at it via MaterialRef, so many meshes can share
 // one material (and editing it updates all users)
 struct Material {
@@ -158,7 +165,7 @@ struct Material {
     float metallic = 0.0f;
     float roughness = 0.5f;
     V3 emissive{0.0f, 0.0f, 0.0f}; // added to the lit color before tonemap (HDR values glow)
-    int texId = -1;                // renderer texture (albedo); -1 = none
+    entt::entity tex = entt::null; // shared texture entity (albedo); null = none
 };
 
 // mesh -> shared material entity

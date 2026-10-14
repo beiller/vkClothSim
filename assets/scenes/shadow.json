@@ -19,10 +19,11 @@
             }
         },
         { "name": "white", "components": { "Material": { "baseColor": [1, 1, 1], "roughness": 0.9 } } },
+        { "name": "tex_plaid", "texture": "cloth_albedo.png" },
         {
             "name": "plaid",
             "components": { "Material": { "baseColor": [1, 1, 1], "roughness": 0.35 } },
-            "texture": "cloth_albedo.png"
+            "texture": "tex_plaid"
         },
         { "name": "shadow", "script": "scenes/shadow" },
         { "name": "vr", "script": "scenes/vr_controller" }
