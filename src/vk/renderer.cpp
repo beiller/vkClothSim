@@ -7,6 +7,7 @@
 #include "tonemap_vert_spv.hpp"
 #include "vk/vkapp.hpp"
 #include "vk/vkutil.hpp"
+#include <algorithm>
 #include <cstring>
 #include <imgui_impl_vulkan.h>
 
@@ -17,7 +18,9 @@ struct ModelUbo {
     float baseColor[3]; // 64
     float metallic;     // 76
     float roughness;    // 80
-    float pad[3];       // 84 - std140 aligns the next vec3 to 16
+    float baseAlpha;    // 84
+    float alphaCutoff;  // 88
+    float alphaMode;    // 92  0 opaque, 1 mask, 2 blend
     float emissive[3];  // 96
     float padEnd;       // 108 - pad the block to 112
 };
@@ -55,7 +58,8 @@ struct LightsUbo {
 };
 static_assert(sizeof(LightsUbo) == 16 + Renderer::kMaxLights * 64, "LightsUbo must match the shader std430 layout");
 
-ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float roughness, const V3& emissive) {
+ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float roughness, const V3& emissive,
+                   float baseAlpha, float alphaCutoff, float alphaMode) {
     ModelUbo mb{};
     std::memcpy(mb.model, model.m, 64);
     mb.baseColor[0] = baseColor.x;
@@ -63,6 +67,9 @@ ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float
     mb.baseColor[2] = baseColor.z;
     mb.metallic = metallic;
     mb.roughness = roughness;
+    mb.baseAlpha = baseAlpha;
+    mb.alphaCutoff = alphaCutoff;
+    mb.alphaMode = alphaMode;
     mb.emissive[0] = emissive.x;
     mb.emissive[1] = emissive.y;
     mb.emissive[2] = emissive.z;
@@ -115,6 +122,9 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     m_pl = vkMakePipelineLayout(m_dev, m_dsl);
     m_pipe = makeGraphicsPipeline(m_dev, app.sceneRenderPass(), mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
                                   mesh_frag_spv_len / 4, m_pl, true);
+    // blend pipeline: alpha blending, depth test without write (for glTF alphaMode BLEND)
+    m_pipeBlend = makeGraphicsPipeline(m_dev, app.sceneRenderPass(), mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
+                                       mesh_frag_spv_len / 4, m_pl, true, false, true);
 
     const uint8_t white[4] = {255, 255, 255, 255};
     vkMakeImage2D(m_dev, m_pdev, 1, 1, white, m_white.img, m_white.mem, m_white.view);
@@ -174,7 +184,7 @@ int Renderer::addInstance(int geom) {
     InstancedMesh inst;
     inst.geom = geom;
     // prepBuffers rewrites this from the ECS every frame; identity + defaults just keep it valid
-    const ModelUbo modelInit = packModel(mat4Identity(), V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, V3{0.0f, 0.0f, 0.0f});
+    const ModelUbo modelInit = packModel(mat4Identity(), V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, V3{0.0f, 0.0f, 0.0f}, 1.0f, 0.5f, 0.0f);
     vkMakeBuffer(m_dev, m_pdev, inst.modelUbuf, inst.modelMem, sizeof(ModelUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                  &modelInit);
     const VkDeviceSize attrSize = (VkDeviceSize)12 * g.vtxCount;
@@ -264,13 +274,17 @@ void Renderer::prepBuffers(const entt::registry& reg) {
     for (auto [e, rend] : reg.view<Renderable>().each()) {
         InstancedMesh& inst = m_insts[rend.inst];
         V3 base{1.0f, 1.0f, 1.0f}, emissive{0.0f, 0.0f, 0.0f};
-        float metallic = 0.0f, roughness = 0.5f;
+        float metallic = 0.0f, roughness = 0.5f, baseAlpha = 1.0f, alphaCutoff = 0.5f;
+        int alphaMode = 0;
         if (const auto* ref = reg.try_get<MaterialRef>(e))
             if (const auto* mat = reg.try_get<Material>(ref->mat)) {
                 base = mat->baseColor;
                 emissive = mat->emissive;
                 metallic = mat->metallic;
                 roughness = mat->roughness;
+                baseAlpha = mat->alpha;
+                alphaCutoff = mat->alphaCutoff;
+                alphaMode = mat->alphaMode;
                 const entt::entity slots[kTexChannels] = {mat->tex, mat->texMR, mat->texNormal, mat->texEmissive};
                 for (int c = 0; c < kTexChannels; ++c) {
                     int texId = -1;
@@ -282,9 +296,12 @@ void Renderer::prepBuffers(const entt::registry& reg) {
             }
         // soft bodies resolve no WorldTransform (geometry is world-space in the GPU buffer) -> identity
         Mat4 model = mat4Identity();
-        if (const auto* wt = reg.try_get<WorldTransform>(e))
+        if (const auto* wt = reg.try_get<WorldTransform>(e)) {
             model = wt->toMat4();
-        const ModelUbo mb = packModel(model, base, metallic, roughness, emissive);
+            inst.wpos = wt->pos;
+        }
+        inst.alphaMode = alphaMode;
+        const ModelUbo mb = packModel(model, base, metallic, roughness, emissive, baseAlpha, alphaCutoff, alphaMode);
         vkWriteBuffer(m_dev, inst.modelMem, &mb, sizeof(ModelUbo));
     }
 }
@@ -307,8 +324,23 @@ void Renderer::renderScenePass(VkCommandBuffer cmd, VkApp& app, const entt::regi
     vkCmdSetViewport(cmd, 0, 1, &vpt);
     vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipe);
-    for (auto [e, rend] : reg.view<Renderable>().each())
-        drawInstance(cmd, m_pl, m_geoms[m_insts[rend.inst].geom], m_insts[rend.inst]);
+    std::vector<int> blend;
+    for (auto [e, rend] : reg.view<Renderable>().each()) {
+        if (m_insts[rend.inst].alphaMode == 2) // BLEND goes to the sorted pass
+            blend.push_back(rend.inst);
+        else
+            drawInstance(cmd, m_pl, m_geoms[m_insts[rend.inst].geom], m_insts[rend.inst]);
+    }
+    if (blend.size()) {
+        // transparent: back-to-front by camera distance
+        std::sort(blend.begin(), blend.end(), [&](int a, int b) {
+            const V3 da = vSub(m_camPos, m_insts[a].wpos), db = vSub(m_camPos, m_insts[b].wpos);
+            return vDot(db, db) > vDot(da, da);
+        });
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeBlend);
+        for (int i : blend)
+            drawInstance(cmd, m_pl, m_geoms[m_insts[i].geom], m_insts[i]);
+    }
     vkCmdEndRenderPass(cmd);
 }
 
@@ -665,6 +697,8 @@ void Renderer::shutdown() {
         vkDestroyPipelineLayout(m_dev, m_pl, nullptr);
     if (m_pipe)
         vkDestroyPipeline(m_dev, m_pipe, nullptr);
+    if (m_pipeBlend)
+        vkDestroyPipeline(m_dev, m_pipeBlend, nullptr);
     for (auto* fb : m_noClearFbs)
         vkDestroyFramebuffer(m_dev, fb, nullptr);
     if (m_noClearRp)

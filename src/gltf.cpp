@@ -277,8 +277,8 @@ void computeNormals(const std::vector<float>& pos, const std::vector<uint32_t>& 
 }
 
 // pack one glTF primitive into the engine's Mesh (pos/nrm/uv0 + u32 indices); NORMAL computed
-// if absent, UVs zero if absent
-bool packPrimitive(const tg3_model& m, const tg3_primitive& p, Mesh& out, std::string& warn) {
+// if absent or morphs were baked, UVs zero if absent
+bool packPrimitive(const tg3_model& m, const tg3_mesh& gm, const tg3_primitive& p, Mesh& out, std::string& warn) {
     if (p.mode != -1 && p.mode != 4) {
         warn = "primitive mode is not triangles";
         return false;
@@ -305,7 +305,29 @@ bool packPrimitive(const tg3_model& m, const tg3_primitive& p, Mesh& out, std::s
     } else
         for (uint64_t i = 0; i < n; ++i)
             idxf.push_back((float)i);
-    if (nrm.empty()) {
+    // bake morph targets: pos += sum(weight_t * target_t.POSITION); weights are the static
+    // frame-0 strengths from the mesh (absent -> zero)
+    bool baked = false, skipped = false;
+    for (uint32_t t = 0; t < p.targets_count; ++t) {
+        const float w = t < gm.weights_count ? (float)gm.weights[t] : 0.0f;
+        if (std::fabs(w) < 1e-6f)
+            continue;
+        int32_t acc = -1;
+        for (uint32_t i = 0; i < p.target_attribute_counts[t]; ++i)
+            if (s(p.targets[t][i].key) == "POSITION")
+                acc = p.targets[t][i].value;
+        std::vector<float> d;
+        if (acc < 0 || !readAccessor(m, acc, 3, d) || d.size() != pos.size()) {
+            skipped = true;
+            continue;
+        }
+        for (size_t i = 0; i < pos.size(); ++i)
+            pos[i] += w * d[i];
+        baked = true;
+    }
+    if (skipped)
+        warn = "some morph targets have no POSITION delta (only POSITION is applied); skipped";
+    if (nrm.empty() || baked) {
         std::vector<uint32_t> idx(idxf.begin(), idxf.end());
         computeNormals(pos, idx, nrm);
     }
@@ -450,6 +472,26 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     slot(pbr.metallic_roughness_texture.index, pbr.metallic_roughness_texture.tex_coord, "metallicRoughness", &mat.texMR);
     slot(gm.normal_texture.index, gm.normal_texture.tex_coord, "normal", &mat.texNormal);
     slot(gm.emissive_texture.index, gm.emissive_texture.tex_coord, "emissive", &mat.texEmissive);
+    mat.alpha = (float)pbr.base_color_factor[3];
+    mat.alphaCutoff = (float)gm.alpha_cutoff;
+    const std::string am = s(gm.alpha_mode);
+    mat.alphaMode = am == "BLEND" ? 2 : (am == "MASK" ? 1 : 0);
+    // KHR_materials_transmission (glass, e.g. cornea): v1 approximation -> blend, with the
+    // surface alpha from the transmission factor (1.0 = fully clear)
+    for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
+        if (s(gm.ext.extensions[i].name) != "KHR_materials_transmission")
+            continue;
+        const tg3_value& ext = gm.ext.extensions[i].value;
+        double tf = 1.0;
+        for (uint32_t j = 0; j < ext.object_count; ++j)
+            if (s(ext.object_data[j].key) == "transmissionFactor" && ext.object_data[j].value.type == TG3_VALUE_REAL)
+                tf = ext.object_data[j].value.real_val;
+        if (tf > 0.02) {
+            mat.alphaMode = 2;
+            mat.alpha = std::max(1.0f - (float)tf, 0.08f);
+        }
+        break;
+    }
     return c.materials[matIdx] = e;
 }
 
@@ -475,25 +517,20 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
         const std::string mName = s(gm.name);
         if (n.skin >= 0)
             warn(c, "skinned mesh " + mName + ": no animation support, using bind pose");
-        bool targets = false;
         for (uint32_t i = 0; i < gm.primitives_count; ++i) {
             const tg3_primitive& p = gm.primitives[i];
-            targets = targets || p.targets_count > 0;
             Mesh pm;
             std::string pwarn;
-            if (!packPrimitive(*c.m, p, pm, pwarn)) {
+            const bool ok = packPrimitive(*c.m, gm, p, pm, pwarn);
+            if (!pwarn.empty())
                 warn(c, "mesh " + mName + " primitive " + std::to_string(i) + ": " + pwarn);
-                continue;
-            }
-            if (pm.vertexCount() == 0)
+            if (!ok || pm.vertexCount() == 0)
                 continue;
             const entt::entity child = c.w.reg.create();
             const std::string cname = mName.empty() ? "prim" : (gm.primitives_count > 1 ? mName + "_" + std::to_string(i) : mName);
             c.w.reg.emplace<Name>(child, cname);
             addMesh(c.w, child, c.w.renderer.addMesh(pm).geom, materialFor(c, p.material), e);
         }
-        if (targets)
-            warn(c, "mesh " + mName + ": morph targets (shape keys) skipped");
     }
     for (uint32_t i = 0; i < n.children_count; ++i)
         buildNode(c, n.children[i], e);

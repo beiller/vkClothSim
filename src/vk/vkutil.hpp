@@ -406,7 +406,7 @@ inline VkPipelineLayout vkMakePipelineLayoutPC(VkDevice dev, VkDescriptorSetLayo
 // shared graphics pipeline builder (mesh/tonemap/shadow/vr all use the same fixed setup)
 inline VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void* vsSpv, uint32_t vsLen,
                                        const void* fsSpv, uint32_t fsLen, VkPipelineLayout layout, bool depth,
-                                       bool cullBack = false) {
+                                       bool cullBack = false, bool blend = false) {
     VkShaderModule vs = vkMakeModule(dev, vsSpv, vsLen);
     VkShaderModule fs = vkMakeModule(dev, fsSpv, fsLen);
     VkPipelineShaderStageCreateInfo stages[2]{};
@@ -446,7 +446,7 @@ inline VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void
     VkPipelineDepthStencilStateCreateInfo ds{};
     ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     ds.depthTestEnable = depth ? VK_TRUE : VK_FALSE;
-    ds.depthWriteEnable = depth ? VK_TRUE : VK_FALSE;
+    ds.depthWriteEnable = depth && !blend ? VK_TRUE : VK_FALSE; // transparent: test but don't write
     ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     ds.minDepthBounds = 0.0f;
     ds.maxDepthBounds = 1.0f;
@@ -455,7 +455,15 @@ inline VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void
     VkPipelineColorBlendAttachmentState ca{};
     ca.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    ca.blendEnable = VK_FALSE;
+    ca.blendEnable = blend ? VK_TRUE : VK_FALSE;
+    if (blend) {
+        ca.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        ca.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        ca.colorBlendOp = VK_BLEND_OP_ADD;
+        ca.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        ca.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        ca.alphaBlendOp = VK_BLEND_OP_ADD;
+    }
     VkPipelineColorBlendStateCreateInfo cb{};
     cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     cb.attachmentCount = 1;

@@ -70,6 +70,8 @@ private:
         VkDeviceMemory modelMem = VK_NULL_HANDLE;
         VkDescriptorSet set = VK_NULL_HANDLE;
         int tex[4] = {-2, -2, -2, -2}; // per-channel texture id last written to the descriptor
+        int alphaMode = 0;             // material alpha mode (2 = blend -> drawn in the sorted pass)
+        V3 wpos{};                     // world position (sort key for the blend pass)
     };
 
     struct EnvPass {
@@ -112,6 +114,7 @@ private:
     int m_poolCap = 0, m_poolUsed = 0;
     VkPipelineLayout m_pl = VK_NULL_HANDLE;
     VkPipeline m_pipe = VK_NULL_HANDLE;
+    VkPipeline m_pipeBlend = VK_NULL_HANDLE;
 
     VkDescriptorSetLayout m_tmDsl = VK_NULL_HANDLE;
     VkDescriptorPool m_tmPool = VK_NULL_HANDLE;

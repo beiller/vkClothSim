@@ -180,6 +180,10 @@ struct Material {
     entt::entity texMR = entt::null;      // metallicRoughness map (glTF channels: G = rough, B = metal)
     entt::entity texNormal = entt::null;  // tangent-space normal map
     entt::entity texEmissive = entt::null; // emissive map (multiplied by the emissive factor)
+    // glTF alpha: mode 0 = opaque, 1 = mask (alpha test), 2 = blend; alpha multiplies the map
+    int alphaMode = 0;
+    float alphaCutoff = 0.5f;
+    float alpha = 1.0f;
 };
 
 // mesh -> shared material entity

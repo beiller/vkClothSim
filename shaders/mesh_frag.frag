@@ -12,7 +12,7 @@ layout(binding = 3) uniform UBO {
     float shadowTexels;
     float pad[2];
 } ubo;
-layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; vec3 emissive; }
+layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; }
     modelU;
 layout(binding = 6) uniform sampler2D albedoTex;
 layout(binding = 7) uniform sampler2D mrTex; // glTF metallicRoughness: G = roughness, B = metallic
@@ -141,12 +141,19 @@ void applyNormalMap(inout vec3 N, vec2 uv, vec3 worldPos) {
 
 void main() {
     vec3 N = normalize(vN);
+    if (!gl_FrontFacing)
+        N = -N; // two-sided: light the back face as front-facing; an un-flipped N gives NoV/NoH ~ 0 and
+                // the GGX denominator max(4*NoL*NoH, 1e-4) then blows the specular up to white
     vec3 V = normalize(ubo.camPos - vWorldPos);
     applyNormalMap(N, vUv, vWorldPos);
     float NoV = max(dot(N, V), 0.0) + 1e-4;
 
     vec4 mr = texture(mrTex, vUv);
-    vec3 albedo = modelU.baseColor * texture(albedoTex, vUv).rgb;
+    vec4 alb = texture(albedoTex, vUv);
+    vec3 albedo = modelU.baseColor * alb.rgb;
+    float alpha = modelU.baseAlpha * alb.a;
+    if (modelU.alphaMode > 0.5 && modelU.alphaMode < 1.5 && alpha < modelU.alphaCutoff)
+        discard; // MASK: alpha test
     float metal = modelU.metallic * mr.b;
     float rough = clamp(modelU.roughness * mr.g, 0.04, 1.0);
     float a = rough;
@@ -186,5 +193,5 @@ void main() {
     }
 
     color += modelU.emissive * texture(emissiveTex, vUv).rgb; // unlit HDR emission, tonemapped with the rest
-    outColor = vec4(color, 1.0);
+    outColor = vec4(color, alpha);
 }
