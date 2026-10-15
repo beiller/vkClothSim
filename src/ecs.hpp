@@ -13,21 +13,22 @@
 struct Transform {
     V3 pos{0, 0, 0};
     V4 quat{0, 0, 0, 1};
+    V3 scale{1, 1, 1};
 
-    Mat4 toMat4() const {
+    Mat4 toMat4() const { // T * R * S (scale in the local frame)
         const float q[4] = {quat.x, quat.y, quat.z, quat.w};
         float rot[9];
         quatToMat3(q, rot);
         Mat4 m{};
-        m.m[0] = rot[0];
-        m.m[1] = rot[1];
-        m.m[2] = rot[2];
-        m.m[4] = rot[3];
-        m.m[5] = rot[4];
-        m.m[6] = rot[5];
-        m.m[8] = rot[6];
-        m.m[9] = rot[7];
-        m.m[10] = rot[8];
+        m.m[0] = rot[0] * scale.x;
+        m.m[1] = rot[1] * scale.x;
+        m.m[2] = rot[2] * scale.x;
+        m.m[4] = rot[3] * scale.y;
+        m.m[5] = rot[4] * scale.y;
+        m.m[6] = rot[5] * scale.y;
+        m.m[8] = rot[6] * scale.z;
+        m.m[9] = rot[7] * scale.z;
+        m.m[10] = rot[8] * scale.z;
         m.m[12] = pos.x;
         m.m[13] = pos.y;
         m.m[14] = pos.z;
@@ -44,16 +45,24 @@ struct Parent {
     entt::entity e;
 };
 
+// parent * local (TRS); a non-uniform parent scale combined with a local rotation is
+// approximated componentwise (the usual DCC-tool caveat)
 inline Transform transformCompose(const Transform& parent, const Transform& local) {
     Transform r;
     r.quat = quatMul(parent.quat, local.quat);
-    r.pos = vAdd(parent.pos, quatRotate(parent.quat, local.pos));
+    r.scale = {parent.scale.x * local.scale.x, parent.scale.y * local.scale.y, parent.scale.z * local.scale.z};
+    r.pos = vAdd(parent.pos,
+                 quatRotate(parent.quat,
+                            V3{local.pos.x * parent.scale.x, local.pos.y * parent.scale.y, local.pos.z * parent.scale.z}));
     return r;
 }
 
-// inverse of a rigid (rotation + translation) pose
+// inverse of a scaled pose; exact for uniform scale, componentwise otherwise
 inline Transform transformInvert(const Transform& t) {
-    return {vScale(quatRotate(quatInv(t.quat), t.pos), -1.0f), quatInv(t.quat)};
+    const V3 r = quatRotate(quatInv(t.quat), t.pos);
+    return {{-r.x / t.scale.x, -r.y / t.scale.y, -r.z / t.scale.z},
+            quatInv(t.quat),
+            {1.0f / t.scale.x, 1.0f / t.scale.y, 1.0f / t.scale.z}};
 }
 
 // per-entity Lua behavior script: file is a module (loaded once, cached) with optional
@@ -160,13 +169,17 @@ struct Texture {
 };
 
 // owned by material entities only; meshes point at it via MaterialRef, so many meshes can share
-// one material (and editing it updates all users)
+// one material (and editing it updates all users). The map slots mirror glTF PBR textures;
+// factors multiply the sampled texel (a null slot falls back to a neutral 1x1 in the shader)
 struct Material {
     V3 baseColor{1.0f, 1.0f, 1.0f};
     float metallic = 0.0f;
     float roughness = 0.5f;
     V3 emissive{0.0f, 0.0f, 0.0f}; // added to the lit color before tonemap (HDR values glow)
-    entt::entity tex = entt::null; // shared texture entity (albedo); null = none
+    entt::entity tex = entt::null;        // base color map (albedo)
+    entt::entity texMR = entt::null;      // metallicRoughness map (glTF channels: G = rough, B = metal)
+    entt::entity texNormal = entt::null;  // tangent-space normal map
+    entt::entity texEmissive = entt::null; // emissive map (multiplied by the emissive factor)
 };
 
 // mesh -> shared material entity

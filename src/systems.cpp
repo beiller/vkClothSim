@@ -61,7 +61,7 @@ void addRigidBody(World& w, entt::entity e, const std::vector<ColliderSpec>& col
         return;
     const Transform& t = w.reg.get<Transform>(e);
     RigidBody body{}; // default material params
-    body.id = w.rigid.addRigidBody(body, shapeDescs(w, colliders), t.pos, t.quat, isStatic);
+    body.id = w.rigid.addRigidBody(body, shapeDescs(w, colliders), t.pos, t.quat, t.scale, isStatic);
     w.reg.emplace<RigidBody>(e, body);
     spawnColliders(w, e, colliders);
 }
@@ -70,7 +70,7 @@ void addKinematicBody(World& w, entt::entity e, const std::vector<ColliderSpec>&
     if (colliders.empty())
         return;
     const Transform& t = w.reg.get<Transform>(e);
-    w.reg.emplace<KinematicBody>(e, w.rigid.addKinematicBody(shapeDescs(w, colliders), t.pos, t.quat));
+    w.reg.emplace<KinematicBody>(e, w.rigid.addKinematicBody(shapeDescs(w, colliders), t.pos, t.quat, t.scale));
     spawnColliders(w, e, colliders);
 }
 
@@ -140,6 +140,16 @@ entt::entity textureEntity(World& w, const std::string& path) {
         return entt::null;
     }
     w.reg.emplace<Name>(e, path);
+    return e;
+}
+
+entt::entity textureBytes(World& w, const std::string& id, const uint8_t* rgba, int wpx, int hpx) {
+    for (auto [e, tx] : w.reg.view<Texture>().each())
+        if (tx.path == id)
+            return e;
+    entt::entity e = w.reg.create();
+    w.reg.emplace<Texture>(e, id, w.renderer.addTexture(rgba, (uint32_t)wpx, (uint32_t)hpx));
+    w.reg.emplace<Name>(e, id);
     return e;
 }
 
@@ -355,8 +365,12 @@ void stepKeyboard(World& w) {
 
 void stepRigid(World& w) {
     w.rigid.step();
-    for (auto [entity, body, t] : w.reg.view<RigidBody, Transform>().each())
-        t = w.rigid.pose(body.id);
+    for (auto [entity, body, t] : w.reg.view<RigidBody, Transform>().each()) {
+        // Jolt poses are rigid: preserve the entity's scale
+        const Transform p = w.rigid.pose(body.id);
+        t.pos = p.pos;
+        t.quat = p.quat;
+    }
 }
 
 void resolveWorldTransforms(World& w) {

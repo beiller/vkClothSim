@@ -35,8 +35,8 @@ std::string assetsRoot() {
     return std::filesystem::exists("assets") ? "assets" : exeDir() + "/../assets";
 }
 
-bool loadTexture(const std::string& path, TextureData& out) {
-    stbi_set_flip_vertically_on_load(1);
+bool loadTexture(const std::string& path, TextureData& out, bool flip) {
+    stbi_set_flip_vertically_on_load(flip ? 1 : 0);
     int w = 0, h = 0, ch = 0;
     unsigned char* px = stbi_load(path.c_str(), &w, &h, &ch, 4);
     if (!px)

@@ -2,6 +2,7 @@
 
 #include "assets.hpp"
 #include "components.hpp"
+#include "gltf.hpp"
 #include "json.hpp"
 #include "reflect.hpp"
 #include "systems.hpp"
@@ -184,7 +185,8 @@ void addComponents(entt::registry& reg, entt::entity e, const json& cj, const st
 
 // one scene object: Name + "components" + "texture" (a path on a texture object = shared texture
 // entity; a name on a material object = reference to an earlier texture object) + "mesh" (render.mesh
-// equivalent; placed by the components' Transform) + "script" (behavior).
+// equivalent; placed by the components' Transform) + "gltf" (a glTF/GLB model built under the
+// object) + "script" (behavior).
 // Referenced names must be defined earlier in "objects" (define before use)
 void buildObject(World& w, const json& o, const std::string& p, bool allowMesh) {
     const auto name = o.at("name").get<std::string>();
@@ -233,10 +235,19 @@ void buildObject(World& w, const json& o, const std::string& p, bool allowMesh) 
         addMesh(w, e, geom, matE, entt::null, o.value("noShadow", false));
     }
 
+    if (o.contains("gltf")) {
+        if (!allowMesh)
+            fail(p, what + ": the camera object cannot have a gltf");
+        const auto gpath = o["gltf"].get<std::string>();
+        std::string gerr;
+        if (loadGltf(w, e, gpath, gerr) == entt::null)
+            fail(p, what + ": gltf '" + gpath + "': " + gerr);
+    }
+
     if (o.contains("script")) {
         auto& ls = w.reg.emplace<LuaScript>(e);
         ls.file = o["script"].get<std::string>();
-    } else if (!o.contains("mesh") && !w.reg.try_get<Transform>(e)) {
+    } else if (!o.contains("mesh") && !o.contains("gltf") && !w.reg.try_get<Transform>(e)) {
         w.reg.emplace<Transform>(e); // identity; lets a plain container parent children
     }
 }

@@ -1,0 +1,25 @@
+{
+    "name": "has check",
+    "env": "fly-studio-03_1K.exr",
+    "envIntensity": 0.15,
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [-4, 0.4, 3.2], "quat": [0.054, 0, 0, 0.9985] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/camera"
+        },
+        {
+            "name": "key light",
+            "components": {
+                "Transform": { "pos": [-2, 2, 2.5] },
+                "PointLight": { "color": [1, 0.95, 0.9], "intensity": 30, "radius": 0.5 }
+            }
+        },
+        { "name": "ground" },
+        { "name": "char" },
+        { "name": "demo", "script": "scenes/_has" }
+    ]
+}

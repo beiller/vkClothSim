@@ -36,6 +36,9 @@ entt::entity addCollider(World& w, entt::entity body, entt::entity shape, const 
 bool textureFor(World& w, entt::entity e, const std::string& path);
 // shared texture entity for a path (deduped, Name = path); null on failure — render.texture
 entt::entity textureEntity(World& w, const std::string& path);
+// shared texture entity from decoded RGBA8 bytes (e.g. a glTF-embedded image); deduped by id,
+// which doubles as the Name ("file.glb#img0" or a resolved file path)
+entt::entity textureBytes(World& w, const std::string& id, const uint8_t* rgba, int wpx, int hpx);
 // the active camera (entt::null if none)
 entt::entity findActiveCamera(const World& w);
 // compose an entity's Transform through its Parent chain (world space); valid before/after resolve

@@ -15,11 +15,12 @@ layout(binding = 3) uniform UBO {
 layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; vec3 emissive; }
     modelU;
 layout(binding = 6) uniform sampler2D albedoTex;
-layout(binding = 7) uniform sampler2D roughTex;
-layout(binding = 8) uniform sampler2D metalTex;
+layout(binding = 7) uniform sampler2D mrTex; // glTF metallicRoughness: G = roughness, B = metallic
 layout(binding = 9) uniform samplerCube envPrefilter;
 layout(binding = 10) uniform samplerCube envIrradiance;
+layout(binding = 11) uniform sampler2D normalTex; // tangent-space normal; (0.5, 0.5, 1) = off
 layout(binding = 12) uniform samplerCubeArray shadowCube;
+layout(binding = 14) uniform sampler2D emissiveTex;
 
 const int MAX_LIGHTS = 8;
 struct Light {
@@ -118,14 +119,36 @@ float pcssShadow(vec3 N, vec3 L, float NoL, float dist, Light li, int idx) {
     return pcfShadow(N, L, dist, bias, radius, idx);
 }
 
+// perturb N by the normal map; the 8-bit neutral texel (128,128,255) is not exactly (0,0,1)
+void applyNormalMap(inout vec3 N, vec2 uv, vec3 worldPos) {
+    vec3 nT = texture(normalTex, uv).rgb * 2.0 - 1.0;
+    const float neu = 0.004; // 128/255 * 2 - 1
+    if (abs(nT.x) <= neu && abs(nT.y) <= neu && abs(nT.z - 1.0) <= neu)
+        return;
+    // derivative-based TBN (no tangent attribute in the geometry)
+    vec3 dpdx = dFdx(worldPos);
+    vec3 dpdy = dFdy(worldPos);
+    vec2 dudx = dFdx(uv);
+    vec2 dudy = dFdy(uv);
+    vec3 T = dpdx * dudy.y - dpdy * dudx.y;
+    vec3 B = -(dpdx * dudy.x - dpdy * dudx.x);
+    if (dot(T, T) < 1e-12 || dot(B, B) < 1e-12)
+        return; // degenerate uv on this pixel: keep the analytic normal
+    T = normalize(T - N * dot(T, N));
+    B = cross(N, T);
+    N = normalize(T * nT.x + B * nT.y + N * nT.z);
+}
+
 void main() {
     vec3 N = normalize(vN);
     vec3 V = normalize(ubo.camPos - vWorldPos);
+    applyNormalMap(N, vUv, vWorldPos);
     float NoV = max(dot(N, V), 0.0) + 1e-4;
 
+    vec4 mr = texture(mrTex, vUv);
     vec3 albedo = modelU.baseColor * texture(albedoTex, vUv).rgb;
-    float metal = modelU.metallic * texture(metalTex, vUv).r;
-    float rough = clamp(modelU.roughness * texture(roughTex, vUv).r, 0.04, 1.0);
+    float metal = modelU.metallic * mr.b;
+    float rough = clamp(modelU.roughness * mr.g, 0.04, 1.0);
     float a = rough;
     vec3 F0 = mix(vec3(0.04), albedo, metal);
 
@@ -162,6 +185,6 @@ void main() {
         color += radiance * NoL * (spec + diff) * shadow;
     }
 
-    color += modelU.emissive; // unlit HDR emission, tonemapped with the rest
+    color += modelU.emissive * texture(emissiveTex, vUv).rgb; // unlit HDR emission, tonemapped with the rest
     outColor = vec4(color, 1.0);
 }

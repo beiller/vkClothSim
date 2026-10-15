@@ -30,6 +30,7 @@ namespace refl {
 
 static const FieldDesc kTransform[] = {
     {"pos", OFF(Transform, pos), FieldKind::DragV3},
+    {"scale", OFF(Transform, scale), FieldKind::DragV3},
     {"qx", OFF(Transform, quat), FieldKind::SliderF, -1.0f, 1.0f},
     {"qy", OFF(Transform, quat) + 4, FieldKind::SliderF, -1.0f, 1.0f},
     {"qz", OFF(Transform, quat) + 8, FieldKind::SliderF, -1.0f, 1.0f},
@@ -41,6 +42,9 @@ static const FieldDesc kMaterial[] = {
     {"roughness", OFF(Material, roughness), FieldKind::SliderF, 0.0f, 1.0f},
     {"emissive", OFF(Material, emissive), FieldKind::Color},
     {"tex", 0, FieldKind::Ref},
+    {"texMR", 0, FieldKind::Ref},
+    {"texNormal", 0, FieldKind::Ref},
+    {"texEmissive", 0, FieldKind::Ref},
 };
 // offset unused for Ref fields
 static const FieldDesc kMaterialRef[] = {

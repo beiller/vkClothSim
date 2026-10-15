@@ -90,6 +90,7 @@ endif()
 add_executable(vksim
     src/main.cpp
     src/components.cpp
+    src/gltf.cpp
     src/scene.cpp
     src/scene_script.cpp
     src/systems.cpp
@@ -104,6 +105,7 @@ add_executable(vksim
     src/vk/renderer_shadow.cpp
     ${CMAKE_SOURCE_DIR}/lib/tinyexr/tinyexr.cc
     ${CMAKE_SOURCE_DIR}/lib/miniz/miniz.c
+    ${CMAKE_SOURCE_DIR}/lib/tinygltf/tiny_gltf_v3.c
     ${XR_SOURCES}
     ${IMGUI_SOURCES})
 target_link_libraries(vksim PRIVATE glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB dl ${LUA_LIBRARY})
@@ -118,6 +120,7 @@ target_include_directories(vksim PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/stb
     ${CMAKE_SOURCE_DIR}/lib/tinyexr
     ${CMAKE_SOURCE_DIR}/lib/miniz
+    ${CMAKE_SOURCE_DIR}/lib/tinygltf
     ${XR_INCLUDES}
     ${CMAKE_SOURCE_DIR}/src)
 

@@ -1,6 +1,7 @@
 #include "scene_script.hpp"
 
 #include "assets.hpp"
+#include "gltf.hpp"
 #include "systems.hpp"
 #include "url.hpp"
 #include <algorithm>
@@ -215,6 +216,7 @@ void SceneScript::init(World& w) {
     reg("texture", lTexture);   // texture(path) -> shared texture entity (one per path)
     reg("material", lMaterial); // material(name, color, metallic, roughness, texEntity?, emissive?)
     reg("mesh", lMesh);         // mesh(entity, geom, mat, pos?, quat?, {parent?, noShadow?})
+    reg("gltf", lGltf);         // gltf(entity, path) -> build under entity, returns the entity
     lua_setglobal(L, "render");
 
     lua_newtable(L);                     // physics: shapes, rigid + kinematic bodies, raycasts, joints
@@ -621,6 +623,18 @@ int SceneScript::lMaterial(lua_State* L) {
     return 1;
 }
 
+int SceneScript::lGltf(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = readEnt(L, 1);
+    const std::string path = luaL_checkstring(L, 2);
+    std::string err;
+    if (loadGltf(w, e, path, err) == entt::null)
+        return luaL_error(L, "render.gltf: %s", err.c_str());
+    pushEnt(L, e);
+    return 1;
+}
+
 int SceneScript::lGeometry(lua_State* L) {
     auto* self = sSelf(L);
     World& w = self->w();
@@ -1022,7 +1036,7 @@ int SceneScript::lDestroy(lua_State* L) {
                 return luaL_error(L, "scene.destroy: shape is referenced by a collider");
     if (w.reg.try_get<Texture>(e))
         for (auto [m, mat] : w.reg.view<Material>().each())
-            if (mat.tex == e)
+            if (mat.tex == e || mat.texMR == e || mat.texNormal == e || mat.texEmissive == e)
                 return luaL_error(L, "scene.destroy: texture is referenced by a material");
     const auto subtree = subtreeEntities(w.reg, e);
     for (const auto c : subtree)
@@ -1051,9 +1065,7 @@ int SceneScript::lAddChild(lua_State* L) {
             return luaL_error(L, "scene.add_child: keepWorld requires the child to have a Transform");
         const auto local =
             transformCompose(transformInvert(worldTransform(w.reg, parent)), worldTransform(w.reg, child));
-        auto& ct = w.reg.get<Transform>(child);
-        ct.pos = local.pos;
-        ct.quat = local.quat;
+        w.reg.get<Transform>(child) = local;
     }
     w.reg.emplace_or_replace<Parent>(child, parent); // (re)interprets the child's Transform as local
     return 0;

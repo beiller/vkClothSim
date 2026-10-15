@@ -29,11 +29,13 @@ class RigidScene {
 public:
     void init();
     // rigid body from its colliders: a single identity-local collider reuses a shared shape,
-    // anything else builds a compound. isStatic = fixed collider (ground) vs integrated
+    // anything else builds a compound. isStatic = fixed collider (ground) vs integrated.
+    // scale = the entity's Transform scale, applied to the shape (Jolt bodies are rigid)
     JPH::BodyID addRigidBody(const RigidBody& body, const std::vector<ColliderDesc>& colliders, const V3& pos,
-                             const V4& quat, bool isStatic);
+                             const V4& quat, const V3& scale, bool isStatic);
     // kinematic body = user-driven anchor for joints; infinite mass, pose set via setKinematicPose
-    JPH::BodyID addKinematicBody(const std::vector<ColliderDesc>& colliders, const V3& pos, const V4& quat);
+    JPH::BodyID addKinematicBody(const std::vector<ColliderDesc>& colliders, const V3& pos, const V4& quat,
+                                 const V3& scale);
     void setKinematicPose(JPH::BodyID id, const V3& pos, const V4& quat);
     void step();
     Transform pose(JPH::BodyID id) const;
@@ -47,8 +49,9 @@ public:
     int velocitySteps = 10; // applied in step(); the UI slider binds to it
 
 private:
-    // a single identity-local collider -> the shared shape directly; anything else a compound
-    JPH::ShapeRefC buildShape(const std::vector<ColliderDesc>& colliders);
+    // a single identity-local collider -> the shared shape directly; anything else a compound;
+    // a non-unit scale wraps the result in a Jolt ScaledShape
+    JPH::ShapeRefC buildShape(const std::vector<ColliderDesc>& colliders, const V3& scale);
     struct JointEntry {
         JPH::Ref<JPH::Constraint> constraint; // owning ref; RemoveConstraint drops the manager's, we drop ours
         bool alive = false;

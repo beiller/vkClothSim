@@ -11,6 +11,7 @@
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <thread>
 
@@ -18,6 +19,17 @@ namespace {
 
 JPH::Quat jQuat(V4 q) {
     return {q.x, q.y, q.z, q.w};
+}
+
+// Jolt scales shapes, not bodies: wrap the shape in the body's scale. Boxes take any scale
+// exactly; capsules only uniform (Jolt degrades the rest); zero scale is rejected
+JPH::ShapeRefC applyBodyScale(JPH::ShapeRefC shape, const V3& s) {
+    if (s.x == 1.0f && s.y == 1.0f && s.z == 1.0f)
+        return shape;
+    JPH::Shape::ShapeResult r = shape->ScaleShape(JPH::Vec3(s.x, s.y, s.z));
+    if (!r.Get())
+        std::fprintf(stderr, "3dsim: rigid body scale {%g, %g, %g} rejected by Jolt (zero scale?)\n", s.x, s.y, s.z);
+    return r.Get() ? r.Get() : shape;
 }
 
 } // namespace
@@ -45,23 +57,23 @@ void RigidScene::init() {
 }
 
 // one identity-local collider -> the shared shape directly; otherwise a compound of the sub-shapes
-JPH::ShapeRefC RigidScene::buildShape(const std::vector<ColliderDesc>& colliders) {
+JPH::ShapeRefC RigidScene::buildShape(const std::vector<ColliderDesc>& colliders, const V3& scale) {
     const auto isIdentity = [](const Transform& t) {
         return t.pos.x == 0.0f && t.pos.y == 0.0f && t.pos.z == 0.0f && t.quat.x == 0.0f && t.quat.y == 0.0f &&
                t.quat.z == 0.0f && t.quat.w == 1.0f;
     };
     if (colliders.size() == 1 && isIdentity(colliders[0].local))
-        return colliders[0].shape;
+        return applyBodyScale(colliders[0].shape, scale);
     JPH::StaticCompoundShapeSettings compound;
     for (const ColliderDesc& c : colliders)
         compound.AddShape(JPH::Vec3(c.local.pos.x, c.local.pos.y, c.local.pos.z), jQuat(c.local.quat), c.shape);
-    return compound.Create().Get();
+    return applyBodyScale(compound.Create().Get(), scale);
 }
 
 JPH::BodyID RigidScene::addRigidBody(const RigidBody& body, const std::vector<ColliderDesc>& colliders, const V3& pos,
-                                     const V4& quat, bool isStatic) {
+                                     const V4& quat, const V3& scale, bool isStatic) {
     auto& bi = m_phys->GetBodyInterface();
-    JPH::ShapeRefC shape = buildShape(colliders);
+    JPH::ShapeRefC shape = buildShape(colliders, scale);
     JPH::BodyCreationSettings cs(shape, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat),
                                  isStatic ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic, isStatic ? 0 : 1);
     cs.mFriction = body.friction;
@@ -76,9 +88,10 @@ JPH::BodyID RigidScene::addRigidBody(const RigidBody& body, const std::vector<Co
     return bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
 }
 
-JPH::BodyID RigidScene::addKinematicBody(const std::vector<ColliderDesc>& colliders, const V3& pos, const V4& quat) {
+JPH::BodyID RigidScene::addKinematicBody(const std::vector<ColliderDesc>& colliders, const V3& pos, const V4& quat,
+                                         const V3& scale) {
     auto& bi = m_phys->GetBodyInterface();
-    JPH::BodyCreationSettings cs(buildShape(colliders), JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat),
+    JPH::BodyCreationSettings cs(buildShape(colliders, scale), JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat),
                                  JPH::EMotionType::Kinematic, 1);
     return bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
 }

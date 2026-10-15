@@ -69,7 +69,7 @@ private:
         VkBuffer modelUbuf = VK_NULL_HANDLE;
         VkDeviceMemory modelMem = VK_NULL_HANDLE;
         VkDescriptorSet set = VK_NULL_HANDLE;
-        int tex[3] = {-2, -2, -2}; // per-channel texture id last written to the descriptor
+        int tex[4] = {-2, -2, -2, -2}; // per-channel texture id last written to the descriptor
     };
 
     struct EnvPass {
@@ -122,10 +122,13 @@ private:
     VkDeviceMemory m_tmMem = VK_NULL_HANDLE;
     VkImageView m_tmSrcView = VK_NULL_HANDLE;
 
+    static constexpr int kTexChannels = 4; // albedo, metallicRoughness, normal, emissive
+
     std::vector<GpuMesh> m_geoms;
     std::vector<InstancedMesh> m_insts;
     std::vector<GpuTexture> m_texs;
-    GpuTexture m_white;
+    GpuTexture m_white;        // fallback for albedo/MR/emissive (texel 1 = factor only)
+    GpuTexture m_neutralNrm;   // fallback for the normal channel (texel (0.5,0.5,1) = identity)
     VkSampler m_texSampler = VK_NULL_HANDLE;
 
     GpuTexture m_envEq, m_envPre, m_envIrr;

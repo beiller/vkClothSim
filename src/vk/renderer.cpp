@@ -78,9 +78,10 @@ std::vector<VkDescriptorSetLayoutBinding> meshBinds() {
         {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {9, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {14, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {13, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     };
@@ -117,6 +118,8 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
 
     const uint8_t white[4] = {255, 255, 255, 255};
     vkMakeImage2D(m_dev, m_pdev, 1, 1, white, m_white.img, m_white.mem, m_white.view);
+    const uint8_t neutralNrm[4] = {128, 128, 255, 255}; // tangent-space (0,0,1)
+    vkMakeImage2D(m_dev, m_pdev, 1, 1, neutralNrm, m_neutralNrm.img, m_neutralNrm.mem, m_neutralNrm.view);
     vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, false, 0.0f, 1.0f,
                     m_texSampler);
 
@@ -189,7 +192,7 @@ int Renderer::addInstance(int geom) {
     ++m_poolUsed;
     m_insts.push_back(inst);
     const int id = (int)m_insts.size() - 1;
-    for (int c = 0; c < 3; ++c)
+    for (int c = 0; c < kTexChannels; ++c)
         setTexture(id, c, -1);
     VkDescriptorBufferInfo lb{m_lightsUbuf, 0, sizeof(LightsUbo)};
     VkWriteDescriptorSet sw[2]{};
@@ -219,12 +222,13 @@ int Renderer::addTexture(const void* rgba, uint32_t w, uint32_t h) {
 }
 
 void Renderer::setTexture(int inst, int channel, int texId) {
+    static const int kBinding[kTexChannels] = {6, 7, 11, 14}; // albedo, metallicRoughness, normal, emissive
     InstancedMesh& im = m_insts[inst];
     if (im.tex[channel] == texId)
         return;
     im.tex[channel] = texId;
     const bool hasTex = texId >= 0 && (size_t)texId < m_texs.size();
-    const GpuTexture& t = hasTex ? m_texs[texId] : m_white;
+    const GpuTexture& t = hasTex ? m_texs[texId] : (channel == 2 ? m_neutralNrm : m_white);
     VkDescriptorImageInfo ii;
     ii.sampler = m_texSampler;
     ii.imageView = t.view;
@@ -232,7 +236,7 @@ void Renderer::setTexture(int inst, int channel, int texId) {
     VkWriteDescriptorSet w{};
     w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     w.dstSet = m_insts[inst].set;
-    w.dstBinding = 6 + channel;
+    w.dstBinding = kBinding[channel];
     w.descriptorCount = 1;
     w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     w.pImageInfo = &ii;
@@ -267,12 +271,14 @@ void Renderer::prepBuffers(const entt::registry& reg) {
                 emissive = mat->emissive;
                 metallic = mat->metallic;
                 roughness = mat->roughness;
-                int texId = -1;
-                if (mat->tex != entt::null)
-                    if (const auto* tx = reg.try_get<Texture>(mat->tex))
-                        texId = tx->texId;
-                if (texId >= 0 && inst.tex[0] != texId)
-                    setTexture(rend.inst, 0, texId);
+                const entt::entity slots[kTexChannels] = {mat->tex, mat->texMR, mat->texNormal, mat->texEmissive};
+                for (int c = 0; c < kTexChannels; ++c) {
+                    int texId = -1;
+                    if (slots[c] != entt::null)
+                        if (const auto* tx = reg.try_get<Texture>(slots[c]))
+                            texId = tx->texId;
+                    setTexture(rend.inst, c, texId); // no-ops when the id is unchanged
+                }
             }
         // soft bodies resolve no WorldTransform (geometry is world-space in the GPU buffer) -> identity
         Mat4 model = mat4Identity();

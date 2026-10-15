@@ -83,6 +83,7 @@ private:
     static int lTexture(lua_State* L);
     static int lGeometry(lua_State* L);
     static int lMesh(lua_State* L);
+    static int lGltf(lua_State* L);
     static int lCompEmplace(lua_State* L);
     static int lCompReplace(lua_State* L);
     static int lComponent(lua_State* L);

@@ -14,6 +14,7 @@
 #   stb      github.com/nothings/stb               013ac3b         stb_image 2.30
 #   tinyexr  github.com/syoyo/tinyexr              v1.0.3          1.0.x
 #   miniz    github.com/syoyo/tinyexr (deps/miniz) v1.0.3          miniz 2.x
+#   tinygltf github.com/syoyo/tinygltf (glTF v3 C) 0d9ce1a         glTF 2.0 parser
 #
 # A bad ref fails the clone loudly (see the tag list it prints). If a tag has
 # moved, bump the REF in the calls at the bottom.
@@ -90,6 +91,8 @@ fetch_files openxr https://github.com/KhronosGroup/OpenXR-SDK release-1.1.63 \
 fetch_files stb https://github.com/nothings/stb 013ac3beddff3dbffafd5177e7972067cd2b5083 stb_image.h
 fetch_files tinyexr https://github.com/syoyo/tinyexr v1.0.3 tinyexr.h tinyexr.cc
 fetch_files miniz https://github.com/syoyo/tinyexr v1.0.3 deps/miniz/miniz.h deps/miniz/miniz.c
+fetch_files tinygltf https://github.com/syoyo/tinygltf 0d9ce1a9561688c6c6e7471430d15a50a0b15f1a \
+    tiny_gltf_v3.h tiny_gltf_v3.c tinygltf_json_c.h LICENSE
 
 # sanity: each lib's key file is present and non-empty
 for f in \
@@ -102,7 +105,9 @@ for f in \
     lib/stb/stb_image.h \
     lib/tinyexr/tinyexr.h \
     lib/tinyexr/tinyexr.cc \
-    lib/miniz/miniz.h
+    lib/miniz/miniz.h \
+    lib/tinygltf/tiny_gltf_v3.h \
+    lib/tinygltf/tiny_gltf_v3.c
 do
     [ -s "$f" ] || { echo "error: $f missing/empty" >&2; exit 1; }
 done
