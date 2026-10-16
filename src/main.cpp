@@ -101,15 +101,16 @@ int main(int argc, char** argv) {
         w.fps = fps;
 
         app.pollEvents();
+        XrFrame fr; // this frame's headset state (head, eyes, controllers); frame-local, not world state
         if (w.xr)
-            w.xrFrame = w.xr->poll();
+            fr = w.xr->poll();
         const auto tPoll = std::chrono::steady_clock::now();
         stepMouse(w);
         stepKeyboard(w);
-        if (w.xr)
-            stepXr(w);
-        if (w.xr)
-            stepControllers(w);
+        if (w.xr) {
+            stepXr(w, fr);
+            stepControllers(w, fr);
+        }
         // activate any script entities spawned since last frame (fixpoint), then run _animate
         w.script.activateScripts();
         w.script.animateAll(dt);
@@ -125,7 +126,7 @@ int main(int argc, char** argv) {
             resolveWorldTransforms(w);
             syncColliders(w);
             VkCommandBuffer simCmd = app.beginCommands();
-            w.skelGpu.step(w.reg, simCmd); // GPU skin before the cloth sim (cloth-on-skeleton hook)
+            w.gpuSim.skel.step(w.reg, simCmd); // GPU skin before the cloth sim (cloth-on-skeleton hook)
             stepSoft(w, simCmd);
             app.submit(simCmd);
             simAccum -= kFrameDt;
@@ -149,14 +150,14 @@ int main(int argc, char** argv) {
         VkCommandBuffer cmd = app.beginCommands();
         if (w.xr) {
             uint32_t imgIdx[2] = {0, 0};
-            if (w.xrFrame.shouldRender)
+            if (fr.shouldRender)
                 for (int i = 0; i < w.xr->eyeCount(); ++i) {
                     w.xr->acquireImage(i);
                     imgIdx[i] = (uint32_t)w.xr->imageIndex(i);
                 }
             w.renderer.drawVr(cmd, app, idx, w.reg, w.render, ImGui::GetDrawData(),
-                              w.xrFrame.shouldRender ? imgIdx : nullptr, w.xrFrame.shouldRender ? w.xr->eyeCount() : 0);
-            if (w.xrFrame.shouldRender)
+                              fr.shouldRender ? imgIdx : nullptr, fr.shouldRender ? w.xr->eyeCount() : 0);
+            if (fr.shouldRender)
                 for (int i = 0; i < w.xr->eyeCount(); ++i)
                     w.xr->releaseImage(i);
         } else {
@@ -164,7 +165,7 @@ int main(int argc, char** argv) {
         }
         const auto tRender = std::chrono::steady_clock::now();
         if (w.xr)
-            w.xr->endFrame(w.xrFrame.shouldRender);
+            w.xr->endFrame(fr.shouldRender);
         const auto tXrEnd = std::chrono::steady_clock::now();
         app.present(idx,
                     !w.xr); // window: sync present (vsync wait shows in 'idle'); VR: compositor paces via waitFrame
@@ -176,8 +177,7 @@ int main(int argc, char** argv) {
     }
 
     shutdownImGui();
-    w.sim.shutdown();
-    w.skelGpu.shutdown(); // frees the skinned groups' pos/nrm the renderer only aliases
+    w.gpuSim.shutdown(); // frees the skinned groups' pos/nrm the renderer only aliases
     w.script.shutdown();
     w.renderer.shutdown();
     if (w.xr)

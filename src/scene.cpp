@@ -286,8 +286,7 @@ void createSceneWorld(World& w, const std::string& path) {
 
     const VkExtent2D ext = w.app->extent();
     w.rigid.init();
-    w.sim.init(w.app->device(), w.app->pdev());
-    w.skelGpu.init(w.app->device(), w.app->pdev());
+    w.gpuSim.init(w.app->device(), w.app->pdev());
     w.renderer.init(*w.app, (int)objects.size() + 2, cameraViewProj(w, w.cam, (float)ext.width / (float)ext.height));
 
     // geometry stdlib: the engine always loads "scenes/mesh" as the global `mesh` and the
@@ -326,8 +325,7 @@ void createSceneWorld(World& w, const std::string& path) {
         }
     }
 
-    w.sim.build();
-    w.skelGpu.build();
+    w.gpuSim.build();
     if (j.contains("env")) {
         const auto env = j["env"].get<std::string>();
         HdrData hdr;

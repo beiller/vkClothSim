@@ -1,6 +1,7 @@
 #include "ecs.hpp"
 #include "shadow_frag_spv.hpp"
 #include "shadow_vert_spv.hpp"
+#include "vk/cube_views.hpp"
 #include "vk/renderer.hpp"
 #include "vk/vkapp.hpp"
 #include "vk/vkutil.hpp"
@@ -94,13 +95,6 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd, const entt::registry& reg)
     });
     if (n == 0)
         return;
-    struct Face {
-        V3 right, up, back;
-    };
-    const Face faces[6] = {
-        {{0, 0, 1}, {0, 1, 0}, {1, 0, 0}},   {{0, 0, -1}, {0, 1, 0}, {-1, 0, 0}}, {{-1, 0, 0}, {0, 0, -1}, {0, 1, 0}},
-        {{-1, 0, 0}, {0, 0, 1}, {0, -1, 0}}, {{-1, 0, 0}, {0, 1, 0}, {0, 0, 1}},  {{1, 0, 0}, {0, 1, 0}, {0, 0, -1}},
-    };
     struct Pc {
         float viewProj[16];
         float lightPosBias[4];
@@ -110,26 +104,11 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd, const entt::registry& reg)
 
     for (int i = 0; i < n; ++i) {
         const SL& L = sl[i];
-        const Mat4 proj = perspective(90.0f, 1.0f, L.nearP, L.farP);
+        const std::array<Mat4, 6> faceVp = cubeViewProj(L.pos, L.nearP, L.farP);
         const float farD = L.farP + 1.0f;
 
         for (uint32_t f = 0; f < 6; ++f) {
-            const Face& fc = faces[f];
-            Mat4 view{};
-            view.m[0] = fc.right.x;
-            view.m[1] = fc.up.x;
-            view.m[2] = fc.back.x;
-            view.m[4] = fc.right.y;
-            view.m[5] = fc.up.y;
-            view.m[6] = fc.back.y;
-            view.m[8] = fc.right.z;
-            view.m[9] = fc.up.z;
-            view.m[10] = fc.back.z;
-            view.m[12] = -vDot(fc.right, L.pos);
-            view.m[13] = -vDot(fc.up, L.pos);
-            view.m[14] = -vDot(fc.back, L.pos);
-            view.m[15] = 1.0f;
-            const Mat4 vpLight = mul4(proj, view);
+            const Mat4 vpLight = faceVp[f];
 
             Pc pc{};
             std::memcpy(pc.viewProj, vpLight.m, 64);

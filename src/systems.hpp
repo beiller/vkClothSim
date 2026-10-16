@@ -57,7 +57,7 @@ void draw(World& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui);
 // headset pose -> vr cam's LOCAL Transform (a child of the VR root, so its world = walkPos +
 // head); synthesize per-eye poses (headset eyes + walkPos, or the fly camera's world pose with
 // virtual lens FOVs) -> setVrEyes
-void stepXr(World& w);
+void stepXr(World& w, const XrFrame& fr);
 // head-independent VR locomotion anchor: a root the VR head camera + grips are parented under;
 // also spawns the "vr cam" (the VR head camera)
 entt::entity spawnVrRoot(World& w);
@@ -65,7 +65,7 @@ entt::entity spawnVrRoot(World& w);
 // kinematic Jolt body (hand anchor for joints)
 void spawnControllers(World& w);
 // headset controller poses -> controller entities' local Transform + ControllerInput + drive hand body
-void stepControllers(World& w);
+void stepControllers(World& w, const XrFrame& fr);
 // GLFW -> "mouse" entity (position + buttons)
 void stepMouse(World& w);
 // GLFW -> "keyboard" entity (key states)

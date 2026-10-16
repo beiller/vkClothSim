@@ -952,7 +952,7 @@ int SceneScript::lSoftBody(lua_State* L) {
 
 int SceneScript::lSoftFloor(lua_State* L) {
     auto* self = sSelf(L);
-    self->w().sim.setFloor((float)luaL_checknumber(L, 1));
+    self->w().gpuSim.soft.setFloor((float)luaL_checknumber(L, 1));
     return 0;
 }
 
@@ -1062,7 +1062,7 @@ int SceneScript::lSetMorph(lua_State* L) {
     const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
     if (skel == entt::null)
         return luaL_error(L, "scene.set_morph: not a skinned character");
-    w.skelGpu.setMorph(w.reg, skel, luaL_checkstring(L, 2), (float)luaL_checknumber(L, 3));
+    w.gpuSim.skel.setMorph(w.reg, skel, luaL_checkstring(L, 2), (float)luaL_checknumber(L, 3));
     return 0;
 }
 
@@ -1073,7 +1073,7 @@ int SceneScript::lGetMorph(lua_State* L) {
     const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
     if (skel == entt::null)
         return luaL_error(L, "scene.get_morph: not a skinned character");
-    lua_pushnumber(L, w.skelGpu.getMorph(w.reg, skel, luaL_checkstring(L, 2)));
+    lua_pushnumber(L, w.gpuSim.skel.getMorph(w.reg, skel, luaL_checkstring(L, 2)));
     return 1;
 }
 
@@ -1084,7 +1084,7 @@ int SceneScript::lResetMorphs(lua_State* L) {
     const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
     if (skel == entt::null)
         return luaL_error(L, "scene.reset_morphs: not a skinned character");
-    w.skelGpu.resetMorphs(w.reg, skel);
+    w.gpuSim.skel.resetMorphs(w.reg, skel);
     return 0;
 }
 
@@ -1321,8 +1321,11 @@ int SceneScript::lFind(lua_State* L) {
 }
 
 int SceneScript::lIsVr(lua_State* L) {
+    // presenting == the VR head camera is the active one (stepXr sets its Camera.active each frame)
     auto* self = sSelf(L);
-    lua_pushboolean(L, self->w().xrFrame.havePose && self->w().xrFrame.nEyes > 0);
+    const World& w = self->w();
+    const bool vr = w.vrCam != entt::null && w.reg.get<Camera>(w.vrCam).active;
+    lua_pushboolean(L, vr);
     return 1;
 }
 

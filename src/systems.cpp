@@ -95,7 +95,7 @@ void addSoftBody(World& w, entt::entity e, const Mesh& mesh, const std::vector<s
         }
     }
     const Renderer::GpuMeshRef ref = w.renderer.addMesh(m);
-    w.reg.emplace<SoftBodyData>(e, w.sim.addSoftBody(m, cons, ref.rw));
+    w.reg.emplace<SoftBodyData>(e, w.gpuSim.soft.addSoftBody(m, cons, ref.rw));
     if (mass > 0.0f)
         w.reg.get<SoftBodyData>(e).params.mass = mass;
     w.reg.emplace<Renderable>(e, w.renderer.addInstance(ref.geom));
@@ -186,8 +186,7 @@ Mat4 cameraViewProj(World& w, entt::entity cam, float aspect) {
     return mul4(perspective(c.fovDeg, aspect, c.nearP, c.farP), viewFromPose(wt.pos, wt.quat));
 }
 
-void stepXr(World& w) {
-    const XrFrame& fr = w.xrFrame;
+void stepXr(World& w, const XrFrame& fr) {
     const bool havePose = fr.havePose && fr.nEyes > 0;
     // current camera: the VR head camera while presenting, the scene's fly camera otherwise
     if (w.vrCam != entt::null)
@@ -286,8 +285,7 @@ void spawnControllers(World& w) {
     }
 }
 
-void stepControllers(World& w) {
-    const XrFrame& fr = w.xrFrame;
+void stepControllers(World& w, const XrFrame& fr) {
     const entt::entity cam = findActiveCamera(w);
     Transform headLocal{}; // head pose in the vr root's frame (the grips' parent)
     if (cam != entt::null) {
@@ -435,7 +433,7 @@ void resolveWorldTransforms(World& w) {
 }
 
 void syncColliders(World& w) {
-    CapsuleGPU* caps = w.sim.caps();
+    CapsuleGPU* caps = w.gpuSim.soft.caps();
     int n = 0;
     for (auto [e, col, wt] : w.reg.view<Collider, WorldTransform>().each()) {
         auto* cs = w.reg.try_get<CapsuleShape>(col.shape); // box shapes are CPU-sim only
@@ -443,15 +441,15 @@ void syncColliders(World& w) {
             continue;
         fillCapsule(caps[n++], wt.pos, wt.quat, cs->halfLen, cs->radius);
     }
-    w.sim.uploadCapsules(n);
+    w.gpuSim.soft.uploadCapsules(n);
 }
 
 void stepSoft(World& w, VkCommandBuffer cmd) {
     for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
-        w.sim.setPinned(sb.softId, sb.pinned);
-        w.sim.setParams(sb.softId, sb.params, sb.steps);
+        w.gpuSim.soft.setPinned(sb.softId, sb.pinned);
+        w.gpuSim.soft.setParams(sb.softId, sb.params, sb.steps);
     }
-    w.sim.record(cmd);
+    w.gpuSim.soft.record(cmd);
 }
 
 void draw(World& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui) {

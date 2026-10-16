@@ -148,7 +148,12 @@ bool VkApp::initDevice(VkDevice dev) {
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_pdev, m_surface, &nf, nullptr);
     std::vector<VkSurfaceFormatKHR> fmts(nf);
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_pdev, m_surface, &nf, fmts.data());
+    // the list order is driver-specific (nvidia lists UNORM first, radv lists SRGB first); the
+    // tonemap shader encodes sRGB itself, so an sRGB swapchain would double-encode (double gamma)
     m_fmt = fmts[0];
+    for (const auto& f : fmts)
+        if (f.format == VK_FORMAT_B8G8R8A8_UNORM)
+            m_fmt = f;
     m_scfmt = m_fmt.format;
 
     VkAttachmentDescription satt[2]{};
