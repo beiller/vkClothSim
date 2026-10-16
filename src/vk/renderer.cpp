@@ -179,6 +179,23 @@ Renderer::GpuMeshRef Renderer::addMesh(const Mesh& mesh) {
     return {(int)m_geoms.size() - 1, MeshGpu{VertexStore{g.pos, g.posMem, n}, VertexStore{g.nrm, g.nrmMem, n}}};
 }
 
+Renderer::GpuMeshRef Renderer::addMeshShared(const Mesh& m, VkBuffer pos, VkDeviceMemory posMem, VkBuffer nrm,
+                                             VkDeviceMemory nrmMem, uint32_t n) {
+    GpuMesh g;
+    g.vtxCount = n;
+    g.idxCount = (uint32_t)m.indices.size();
+    g.externalPosNrm = true;
+    g.pos = pos;
+    g.posMem = posMem;
+    g.nrm = nrm;
+    g.nrmMem = nrmMem;
+    vkMakeBufferDev(m_dev, m_pdev, g.uv, g.uvMem, (VkDeviceSize)8 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m.uv.data());
+    vkMakeBufferDev(m_dev, m_pdev, g.ibuf, g.ibmem, (VkDeviceSize)g.idxCount * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                    m.indices.data());
+    m_geoms.push_back(g);
+    return {(int)m_geoms.size() - 1, MeshGpu{VertexStore{pos, posMem, n}, VertexStore{nrm, nrmMem, n}}};
+}
+
 int Renderer::addInstance(int geom) {
     const GpuMesh& g = m_geoms[geom];
     InstancedMesh inst;
@@ -258,6 +275,21 @@ void Renderer::setViewProj(const Mat4& vp, const V3& camPos) {
     m_camPos = camPos;
 }
 
+// hidden when this entity or any ancestor carries Visible{on = false} (absent = visible)
+bool Renderer::isHidden(const entt::registry& reg, entt::entity e) const {
+    int depth = 0; // guard against parent cycles
+    for (auto cur = e; cur != entt::null && depth++ < 64;) {
+        if (const auto* v = reg.try_get<Visible>(cur))
+            if (!v->on)
+                return true;
+        const auto* p = reg.try_get<Parent>(cur);
+        if (!p)
+            return false;
+        cur = p->e;
+    }
+    return false;
+}
+
 void Renderer::writeViewUbo(const Mat4& vp, const V3& cam, float envIntensity) {
     ViewUbo u{};
     std::memcpy(u.viewProj, vp.m, 64);
@@ -326,6 +358,8 @@ void Renderer::renderScenePass(VkCommandBuffer cmd, VkApp& app, const entt::regi
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipe);
     std::vector<int> blend;
     for (auto [e, rend] : reg.view<Renderable>().each()) {
+        if (isHidden(reg, e))
+            continue;
         if (m_insts[rend.inst].alphaMode == 2) // BLEND goes to the sorted pass
             blend.push_back(rend.inst);
         else
@@ -655,8 +689,10 @@ void Renderer::shutdown() {
     for (auto& inst : m_insts)
         vkFreeBuffer(m_dev, inst.modelUbuf, inst.modelMem);
     for (auto& g : m_geoms) {
-        vkFreeBuffer(m_dev, g.pos, g.posMem);
-        vkFreeBuffer(m_dev, g.nrm, g.nrmMem);
+        if (!g.externalPosNrm) {
+            vkFreeBuffer(m_dev, g.pos, g.posMem);
+            vkFreeBuffer(m_dev, g.nrm, g.nrmMem);
+        }
         vkFreeBuffer(m_dev, g.uv, g.uvMem);
         vkFreeBuffer(m_dev, g.ibuf, g.ibmem);
     }

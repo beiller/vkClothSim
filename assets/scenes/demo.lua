@@ -49,13 +49,13 @@ function M._on_ready(self)
     soft.body(ball, ballGeom, mesh.ballCons(ballGeom), "mat_ball", 2.0)
 
     -- glft tests
-    local m = scene.entity("model")
-    scene.replace(m, "Transform", { pos = { 0, 3, 0 } })
-    render.gltf(m, "scenes/models/cube_test.glb")
+    -- local m = scene.entity("model")
+    -- scene.replace(m, "Transform", { pos = { 0, 3, 0 } })
+    -- render.gltf(m, "scenes/models/cube_test.glb")
 
     local ch = scene.entity("hashimoto")
-    scene.replace(ch, "Transform", { pos = { -4, -0.5, 0 } })
-    render.gltf(ch, "scenes/models/hashimoto.glb")
+    scene.replace(ch, "Transform", { pos = { -5, 0, 0 } })
+    render.gltf(ch, "local/basegen8.glb")
 end
 
 function M._physics(self, dt)

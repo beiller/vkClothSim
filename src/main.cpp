@@ -125,6 +125,7 @@ int main(int argc, char** argv) {
             resolveWorldTransforms(w);
             syncColliders(w);
             VkCommandBuffer simCmd = app.beginCommands();
+            w.skelGpu.step(w.reg, simCmd); // GPU skin before the cloth sim (cloth-on-skeleton hook)
             stepSoft(w, simCmd);
             app.submit(simCmd);
             simAccum -= kFrameDt;
@@ -176,6 +177,7 @@ int main(int argc, char** argv) {
 
     shutdownImGui();
     w.sim.shutdown();
+    w.skelGpu.shutdown(); // frees the skinned groups' pos/nrm the renderer only aliases
     w.script.shutdown();
     w.renderer.shutdown();
     if (w.xr)

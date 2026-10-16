@@ -156,6 +156,37 @@ bool optBool(lua_State* L, int tidx, const char* key) {
     return b;
 }
 
+// arg -> entity: a number is a handle, a string a name; entt::null if unresolvable
+entt::entity entityOrName(const World& w, lua_State* L, int idx) {
+    if (lua_isnumber(L, idx))
+        return readEnt(L, idx);
+    return findNamedEntity(w, luaL_checkstring(L, idx));
+}
+
+// the skinned character (skeleton) entity at e or among its descendants (a gltf character
+// spans many entities: joints, mesh nodes, prims); entt::null if none
+entt::entity skelCharEntity(const World& w, entt::entity e) {
+    if (e == entt::null)
+        return entt::null;
+    auto& reg = w.reg;
+    if (const auto* s = reg.try_get<SkelCharData>(e))
+        return s->skel;
+    std::map<unsigned, std::vector<entt::entity>> children;
+    for (auto [c, p] : reg.view<Parent>().each())
+        children[entt::to_integral(p.e)].push_back(c);
+    std::vector<entt::entity> stack{e};
+    while (!stack.empty()) {
+        const entt::entity cur = stack.back();
+        stack.pop_back();
+        if (const auto* s = reg.try_get<SkelCharData>(cur))
+            return s->skel;
+        if (auto it = children.find(entt::to_integral(cur)); it != children.end())
+            for (entt::entity c : it->second)
+                stack.push_back(c);
+    }
+    return entt::null;
+}
+
 } // namespace
 
 SceneScript* SceneScript::sSelf(lua_State* L) {
@@ -186,6 +217,13 @@ void SceneScript::init(World& w) {
     reg("remove", lCompRemove);          // remove(entity, "Type") - pure-data components
     reg("set", lSet);                    // set(url | entity, field, value | {values})
     reg("get", lGet);                    // get(url | entity, field) -> number | {x, y, z}
+    reg("set_pose", lSetPose);           // set_pose(name | entity, {x,y,z}, {qx,qy,qz,qw})
+    reg("get_pose", lGetPose);           // get_pose(name | entity) -> {{x,y,z}, {qx,qy,qz,qw}}
+    reg("set_morph", lSetMorph);         // set_morph(name | entity, target, weight)
+    reg("get_morph", lGetMorph);         // get_morph(name | entity, target) -> weight
+    reg("reset_morphs", lResetMorphs);   // reset_morphs(name | entity)
+    reg("joints", lJoints);              // joints(name | entity) -> {joint, ...} (skinned character joints)
+    reg("visible", lVisible);            // visible(name | entity, bool) - hides it and all descendants
     reg("time", lTime);                  // time() -> seconds since scene start
     reg("button", lButton);              // button(name, fn())
     reg("attach_script", lAttachScript); // attach_script(entity, file, params?)
@@ -972,6 +1010,111 @@ int SceneScript::lGet(lua_State* L) {
     }
     pushV3(L, {vals[0], vals[1], vals[2]});
     return 1;
+}
+
+// set_pose(name|entity, {x,y,z}, {qx,qy,qz,qw}): one call sets the whole pose
+int SceneScript::lSetPose(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = entityOrName(w, L, 1);
+    if (e == entt::null || !w.reg.try_get<Transform>(e))
+        return luaL_error(L, "scene.set_pose: no such entity with a Transform");
+    Transform& t = w.reg.get<Transform>(e);
+    t.pos = readV3(L, 2);
+    t.quat = readQuat(L, 3);
+    return 0;
+}
+
+// get_pose(name|entity) -> {{x,y,z}, {qx,qy,qz,qw}}
+int SceneScript::lGetPose(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = entityOrName(w, L, 1);
+    if (e == entt::null || !w.reg.try_get<Transform>(e))
+        return luaL_error(L, "scene.get_pose: no such entity with a Transform");
+    const Transform& t = w.reg.get<Transform>(e);
+    lua_createtable(L, 2, 0);
+    lua_createtable(L, 3, 0);
+    lua_pushnumber(L, t.pos.x);
+    lua_seti(L, -2, 1);
+    lua_pushnumber(L, t.pos.y);
+    lua_seti(L, -2, 2);
+    lua_pushnumber(L, t.pos.z);
+    lua_seti(L, -2, 3);
+    lua_seti(L, -2, 1);
+    lua_createtable(L, 4, 0);
+    lua_pushnumber(L, t.quat.x);
+    lua_seti(L, -2, 1);
+    lua_pushnumber(L, t.quat.y);
+    lua_seti(L, -2, 2);
+    lua_pushnumber(L, t.quat.z);
+    lua_seti(L, -2, 3);
+    lua_pushnumber(L, t.quat.w);
+    lua_seti(L, -2, 4);
+    lua_seti(L, -2, 2);
+    return 1;
+}
+
+// set_morph(name|entity, target, weight): every group of the character that has the target
+int SceneScript::lSetMorph(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
+    if (skel == entt::null)
+        return luaL_error(L, "scene.set_morph: not a skinned character");
+    w.skelGpu.setMorph(w.reg, skel, luaL_checkstring(L, 2), (float)luaL_checknumber(L, 3));
+    return 0;
+}
+
+// get_morph(name|entity, target) -> weight (0 if the target is unknown)
+int SceneScript::lGetMorph(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
+    if (skel == entt::null)
+        return luaL_error(L, "scene.get_morph: not a skinned character");
+    lua_pushnumber(L, w.skelGpu.getMorph(w.reg, skel, luaL_checkstring(L, 2)));
+    return 1;
+}
+
+// reset_morphs(name|entity): all morph weights of the character back to zero
+int SceneScript::lResetMorphs(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
+    if (skel == entt::null)
+        return luaL_error(L, "scene.reset_morphs: not a skinned character");
+    w.skelGpu.resetMorphs(w.reg, skel);
+    return 0;
+}
+
+// joints(name | entity) -> {joint, ...}: the skinned character's joint entities, in the skin's joints[] order
+int SceneScript::lJoints(lua_State* L) {
+    auto* self = sSelf(L);
+    const World& w = self->w();
+    const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
+    if (skel == entt::null)
+        return luaL_error(L, "scene.joints: not a skinned character");
+    const auto& js = w.reg.get<Skeleton>(skel).joints;
+    lua_createtable(L, (int)js.size(), 0);
+    for (size_t i = 0; i < js.size(); ++i) {
+        pushEnt(L, js[i]);
+        lua_seti(L, -2, (int)i + 1);
+    }
+    return 1;
+}
+
+// visible(name | entity, bool): draw visibility, cascading to all descendants
+int SceneScript::lVisible(lua_State* L) {
+    auto* self = sSelf(L);
+    World& w = self->w();
+    const entt::entity e = entityOrName(w, L, 1);
+    if (e == entt::null)
+        return luaL_error(L, "scene.visible: no such entity");
+    if (lua_isnoneornil(L, 2))
+        return luaL_error(L, "scene.visible: missing boolean");
+    w.reg.emplace_or_replace<Visible>(e, Visible{lua_toboolean(L, 2) != 0});
+    return 0;
 }
 
 int SceneScript::lTime(lua_State* L) {

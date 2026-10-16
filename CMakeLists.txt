@@ -56,6 +56,7 @@ spirv(shadow_frag ${CMAKE_SOURCE_DIR}/shaders/shadow.frag)
 spirv(tonemap_vert ${CMAKE_SOURCE_DIR}/shaders/tonemap.vert)
 spirv(tonemap_frag ${CMAKE_SOURCE_DIR}/shaders/tonemap.frag)
 spirv(softbody ${CMAKE_SOURCE_DIR}/shaders/softbody.comp)
+spirv(skeleton ${CMAKE_SOURCE_DIR}/shaders/skeleton.comp)
 spirv(env_cube ${CMAKE_SOURCE_DIR}/shaders/env_cube.comp)
 spirv(env_prefilter ${CMAKE_SOURCE_DIR}/shaders/env_prefilter.comp)
 spirv(env_irradiance ${CMAKE_SOURCE_DIR}/shaders/env_irradiance.comp)
@@ -99,6 +100,8 @@ add_executable(vksim
     src/app/rigid.cpp
     src/assets.cpp
     src/sim/softsim.cpp
+    src/sim/dualquat.cpp
+    src/sim/skeleton.cpp
     src/vk/vkapp.cpp
     src/vk/renderer.cpp
     src/vk/renderer_env.cpp
@@ -123,5 +126,11 @@ target_include_directories(vksim PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/tinygltf
     ${XR_INCLUDES}
     ${CMAKE_SOURCE_DIR}/src)
+
+# CPU self-test for the ported dual-quaternion math (Blender ground truth). Build with -Dvksim's
+# default; run ./build/dualquat_test (no GPU needed).
+add_executable(dualquat_test tests/dualquat_test.cpp src/sim/dualquat.cpp)
+target_compile_features(dualquat_test PRIVATE cxx_std_23)
+target_include_directories(dualquat_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 

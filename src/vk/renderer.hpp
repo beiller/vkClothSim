@@ -30,6 +30,10 @@ public:
 
     void init(VkApp& app, int nInstances, const Mat4& viewProj);
     GpuMeshRef addMesh(const Mesh& mesh);
+    // a GpuMesh whose pos/nrm buffers are owned by the Skeleton (freed by Skeleton::shutdown):
+    // the renderer uploads only the uv + index buffers and aliases the rest
+    GpuMeshRef addMeshShared(const Mesh& m, VkBuffer pos, VkDeviceMemory posMem, VkBuffer nrm,
+                             VkDeviceMemory nrmMem, uint32_t n);
     int addInstance(int geom); // per-instance model UBO + descriptor set; the ECS keeps the id
     int addTexture(const void* rgba, uint32_t w, uint32_t h);
     void setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h);
@@ -56,6 +60,7 @@ private:
         VkDeviceMemory ibmem = VK_NULL_HANDLE;
         uint32_t idxCount = 0;
         uint32_t vtxCount = 0;
+        bool externalPosNrm = false; // pos/nrm owned by the Skeleton; the free path skips them
     };
 
     struct GpuTexture {
@@ -83,6 +88,7 @@ private:
     };
 
     static void drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const InstancedMesh& inst);
+    bool isHidden(const entt::registry& reg, entt::entity e) const; // Visible flag on e or any ancestor
     void rebuildTonemapSet(VkApp& app);
     void writeViewUbo(const Mat4& vp, const V3& cam, float envIntensity);
     void writeLights(const entt::registry& reg);

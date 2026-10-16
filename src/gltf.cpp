@@ -2,6 +2,7 @@
 
 #include "assets.hpp"
 #include "math.hpp"
+#include "sim/skeleton.hpp"
 #include "systems.hpp"
 #include "tiny_gltf_v3.h"
 
@@ -12,6 +13,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <vector>
 
 namespace {
@@ -148,6 +150,12 @@ int typeComps(int t) {
         return 3;
     case TG3_TYPE_VEC4:
         return 4;
+    case TG3_TYPE_MAT2:
+        return 4;
+    case TG3_TYPE_MAT3:
+        return 9;
+    case TG3_TYPE_MAT4:
+        return 16;
     }
     return 0;
 }
@@ -407,6 +415,14 @@ struct GltfCtx {
     std::string baseDir;
     std::vector<entt::entity> materials; // per glTF material index (null = not created)
     std::vector<entt::entity> textures;  // per glTF image index
+    // skinned meshes: the node entities (filled in buildNode), the per-skin character id
+    // (created in finishSkinned), and the prims deferred to finishSkinned
+    struct PendingPrim {
+        int32_t nodeIdx, meshIdx, primIdx;
+    };
+    std::vector<entt::entity> nodeEntities; // per glTF node index (null = not built)
+    std::vector<entt::entity> skinChars;    // per skin index: the skeleton character entity (null = not created)
+    std::vector<PendingPrim> pending;
 };
 
 void warn(GltfCtx& c, const std::string& msg) {
@@ -495,6 +511,247 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     return c.materials[matIdx] = e;
 }
 
+// ---- skinned meshes (dual-quaternion skin + shape keys, see sim/skeleton.hpp)
+
+// the skin a node's meshes use: its explicit skin, else the file's only skin, else -1
+int32_t skinOf(const GltfCtx& c, int32_t nodeIdx) {
+    const int32_t s = c.m->nodes[nodeIdx].skin;
+    if (s >= 0)
+        return s;
+    return c.m->skins_count == 1 ? 0 : -1;
+}
+
+// the joints accessor: JOINTS_0 (2.0) or JOINT_0 (1.0); -1 if absent
+int32_t jointAcc(const tg3_primitive& p) {
+    const int32_t a = attrAccessor(p, "JOINTS_0");
+    return a >= 0 ? a : attrAccessor(p, "JOINT_0");
+}
+
+// mesh-level extras.targetNames (Daz convention): the morph target names
+std::vector<std::string> targetNames(const tg3_mesh& gm) {
+    std::vector<std::string> out;
+    if (!gm.ext.extras || gm.ext.extras->type != TG3_VALUE_OBJECT)
+        return out;
+    const tg3_value& ex = *gm.ext.extras;
+    for (uint32_t i = 0; i < ex.object_count; ++i) {
+        if (s(ex.object_data[i].key) != "targetNames")
+            continue;
+        const tg3_value& arr = ex.object_data[i].value;
+        if (arr.type != TG3_VALUE_ARRAY)
+            break;
+        for (uint32_t j = 0; j < arr.array_count; ++j)
+            if (arr.array_data[j].type == TG3_VALUE_STRING)
+                out.push_back(s(arr.array_data[j].string_val));
+        break;
+    }
+    return out;
+}
+
+// phase B for skinned meshes (run after all buildNode calls, so every joint entity exists).
+// Pending prims are grouped by (skin, POSITION accessor): a group shares its rest data,
+// joints/weights and morph deltas - never per primitive, that's the 4.1 GB trap. One
+// character per skin, one group per distinct POSITION accessor.
+void finishSkinned(GltfCtx& c) {
+    if (c.pending.empty())
+        return;
+    std::map<std::pair<int32_t, int32_t>, std::vector<GltfCtx::PendingPrim>> byGroup;
+    for (const auto& pp : c.pending) {
+        const int32_t skin = skinOf(c, pp.nodeIdx);
+        const tg3_primitive& p = c.m->meshes[pp.meshIdx].primitives[pp.primIdx];
+        byGroup[{skin, attrAccessor(p, "POSITION")}].push_back(pp);
+    }
+    for (auto& [key, prims] : byGroup) {
+        const int32_t skin = key.first;
+        const tg3_mesh& gm0 = c.m->meshes[prims[0].meshIdx];
+        const tg3_primitive& p0 = gm0.primitives[prims[0].primIdx];
+
+        // character (once per skin): joint entities + inverse bind matrices + one
+        // representative mesh node as the shared placement. The ECS `Skeleton` component (on a
+        // dedicated character entity) is the source of truth the SkelGpu compute filters on.
+        if (c.skinChars[skin] == entt::null) {
+            const tg3_skin& sk = c.m->skins[skin];
+            const std::string skelName = s(sk.name);
+            std::vector<entt::entity> jointEntities;
+            jointEntities.resize(sk.joints_count);
+            for (uint32_t i = 0; i < sk.joints_count; ++i) {
+                const int32_t ji = sk.joints[i];
+                jointEntities[i] = (uint32_t)ji < c.m->nodes_count ? c.nodeEntities[ji] : entt::null;
+            }
+            std::vector<float> ibf;
+            const bool haveIbm =
+                sk.inverse_bind_matrices >= 0 && readAccessor(*c.m, sk.inverse_bind_matrices, 16, ibf) &&
+                ibf.size() == 16 * sk.joints_count;
+            if (!haveIbm)
+                warn(c, "skin " + std::to_string(skin) + ": missing or bad inverseBindMatrices (identity)");
+            std::vector<Mat4> invBinds;
+            for (uint32_t i = 0; i < sk.joints_count; ++i) {
+                Mat4 m = mat4Identity();
+                if (haveIbm)
+                    std::memcpy(m.m, ibf.data() + 16 * i, 64);
+                invBinds.push_back(m);
+            }
+            for (uint32_t i = 0; i < sk.joints_count; ++i) {
+                const int32_t ji = sk.joints[i];
+                if ((uint32_t)ji >= c.m->nodes_count)
+                    continue;
+                const tg3_node& jn = c.m->nodes[ji];
+                if (!jn.has_matrix && (std::fabs(jn.scale[0] - jn.scale[1]) > 1e-4 || std::fabs(jn.scale[1] - jn.scale[2]) > 1e-4)) {
+                    warn(c, "joint " + s(jn.name) + " has non-uniform scale (approximated by the DQ scale blend)");
+                    break;
+                }
+            }
+            Skeleton skelComp;
+            skelComp.name = skelName;
+            skelComp.joints = std::move(jointEntities);
+            skelComp.invBinds = std::move(invBinds);
+            skelComp.placement = c.nodeEntities[prims[0].nodeIdx];
+            skelComp.charGpu = c.w.skelGpu.addCharacter((int)sk.joints_count);
+            const entt::entity skelEnt = c.w.reg.create();
+            c.w.reg.emplace<Name>(skelEnt, skelName);
+            c.w.reg.emplace<Skeleton>(skelEnt, std::move(skelComp));
+            c.skinChars[skin] = skelEnt;
+        }
+        const entt::entity skelEnt = c.skinChars[skin];
+        if (skelEnt == entt::null)
+            continue;
+        const int charGpu = c.w.reg.get<Skeleton>(skelEnt).charGpu;
+
+        // group (once per (skin, POSITION accessor))
+        std::vector<float> pos0;
+        if (!readAccessor(*c.m, key.second, 3, pos0) || pos0.empty()) {
+            warn(c, "skinned group: bad POSITION accessor");
+            continue;
+        }
+        const int nV = (int)(pos0.size() / 3);
+        const int nJ = (int)c.m->skins[skin].joints_count;
+        SkelGroupDesc g;
+        g.nV = nV;
+        g.pos0 = pos0;
+        std::vector<float> nrm0;
+        if (readAccessor(*c.m, attrAccessor(p0, "NORMAL"), 3, nrm0) && nrm0.size() == (size_t)nV * 3)
+            g.nrm0 = std::move(nrm0);
+        else {
+            std::vector<uint32_t> idx;
+            std::vector<float> idxf;
+            if (p0.indices >= 0 && readAccessor(*c.m, p0.indices, 1, idxf))
+                for (float v : idxf)
+                    idx.push_back((uint32_t)v);
+            computeNormals(pos0, idx, g.nrm0);
+        }
+        const int32_t ja = jointAcc(p0);
+        const int32_t wa = attrAccessor(p0, "WEIGHTS_0") >= 0 ? attrAccessor(p0, "WEIGHTS_0") : attrAccessor(p0, "WEIGHT_0");
+        std::vector<float> jf, wf;
+        if (!readAccessor(*c.m, ja, 4, jf) || jf.size() != (size_t)4 * nV) {
+            warn(c, "skinned group: bad JOINTS_0");
+            continue;
+        }
+        const int wc = wa >= 0 ? typeComps(c.m->accessors[wa].type) : 0;
+        const bool haveW = wc > 0 && readAccessor(*c.m, wa, wc, wf) && wf.size() == (size_t)wc * nV;
+        if (wc > 0 && !haveW)
+            warn(c, "skinned group: bad WEIGHTS_0 (treating as zero)");
+        g.joints.resize((size_t)4 * nV);
+        g.weights.assign((size_t)4 * nV, 0.0f);
+        bool badJoint = false;
+        for (int v = 0; v < nV; ++v) {
+            float sum = 0.0f;
+            for (int i = 0; i < 4; ++i) {
+                const float jv = jf[4 * v + i];
+                const bool okJ = jv >= 0.0f && jv < (float)nJ;
+                if (!okJ)
+                    badJoint = true;
+                g.joints[4 * v + i] = okJ ? (uint32_t)jv : 0;
+                const float wgt = (i < wc && haveW) ? wf[wc * v + i] : 0.0f;
+                g.weights[4 * v + i] = wgt;
+                sum += wgt;
+            }
+            if (sum > 1e-6f) // DQS expects a convex blend
+                for (int i = 0; i < 4; ++i)
+                    g.weights[4 * v + i] /= sum;
+        }
+        if (badJoint)
+            warn(c, "skinned group: joint index out of range (clamped)");
+        // morph deltas: target-major; a target without a POSITION delta gets a zero slot so
+        // target indices stay dense
+        const int nT = (int)p0.targets_count;
+        g.deltas.assign((size_t)nT * nV * 3, 0.0f);
+        std::vector<float> d;
+        for (int t = 0; t < nT; ++t) {
+            int32_t acc = -1;
+            bool hasNrm = false;
+            for (uint32_t i = 0; i < p0.target_attribute_counts[t]; ++i) {
+                const std::string k = s(p0.targets[t][i].key);
+                if (k == "POSITION")
+                    acc = p0.targets[t][i].value;
+                else if (k == "NORMAL")
+                    hasNrm = true;
+            }
+            if (acc < 0) {
+                if (hasNrm)
+                    warn(c, "skinned group: target " + std::to_string(t) + " has no POSITION delta (slot zeroed)");
+                continue;
+            }
+            d.clear();
+            if (readAccessor(*c.m, acc, 3, d) && d.size() == (size_t)nV * 3)
+                std::memcpy(g.deltas.data() + (size_t)t * nV * 3, d.data(), (size_t)nV * 12);
+            else
+                warn(c, "skinned group: target " + std::to_string(t) + " POSITION delta mismatch (slot zeroed)");
+        }
+        g.morphNames = targetNames(gm0);
+        // the file's static (frame-0) morph strengths: the character's real shape. Applied as
+        // live GPU weights each step (no baking into pos0), and the reset state.
+        g.initWeights.assign((size_t)nT, 0.0f);
+        for (int t = 0; t < nT && t < (int)gm0.weights_count; ++t)
+            g.initWeights[t] = (float)gm0.weights[t];
+        const int gid = c.w.skelGpu.addGroup(charGpu, g);
+        if (gid < 0)
+            continue;
+        c.w.reg.get<Skeleton>(skelEnt).groups.push_back(gid);
+        const MeshGpu rw = c.w.skelGpu.groupOut(gid);
+        for (const auto& pp : prims) {
+            const tg3_mesh& gm = c.m->meshes[pp.meshIdx];
+            const tg3_primitive& p = gm.primitives[pp.primIdx];
+            if (p.mode != -1 && p.mode != 4) {
+                warn(c, "skinned prim: primitive mode is not triangles");
+                continue;
+            }
+            Mesh pm; // pos/nrm come from the group's shared buffers (below)
+            std::vector<float> uv, idxf;
+            if (!readAccessor(*c.m, attrAccessor(p, "TEXCOORD_0"), 2, uv) || uv.size() != (size_t)nV * 2)
+                uv.assign((size_t)nV * 2, 0.0f);
+            pm.uv = std::move(uv);
+            bool bad = false;
+            if (p.indices >= 0) {
+                if (!readAccessor(*c.m, p.indices, 1, idxf))
+                    bad = true;
+                for (float v : idxf) {
+                    if (v < 0.0f || v >= (float)nV) {
+                        bad = true;
+                        break;
+                    }
+                    pm.indices.push_back((uint32_t)v);
+                }
+            } else
+                for (int i = 0; i < nV; ++i)
+                    pm.indices.push_back((uint32_t)i);
+            if (bad) {
+                warn(c, "skinned prim: index out of range");
+                continue;
+            }
+            const entt::entity child = c.w.reg.create();
+            const std::string mName = s(gm.name);
+            const std::string cname = mName.empty() ? "prim" : (gm.primitives_count > 1 ? mName + "_" + std::to_string(pp.primIdx) : mName);
+            c.w.reg.emplace<Name>(child, cname);
+            const int geom =
+                c.w.renderer.addMeshShared(pm, rw.pos.buffer, rw.pos.memory, rw.nrm.buffer, rw.nrm.memory, (uint32_t)nV).geom;
+            addMesh(c.w, child, geom, materialFor(c, p.material), c.nodeEntities[pp.nodeIdx]);
+            c.w.reg.emplace<SkelCharData>(child, skelEnt);
+        }
+        for (const auto& pp : prims)
+            if (c.nodeEntities[pp.nodeIdx] != entt::null)
+                c.w.reg.get_or_emplace<SkelCharData>(c.nodeEntities[pp.nodeIdx], skelEnt); // addressable from the mesh node too
+    }
+}
+
 // a node -> entity with local Transform + Parent; mesh primitives -> child mesh entities.
 // the node scale lives in the Transform (composed by the world-transform resolve)
 entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
@@ -510,15 +767,22 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
     const std::string name = s(n.name).empty() ? "node" + std::to_string(nodeIdx) : s(n.name);
     c.w.reg.emplace<Name>(e, c.fileBase + "/" + name);
     c.w.reg.emplace<Transform>(e, t);
+    c.nodeEntities[nodeIdx] = e;
     if (parent != entt::null)
         c.w.reg.emplace<Parent>(e, parent);
     if (n.mesh >= 0 && (uint32_t)n.mesh < c.m->meshes_count) {
         const tg3_mesh& gm = c.m->meshes[n.mesh];
         const std::string mName = s(gm.name);
-        if (n.skin >= 0)
-            warn(c, "skinned mesh " + mName + ": no animation support, using bind pose");
+        const int32_t skin = skinOf(c, nodeIdx);
         for (uint32_t i = 0; i < gm.primitives_count; ++i) {
             const tg3_primitive& p = gm.primitives[i];
+            if (skin >= 0 && jointAcc(p) >= 0) {
+                // skinned: deferred to finishSkinned (phase B, once all joint entities exist)
+                c.pending.push_back({nodeIdx, n.mesh, (int32_t)i});
+                continue;
+            }
+            if (jointAcc(p) >= 0)
+                warn(c, "skinned mesh " + mName + ": no usable skin, using bind pose");
             Mesh pm;
             std::string pwarn;
             const bool ok = packPrimitive(*c.m, gm, p, pm, pwarn);
@@ -598,8 +862,11 @@ entt::entity loadGltf(World& w, entt::entity e, const std::string& path, std::st
     // note: value-initialized entt::entity is 0, not entt::null (all bits set in EnTT 4)
     c.materials.assign(model.materials_count, entt::null);
     c.textures.assign(model.images_count, entt::null);
+    c.nodeEntities.assign(model.nodes_count, entt::null);
+    c.skinChars.assign(model.skins_count, entt::null);
     for (uint32_t i = 0; i < scene.nodes_count; ++i)
         buildNode(c, scene.nodes[i], e);
+    finishSkinned(c); // skinned meshes: characters + groups + shared-buffer prims
     tg3_model_free(&model);
     return e;
 }

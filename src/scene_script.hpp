@@ -46,6 +46,7 @@ public:
     void animateAll(float dt);
     // call _physics(self, dt) on every ready script entity (per physics step)
     void physicsAll(float dt);
+    float time() const { return m_time; }
     // unref a script entity's Lua refs (invoked from the on_destroy<LuaScript> hook; takes the
     // refs directly so it stays safe while the entity's components are being torn down)
     void destroyScript(int inst, int params, int onReady, int animate, int physics);
@@ -96,6 +97,13 @@ private:
     static int lSoftFloor(lua_State* L);
     static int lSet(lua_State* L);
     static int lGet(lua_State* L);
+    static int lSetPose(lua_State* L);
+    static int lGetPose(lua_State* L);
+    static int lSetMorph(lua_State* L);
+    static int lGetMorph(lua_State* L);
+    static int lResetMorphs(lua_State* L);
+    static int lJoints(lua_State* L);
+    static int lVisible(lua_State* L);
     static int lTime(lua_State* L);
     static int lButton(lua_State* L);
     static int lAttachScript(lua_State* L);

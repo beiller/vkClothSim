@@ -9,6 +9,7 @@
 #include <entt/entt.hpp>
 #include <functional>
 #include <string>
+#include <vector>
 
 struct Transform {
     V3 pos{0, 0, 0};
@@ -159,6 +160,31 @@ struct KeyboardInput {
 struct Renderable {
     int inst = -1;
     bool noShadow = false; // skip in the shadow pass (still drawn in the scene pass)
+};
+
+// draw visibility; an entity is drawn only when it and every ancestor are on. Absent = on.
+struct Visible {
+    bool on = true;
+};
+
+// one per skinned character (a glTF skin): the ECS source of truth for a skeleton. The SkelGpu
+// manager owns the GPU resources and discovers skeletons by viewing this component in step(), so
+// any number of skeletons (characters) are supported. joints are in the skin's joints[] order;
+// placement is the representative node whose WorldTransform carries the whole character rigidly
+// (excluded from the per-joint deformation matrix).
+struct Skeleton {
+    std::string name;
+    std::vector<entt::entity> joints;
+    std::vector<Mat4> invBinds;
+    entt::entity placement = entt::null;
+    int charGpu = -1;         // SkelGpu character id (the joint-DQ buffer)
+    std::vector<int> groups;  // SkelGpu group ids (the dispatch units)
+};
+
+// on a skinned mesh's node + prim entities: the skeleton character entity this mesh belongs to
+// (all mesh nodes of one skin share the same skeleton)
+struct SkelCharData {
+    entt::entity skel = entt::null;
 };
 
 // shared texture entity: one per asset path; materials link by entity ref, so users share one

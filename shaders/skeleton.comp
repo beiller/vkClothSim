@@ -1,0 +1,173 @@
+#version 450
+
+// Dual-quaternion skinning + shape keys. Mirrors the CPU port in sim/dualquat.cpp (Blender's
+// add_weighted_dq_dq_pivot -> add_weighted_dq_dq -> normalize_dq -> mul_v3m3_dq). Note the CPU
+// and GPU are NOT automatically equivalent: the CPU stores M as m[col][row] and applies it via an
+// explicit matrix*vector, while a GLSL mat3 literal built from the same source-ordered values is
+// transposed (see applyDq). Keep the two in lockstep and validate the kernel against the CPU.
+// Morph deltas are applied before skinning (glTF order). The DQ struct is 112 B on the GPU
+// (std140), byte-identical to the C DualQuat; quat is {w,x,y,z}.
+//
+// Vertex data uses raw float/uint arrays (codebase convention: 4-byte stride, manual 3x/4x
+// indexing) — a vec3 array in a storage buffer would stride at 16 bytes and misalign against
+// the 12-byte CPU pack and the renderer's float-array reads of posOut/nrmOut.
+
+layout(local_size_x = 64) in;
+
+struct DQ {
+    vec4 quat;          // {w, x, y, z}
+    vec4 trans;         // dual part (full 4-vector)
+    mat4 scale;         // model-space scale (identity when scale_weight == 0)
+    float scale_weight; // 0 = no scale, 1 = scale active
+};
+
+layout(binding = 0) readonly buffer Pos0    { float p[]; } pos0;   // 3 per vertex
+layout(binding = 1) readonly buffer Nrm0    { float p[]; } nrm0;   // 3 per vertex
+layout(binding = 2) readonly buffer Joints  { uint  j[]; } joints; // 4 per vertex
+layout(binding = 3) readonly buffer Weights { float w[]; } weights; // 4 per vertex
+layout(binding = 4) readonly buffer Deltas  { float p[]; } deltas; // 3 per vertex per target
+layout(binding = 5) readonly buffer JointDQ { DQ    v[]; } jointDQ;
+layout(binding = 6) readonly buffer AMorphs { uvec2 v[]; } activeMorphs;
+layout(binding = 7) writeonly buffer PosOut { float p[]; } posOut;
+layout(binding = 8) writeonly buffer NrmOut { float p[]; } nrmOut;
+
+layout(push_constant) uniform PC {
+    int nV;
+    int nJ;
+    int activeCount;
+    int pad;
+} pc;
+
+// mirrors dq::addWeightedDqDq: accumulates weight*dq into the running sum, flipping the dual
+// part's sign when it opposes the running real part (stable accumulation). The scale always
+// accumulates with a positive weight.
+void addWeighted(inout vec4 q, inout vec4 tr, inout mat4 S, inout float sw,
+                 vec4 jq, vec4 jt, mat4 js, float jsw, float weight) {
+    float sgn = dot(jq, q) < 0.0 ? -1.0 : 1.0;
+    float w = sgn * weight;
+    q += w * jq;
+    tr += w * jt;
+    if (jsw != 0.0) {
+        float aw = abs(weight);
+        S += aw * js;
+        sw += aw;
+    }
+}
+
+// mirrors dq::addWeightedDqDqPivot (computeScaleMatrix = true): re-expresses the joint's scale
+// about the vertex position (the pivot) so a scaled joint doesn't pull the vertex toward the
+// joint origin.
+DQ pivotAdjust(DQ j, vec3 pivot) {
+    if (j.scale_weight == 0.0)
+        return j;
+    vec3 dst = (j.scale * vec4(pivot, 1.0)).xyz - pivot; // (S - I) * pivot
+    vec4 q = j.quat; // {w, x, y, z}
+    j.trans.x -= 0.5 * (q.y * dst.x + q.z * dst.y + q.w * dst.z);
+    j.trans.y += 0.5 * (q.x * dst.x + q.z * dst.z - q.w * dst.y);
+    j.trans.z += 0.5 * (q.x * dst.y + q.w * dst.x - q.y * dst.z);
+    j.trans.w += 0.5 * (q.x * dst.z + q.y * dst.y - q.z * dst.x);
+    j.scale[3].xyz -= dst; // neutralize the scale at the pivot
+    return j;
+}
+
+// mirrors dq::normalizeDq: divide the sum by the total weight; the scale matrix gets the
+// residual (1 - sw/W) identity first so unscaled influences contribute identity.
+void normalizeDq(inout vec4 q, inout vec4 tr, inout mat4 S, inout float sw, float W) {
+    float invW = 1.0 / W;
+    q *= invW;
+    tr *= invW;
+    if (sw != 0.0) {
+        float aw = W - sw;
+        if (aw != 0.0) {
+            S[0].x += aw;
+            S[1].y += aw;
+            S[2].z += aw;
+            S[3].w += aw;
+        }
+        S *= invW;
+        sw = 1.0;
+    }
+}
+
+// mirrors dq::mulV3m3Dq: p' = (M(q) * (S * p) + t(q,d)) / |q|^2; the normal goes through A^-T
+// with A = M(q) * S (for a pure rotation A^-T = A, so it is just rotated).
+void applyDq(vec3 p, vec3 n, out vec3 po, out vec3 no, vec4 q, vec4 tr, mat4 S, float sw) {
+    float w = q.x, x = q.y, y = q.z, z = q.w;
+    // The literal below is copied in the CPU's source-assignment order, which is ROW-major of the
+    // true matrix; the GLSL mat3 constructor fills COLUMN-major, so as written it is M^T. The
+    // transpose() restores the CPU's matrix - without it the rotation is inverted (the mesh turns
+    // the opposite way to the joint).
+    mat3 M = transpose(mat3(
+        w * w + x * x - y * y - z * z, 2.0 * (x * y - w * z), 2.0 * (x * z + w * y),
+        2.0 * (x * y + w * z),         w * w + y * y - x * x - z * z, 2.0 * (y * z - w * x),
+        2.0 * (x * z - w * y),         2.0 * (y * z + w * x),  w * w + z * z - x * x - y * y));
+    float len2 = 1.0 / dot(q, q);
+    vec3 t;
+    t.x = 2.0 * (-tr.x * x + w * tr.y - tr.z * z + y * tr.w);
+    t.y = 2.0 * (-tr.x * y + tr.y * z - x * tr.w + w * tr.z);
+    t.z = 2.0 * (-tr.x * z + x * tr.z + w * tr.w - tr.y * y);
+    vec3 r = (sw != 0.0) ? (S * vec4(p, 1.0)).xyz : p;
+    po = (M * r + t) * len2;
+    vec3 nn;
+    if (sw != 0.0) {
+        mat3 S3 = mat3(
+            vec3(S[0].x, S[1].x, S[2].x),
+            vec3(S[0].y, S[1].y, S[2].y),
+            vec3(S[0].z, S[1].z, S[2].z));
+        nn = normalize(inverse(M * S3) * n);
+    } else {
+        nn = normalize(M * n); // the unnormalized |q|^2 factor cancels in normalize
+    }
+    no = nn;
+}
+
+void main() {
+    int v = int(gl_GlobalInvocationID.x);
+    if (v >= pc.nV)
+        return;
+    int o = v * 3;
+    vec3 p = vec3(pos0.p[o], pos0.p[o + 1], pos0.p[o + 2]);
+    vec3 n = vec3(nrm0.p[o], nrm0.p[o + 1], nrm0.p[o + 2]);
+    // morph deltas first (glTF order: morph -> skin)
+    for (int k = 0; k < pc.activeCount; ++k) {
+        uvec2 e = activeMorphs.v[k];
+        int d = (int(e.x) * pc.nV + v) * 3;
+        p += uintBitsToFloat(e.y) * vec3(deltas.p[d], deltas.p[d + 1], deltas.p[d + 2]);
+    }
+    int q4 = v * 4;
+    uvec4 ji = uvec4(joints.j[q4], joints.j[q4 + 1], joints.j[q4 + 2], joints.j[q4 + 3]);
+    vec4 wg = vec4(weights.w[q4], weights.w[q4 + 1], weights.w[q4 + 2], weights.w[q4 + 3]);
+
+    // (1) accumulate the 4 influences
+    vec4 qs = vec4(0.0), tr = vec4(0.0);
+    mat4 S = mat4(0.0);
+    float sw = 0.0, W = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        float wi = wg[i];
+        if (wi == 0.0)
+            continue;
+        DQ j = pivotAdjust(jointDQ.v[ji[i]], p);
+        addWeighted(qs, tr, S, sw, j.quat, j.trans, j.scale, j.scale_weight, wi);
+        W += wi;
+    }
+    if (W <= 0.0) { // degenerate (all weights zero): pass through
+        posOut.p[o] = p.x;
+        posOut.p[o + 1] = p.y;
+        posOut.p[o + 2] = p.z;
+        nrmOut.p[o] = n.x;
+        nrmOut.p[o + 1] = n.y;
+        nrmOut.p[o + 2] = n.z;
+        return;
+    }
+    // (2) normalize by the total weight
+    normalizeDq(qs, tr, S, sw, W);
+    // (3) apply
+    vec3 po, no;
+    applyDq(p, n, po, no, qs, tr, S, sw);
+    posOut.p[o] = po.x;
+    posOut.p[o + 1] = po.y;
+    posOut.p[o + 2] = po.z;
+    nrmOut.p[o] = no.x;
+    nrmOut.p[o + 1] = no.y;
+    nrmOut.p[o + 2] = no.z;
+}

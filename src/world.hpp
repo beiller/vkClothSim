@@ -1,6 +1,7 @@
 #pragma once
 #include "app/rigid.hpp"
 #include "scene_script.hpp"
+#include "sim/skeleton.hpp"
 #include "sim/softsim.hpp"
 #include "vk/renderer.hpp"
 #include "xr_backend.hpp"
@@ -23,6 +24,7 @@ struct World {
     VkApp* app = nullptr;
     RigidScene rigid;
     SoftSim sim;
+    SkelGpu skelGpu; // dual-quaternion skin + shape keys; discovers skeletons via the ECS `Skeleton` component
     Renderer renderer;
     std::unique_ptr<IXrBackend> xr;
     XrFrame xrFrame;
