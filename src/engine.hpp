@@ -18,7 +18,7 @@ struct PhaseMs {
     float idle = 0.0f;   // waiting for the display to present (window: vsync; VR: ~0, pacing is in poll)
 };
 
-struct World {
+struct Engine {
     entt::registry reg;
     VkApp* app = nullptr;
     RigidScene rigid;

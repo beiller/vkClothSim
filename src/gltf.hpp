@@ -1,5 +1,5 @@
 #pragma once
-#include "world.hpp"
+#include "engine.hpp"
 #include <string>
 
 // Load a glTF 2.0 (.gltf / .glb) file under entity e: scene nodes become an entity hierarchy
@@ -8,4 +8,4 @@
 // id; embedded images dedupe as "file#imgN"). Node scale (TRS or matrix) is baked into the
 // primitive geometry; skinned or morphed primitives are skipped with a warning.
 // Returns e on success; on failure sets err and returns entt::null.
-entt::entity loadGltf(World& w, entt::entity e, const std::string& path, std::string& err);
+entt::entity loadGltf(Engine& w, entt::entity e, const std::string& path, std::string& err);

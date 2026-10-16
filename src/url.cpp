@@ -1,6 +1,6 @@
 #include "url.hpp"
 
-#include "world.hpp"
+#include "engine.hpp"
 #include <cstring>
 #include <entt/entt.hpp>
 
@@ -13,7 +13,7 @@ static const FieldDesc* findField(const TypeDesc* t, const std::string& name) {
 
 // resolve a field on a specific entity (no name lookup): optional Component qualifier
 // ("Component.field"), then a MaterialRef fallthrough. label is for error messages.
-bool resolveEntityField(const World& w, entt::entity ent, const std::string& field, const std::string& label,
+bool resolveEntityField(const Engine& w, entt::entity ent, const std::string& field, const std::string& label,
                         UrlRef& out, std::string& err) {
     auto comps = refl::entityFields(w.reg, ent);
     if (comps.empty()) {
@@ -63,7 +63,7 @@ bool resolveEntityField(const World& w, entt::entity ent, const std::string& fie
     return true;
 }
 
-bool resolveUrl(const World& w, const std::string& url, UrlRef& out, std::string& err) {
+bool resolveUrl(const Engine& w, const std::string& url, UrlRef& out, std::string& err) {
     const auto dot = url.find('.');
     if (dot == std::string::npos) {
         err = "expected 'name.field'";
@@ -173,14 +173,14 @@ static bool applyGet(const UrlRef& r, float* vals, int maxN, int& n, std::string
     return false;
 }
 
-bool sceneSet(World& w, const std::string& url, const float* vals, int n, std::string& err) {
+bool sceneSet(Engine& w, const std::string& url, const float* vals, int n, std::string& err) {
     UrlRef r;
     if (!resolveUrl(w, url, r, err))
         return false;
     return applySet(r, vals, n, err);
 }
 
-bool sceneGet(const World& w, const std::string& url, float* vals, int maxN, int& n, std::string& err) {
+bool sceneGet(const Engine& w, const std::string& url, float* vals, int maxN, int& n, std::string& err) {
     UrlRef r;
     if (!resolveUrl(w, url, r, err))
         return false;
@@ -188,14 +188,14 @@ bool sceneGet(const World& w, const std::string& url, float* vals, int maxN, int
 }
 
 // handle form: address a field on a specific entity (arg-1 = handle, not a name URL)
-bool sceneSetEnt(World& w, entt::entity ent, const std::string& field, const float* vals, int n, std::string& err) {
+bool sceneSetEnt(Engine& w, entt::entity ent, const std::string& field, const float* vals, int n, std::string& err) {
     UrlRef r;
     if (!resolveEntityField(w, ent, field, "entity", r, err))
         return false;
     return applySet(r, vals, n, err);
 }
 
-bool sceneGetEnt(const World& w, entt::entity ent, const std::string& field, float* vals, int maxN, int& n,
+bool sceneGetEnt(const Engine& w, entt::entity ent, const std::string& field, float* vals, int maxN, int& n,
                  std::string& err) {
     UrlRef r;
     if (!resolveEntityField(w, ent, field, "entity", r, err))

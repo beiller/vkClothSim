@@ -11,7 +11,7 @@
 
 struct lua_State;
 struct LuaScript;
-struct World;
+struct Engine;
 
 // Embedded Lua 5.4 host for scene behavior scripts (scene .json + .lua).
 // Scripts see only the `scene` table (io/os/debug/package are removed); errors go to
@@ -23,7 +23,7 @@ public:
     SceneScript(const SceneScript&) = delete;
     SceneScript& operator=(const SceneScript&) = delete;
 
-    void init(World& w);
+    void init(Engine& w);
     // restricted module loader: run a .lua file under the assets dir once and cache its
     // (table) result; registry ref, or -1 on error
     int includeModule(const std::string& relPath, std::string& err);
@@ -63,7 +63,7 @@ private:
     void onScriptDestroy(entt::registry& reg, entt::entity e);
 
 private:
-    World& w() const { return *m_w; }
+    Engine& w() const { return *m_w; }
     int newRef(lua_State* L, int idx);
     void dropRef(int ref);
     // the error object is on top of the stack
@@ -132,7 +132,7 @@ private:
     static int lDestroyJoint(lua_State* L);
     static int lIsDynamic(lua_State* L);
 
-    World* m_w = nullptr;
+    Engine* m_w = nullptr;
     lua_State* L = nullptr;
     std::map<std::string, int> m_buttons; // action name -> registry ref
     std::vector<int> m_refs;              // every registry ref (unrefed at shutdown)

@@ -10,7 +10,7 @@
 #include <limits>
 #include <vector>
 
-class SoftSim {
+class Soft {
 public:
     void init(VkDevice dev, VkPhysicalDevice pdev);
     // scene ground: the soft-body floor plane (top face of the ground box); -inf = no floor

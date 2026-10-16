@@ -2,7 +2,7 @@
 
 #include "assets.hpp"
 #include "math.hpp"
-#include "sim/skeleton.hpp"
+#include "sim/skin.hpp"
 #include "systems.hpp"
 #include "tiny_gltf_v3.h"
 
@@ -408,7 +408,7 @@ bool nodePose(const tg3_node& n, Transform& out) {
 // ---- load context: per-file caches of the created shared entities
 
 struct GltfCtx {
-    World& w;
+    Engine& w;
     const tg3_model* m;
     std::string fileBase; // file name without extension (name prefix)
     std::string fileId;   // resolved path (embedded-image dedupe key)
@@ -511,7 +511,7 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     return c.materials[matIdx] = e;
 }
 
-// ---- skinned meshes (dual-quaternion skin + shape keys, see sim/skeleton.hpp)
+// ---- skinned meshes (dual-quaternion skin + shape keys, see sim/skin.hpp)
 
 // the skin a node's meshes use: its explicit skin, else the file's only skin, else -1
 int32_t skinOf(const GltfCtx& c, int32_t nodeIdx) {
@@ -567,7 +567,7 @@ void finishSkinned(GltfCtx& c) {
 
         // character (once per skin): joint entities + inverse bind matrices + one
         // representative mesh node as the shared placement. The ECS `Skeleton` component (on a
-        // dedicated character entity) is the source of truth the SkelGpu compute filters on.
+        // dedicated character entity) is the source of truth the Skin compute filters on.
         if (c.skinChars[skin] == entt::null) {
             const tg3_skin& sk = c.m->skins[skin];
             const std::string skelName = s(sk.name);
@@ -605,7 +605,7 @@ void finishSkinned(GltfCtx& c) {
             skelComp.joints = std::move(jointEntities);
             skelComp.invBinds = std::move(invBinds);
             skelComp.placement = c.nodeEntities[prims[0].nodeIdx];
-            skelComp.charGpu = c.w.gpuSim.skel.addCharacter((int)sk.joints_count);
+            skelComp.charGpu = c.w.gpuSim.skin.addCharacter((int)sk.joints_count);
             const entt::entity skelEnt = c.w.reg.create();
             c.w.reg.emplace<Name>(skelEnt, skelName);
             c.w.reg.emplace<Skeleton>(skelEnt, std::move(skelComp));
@@ -702,11 +702,11 @@ void finishSkinned(GltfCtx& c) {
         g.initWeights.assign((size_t)nT, 0.0f);
         for (int t = 0; t < nT && t < (int)gm0.weights_count; ++t)
             g.initWeights[t] = (float)gm0.weights[t];
-        const int gid = c.w.gpuSim.skel.addGroup(charGpu, g);
+        const int gid = c.w.gpuSim.skin.addGroup(charGpu, g);
         if (gid < 0)
             continue;
         c.w.reg.get<Skeleton>(skelEnt).groups.push_back(gid);
-        const MeshGpu rw = c.w.gpuSim.skel.groupOut(gid);
+        const MeshGpu rw = c.w.gpuSim.skin.groupOut(gid);
         for (const auto& pp : prims) {
             const tg3_mesh& gm = c.m->meshes[pp.meshIdx];
             const tg3_primitive& p = gm.primitives[pp.primIdx];
@@ -803,7 +803,7 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
 
 } // namespace
 
-entt::entity loadGltf(World& w, entt::entity e, const std::string& path, std::string& err) {
+entt::entity loadGltf(Engine& w, entt::entity e, const std::string& path, std::string& err) {
     std::string file;
     if (std::filesystem::exists("assets/" + path))
         file = "assets/" + path;

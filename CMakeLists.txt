@@ -99,9 +99,9 @@ add_executable(vksim
     src/url.cpp
     src/app/rigid.cpp
     src/assets.cpp
-    src/sim/softsim.cpp
+    src/sim/soft.cpp
     src/sim/dualquat.cpp
-    src/sim/skeleton.cpp
+    src/sim/skin.cpp
     src/vk/vkapp.cpp
     src/vk/renderer.cpp
     src/vk/renderer_env.cpp

@@ -3,7 +3,7 @@
 #include "scene.hpp"
 #include "systems.hpp"
 #include "vk/vkapp.hpp"
-#include "world.hpp"
+#include "engine.hpp"
 #include "xr/xr.hpp"
 #include <chrono>
 #include <cstdio>
@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
     if (!app.initInstance(900, 900, "3dsim"))
         return 1;
 
-    World w;
+    Engine w;
     w.app = &app;
     bool wantHdri = false, wantShadow = false, wantHier = false, wantNoVr = false;
     std::string scenePath;
@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
         else
             scenePath = "assets/scenes/demo.json";
     }
-    createSceneWorld(w, scenePath);
+    createScene(w, scenePath);
     spawnFpsHud(w);
     if (w.xr) {
         if (w.xr->init(app)) {
@@ -126,7 +126,7 @@ int main(int argc, char** argv) {
             resolveWorldTransforms(w);
             syncColliders(w);
             VkCommandBuffer simCmd = app.beginCommands();
-            w.gpuSim.skel.step(w.reg, simCmd); // GPU skin before the cloth sim (cloth-on-skeleton hook)
+            w.gpuSim.skin.step(w.reg, simCmd); // GPU skin before the cloth sim (cloth-on-skeleton hook)
             stepSoft(w, simCmd);
             app.submit(simCmd);
             simAccum -= kFrameDt;
@@ -155,7 +155,7 @@ int main(int argc, char** argv) {
                     w.xr->acquireImage(i);
                     imgIdx[i] = (uint32_t)w.xr->imageIndex(i);
                 }
-            w.renderer.drawVr(cmd, app, idx, w.reg, w.render, ImGui::GetDrawData(),
+            w.renderer.drawVr(cmd, app, idx, w.reg, w.render, ImGui::GetDrawData(), cam,
                               fr.shouldRender ? imgIdx : nullptr, fr.shouldRender ? w.xr->eyeCount() : 0);
             if (fr.shouldRender)
                 for (int i = 0; i < w.xr->eyeCount(); ++i)

@@ -32,7 +32,7 @@ V2 v2(const json& a, const char* what) {
     return {a[0].get<float>(), a[1].get<float>()};
 }
 
-UrlRef urlBind(World& w, const std::string& url, const std::string& path) {
+UrlRef urlBind(Engine& w, const std::string& url, const std::string& path) {
     UrlRef r;
     std::string err;
     if (!resolveUrl(w, url, r, err))
@@ -47,7 +47,7 @@ std::string resolveFile(const std::string& p) {
 
 // ---- editor tab: auto-generated from reflect.hpp tables x ECS contents
 
-void spawnEditorUi(World& w, entt::entity tab) {
+void spawnEditorUi(Engine& w, entt::entity tab) {
     std::vector<std::pair<entt::entity, std::string>> named;
     for (auto [e, n] : w.reg.view<Name>().each())
         named.emplace_back(e, n.id);
@@ -76,7 +76,7 @@ void spawnEditorUi(World& w, entt::entity tab) {
 
 // ---- scene tab: explicit widgets from JSON, bound by URL
 
-void spawnJsonWidgets(World& w, entt::entity parent, const json& arr, const std::string& path,
+void spawnJsonWidgets(Engine& w, entt::entity parent, const json& arr, const std::string& path,
                       std::vector<std::string>& scriptButtons) {
     for (const auto& W : arr) {
         const auto type = W.at("type").get<std::string>();
@@ -133,7 +133,7 @@ void spawnJsonWidgets(World& w, entt::entity parent, const json& arr, const std:
     }
 }
 
-void buildUi(World& w, const json& j, const std::string& path) {
+void buildUi(Engine& w, const json& j, const std::string& path) {
     const json& ui = j.value("ui", json::object());
     const auto title = ui.value("title", j.value("name", std::string("scene")));
     const V2 size = ui.contains("size") ? v2(ui["size"], (path + " ui.size").c_str()) : V2{320.0f, 720.0f};
@@ -188,7 +188,7 @@ void addComponents(entt::registry& reg, entt::entity e, const json& cj, const st
 // equivalent; placed by the components' Transform) + "gltf" (a glTF/GLB model built under the
 // object) + "script" (behavior).
 // Referenced names must be defined earlier in "objects" (define before use)
-void buildObject(World& w, const json& o, const std::string& p, bool allowMesh) {
+void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh) {
     const auto name = o.at("name").get<std::string>();
     const std::string what = "object '" + name + "'";
     const entt::entity e = w.reg.create();
@@ -254,7 +254,7 @@ void buildObject(World& w, const json& o, const std::string& p, bool allowMesh) 
 
 } // namespace
 
-void createSceneWorld(World& w, const std::string& path) {
+void createScene(Engine& w, const std::string& path) {
     const std::string p = resolveFile(path);
     std::ifstream in(p);
     if (!in)

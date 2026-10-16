@@ -1,4 +1,4 @@
-#include "sim/softsim.hpp"
+#include "sim/soft.hpp"
 
 #include "softbody_spv.hpp"
 #include "vk/vkutil.hpp"
@@ -38,16 +38,16 @@ void stageBarrier(VkCommandBuffer cmd, VkPipelineStageFlags src, VkPipelineStage
 
 } // namespace
 
-void SoftSim::init(VkDevice dev, VkPhysicalDevice pdev) {
+void Soft::init(VkDevice dev, VkPhysicalDevice pdev) {
     m_dev = dev;
     m_pdev = pdev;
 }
 
-void SoftSim::setFloor(float y) {
+void Soft::setFloor(float y) {
     m_floorY = y;
 }
 
-int SoftSim::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw) {
+int Soft::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw) {
     GpuBody b;
     b.soft.init(mesh, cons);
     const auto vn = (VkDeviceSize)b.soft.n;
@@ -74,7 +74,7 @@ int SoftSim::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& c
     return (int)m_body.size() - 1;
 }
 
-void SoftSim::build() {
+void Soft::build() {
     m_caps.resize(kMaxCapsules);
     vkMakeBuffer(m_dev, m_pdev, m_capsInstances, m_capsInstancesMem, 48 * kMaxCapsules,
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
@@ -100,7 +100,7 @@ void SoftSim::build() {
         makeBodySet(b);
 }
 
-void SoftSim::makeBodySet(GpuBody& b) {
+void Soft::makeBodySet(GpuBody& b) {
     const int n = b.soft.n;
     std::vector<VkDescriptorBufferInfo> bi = {
         {b.pos, 0, (VkDeviceSize)12 * n},
@@ -121,7 +121,7 @@ void SoftSim::makeBodySet(GpuBody& b) {
     vkMakeSet(m_dev, m_softPool, m_softDsl, softBinds(), b.simSet, bi);
 }
 
-void SoftSim::dispatch(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset) {
+void Soft::dispatch(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset) {
     int pc[4] = {mode, n, groupOffset, 0};
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPl, 0, 1, &b.simSet, 0, nullptr);
@@ -129,7 +129,7 @@ void SoftSim::dispatch(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, i
     vkCmdDispatch(cmd, (n + 63) / 64, 1, 1);
 }
 
-int SoftSim::modeBarriers(const GpuBody& b, int mode, VkBufferMemoryBarrier* out) {
+int Soft::modeBarriers(const GpuBody& b, int mode, VkBufferMemoryBarrier* out) {
     int k = 0;
     auto add = [&](VkBuffer buf) {
         out[k] = bufBarrier(buf);
@@ -156,7 +156,7 @@ int SoftSim::modeBarriers(const GpuBody& b, int mode, VkBufferMemoryBarrier* out
     return k;
 }
 
-void SoftSim::recordMode(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset) {
+void Soft::recordMode(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset) {
     if (n <= 0)
         return;
     VkBufferMemoryBarrier bmb[6];
@@ -165,7 +165,7 @@ void SoftSim::recordMode(VkCommandBuffer cmd, const GpuBody& b, int mode, int n,
     dispatch(cmd, b, mode, n, groupOffset);
 }
 
-void SoftSim::recordBody(VkCommandBuffer cmd, const GpuBody& b, int iters, int pinned) {
+void Soft::recordBody(VkCommandBuffer cmd, const GpuBody& b, int iters, int pinned) {
     if (pinned)
         return;
     const int n = b.soft.n;
@@ -176,16 +176,16 @@ void SoftSim::recordBody(VkCommandBuffer cmd, const GpuBody& b, int iters, int p
     recordMode(cmd, b, 2, n, 0);
 }
 
-void SoftSim::setPinned(int softId, int pinned) {
+void Soft::setPinned(int softId, int pinned) {
     m_body[softId].pinned = pinned;
 }
 
-void SoftSim::setParams(int softId, const SimParams& params, int steps) {
+void Soft::setParams(int softId, const SimParams& params, int steps) {
     m_body[softId].params = params;
     m_body[softId].steps = steps;
 }
 
-void SoftSim::record(VkCommandBuffer cmd) {
+void Soft::record(VkCommandBuffer cmd) {
     for (GpuBody& b : m_body) {
         PhysParams phys{};
         phys.nCaps = m_nCaps;
@@ -221,14 +221,14 @@ void SoftSim::record(VkCommandBuffer cmd) {
     }
 }
 
-void SoftSim::uploadCapsules(int n) {
+void Soft::uploadCapsules(int n) {
     m_nCaps = n;
     if (n == 0)
         return;
     vkWriteBuffer(m_dev, m_capsInstancesMem, m_caps.data(), 48 * (VkDeviceSize)n);
 }
 
-void SoftSim::shutdown() {
+void Soft::shutdown() {
     if (m_dev == VK_NULL_HANDLE)
         return;
     for (auto& b : m_body) {

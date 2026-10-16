@@ -157,7 +157,7 @@ bool optBool(lua_State* L, int tidx, const char* key) {
 }
 
 // arg -> entity: a number is a handle, a string a name; entt::null if unresolvable
-entt::entity entityOrName(const World& w, lua_State* L, int idx) {
+entt::entity entityOrName(const Engine& w, lua_State* L, int idx) {
     if (lua_isnumber(L, idx))
         return readEnt(L, idx);
     return findNamedEntity(w, luaL_checkstring(L, idx));
@@ -165,7 +165,7 @@ entt::entity entityOrName(const World& w, lua_State* L, int idx) {
 
 // the skinned character (skeleton) entity at e or among its descendants (a gltf character
 // spans many entities: joints, mesh nodes, prims); entt::null if none
-entt::entity skelCharEntity(const World& w, entt::entity e) {
+entt::entity skelCharEntity(const Engine& w, entt::entity e) {
     if (e == entt::null)
         return entt::null;
     auto& reg = w.reg;
@@ -193,7 +193,7 @@ SceneScript* SceneScript::sSelf(lua_State* L) {
     return (SceneScript*)lua_touserdata(L, lua_upvalueindex(1));
 }
 
-void SceneScript::init(World& w) {
+void SceneScript::init(Engine& w) {
     m_w = &w;
     L = luaL_newstate();
     lua_atpanic(L, scenePanic);
@@ -629,7 +629,7 @@ void SceneScript::reportError(const char* what) {
 
 int SceneScript::lTexture(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const char* path = luaL_checkstring(L, 1);
     const entt::entity e = textureEntity(w, path);
     if (e == entt::null)
@@ -640,7 +640,7 @@ int SceneScript::lTexture(lua_State* L) {
 
 int SceneScript::lMaterial(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const char* name = luaL_checkstring(L, 1);
     auto color = readV3(L, 2);
     const float metallic = (float)luaL_optnumber(L, 3, 0.0);
@@ -663,7 +663,7 @@ int SceneScript::lMaterial(lua_State* L) {
 
 int SceneScript::lGltf(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     const std::string path = luaL_checkstring(L, 2);
     std::string err;
@@ -675,7 +675,7 @@ int SceneScript::lGltf(lua_State* L) {
 
 int SceneScript::lGeometry(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const Mesh m = checkGeom(L, "scene.geometry");
     lua_pushinteger(L, w.renderer.addMesh(m).geom);
     return 1;
@@ -718,7 +718,7 @@ bool SceneScript::readCompFields(lua_State* L, int idx, CompFields& out, std::st
 
 int SceneScript::lEntity(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = w.reg.create();
     const char* name = luaL_optstring(L, 1, nullptr);
     if (name)
@@ -729,7 +729,7 @@ int SceneScript::lEntity(lua_State* L) {
 
 int SceneScript::lCompEmplace(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     const std::string type = luaL_checkstring(L, 2);
     CompFields fields;
@@ -743,7 +743,7 @@ int SceneScript::lCompEmplace(lua_State* L) {
 
 int SceneScript::lCompReplace(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     const std::string type = luaL_checkstring(L, 2);
     CompFields fields;
@@ -757,7 +757,7 @@ int SceneScript::lCompReplace(lua_State* L) {
 
 int SceneScript::lComponent(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     const std::string type = luaL_checkstring(L, 2);
     CompFields out;
@@ -783,7 +783,7 @@ int SceneScript::lComponent(lua_State* L) {
 
 int SceneScript::lCompRemove(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     const std::string type = luaL_checkstring(L, 2);
     std::string err;
@@ -794,7 +794,7 @@ int SceneScript::lCompRemove(lua_State* L) {
 
 int SceneScript::lMesh(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     const int geom = (int)luaL_checkinteger(L, 2);
     const char* matName = luaL_checkstring(L, 3);
@@ -835,7 +835,7 @@ static float tableNum(lua_State* L, int i) {
 
 // one collider spec: {shape = <shape entity>}, optionally at = {x, y, z} (local offset) and
 // rot = {x, y, z, w} (local rotation)
-static ColliderSpec readColliderSpec(World& w, lua_State* L, int idx) {
+static ColliderSpec readColliderSpec(Engine& w, lua_State* L, int idx) {
     ColliderSpec d{};
     const int t = lua_absindex(L, idx); // absolute: field pushes shift negative indexes
     lua_getfield(L, t, "shape");
@@ -865,7 +865,7 @@ static ColliderSpec readColliderSpec(World& w, lua_State* L, int idx) {
 }
 
 // collider list at idx: a list of {shape = ..., at?, rot?} specs
-static std::vector<ColliderSpec> readColliderList(World& w, lua_State* L, int idx, const char* what) {
+static std::vector<ColliderSpec> readColliderList(Engine& w, lua_State* L, int idx, const char* what) {
     std::vector<ColliderSpec> out;
     if (!lua_istable(L, idx))
         luaL_error(L, "%s: colliders must be a list of {shape = ...} specs", what);
@@ -902,7 +902,7 @@ int SceneScript::lBoxShape(lua_State* L) {
 
 int SceneScript::lBody(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     if (!w.reg.try_get<Transform>(e))
         return luaL_error(L, "physics.body: entity has no transform (add a mesh or set a pose first)");
@@ -920,7 +920,7 @@ int SceneScript::lBody(lua_State* L) {
 
 int SceneScript::lKinematic(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     if (!w.reg.try_get<Transform>(e))
         return luaL_error(L, "physics.kinematic: entity has no transform");
@@ -931,7 +931,7 @@ int SceneScript::lKinematic(lua_State* L) {
 
 int SceneScript::lSoftBody(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     std::string err;
     const Mesh m = readGeom(L, 2, err);
@@ -958,7 +958,7 @@ int SceneScript::lSoftFloor(lua_State* L) {
 
 int SceneScript::lSet(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     // value(s) at arg idx: a number, or a {n, ...} array
     const auto readVals = [L](int idx) {
         std::vector<float> vals;
@@ -995,7 +995,7 @@ int SceneScript::lSet(lua_State* L) {
 
 int SceneScript::lGet(lua_State* L) {
     auto* self = sSelf(L);
-    const World& w = self->w();
+    const Engine& w = self->w();
     float vals[3]{};
     int n = 0;
     std::string err;
@@ -1015,7 +1015,7 @@ int SceneScript::lGet(lua_State* L) {
 // set_pose(name|entity, {x,y,z}, {qx,qy,qz,qw}): one call sets the whole pose
 int SceneScript::lSetPose(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = entityOrName(w, L, 1);
     if (e == entt::null || !w.reg.try_get<Transform>(e))
         return luaL_error(L, "scene.set_pose: no such entity with a Transform");
@@ -1028,7 +1028,7 @@ int SceneScript::lSetPose(lua_State* L) {
 // get_pose(name|entity) -> {{x,y,z}, {qx,qy,qz,qw}}
 int SceneScript::lGetPose(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = entityOrName(w, L, 1);
     if (e == entt::null || !w.reg.try_get<Transform>(e))
         return luaL_error(L, "scene.get_pose: no such entity with a Transform");
@@ -1058,40 +1058,40 @@ int SceneScript::lGetPose(lua_State* L) {
 // set_morph(name|entity, target, weight): every group of the character that has the target
 int SceneScript::lSetMorph(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
     if (skel == entt::null)
         return luaL_error(L, "scene.set_morph: not a skinned character");
-    w.gpuSim.skel.setMorph(w.reg, skel, luaL_checkstring(L, 2), (float)luaL_checknumber(L, 3));
+    w.gpuSim.skin.setMorph(w.reg, skel, luaL_checkstring(L, 2), (float)luaL_checknumber(L, 3));
     return 0;
 }
 
 // get_morph(name|entity, target) -> weight (0 if the target is unknown)
 int SceneScript::lGetMorph(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
     if (skel == entt::null)
         return luaL_error(L, "scene.get_morph: not a skinned character");
-    lua_pushnumber(L, w.gpuSim.skel.getMorph(w.reg, skel, luaL_checkstring(L, 2)));
+    lua_pushnumber(L, w.gpuSim.skin.getMorph(w.reg, skel, luaL_checkstring(L, 2)));
     return 1;
 }
 
 // reset_morphs(name|entity): all morph weights of the character back to zero
 int SceneScript::lResetMorphs(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
     if (skel == entt::null)
         return luaL_error(L, "scene.reset_morphs: not a skinned character");
-    w.gpuSim.skel.resetMorphs(w.reg, skel);
+    w.gpuSim.skin.resetMorphs(w.reg, skel);
     return 0;
 }
 
 // joints(name | entity) -> {joint, ...}: the skinned character's joint entities, in the skin's joints[] order
 int SceneScript::lJoints(lua_State* L) {
     auto* self = sSelf(L);
-    const World& w = self->w();
+    const Engine& w = self->w();
     const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
     if (skel == entt::null)
         return luaL_error(L, "scene.joints: not a skinned character");
@@ -1107,7 +1107,7 @@ int SceneScript::lJoints(lua_State* L) {
 // visible(name | entity, bool): draw visibility, cascading to all descendants
 int SceneScript::lVisible(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = entityOrName(w, L, 1);
     if (e == entt::null)
         return luaL_error(L, "scene.visible: no such entity");
@@ -1132,7 +1132,7 @@ int SceneScript::lButton(lua_State* L) {
 
 int SceneScript::lAttachScript(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     const std::string file = luaL_checkstring(L, 2);
     if (!w.reg.valid(e))
@@ -1169,7 +1169,7 @@ static std::vector<entt::entity> subtreeEntities(entt::registry& reg, entt::enti
 
 int SceneScript::lDestroy(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     if (!w.reg.valid(e))
         return 0;
@@ -1189,7 +1189,7 @@ int SceneScript::lDestroy(lua_State* L) {
 
 int SceneScript::lAddChild(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity parent = readEnt(L, 1);
     const entt::entity child = readEnt(L, 2);
     if (!w.reg.valid(parent) || !w.reg.valid(child))
@@ -1216,7 +1216,7 @@ int SceneScript::lAddChild(lua_State* L) {
 
 int SceneScript::lRemoveChild(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity child = readEnt(L, 1);
     if (w.reg.valid(child))
         w.reg.remove<Parent>(child);
@@ -1225,7 +1225,7 @@ int SceneScript::lRemoveChild(lua_State* L) {
 
 int SceneScript::lGetParent(lua_State* L) {
     auto* self = sSelf(L);
-    const World& w = self->w();
+    const Engine& w = self->w();
     const entt::entity child = readEnt(L, 1);
     if (const auto* p = w.reg.try_get<Parent>(child)) {
         pushEnt(L, p->e);
@@ -1236,7 +1236,7 @@ int SceneScript::lGetParent(lua_State* L) {
 
 int SceneScript::lGetChildren(lua_State* L) {
     auto* self = sSelf(L);
-    const World& w = self->w();
+    const Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     lua_newtable(L);
     int i = 1;
@@ -1323,7 +1323,7 @@ int SceneScript::lFind(lua_State* L) {
 int SceneScript::lIsVr(lua_State* L) {
     // presenting == the VR head camera is the active one (stepXr sets its Camera.active each frame)
     auto* self = sSelf(L);
-    const World& w = self->w();
+    const Engine& w = self->w();
     const bool vr = w.vrCam != entt::null && w.reg.get<Camera>(w.vrCam).active;
     lua_pushboolean(L, vr);
     return 1;
@@ -1389,7 +1389,7 @@ int SceneScript::lRaycast(lua_State* L) {
 
 int SceneScript::lCreateJoint(lua_State* L) {
     auto* self = sSelf(L);
-    World& w = self->w();
+    Engine& w = self->w();
     const entt::entity eA = readEnt(L, 1);
     const entt::entity eB = readEnt(L, 2);
     const char* type = luaL_checkstring(L, 3);

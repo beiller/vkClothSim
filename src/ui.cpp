@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
-entt::entity spawnUiWindow(World& w, const UIWindow& cfg) {
+entt::entity spawnUiWindow(Engine& w, const UIWindow& cfg) {
     entt::entity e = w.reg.create();
     UIWindow c = cfg;
     c.order = w.uiSeq++;
@@ -19,7 +19,7 @@ entt::entity spawnUiWindow(World& w, const UIWindow& cfg) {
     return e;
 }
 
-void spawnFieldWidget(World& w, entt::entity parent, const char* label, const FieldDesc* f, void* base) {
+void spawnFieldWidget(Engine& w, entt::entity parent, const char* label, const FieldDesc* f, void* base) {
     char* p = (char*)base + f->offset;
     switch (f->kind) {
     case FieldKind::SliderF:
@@ -53,7 +53,7 @@ void spawnFieldWidget(World& w, entt::entity parent, const char* label, const Fi
     }
 }
 
-void spawnFpsHud(World& w) {
+void spawnFpsHud(Engine& w) {
     // app-level fps HUD, also a UI window entity
     const entt::entity fpsWin =
         spawnUiWindow(w, UIWindow{"##fps",
@@ -115,7 +115,7 @@ void imguiNewFrame() {
     ImGui::NewFrame();
 }
 
-void drawUi(World& w) {
+void drawUi(Engine& w) {
     auto& reg = w.reg;
     std::unordered_map<entt::entity, std::vector<entt::entity>> kids;
     for (auto [c, wg, p] : reg.view<UIWidget, Parent>().each()) {

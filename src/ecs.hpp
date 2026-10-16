@@ -6,6 +6,7 @@
 
 #include "math.hpp"
 #include "sim/params.hpp"
+#include "xr_frame.hpp"
 #include <entt/entt.hpp>
 #include <functional>
 #include <string>
@@ -120,11 +121,16 @@ struct SoftBodyData {
 // camera: pose lives in the entity's Transform, projection params here; active = the current
 // camera the window renders (exactly one by convention). The engine swaps it per display mode:
 // the VR head camera ("vr cam") while presenting, the scene's fly camera otherwise.
+// a camera is a set of views, each of which renders one image. A single camera has one view,
+// derived from the entity's Transform + fov (nViews = 0). A stereo head (the VR camera) stores
+// its two eye views here: per-eye pose + lens tangents, filled each frame from the headset poll.
 struct Camera {
     float fovDeg = 50.0f;
     float nearP = 0.1f;
     float farP = 300.0f;
     bool active = false;
+    int nViews = 0; // 0 = single view (the entity's Transform), 2 = stereo eyes
+    View views[2];
 };
 
 // a tracked controller (left/right). Its Transform is the grip pose, local under the VR root; the
@@ -167,7 +173,7 @@ struct Visible {
     bool on = true;
 };
 
-// one per skinned character (a glTF skin): the ECS source of truth for a skeleton. The SkelGpu
+// one per skinned character (a glTF skin): the ECS source of truth for a skeleton. The Skin
 // manager owns the GPU resources and discovers skeletons by viewing this component in step(), so
 // any number of skeletons (characters) are supported. joints are in the skin's joints[] order;
 // placement is the representative node whose WorldTransform carries the whole character rigidly
@@ -177,8 +183,8 @@ struct Skeleton {
     std::vector<entt::entity> joints;
     std::vector<Mat4> invBinds;
     entt::entity placement = entt::null;
-    int charGpu = -1;         // SkelGpu character id (the joint-DQ buffer)
-    std::vector<int> groups;  // SkelGpu group ids (the dispatch units)
+    int charGpu = -1;         // Skin character id (the joint-DQ buffer)
+    std::vector<int> groups;  // Skin group ids (the dispatch units)
 };
 
 // on a skinned mesh's node + prim entities: the skeleton character entity this mesh belongs to

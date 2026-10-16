@@ -31,7 +31,7 @@ struct SkelGroupDesc {
 // the `Skeleton` component, so any number of characters are supported. Groups and characters are
 // registered at load time (before build); step() records one dispatch per group on the sim
 // command buffer, before the soft sim, at the fixed sim rate.
-class SkelGpu {
+class Skin {
 public:
     static constexpr int kMaxActiveMorphs = 256; // a Daz character's full stack is 190-222 targets, all nonzero
 

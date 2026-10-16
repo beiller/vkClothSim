@@ -10,7 +10,7 @@
 #include <cstdlib>
 #include <unordered_map>
 
-void addMesh(World& w, entt::entity e, int geom, entt::entity mat, entt::entity parent, bool noShadow) {
+void addMesh(Engine& w, entt::entity e, int geom, entt::entity mat, entt::entity parent, bool noShadow) {
     if (!w.reg.try_get<Transform>(e))
         w.reg.emplace<Transform>(e); // identity: a mesh with no explicit pose sits at the origin
     w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom), noShadow);
@@ -20,7 +20,7 @@ void addMesh(World& w, entt::entity e, int geom, entt::entity mat, entt::entity 
 }
 
 // one collider child entity: local Transform + Collider(shape) + Parent -> the body
-entt::entity addCollider(World& w, entt::entity body, entt::entity shape, const Transform& local) {
+entt::entity addCollider(Engine& w, entt::entity body, entt::entity shape, const Transform& local) {
     entt::entity e = w.reg.create();
     w.reg.emplace<Transform>(e, local);
     w.reg.emplace<Collider>(e, shape);
@@ -29,7 +29,7 @@ entt::entity addCollider(World& w, entt::entity body, entt::entity shape, const 
 }
 
 // the Jolt projection of a shape entity: built on first use, held by the component
-static const JPH::Shape* shapeHandle(World& w, entt::entity e) {
+static const JPH::Shape* shapeHandle(Engine& w, entt::entity e) {
     if (auto* cs = w.reg.try_get<CapsuleShape>(e)) {
         if (cs->shape == nullptr)
             cs->shape = JPH::ShapeRefC(new JPH::CapsuleShape(cs->halfLen, cs->radius));
@@ -43,7 +43,7 @@ static const JPH::Shape* shapeHandle(World& w, entt::entity e) {
     return nullptr;
 }
 
-static std::vector<ColliderDesc> shapeDescs(World& w, const std::vector<ColliderSpec>& specs) {
+static std::vector<ColliderDesc> shapeDescs(Engine& w, const std::vector<ColliderSpec>& specs) {
     std::vector<ColliderDesc> out;
     out.reserve(specs.size());
     for (const ColliderSpec& s : specs)
@@ -51,12 +51,12 @@ static std::vector<ColliderDesc> shapeDescs(World& w, const std::vector<Collider
     return out;
 }
 
-static void spawnColliders(World& w, entt::entity body, const std::vector<ColliderSpec>& specs) {
+static void spawnColliders(Engine& w, entt::entity body, const std::vector<ColliderSpec>& specs) {
     for (const ColliderSpec& s : specs)
         addCollider(w, body, s.shape, s.local);
 }
 
-void addRigidBody(World& w, entt::entity e, const std::vector<ColliderSpec>& colliders, bool isStatic) {
+void addRigidBody(Engine& w, entt::entity e, const std::vector<ColliderSpec>& colliders, bool isStatic) {
     if (colliders.empty())
         return;
     const Transform& t = w.reg.get<Transform>(e);
@@ -66,7 +66,7 @@ void addRigidBody(World& w, entt::entity e, const std::vector<ColliderSpec>& col
     spawnColliders(w, e, colliders);
 }
 
-void addKinematicBody(World& w, entt::entity e, const std::vector<ColliderSpec>& colliders) {
+void addKinematicBody(Engine& w, entt::entity e, const std::vector<ColliderSpec>& colliders) {
     if (colliders.empty())
         return;
     const Transform& t = w.reg.get<Transform>(e);
@@ -74,7 +74,7 @@ void addKinematicBody(World& w, entt::entity e, const std::vector<ColliderSpec>&
     spawnColliders(w, e, colliders);
 }
 
-void addSoftBody(World& w, entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
+void addSoftBody(Engine& w, entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
                  float mass) {
     // the entity's Transform is the pinned (spawn) pose: lift the local geometry into world space
     // once here; the sim owns the vertices (world space) from then on
@@ -102,7 +102,7 @@ void addSoftBody(World& w, entt::entity e, const Mesh& mesh, const std::vector<s
     w.reg.emplace<MaterialRef>(e, mat);
 }
 
-entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float roughness, const V3& emissive,
+entt::entity spawnMaterial(Engine& w, const V3& baseColor, float metallic, float roughness, const V3& emissive,
                            const char* name) {
     entt::entity e = w.reg.create();
     w.reg.emplace<Material>(e, baseColor, metallic, roughness, emissive);
@@ -111,7 +111,7 @@ entt::entity spawnMaterial(World& w, const V3& baseColor, float metallic, float 
     return e;
 }
 
-entt::entity findNamedEntity(const World& w, const std::string& name) {
+entt::entity findNamedEntity(const Engine& w, const std::string& name) {
     entt::entity out = entt::null;
     w.reg.view<Name>().each([&](entt::entity e, const Name& n) {
         if (n.id == name)
@@ -120,7 +120,7 @@ entt::entity findNamedEntity(const World& w, const std::string& name) {
     return out;
 }
 
-bool textureFor(World& w, entt::entity e, const std::string& path) {
+bool textureFor(Engine& w, entt::entity e, const std::string& path) {
     TextureData td;
     if (!loadTexture(exeDir() + "/../assets/" + path, td))
         loadTexture("assets/" + path, td);
@@ -130,7 +130,7 @@ bool textureFor(World& w, entt::entity e, const std::string& path) {
     return true;
 }
 
-entt::entity textureEntity(World& w, const std::string& path) {
+entt::entity textureEntity(Engine& w, const std::string& path) {
     for (auto [e, tx] : w.reg.view<Texture>().each())
         if (tx.path == path)
             return e;
@@ -143,7 +143,7 @@ entt::entity textureEntity(World& w, const std::string& path) {
     return e;
 }
 
-entt::entity textureBytes(World& w, const std::string& id, const uint8_t* rgba, int wpx, int hpx) {
+entt::entity textureBytes(Engine& w, const std::string& id, const uint8_t* rgba, int wpx, int hpx) {
     for (auto [e, tx] : w.reg.view<Texture>().each())
         if (tx.path == id)
             return e;
@@ -153,7 +153,7 @@ entt::entity textureBytes(World& w, const std::string& id, const uint8_t* rgba, 
     return e;
 }
 
-entt::entity findActiveCamera(const World& w) {
+entt::entity findActiveCamera(const Engine& w) {
     entt::entity cam = entt::null;
     w.reg.view<Camera>().each([&](entt::entity e, const Camera& c) {
         if (c.active)
@@ -163,7 +163,7 @@ entt::entity findActiveCamera(const World& w) {
 }
 
 // the VR root's world translation (stick locomotion); {0,0,0} when there is no VR root
-static V3 walkPos(const World& w) {
+static V3 walkPos(const Engine& w) {
     return w.vrRoot != entt::null ? w.reg.get<Transform>(w.vrRoot).pos : V3{0, 0, 0};
 }
 
@@ -180,13 +180,13 @@ Transform worldTransform(entt::registry& reg, entt::entity e) {
     return acc;
 }
 
-Mat4 cameraViewProj(World& w, entt::entity cam, float aspect) {
+Mat4 cameraViewProj(Engine& w, entt::entity cam, float aspect) {
     const Transform wt = worldTransform(w.reg, cam);
     const Camera& c = w.reg.get<Camera>(cam);
     return mul4(perspective(c.fovDeg, aspect, c.nearP, c.farP), viewFromPose(wt.pos, wt.quat));
 }
 
-void stepXr(World& w, const XrFrame& fr) {
+void stepXr(Engine& w, const XrFrame& fr) {
     const bool havePose = fr.havePose && fr.nEyes > 0;
     // current camera: the VR head camera while presenting, the scene's fly camera otherwise
     if (w.vrCam != entt::null)
@@ -194,23 +194,24 @@ void stepXr(World& w, const XrFrame& fr) {
     if (w.cam != entt::null)
         w.reg.get<Camera>(w.cam).active = !havePose;
     const entt::entity cam = findActiveCamera(w);
-    XrEyeData eyes[2]{};
-    int n = 0;
-    if (havePose && cam != entt::null) {
+    if (cam == entt::null)
+        return;
+    Camera& c = w.reg.get<Camera>(cam);
+    if (havePose) {
         // the VR head camera tracks the XR pose. It's a child of the VR root, so its LOCAL Transform
-        // is the reported head pose and its world = walkPos + head. The per-eye render poses are data
-        // (not entities), so they get walkPos added directly.
+        // is the reported head pose and its world = walkPos + head. The per-eye views are data on the
+        // camera (not entities), so they get walkPos added directly.
         const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
         Transform& t = w.reg.get<Transform>(cam);
         t.pos = mid;
         t.quat = fr.eye[0].quat;
         const V3 walk = walkPos(w);
-        n = fr.nEyes;
-        for (int i = 0; i < n; ++i) {
-            eyes[i] = fr.eye[i];
-            eyes[i].pos = vAdd(eyes[i].pos, walk);
+        c.nViews = fr.nEyes;
+        for (int i = 0; i < c.nViews; ++i) {
+            c.views[i] = fr.eye[i];
+            c.views[i].pos = vAdd(c.views[i].pos, walk);
         }
-    } else if (cam != entt::null) {
+    } else {
         // no session: virtual head = the fly camera's world pose, with Quest 3 lens tangents
         const Transform wt = worldTransform(w.reg, cam);
         const V3 head = wt.pos;
@@ -219,18 +220,12 @@ void stepXr(World& w, const XrFrame& fr) {
         float rotm[9];
         quatToMat3(qf, rotm);
         const V3 right{rotm[0], rotm[1], rotm[2]};
-        for (int i = 0; i < 2; ++i) {
-            eyes[i].pos = vAdd(head, vScale(right, i == 0 ? -0.032f : 0.032f));
-            eyes[i].quat = q;
-            eyes[i].tanL = -std::tan(54.0f * kPi / 180.0f);
-            eyes[i].tanR = std::tan(40.0f * kPi / 180.0f);
-            eyes[i].tanU = std::tan(44.0f * kPi / 180.0f);
-            eyes[i].tanD = -std::tan(55.0f * kPi / 180.0f);
-        }
-        n = 2;
+        c.nViews = 2;
+        for (int i = 0; i < 2; ++i)
+            c.views[i] = View{vAdd(head, vScale(right, i == 0 ? -0.032f : 0.032f)), q,
+                             -std::tan(54.0f * kPi / 180.0f), std::tan(40.0f * kPi / 180.0f),
+                             std::tan(44.0f * kPi / 180.0f), -std::tan(55.0f * kPi / 180.0f)};
     }
-    if (n > 0)
-        w.renderer.setVrEyes(eyes, n);
 }
 
 // natural resting spot (head-local: -Z forward, +Y up) so the grip is always visible even
@@ -239,7 +234,7 @@ static V3 restPose(int hand) {
     return hand == 0 ? V3{-0.30f, -0.40f, 0.40f} : V3{0.30f, -0.40f, 0.40f};
 }
 
-entt::entity spawnVrRoot(World& w) {
+entt::entity spawnVrRoot(Engine& w) {
     // head-independent locomotion anchor. The VR head camera and the grips are parented under it;
     // its world Transform is walkPos, a translation driven only by stick locomotion (identity
     // rotation), never the head. So head/grip world = walkPos + pose, and head motion can't leak
@@ -258,7 +253,7 @@ entt::entity spawnVrRoot(World& w) {
     return root;
 }
 
-void spawnControllers(World& w) {
+void spawnControllers(Engine& w) {
     // grips are children of the VR root; their LOCAL Transform is set to the raw OpenXR grip each
     // frame, so world = walkPos + grip (head-independent -> no drift).
     // grip visual from the std geometry library (the engine has no mesh generators of its own)
@@ -285,7 +280,7 @@ void spawnControllers(World& w) {
     }
 }
 
-void stepControllers(World& w, const XrFrame& fr) {
+void stepControllers(Engine& w, const XrFrame& fr) {
     const entt::entity cam = findActiveCamera(w);
     Transform headLocal{}; // head pose in the vr root's frame (the grips' parent)
     if (cam != entt::null) {
@@ -320,7 +315,7 @@ void stepControllers(World& w, const XrFrame& fr) {
     });
 }
 
-void spawnInputEntities(World& w) {
+void spawnInputEntities(Engine& w) {
     entt::entity m = w.reg.create();
     w.reg.emplace<MouseInput>(m);
     w.reg.emplace<Name>(m, "mouse");
@@ -329,7 +324,7 @@ void spawnInputEntities(World& w) {
     w.reg.emplace<Name>(k, "keyboard");
 }
 
-void stepMouse(World& w) {
+void stepMouse(Engine& w) {
     auto* app = w.app;
     if (!app)
         return;
@@ -347,7 +342,7 @@ void stepMouse(World& w) {
     });
 }
 
-void stepKeyboard(World& w) {
+void stepKeyboard(Engine& w) {
     auto* app = w.app;
     if (!app)
         return;
@@ -361,7 +356,7 @@ void stepKeyboard(World& w) {
     });
 }
 
-void stepRigid(World& w) {
+void stepRigid(Engine& w) {
     w.rigid.step();
     for (auto [entity, body, t] : w.reg.view<RigidBody, Transform>().each()) {
         // Jolt poses are rigid: preserve the entity's scale
@@ -371,7 +366,7 @@ void stepRigid(World& w) {
     }
 }
 
-void resolveWorldTransforms(World& w) {
+void resolveWorldTransforms(Engine& w) {
     auto& reg = w.reg;
     struct Node {
         entt::entity e;
@@ -432,19 +427,19 @@ void resolveWorldTransforms(World& w) {
     }
 }
 
-void syncColliders(World& w) {
+void syncColliders(Engine& w) {
     CapsuleGPU* caps = w.gpuSim.soft.caps();
     int n = 0;
     for (auto [e, col, wt] : w.reg.view<Collider, WorldTransform>().each()) {
         auto* cs = w.reg.try_get<CapsuleShape>(col.shape); // box shapes are CPU-sim only
-        if (!cs || n >= SoftSim::kMaxCapsules)
+        if (!cs || n >= Soft::kMaxCapsules)
             continue;
         fillCapsule(caps[n++], wt.pos, wt.quat, cs->halfLen, cs->radius);
     }
     w.gpuSim.soft.uploadCapsules(n);
 }
 
-void stepSoft(World& w, VkCommandBuffer cmd) {
+void stepSoft(Engine& w, VkCommandBuffer cmd) {
     for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
         w.gpuSim.soft.setPinned(sb.softId, sb.pinned);
         w.gpuSim.soft.setParams(sb.softId, sb.params, sb.steps);
@@ -452,6 +447,6 @@ void stepSoft(World& w, VkCommandBuffer cmd) {
     w.gpuSim.soft.record(cmd);
 }
 
-void draw(World& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui) {
+void draw(Engine& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui) {
     w.renderer.draw(cmd, *w.app, fb, w.reg, w.render, imgui);
 }

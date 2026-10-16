@@ -1,8 +1,9 @@
 #pragma once
 #include "math.hpp"
 
-// one render eye of the headset (or synthesized virtual head); no OpenXR types
-struct XrEyeData {
+// one render view of a head: a pose + per-eye lens tangents (the tangents fully define a
+// stereo eye's projection; a single view uses the camera's fov instead). No OpenXR types.
+struct View {
     V3 pos{0, 0, 0};
     V4 quat{0, 0, 0, 1};
     float tanL = 1.0f, tanR = 1.0f, tanU = 0.58f, tanD = 0.58f;
@@ -26,6 +27,6 @@ struct XrFrame {
     bool shouldRender = false;
     bool havePose = false;
     int nEyes = 0;
-    XrEyeData eye[2]{};
+    View eye[2]{};
     XrController controller[2]{}; // 0 = left hand, 1 = right hand
 };

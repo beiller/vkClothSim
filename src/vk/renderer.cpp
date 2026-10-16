@@ -513,16 +513,14 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::re
     app.submit(cmd);
 }
 
-Mat4 Renderer::eyeVP(int eye) const {
-    const XrEyeData& e = m_vrEyes[eye];
-    const Mat4 proj = projFov(e.tanL, e.tanR, e.tanU, e.tanD, 0.1f, 300.0f);
-    return mul4(proj, viewFromPose(e.pos, e.quat));
+Mat4 Renderer::eyeVP(const View& v) const {
+    const Mat4 proj = projFov(v.tanL, v.tanR, v.tanU, v.tanD, 0.1f, 300.0f);
+    return mul4(proj, viewFromPose(v.pos, v.quat));
 }
 
 // letterbox the eye image (its own aspect) into the eye's half of the window
-VkRect2D Renderer::eyeRegion(int eye, VkExtent2D ext) const {
-    const XrEyeData& e = m_vrEyes[eye];
-    const float aspect = (e.tanR - e.tanL) / (e.tanU - e.tanD);
+VkRect2D Renderer::eyeRegion(const View& v, VkExtent2D ext, int eye) const {
+    const float aspect = (v.tanR - v.tanL) / (v.tanU - v.tanD);
     const uint32_t halfW = ext.width / 2;
     float rw, rh;
     if (aspect > (float)halfW / (float)ext.height) {
@@ -535,12 +533,6 @@ VkRect2D Renderer::eyeRegion(int eye, VkExtent2D ext) const {
     const float ox = eye * (float)halfW + ((float)halfW - rw) * 0.5f;
     const float oy = ((float)ext.height - rh) * 0.5f;
     return {(int)ox, (int)oy, (uint32_t)rw, (uint32_t)rh};
-}
-
-void Renderer::setVrEyes(const XrEyeData* eyes, int nEyes) {
-    m_vrEyesN = std::clamp(nEyes, 1, 2);
-    for (int i = 0; i < m_vrEyesN; ++i)
-        m_vrEyes[i] = eyes[i];
 }
 
 void Renderer::ensureNoClearFbs(VkApp& app) {
@@ -567,25 +559,28 @@ void Renderer::ensureNoClearFbs(VkApp& app) {
 }
 
 void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
-                      ImDrawData* imgui, const uint32_t* xrImg, int nXr) {
+                      ImDrawData* imgui, entt::entity cam, const uint32_t* xrImg, int nXr) {
     m_exposure = rs.exposure;
     prepBuffers(reg);
     const VkExtent2D ext = app.extent();
     renderShadowCubes(cmd, reg);
     ensureNoClearFbs(app);
     VkRect2D full{0, 0, ext.width, ext.height};
-    for (int eye = 0; eye < m_vrEyesN; ++eye) {
+    const Camera* c = cam != entt::null ? &reg.get<Camera>(cam) : nullptr;
+    const int nViews = c ? c->nViews : 0;
+    for (int eye = 0; eye < nViews; ++eye) {
+        const View& v = c->views[eye];
         // the view + tonemap UBOs are single-slot host buffers, so each eye is
         // its own fence-waited submit to avoid the next eye clobbering this one
-        writeViewUbo(eyeVP(eye), m_vrEyes[eye].pos, rs.envIntensity);
+        writeViewUbo(eyeVP(v), v.pos, rs.envIntensity);
         renderScenePass(cmd, app, reg, rs.bgColor);
         hdrBarrier(cmd, app);
         if (app.hdrView() != m_tmSrcView)
             rebuildTonemapSet(app);
-        const VkRect2D r = eyeRegion(eye, ext);
+        const VkRect2D r = eyeRegion(v, ext, eye);
         writeTonemapUbo((float)r.offset.x, (float)r.offset.y, (float)r.extent.width, (float)r.extent.height);
         const bool first = eye == 0;
-        const bool last = eye == m_vrEyesN - 1;
+        const bool last = eye == nViews - 1;
         drawTonemapRegion(cmd, app, fb, r, first);
         if (last && imgui && imgui->CmdLists.Size > 0) {
             vkCmdSetScissor(cmd, 0, 1, &full);

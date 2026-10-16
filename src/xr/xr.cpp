@@ -494,7 +494,7 @@ XrFrame Xr::poll() {
     fr.nEyes = ne;
     for (int i = 0; i < ne; ++i) {
         const XrView& v = m_views[i];
-        XrEyeData& e = fr.eye[i];
+        View& e = fr.eye[i];
         e.pos = {v.pose.position.x, v.pose.position.y, v.pose.position.z};
         e.quat = {v.pose.orientation.x, v.pose.orientation.y, v.pose.orientation.z, v.pose.orientation.w};
         e.tanL = std::tan(v.fov.angleLeft);

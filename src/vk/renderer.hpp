@@ -43,13 +43,13 @@ public:
     void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
               ImDrawData* imgui);
 
-    // VR: per-eye scene render + side-by-side window debug view + headset swapchain
+    // VR: per-eye scene render + side-by-side window debug view + headset swapchain. The eyes are
+    // the views on the stereo camera's Camera component (filled by stepXr each frame)
     void initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vector<std::vector<VkImage>>& images,
                       const VkExtent2D* exts);
-    void setVrEyes(const XrEyeData* eyes, int nEyes);
     // xrImg[i] is the acquired swapchain image index for eye i (headet); nullptr = window only
     void drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
-                ImDrawData* imgui, const uint32_t* xrImg, int nXr);
+                ImDrawData* imgui, entt::entity cam, const uint32_t* xrImg, int nXr);
 
 private:
     void drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx);
@@ -101,8 +101,8 @@ private:
     // imgui and closes the pass); clear = first eye gets the clearing pass
     void drawTonemapRegion(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const VkRect2D& region, bool clear);
     void ensureNoClearFbs(VkApp& app);
-    Mat4 eyeVP(int eye) const;
-    VkRect2D eyeRegion(int eye, VkExtent2D ext) const;
+    Mat4 eyeVP(const View& v) const;
+    VkRect2D eyeRegion(const View& v, VkExtent2D ext, int eye) const;
     void initShadow(VkApp& app);
     void renderShadowCubes(VkCommandBuffer cmd, const entt::registry& reg);
     void makeComputePass(const void* spv, uint32_t len, const std::vector<VkDescriptorSetLayoutBinding>& binds,
@@ -155,8 +155,6 @@ private:
     VkDeviceMemory m_lightsMem = VK_NULL_HANDLE;
 
     // VR state
-    XrEyeData m_vrEyes[2]{};
-    int m_vrEyesN = 0;
     VkRenderPass m_noClearRp = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> m_noClearFbs;
     VkExtent2D m_noClearExt{};

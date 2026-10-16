@@ -1,4 +1,4 @@
-#include "sim/skeleton.hpp"
+#include "sim/skin.hpp"
 
 #include "ecs.hpp"
 #include "skeleton_spv.hpp"
@@ -73,12 +73,12 @@ VkBufferMemoryBarrier bufBarrier(VkBuffer buf) {
 
 } // namespace
 
-void SkelGpu::init(VkDevice dev, VkPhysicalDevice pdev) {
+void Skin::init(VkDevice dev, VkPhysicalDevice pdev) {
     m_dev = dev;
     m_pdev = pdev;
 }
 
-int SkelGpu::addCharacter(int nJoints) {
+int Skin::addCharacter(int nJoints) {
     Character c;
     c.dqStaging.resize((size_t)nJoints);
     const auto bytes = (VkDeviceSize)nJoints * sizeof(DualQuat);
@@ -88,7 +88,7 @@ int SkelGpu::addCharacter(int nJoints) {
     return (int)m_chars.size() - 1;
 }
 
-int SkelGpu::addGroup(int charGpu, const SkelGroupDesc& d) {
+int Skin::addGroup(int charGpu, const SkelGroupDesc& d) {
     if (charGpu < 0 || (size_t)charGpu >= m_chars.size())
         return -1;
     Group g;
@@ -129,12 +129,12 @@ int SkelGpu::addGroup(int charGpu, const SkelGroupDesc& d) {
     return (int)m_groups.size() - 1;
 }
 
-MeshGpu SkelGpu::groupOut(int groupId) const {
+MeshGpu Skin::groupOut(int groupId) const {
     const Group& g = m_groups[groupId];
     return {VertexStore{g.posOut.b, g.posOut.m, (uint32_t)g.nV}, VertexStore{g.nrmOut.b, g.nrmOut.m, (uint32_t)g.nV}};
 }
 
-void SkelGpu::build() {
+void Skin::build() {
     if (m_dev == VK_NULL_HANDLE)
         return;
     const auto binds = skelBinds();
@@ -159,7 +159,7 @@ void SkelGpu::build() {
         makeGroupSet(g);
 }
 
-void SkelGpu::makeGroupSet(Group& g) {
+void Skin::makeGroupSet(Group& g) {
     const Character& c = m_chars[(size_t)g.charGpu];
     std::vector<VkDescriptorBufferInfo> bi = {
         {g.pos0.b, 0, g.pos0.sz},
@@ -175,7 +175,7 @@ void SkelGpu::makeGroupSet(Group& g) {
     vkMakeSet(m_dev, m_pool, m_dsl, skelBinds(), g.set, bi);
 }
 
-void SkelGpu::stepCharacter(const entt::registry& reg, const Skeleton& s) {
+void Skin::stepCharacter(const entt::registry& reg, const Skeleton& s) {
     Character& c = m_chars[(size_t)s.charGpu];
     auto worldOf = [&](entt::entity e) {
         if (e != entt::null)
@@ -197,7 +197,7 @@ void SkelGpu::stepCharacter(const entt::registry& reg, const Skeleton& s) {
     vkWriteBuffer(m_dev, c.jointDQ.m, c.dqStaging.data(), c.jointDQ.sz);
 }
 
-void SkelGpu::packMorphs(Group& g) {
+void Skin::packMorphs(Group& g) {
     uint32_t pack[kMaxActiveMorphs * 2] = {};
     int k = 0;
     for (size_t t = 0; t < g.morphW.size() && k < kMaxActiveMorphs; ++t) {
@@ -214,7 +214,7 @@ void SkelGpu::packMorphs(Group& g) {
     vkWriteBuffer(m_dev, g.activeMorphs.m, pack, g.activeMorphs.sz);
 }
 
-void SkelGpu::step(const entt::registry& reg, VkCommandBuffer cmd) {
+void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
     if (m_pl == VK_NULL_HANDLE)
         return;
     for (const auto e : reg.view<Skeleton>()) {
@@ -250,7 +250,7 @@ void SkelGpu::step(const entt::registry& reg, VkCommandBuffer cmd) {
     }
 }
 
-void SkelGpu::setMorph(const entt::registry& reg, entt::entity skel, const std::string& name, float weight) {
+void Skin::setMorph(const entt::registry& reg, entt::entity skel, const std::string& name, float weight) {
     if (!reg.valid(skel) || !reg.all_of<Skeleton>(skel))
         return;
     const Skeleton& s = reg.get<Skeleton>(skel);
@@ -261,7 +261,7 @@ void SkelGpu::setMorph(const entt::registry& reg, entt::entity skel, const std::
     }
 }
 
-float SkelGpu::getMorph(const entt::registry& reg, entt::entity skel, const std::string& name) {
+float Skin::getMorph(const entt::registry& reg, entt::entity skel, const std::string& name) {
     if (!reg.valid(skel) || !reg.all_of<Skeleton>(skel))
         return 0.0f;
     const Skeleton& s = reg.get<Skeleton>(skel);
@@ -273,7 +273,7 @@ float SkelGpu::getMorph(const entt::registry& reg, entt::entity skel, const std:
     return 0.0f;
 }
 
-void SkelGpu::resetMorphs(const entt::registry& reg, entt::entity skel) {
+void Skin::resetMorphs(const entt::registry& reg, entt::entity skel) {
     if (!reg.valid(skel) || !reg.all_of<Skeleton>(skel))
         return;
     const Skeleton& s = reg.get<Skeleton>(skel);
@@ -281,7 +281,7 @@ void SkelGpu::resetMorphs(const entt::registry& reg, entt::entity skel) {
         m_groups[gid].morphW = m_groups[gid].morphW0; // back to the file's frame-0 shape
 }
 
-void SkelGpu::destroyCharacter(int charGpu) {
+void Skin::destroyCharacter(int charGpu) {
     if (charGpu < 0 || (size_t)charGpu >= m_chars.size() || m_chars[(size_t)charGpu].dead)
         return;
     // mark dead first: the groups' descriptor sets stay allocated (pool freed at shutdown) but
@@ -292,7 +292,7 @@ void SkelGpu::destroyCharacter(int charGpu) {
             g.dead = true;
 }
 
-void SkelGpu::shutdown() {
+void Skin::shutdown() {
     if (m_dev == VK_NULL_HANDLE)
         return;
     for (auto& c : m_chars)

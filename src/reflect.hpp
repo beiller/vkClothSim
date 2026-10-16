@@ -1,7 +1,7 @@
 #pragma once
 // hand-written reflection tables: the field knowledge the UI editor and URL resolver both use.
 // add a component here to make it inspectable/bindable; omission = not exposed (curation).
-#include "world.hpp"
+#include "engine.hpp"
 #include <cstddef>
 #include <cstring>
 #include <span>
@@ -188,13 +188,13 @@ inline std::vector<std::pair<const TypeDesc*, const void*>> entityFields(const e
     return out;
 }
 
-// World-level (non-entity) state exposed under reserved URL roots
+// Engine-level (non-entity) state exposed under reserved URL roots
 struct RootRef {
     const TypeDesc* type;
     void* base;
 };
 
-inline std::vector<RootRef> roots(World& w) {
+inline std::vector<RootRef> roots(Engine& w) {
     return {{findType("RenderSettings"), &w.render}, {findType("RigidScene"), &w.rigid}};
 }
 
