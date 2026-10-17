@@ -1348,7 +1348,7 @@ int SceneScript::lRaycast(lua_State* L) {
     const V3 dir = readV3(L, 2);
     const float maxDist = (float)luaL_checknumber(L, 3);
     // optional arg 4: a table of entities whose bodies (dynamic or kinematic) the ray skips
-    std::vector<JPH::BodyID> excludes;
+    std::vector<entt::entity> excludes;
     if (lua_istable(L, 4))
         for (int i = 1;; ++i) {
             lua_geti(L, 4, i);
@@ -1356,11 +1356,7 @@ int SceneScript::lRaycast(lua_State* L) {
                 lua_pop(L, 1);
                 break;
             }
-            const entt::entity e = readEnt(L, -1);
-            if (auto* b = self->w().reg.try_get<RigidBody>(e))
-                excludes.push_back(b->id);
-            else if (auto* k = self->w().reg.try_get<KinematicBody>(e))
-                excludes.push_back(k->id);
+            excludes.push_back(readEnt(L, -1));
             lua_pop(L, 1);
         }
     const RayHit hit = self->w().rigid.raycast(origin, dir, maxDist, excludes);
@@ -1368,11 +1364,8 @@ int SceneScript::lRaycast(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    // find the ECS entity for the hit body
-    entt::entity bodyEnt = entt::null;
-    for (auto [e, body] : self->w().reg.view<RigidBody>().each())
-        if (body.id == hit.body)
-            bodyEnt = e;
+    // the ECS entity for the hit body
+    const entt::entity bodyEnt = self->w().rigid.entityFor(hit.body);
     lua_newtable(L);
     lua_pushboolean(L, true);
     lua_setfield(L, -2, "hit");
@@ -1393,20 +1386,10 @@ int SceneScript::lCreateJoint(lua_State* L) {
     const entt::entity eA = readEnt(L, 1);
     const entt::entity eB = readEnt(L, 2);
     const char* type = luaL_checkstring(L, 3);
-    // resolve Jolt body IDs: from RigidBody or KinematicBody
-    auto getBodyId = [&](entt::entity e) -> JPH::BodyID {
-        if (auto* b = w.reg.try_get<RigidBody>(e))
-            return b->id;
-        if (auto* k = w.reg.try_get<KinematicBody>(e))
-            return k->id;
-        return {};
-    };
-    const JPH::BodyID idA = getBodyId(eA);
-    const JPH::BodyID idB = getBodyId(eB);
-    if (idA.IsInvalid() && idB.IsInvalid())
+    if (!w.rigid.hasBody(eA) && !w.rigid.hasBody(eB))
         return luaL_error(L, "scene.create_joint: entity has no rigid/kinematic body");
     const V3 grabPos = readV3(L, 4); // world collision point the joint anchors
-    const int jid = w.rigid.createJoint(idA, idB, type, grabPos);
+    const int jid = w.rigid.createJoint(eA, eB, type, grabPos);
     if (jid < 0)
         return luaL_error(L, "scene.create_joint: unknown type '%s'", type);
     lua_pushnumber(L, jid);
@@ -1422,7 +1405,6 @@ int SceneScript::lDestroyJoint(lua_State* L) {
 int SceneScript::lIsDynamic(lua_State* L) {
     auto* self = sSelf(L);
     const entt::entity e = readEnt(L, 1);
-    const auto* b = self->w().reg.try_get<RigidBody>(e);
-    lua_pushboolean(L, b && self->w().rigid.isDynamic(b->id));
+    lua_pushboolean(L, self->w().rigid.isDynamic(e));
     return 1;
 }

@@ -1,8 +1,5 @@
 #include "systems.hpp"
 
-#include <Jolt/Physics/Collision/Shape/BoxShape.h>
-#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
-
 #include "assets.hpp"
 #include "vk/vkapp.hpp"
 #include <cmath>
@@ -13,7 +10,7 @@
 void addMesh(Engine& w, entt::entity e, int geom, entt::entity mat, entt::entity parent, bool noShadow) {
     if (!w.reg.try_get<Transform>(e))
         w.reg.emplace<Transform>(e); // identity: a mesh with no explicit pose sits at the origin
-    w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom), noShadow);
+    w.reg.emplace<Renderable>(e, geom, noShadow);
     w.reg.emplace<MaterialRef>(e, mat);
     if (parent != entt::null)
         w.reg.emplace<Parent>(e, parent);
@@ -28,26 +25,11 @@ entt::entity addCollider(Engine& w, entt::entity body, entt::entity shape, const
     return e;
 }
 
-// the Jolt projection of a shape entity: built on first use, held by the component
-static const JPH::Shape* shapeHandle(Engine& w, entt::entity e) {
-    if (auto* cs = w.reg.try_get<CapsuleShape>(e)) {
-        if (cs->shape == nullptr)
-            cs->shape = JPH::ShapeRefC(new JPH::CapsuleShape(cs->halfLen, cs->radius));
-        return cs->shape.GetPtr();
-    }
-    if (auto* bs = w.reg.try_get<BoxShape>(e)) {
-        if (bs->shape == nullptr)
-            bs->shape = JPH::ShapeRefC(new JPH::BoxShape(JPH::Vec3(bs->half.x, bs->half.y, bs->half.z)));
-        return bs->shape.GetPtr();
-    }
-    return nullptr;
-}
-
 static std::vector<ColliderDesc> shapeDescs(Engine& w, const std::vector<ColliderSpec>& specs) {
     std::vector<ColliderDesc> out;
     out.reserve(specs.size());
     for (const ColliderSpec& s : specs)
-        out.push_back({shapeHandle(w, s.shape), s.local});
+        out.push_back({w.rigid.shape(w.reg, s.shape), s.local}); // the rigid sim's lazy projection
     return out;
 }
 
@@ -60,8 +42,8 @@ void addRigidBody(Engine& w, entt::entity e, const std::vector<ColliderSpec>& co
     if (colliders.empty())
         return;
     const Transform& t = w.reg.get<Transform>(e);
-    RigidBody body{}; // default material params
-    body.id = w.rigid.addRigidBody(body, shapeDescs(w, colliders), t.pos, t.quat, t.scale, isStatic);
+    const RigidBody body{}; // default material params
+    w.rigid.addRigidBody(e, body, shapeDescs(w, colliders), t.pos, t.quat, t.scale, isStatic);
     w.reg.emplace<RigidBody>(e, body);
     spawnColliders(w, e, colliders);
 }
@@ -70,7 +52,8 @@ void addKinematicBody(Engine& w, entt::entity e, const std::vector<ColliderSpec>
     if (colliders.empty())
         return;
     const Transform& t = w.reg.get<Transform>(e);
-    w.reg.emplace<KinematicBody>(e, w.rigid.addKinematicBody(shapeDescs(w, colliders), t.pos, t.quat, t.scale));
+    w.rigid.addKinematicBody(e, shapeDescs(w, colliders), t.pos, t.quat, t.scale);
+    w.reg.emplace<KinematicBody>(e);
     spawnColliders(w, e, colliders);
 }
 
@@ -95,10 +78,11 @@ void addSoftBody(Engine& w, entt::entity e, const Mesh& mesh, const std::vector<
         }
     }
     const Renderer::GpuMeshRef ref = w.renderer.addMesh(m);
-    w.reg.emplace<SoftBodyData>(e, w.gpuSim.soft.addSoftBody(m, cons, ref.rw));
+    w.gpuSim.soft.addSoftBody(e, m, cons, ref.rw);
+    w.reg.emplace<SoftBodyData>(e);
     if (mass > 0.0f)
         w.reg.get<SoftBodyData>(e).params.mass = mass;
-    w.reg.emplace<Renderable>(e, w.renderer.addInstance(ref.geom));
+    w.reg.emplace<Renderable>(e, ref.geom);
     w.reg.emplace<MaterialRef>(e, mat);
 }
 
@@ -126,7 +110,8 @@ bool textureFor(Engine& w, entt::entity e, const std::string& path) {
         loadTexture("assets/" + path, td);
     if (td.rgba.empty())
         return false;
-    w.reg.emplace<Texture>(e, path, w.renderer.addTexture(td.rgba.data(), (uint32_t)td.w, (uint32_t)td.h));
+    w.renderer.addTexture(e, td.rgba.data(), (uint32_t)td.w, (uint32_t)td.h);
+    w.reg.emplace<Texture>(e, path);
     return true;
 }
 
@@ -148,7 +133,8 @@ entt::entity textureBytes(Engine& w, const std::string& id, const uint8_t* rgba,
         if (tx.path == id)
             return e;
     entt::entity e = w.reg.create();
-    w.reg.emplace<Texture>(e, id, w.renderer.addTexture(rgba, (uint32_t)wpx, (uint32_t)hpx));
+    w.renderer.addTexture(e, rgba, (uint32_t)wpx, (uint32_t)hpx);
+    w.reg.emplace<Texture>(e, id);
     w.reg.emplace<Name>(e, id);
     return e;
 }
@@ -272,7 +258,7 @@ void spawnControllers(Engine& w) {
         if (w.vrRoot != entt::null)
             w.reg.emplace<Parent>(e, w.vrRoot);
         w.reg.emplace<ControllerInput>(e, ControllerInput{h});
-        w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
+        w.reg.emplace<Renderable>(e, geom);
         w.reg.emplace<MaterialRef>(e, gripMat);
         w.reg.emplace<Name>(e, h == 0 ? "controller L" : "controller R");
     }
@@ -356,17 +342,17 @@ void stepRigid(Engine& w) {
     // kinematic bodies are driven from the ECS (the XR step or a scene script writes the owning
     // entity's Transform); pull each one's world pose into Jolt before the step so this step
     // integrates against the pose that was just written
-    for (auto [e, kb] : w.reg.view<KinematicBody>().each()) {
+    for (const auto e : w.reg.view<KinematicBody>()) {
         const Transform wt = worldTransform(w.reg, e);
-        w.rigid.setKinematicPose(kb.id, wt.pos, wt.quat);
+        w.rigid.setKinematicPose(e, wt.pos, wt.quat);
     }
     w.rigid.step();
-    for (auto [entity, body, t] : w.reg.view<RigidBody, Transform>().each()) {
+    w.reg.view<RigidBody, Transform>().each([&](entt::entity e, auto&, Transform& t) {
         // Jolt poses are rigid: preserve the entity's scale
-        const Transform p = w.rigid.pose(body.id);
+        const Transform p = w.rigid.pose(e);
         t.pos = p.pos;
         t.quat = p.quat;
-    }
+    });
 }
 
 void resolveWorldTransforms(Engine& w) {
@@ -444,8 +430,8 @@ void syncColliders(Engine& w) {
 
 void stepSoft(Engine& w, VkCommandBuffer cmd) {
     for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
-        w.gpuSim.soft.setPinned(sb.softId, sb.pinned);
-        w.gpuSim.soft.setParams(sb.softId, sb.params, sb.steps);
+        w.gpuSim.soft.setPinned(entity, sb.pinned);
+        w.gpuSim.soft.setParams(entity, sb.params, sb.steps);
     }
     w.gpuSim.soft.record(cmd);
 }

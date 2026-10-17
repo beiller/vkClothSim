@@ -297,6 +297,14 @@ void createScene(Engine& w, const std::string& path) {
     if (!w.script.loadMeshStdlib(err))
         fail(p, "geometry stdlib: " + err);
 
+    // destroy observers: the subsystems hold their own resource handles (entity -> id) and
+    // reclaim them when the ECS destroys the owning component (GPU frees defer one frame).
+    // Registered before any script/content runs, since a _on_ready may destroy entities
+    w.renderer.watch(w.reg);
+    w.rigid.watch(w.reg);
+    w.gpuSim.soft.watch(w.reg);
+    w.gpuSim.skin.watch(w.reg);
+
     for (const auto& o : objects)
         if (&o != camObj)
             buildObject(w, o, p, true);

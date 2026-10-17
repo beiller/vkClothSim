@@ -8,6 +8,7 @@
 #include <entt/entt.hpp>
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // CPU data for a skinned group: the shared skin data of a set of primitives (one distinct
@@ -34,12 +35,13 @@ struct SkelGroupDesc {
 class Skin {
 public:
     static constexpr int kMaxActiveMorphs = 256; // a Daz character's full stack is 190-222 targets, all nonzero
+    static constexpr int kPoolChunk = 16;        // descriptor pool growth step for runtime characters
 
     void init(VkDevice dev, VkPhysicalDevice pdev);
-    // allocate a character's joint-DQ buffer (nJoints dual quaternions); returns the charGpu id
-    int addCharacter(int nJoints);
+    // allocate a character's joint-DQ buffer (nJoints dual quaternions), keyed by the skeleton entity
+    void addCharacter(entt::entity e, int nJoints);
     // allocate a group's vertex buffers, linked to the character's DQ buffer; returns the group id
-    int addGroup(int charGpu, const SkelGroupDesc& d);
+    int addGroup(entt::entity e, const SkelGroupDesc& d);
     // the group's posOut/nrmOut as a MeshGpu; the renderer aliases these buffers (addMeshShared)
     MeshGpu groupOut(int groupId) const;
     void build();
@@ -50,7 +52,11 @@ public:
     void setMorph(const entt::registry& reg, entt::entity skel, const std::string& name, float weight);
     float getMorph(const entt::registry& reg, entt::entity skel, const std::string& name);
     void resetMorphs(const entt::registry& reg, entt::entity skel);
-    void destroyCharacter(int charGpu);
+    void destroyCharacter(entt::entity e);
+    // register the destroy observer: a Skeleton teardown retires the character. Its group
+    // buffers are aliased by the renderer (addMeshShared), so they stay allocated and are
+    // freed in bulk at shutdown, as before
+    void watch(entt::registry& reg);
     void shutdown();
 
 private:
@@ -72,20 +78,26 @@ private:
     };
     struct Character {
         bool dead = false;
+        std::vector<int> groups; // this character's group ids (the dispatch units)
         Buf jointDQ; // nJ x sizeof(DualQuat), host-visible (rewritten every step)
         std::vector<DualQuat> dqStaging;
     };
 
     void makeGroupSet(Group& g);
-    void stepCharacter(const entt::registry& reg, const Skeleton& s);
+    void ensurePoolSlot(); // grow the descriptor pools in kPoolChunk steps when the pool is used up
+    void stepCharacter(const entt::registry& reg, const Skeleton& s, Character& c);
     void packMorphs(Group& g);
+    std::unordered_map<entt::entity, int>::const_iterator charFor(const entt::registry& reg, entt::entity skel) const;
+    void onSkeletonDestroyed(entt::registry&, entt::entity e); // destroy-observer handler
 
     VkDevice m_dev = VK_NULL_HANDLE;
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;
     std::vector<Character> m_chars; // keyed by charGpu
+    std::unordered_map<entt::entity, int> m_ent; // skeleton entity -> charGpu
     std::vector<Group> m_groups;    // keyed by group id
     VkPipeline m_pipe = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_dsl = VK_NULL_HANDLE;
-    VkDescriptorPool m_pool = VK_NULL_HANDLE;
+    std::vector<VkDescriptorPool> m_pools; // grown in kPoolChunk steps as runtime characters are added
+    int m_poolCap = 0, m_poolUsed = 0;     // the pools.back() budget
     VkPipelineLayout m_pl = VK_NULL_HANDLE;
 };

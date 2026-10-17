@@ -5,6 +5,8 @@
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
@@ -70,8 +72,8 @@ JPH::ShapeRefC RigidScene::buildShape(const std::vector<ColliderDesc>& colliders
     return applyBodyScale(compound.Create().Get(), scale);
 }
 
-JPH::BodyID RigidScene::addRigidBody(const RigidBody& body, const std::vector<ColliderDesc>& colliders, const V3& pos,
-                                     const V4& quat, const V3& scale, bool isStatic) {
+void RigidScene::addRigidBody(entt::entity e, const RigidBody& body, const std::vector<ColliderDesc>& colliders,
+                              const V3& pos, const V4& quat, const V3& scale, bool isStatic) {
     auto& bi = m_phys->GetBodyInterface();
     JPH::ShapeRefC shape = buildShape(colliders, scale);
     JPH::BodyCreationSettings cs(shape, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat),
@@ -79,35 +81,107 @@ JPH::BodyID RigidScene::addRigidBody(const RigidBody& body, const std::vector<Co
     cs.mFriction = body.friction;
     cs.mRestitution = body.restitution;
     cs.mLinearDamping = body.damping;
+    JPH::BodyID id;
     if (isStatic) {
         JPH::Body* b = bi.CreateBody(cs);
         bi.AddBody(b->GetID(), JPH::EActivation::DontActivate);
         m_phys->OptimizeBroadPhase();
-        return b->GetID();
-    }
-    return bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
+        id = b->GetID();
+    } else
+        id = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
+    m_body[e] = id;
 }
 
-JPH::BodyID RigidScene::addKinematicBody(const std::vector<ColliderDesc>& colliders, const V3& pos, const V4& quat,
-                                         const V3& scale) {
+void RigidScene::addKinematicBody(entt::entity e, const std::vector<ColliderDesc>& colliders, const V3& pos,
+                                  const V4& quat, const V3& scale) {
     auto& bi = m_phys->GetBodyInterface();
     JPH::BodyCreationSettings cs(buildShape(colliders, scale), JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat),
                                  JPH::EMotionType::Kinematic, 1);
-    return bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
+    m_body[e] = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
 }
 
-void RigidScene::setKinematicPose(JPH::BodyID id, const V3& pos, const V4& quat) {
+void RigidScene::removeBody(entt::entity e) {
+    const auto it = m_body.find(e);
+    if (it == m_body.end())
+        return;
+    const JPH::BodyID id = it->second;
+    m_body.erase(it);
+    m_phys->GetBodyInterface().RemoveBody(id); // also detaches its constraints from the world
+    // drop our owning refs of the detached constraints (releasing frees them)
+    for (auto& j : m_joints) {
+        if (!j.alive)
+            continue;
+        const auto* two = static_cast<const JPH::TwoBodyConstraint*>(j.constraint.GetPtr());
+        if (two->GetBody1()->GetID() == id || two->GetBody2()->GetID() == id) {
+            j.constraint = nullptr;
+            j.alive = false;
+        }
+    }
+}
+
+bool RigidScene::hasBody(entt::entity e) const {
+    return m_body.count(e) > 0;
+}
+
+entt::entity RigidScene::entityFor(JPH::BodyID id) const {
+    for (const auto& [e, b] : m_body)
+        if (b == id)
+            return e;
+    return entt::null;
+}
+
+const JPH::Shape* RigidScene::shape(const entt::registry& reg, entt::entity e) {
+    const auto it = m_shape.find(e);
+    if (it != m_shape.end())
+        return it->second.GetPtr();
+    JPH::ShapeRefC s;
+    if (const auto* cs = reg.try_get<CapsuleShape>(e))
+        s = JPH::ShapeRefC(new JPH::CapsuleShape(cs->halfLen, cs->radius));
+    else if (const auto* bs = reg.try_get<BoxShape>(e))
+        s = JPH::ShapeRefC(new JPH::BoxShape(JPH::Vec3(bs->half.x, bs->half.y, bs->half.z)));
+    if (!s.GetPtr())
+        return nullptr;
+    const JPH::Shape* ptr = s.GetPtr();
+    m_shape.emplace(e, std::move(s));
+    return ptr;
+}
+
+// the ECS is the source of truth for which bodies exist: a component destroy (or a mass
+// destroy) pushes the removal back. CPU-only, so no deferral needed
+void RigidScene::onBodyDestroyed(entt::registry&, entt::entity e) {
+    removeBody(e);
+}
+
+void RigidScene::onShapeDestroyed(entt::registry&, entt::entity e) {
+    // releasing the cached ref is safe: any live body holds its own ref to the shape
+    m_shape.erase(e);
+}
+
+void RigidScene::watch(entt::registry& reg) {
+    reg.on_destroy<RigidBody>().connect<&RigidScene::onBodyDestroyed>(this);
+    reg.on_destroy<KinematicBody>().connect<&RigidScene::onBodyDestroyed>(this);
+    reg.on_destroy<CapsuleShape>().connect<&RigidScene::onShapeDestroyed>(this);
+    reg.on_destroy<BoxShape>().connect<&RigidScene::onShapeDestroyed>(this);
+}
+
+void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const V4& quat) {
+    const auto it = m_body.find(e);
+    if (it == m_body.end())
+        return;
     // kinematic body: Jolt derives its velocity from the position change (used by the solver/broadphase)
     auto& bi = m_phys->GetBodyInterface();
-    bi.SetPositionAndRotation(id, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat), JPH::EActivation::Activate);
+    bi.SetPositionAndRotation(it->second, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat), JPH::EActivation::Activate);
 }
 
-int RigidScene::createJoint(JPH::BodyID a, JPH::BodyID b, const char* type, const V3& grabPos) {
+int RigidScene::createJoint(entt::entity a, entt::entity b, const char* type, const V3& grabPos) {
     if (std::strcmp(type, "point") != 0)
         return -1;
+    const auto ia = m_body.find(a), ib = m_body.find(b);
+    if (ia == m_body.end() || ib == m_body.end())
+        return -1;
     // no body locking: single-threaded between Update() calls, so the references stay valid
-    JPH::Body* bodyA = m_phys->GetBodyLockInterface().TryGetBody(a);
-    JPH::Body* bodyB = m_phys->GetBodyLockInterface().TryGetBody(b);
+    JPH::Body* bodyA = m_phys->GetBodyLockInterface().TryGetBody(ia->second);
+    JPH::Body* bodyB = m_phys->GetBodyLockInterface().TryGetBody(ib->second);
     if (!bodyA || !bodyB)
         return -1;
     JPH::PointConstraintSettings cs;
@@ -138,8 +212,11 @@ void RigidScene::step() {
     m_phys->Update(kFrameDt, 1, m_temp, m_job);
 }
 
-Transform RigidScene::pose(JPH::BodyID id) const {
-    JPH::BodyLockRead lock(m_phys->GetBodyLockInterface(), id);
+Transform RigidScene::pose(entt::entity e) const {
+    const auto it = m_body.find(e);
+    if (it == m_body.end())
+        return {};
+    JPH::BodyLockRead lock(m_phys->GetBodyLockInterface(), it->second);
     const JPH::Body& b = lock.GetBody();
     const JPH::Vec3 p = b.GetPosition();
     const JPH::Quat q = b.GetRotation();
@@ -147,14 +224,15 @@ Transform RigidScene::pose(JPH::BodyID id) const {
 }
 
 RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist,
-                           const std::vector<JPH::BodyID>& excludes) const {
+                           const std::vector<entt::entity>& excludes) const {
     RayHit out{};
     // direction encodes the endpoint (length included): anything beyond maxDist is not reported
     JPH::RRayCast ray(JPH::RVec3(origin.x, origin.y, origin.z), JPH::Vec3(dir.x, dir.y, dir.z) * maxDist);
     JPH::RayCastResult hit;
     JPH::IgnoreMultipleBodiesFilter filter; // a ray from inside a convex body hits it at 0; skip ours
-    for (const auto& id : excludes)
-        filter.IgnoreBody(id);
+    for (const entt::entity x : excludes)
+        if (const auto it = m_body.find(x); it != m_body.end())
+            filter.IgnoreBody(it->second);
     if (!m_phys->GetNarrowPhaseQuery().CastRay(ray, hit, {}, {}, filter))
         return out;
     const JPH::Vec3 hp = ray.GetPointOnRay(hit.mFraction);
@@ -164,8 +242,11 @@ RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist,
     return out;
 }
 
-bool RigidScene::isDynamic(JPH::BodyID id) const {
-    JPH::BodyLockRead lock(m_phys->GetBodyLockInterface(), id);
+bool RigidScene::isDynamic(entt::entity e) const {
+    const auto it = m_body.find(e);
+    if (it == m_body.end())
+        return false;
+    JPH::BodyLockRead lock(m_phys->GetBodyLockInterface(), it->second);
     if (!lock.Succeeded())
         return false;
     return lock.GetBody().IsDynamic();

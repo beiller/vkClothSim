@@ -47,7 +47,7 @@ void Soft::setFloor(float y) {
     m_floorY = y;
 }
 
-int Soft::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw) {
+void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw) {
     GpuBody b;
     b.soft.init(mesh, cons);
     const auto vn = (VkDeviceSize)b.soft.n;
@@ -71,7 +71,13 @@ int Soft::addSoftBody(const Mesh& mesh, const std::vector<sim::Constraint>& cons
     // params stay host-visible: the CPU rewrites them every sim step
     vkMakeBuffer(m_dev, m_pdev, b.paramsBuf, b.paramsMem, 40, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     m_body.push_back(std::move(b));
-    return (int)m_body.size() - 1;
+    m_ent[e] = (int)m_body.size() - 1;
+    // bodies added after build() create their own descriptor set (build() did the load-time ones)
+    if (!m_softPools.empty()) {
+        ensurePoolSlot();
+        makeBodySet(m_body.back());
+        ++m_softPoolUsed;
+    }
 }
 
 void Soft::build() {
@@ -82,7 +88,11 @@ void Soft::build() {
     auto maxSets = (uint32_t)m_body.size();
     if (maxSets == 0)
         maxSets = 1;
-    vkMakeDslPool(m_dev, binds, maxSets, m_softDsl, m_softPool);
+    VkDescriptorPool pool;
+    vkMakeDslPool(m_dev, binds, maxSets, m_softDsl, pool);
+    m_softPools.push_back(pool);
+    m_softPoolCap = (int)maxSets;
+    m_softPoolUsed = 0;
     m_softPl = vkMakePipelineLayoutPC(m_dev, m_softDsl, VK_SHADER_STAGE_COMPUTE_BIT, 16);
     VkShaderModule cm = vkMakeModule(m_dev, softbody_spv, softbody_spv_len / 4);
     VkPipelineShaderStageCreateInfo cs{};
@@ -96,8 +106,18 @@ void Soft::build() {
     cpc.layout = m_softPl;
     VK(vkCreateComputePipelines(m_dev, VK_NULL_HANDLE, 1, &cpc, nullptr, &m_softPipe));
     vkDestroyShaderModule(m_dev, cm, nullptr);
-    for (auto& b : m_body)
+    for (auto& b : m_body) {
         makeBodySet(b);
+        ++m_softPoolUsed;
+    }
+}
+
+void Soft::ensurePoolSlot() {
+    if (m_softPoolUsed < m_softPoolCap)
+        return;
+    m_softPools.push_back(vkMakePool(m_dev, softBinds(), (uint32_t)kPoolChunk));
+    m_softPoolCap = kPoolChunk;
+    m_softPoolUsed = 0;
 }
 
 void Soft::makeBodySet(GpuBody& b) {
@@ -118,7 +138,7 @@ void Soft::makeBodySet(GpuBody& b) {
         {b.triStart, 0, (VkDeviceSize)4 * (n + 1)},
         {b.triList, 0, (VkDeviceSize)4 * b.soft.triList.size()},
     };
-    vkMakeSet(m_dev, m_softPool, m_softDsl, softBinds(), b.simSet, bi);
+    vkMakeSet(m_dev, m_softPools.back(), m_softDsl, softBinds(), b.simSet, bi);
 }
 
 void Soft::dispatch(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset) {
@@ -176,17 +196,47 @@ void Soft::recordBody(VkCommandBuffer cmd, const GpuBody& b, int iters, int pinn
     recordMode(cmd, b, 2, n, 0);
 }
 
-void Soft::setPinned(int softId, int pinned) {
-    m_body[softId].pinned = pinned;
+void Soft::setPinned(entt::entity e, int pinned) {
+    const auto it = m_ent.find(e);
+    if (it != m_ent.end())
+        m_body[(size_t)it->second].pinned = pinned;
 }
 
-void Soft::setParams(int softId, const SimParams& params, int steps) {
-    m_body[softId].params = params;
-    m_body[softId].steps = steps;
+void Soft::setParams(entt::entity e, const SimParams& params, int steps) {
+    const auto it = m_ent.find(e);
+    if (it == m_ent.end())
+        return;
+    m_body[(size_t)it->second].params = params;
+    m_body[(size_t)it->second].steps = steps;
+}
+
+// retired bodies stop being recorded the moment their entity dies; their buffers go to the
+// flush queue and are released at the next frame start (one in-flight frame still reads them)
+void Soft::onBodyDestroyed(entt::registry&, entt::entity e) {
+    const auto it = m_ent.find(e);
+    if (it == m_ent.end())
+        return;
+    m_body[(size_t)it->second].dead = true;
+    m_free.push_back(it->second);
+    m_ent.erase(it);
+}
+
+void Soft::watch(entt::registry& reg) {
+    reg.on_destroy<SoftBodyData>().connect<&Soft::onBodyDestroyed>(this);
+}
+
+void Soft::flushFrees() {
+    for (const int id : m_free) {
+        GpuBody& b = m_body[(size_t)id];
+        freeBody(b);
+    }
+    m_free.clear();
 }
 
 void Soft::record(VkCommandBuffer cmd) {
     for (GpuBody& b : m_body) {
+        if (b.dead)
+            continue;
         PhysParams phys{};
         phys.nCaps = m_nCaps;
         phys.dt = kFrameDt / (float)b.steps;
@@ -203,22 +253,42 @@ void Soft::record(VkCommandBuffer cmd) {
 
     std::vector<VkBufferMemoryBarrier> first;
     for (const GpuBody& b : m_body)
-        for (VkBuffer buf : {b.pos, b.nrm, b.prev, b.sub0, b.contactN, b.contactL, b.tris, b.triStart, b.triList})
-            first.push_back(bufBarrier(buf));
+        if (!b.dead)
+            for (VkBuffer buf : {b.pos, b.nrm, b.prev, b.sub0, b.contactN, b.contactL, b.tris, b.triStart, b.triList})
+                first.push_back(bufBarrier(buf));
     stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, first.data(),
                  (uint32_t)first.size());
 
     for (const GpuBody& b : m_body)
-        for (int s = 0; s < b.steps; ++s)
-            recordBody(cmd, b, b.params.passes, b.pinned);
+        if (!b.dead)
+            for (int s = 0; s < b.steps; ++s)
+                recordBody(cmd, b, b.params.passes, b.pinned);
     for (const GpuBody& b : m_body)
-        if (!b.pinned)
+        if (!b.dead && !b.pinned)
             recordMode(cmd, b, 3, b.soft.n, 0);
 
-    for (const GpuBody& b : m_body) {
-        VkBufferMemoryBarrier bmb[2] = {bufBarrier(b.pos), bufBarrier(b.nrm)};
-        stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, bmb, 2);
-    }
+    for (const GpuBody& b : m_body)
+        if (!b.dead) {
+            VkBufferMemoryBarrier bmb[2] = {bufBarrier(b.pos), bufBarrier(b.nrm)};
+            stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, bmb, 2);
+        }
+}
+
+void Soft::freeBody(GpuBody& b) {
+    if (b.freed)
+        return;
+    b.freed = true;
+    vkFreeBuffer(m_dev, b.paramsBuf, b.paramsMem);
+    vkFreeBuffer(m_dev, b.prev, b.prevMem);
+    vkFreeBuffer(m_dev, b.sub0, b.sub0Mem);
+    vkFreeBuffer(m_dev, b.contactN, b.contactNMem);
+    vkFreeBuffer(m_dev, b.contactL, b.contactLMem);
+    vkFreeBuffer(m_dev, b.entries, b.entriesMem);
+    vkFreeBuffer(m_dev, b.entryStart, b.entryStartMem);
+    vkFreeBuffer(m_dev, b.colorVerts, b.colorVertsMem);
+    vkFreeBuffer(m_dev, b.tris, b.trisMem);
+    vkFreeBuffer(m_dev, b.triStart, b.triStartMem);
+    vkFreeBuffer(m_dev, b.triList, b.triListMem);
 }
 
 void Soft::uploadCapsules(int n) {
@@ -231,21 +301,13 @@ void Soft::uploadCapsules(int n) {
 void Soft::shutdown() {
     if (m_dev == VK_NULL_HANDLE)
         return;
-    for (auto& b : m_body) {
-        vkFreeBuffer(m_dev, b.paramsBuf, b.paramsMem);
-        vkFreeBuffer(m_dev, b.prev, b.prevMem);
-        vkFreeBuffer(m_dev, b.sub0, b.sub0Mem);
-        vkFreeBuffer(m_dev, b.contactN, b.contactNMem);
-        vkFreeBuffer(m_dev, b.contactL, b.contactLMem);
-        vkFreeBuffer(m_dev, b.entries, b.entriesMem);
-        vkFreeBuffer(m_dev, b.entryStart, b.entryStartMem);
-        vkFreeBuffer(m_dev, b.colorVerts, b.colorVertsMem);
-        vkFreeBuffer(m_dev, b.tris, b.trisMem);
-        vkFreeBuffer(m_dev, b.triStart, b.triStartMem);
-        vkFreeBuffer(m_dev, b.triList, b.triListMem);
-    }
-    if (m_softPool)
-        vkDestroyDescriptorPool(m_dev, m_softPool, nullptr);
+    for (auto& b : m_body)
+        freeBody(b); // no-op for the ones flushFrees already released
+    m_ent.clear();
+    m_free.clear();
+    for (auto& p : m_softPools)
+        if (p)
+            vkDestroyDescriptorPool(m_dev, p, nullptr);
     if (m_softDsl)
         vkDestroyDescriptorSetLayout(m_dev, m_softDsl, nullptr);
     if (m_softPl)

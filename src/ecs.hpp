@@ -1,9 +1,4 @@
 #pragma once
-#include <Jolt/Jolt.h>
-
-#include <Jolt/Physics/Body/BodyID.h>
-#include <Jolt/Physics/Collision/Shape/Shape.h>
-
 #include "math.hpp"
 #include "sim/params.hpp"
 #include "xr_frame.hpp"
@@ -80,18 +75,16 @@ struct LuaScript {
     bool ready = false;
 };
 
-// shared collision geometry: one shape entity referenced by many bodies' colliders. The Jolt
-// shape is a lazy projection built on first use; the soft sim reads the geometry live each step
-// (Jolt stays as built at spawn)
+// shared collision geometry: one shape entity referenced by many bodies' colliders. Pure data:
+// the rigid sim holds its own lazy Jolt projection (built on first use), the soft sim reads the
+// geometry live each step
 struct CapsuleShape {
     float halfLen = 0.0f;
     float radius = 0.0f;
-    JPH::ShapeRefC shape; // lazy; the component's ref keeps it alive
 };
 
 struct BoxShape {
     V3 half{};
-    JPH::ShapeRefC shape;
 };
 
 // a body's collision: a shared shape entity + a local Transform placing it in the body's frame.
@@ -108,11 +101,9 @@ struct RigidBody {
     float friction = 0.7f;
     float restitution = 0.05f;
     float damping = 0.05f;
-    JPH::BodyID id;
 };
 
 struct SoftBodyData {
-    int softId = -1;
     int pinned = 0;
     SimParams params;
     int steps = kDefaultSteps;
@@ -145,10 +136,9 @@ struct ControllerInput {
     bool active = false;
 };
 
-// a kinematic Jolt body driven by the engine (controller hand anchor for joints)
-struct KinematicBody {
-    JPH::BodyID id{};
-};
+// marker: the entity owns a kinematic Jolt body (grab anchor etc.) driven from its Transform;
+// the rigid sim holds the entity -> body mapping
+struct KinematicBody {};
 
 // mouse pointer state (window-relative); "mouse" entity
 struct MouseInput {
@@ -164,7 +154,7 @@ struct KeyboardInput {
 };
 
 struct Renderable {
-    int inst = -1;
+    int geom = -1; // the renderer's mesh-table index (shared vertex data)
     bool noShadow = false; // skip in the shadow pass (still drawn in the scene pass)
 };
 
@@ -183,8 +173,6 @@ struct Skeleton {
     std::vector<entt::entity> joints;
     std::vector<Mat4> invBinds;
     entt::entity placement = entt::null;
-    int charGpu = -1;         // Skin character id (the joint-DQ buffer)
-    std::vector<int> groups;  // Skin group ids (the dispatch units)
 };
 
 // on a skinned mesh's node + prim entities: the skeleton character entity this mesh belongs to
@@ -194,10 +182,9 @@ struct SkelCharData {
 };
 
 // shared texture entity: one per asset path; materials link by entity ref, so users share one
-// GPU copy. texId is the renderer's upload (eager, at entity creation)
+// GPU copy. The renderer holds the entity -> texture mapping (the upload is eager, at creation)
 struct Texture {
     std::string path;
-    int texId = -1;
 };
 
 // owned by material entities only; meshes point at it via MaterialRef, so many meshes can share

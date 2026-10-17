@@ -78,19 +78,21 @@ void Skin::init(VkDevice dev, VkPhysicalDevice pdev) {
     m_pdev = pdev;
 }
 
-int Skin::addCharacter(int nJoints) {
+void Skin::addCharacter(entt::entity e, int nJoints) {
     Character c;
     c.dqStaging.resize((size_t)nJoints);
     const auto bytes = (VkDeviceSize)nJoints * sizeof(DualQuat);
     vkMakeBuffer(m_dev, m_pdev, c.jointDQ.b, c.jointDQ.m, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     c.jointDQ.sz = bytes;
     m_chars.push_back(std::move(c));
-    return (int)m_chars.size() - 1;
+    m_ent[e] = (int)m_chars.size() - 1;
 }
 
-int Skin::addGroup(int charGpu, const SkelGroupDesc& d) {
-    if (charGpu < 0 || (size_t)charGpu >= m_chars.size())
+int Skin::addGroup(entt::entity e, const SkelGroupDesc& d) {
+    const auto ce = m_ent.find(e);
+    if (ce == m_ent.end())
         return -1;
+    const int charGpu = ce->second;
     Group g;
     g.charGpu = charGpu;
     g.nV = d.nV;
@@ -126,6 +128,13 @@ int Skin::addGroup(int charGpu, const SkelGroupDesc& d) {
     mkDev(g.posOut, 12 * vn, d.pos0.data());
     mkDev(g.nrmOut, 12 * vn, d.nrm0.data());
     m_groups.push_back(std::move(g));
+    m_chars[(size_t)charGpu].groups.push_back((int)m_groups.size() - 1);
+    // groups added after build() create their own descriptor set (build() did the load-time ones)
+    if (!m_pools.empty()) {
+        ensurePoolSlot();
+        makeGroupSet(m_groups.back());
+        ++m_poolUsed;
+    }
     return (int)m_groups.size() - 1;
 }
 
@@ -141,7 +150,11 @@ void Skin::build() {
     auto maxSets = (uint32_t)m_groups.size();
     if (maxSets == 0)
         maxSets = 1;
-    vkMakeDslPool(m_dev, binds, maxSets, m_dsl, m_pool);
+    VkDescriptorPool pool;
+    vkMakeDslPool(m_dev, binds, maxSets, m_dsl, pool);
+    m_pools.push_back(pool);
+    m_poolCap = (int)maxSets;
+    m_poolUsed = 0;
     m_pl = vkMakePipelineLayoutPC(m_dev, m_dsl, VK_SHADER_STAGE_COMPUTE_BIT, 16);
     VkShaderModule cm = vkMakeModule(m_dev, skeleton_spv, skeleton_spv_len / 4);
     VkPipelineShaderStageCreateInfo cs{};
@@ -155,8 +168,18 @@ void Skin::build() {
     cpc.layout = m_pl;
     VK(vkCreateComputePipelines(m_dev, VK_NULL_HANDLE, 1, &cpc, nullptr, &m_pipe));
     vkDestroyShaderModule(m_dev, cm, nullptr);
-    for (auto& g : m_groups)
+    for (auto& g : m_groups) {
         makeGroupSet(g);
+        ++m_poolUsed;
+    }
+}
+
+void Skin::ensurePoolSlot() {
+    if (m_poolUsed < m_poolCap)
+        return;
+    m_pools.push_back(vkMakePool(m_dev, skelBinds(), (uint32_t)kPoolChunk));
+    m_poolCap = kPoolChunk;
+    m_poolUsed = 0;
 }
 
 void Skin::makeGroupSet(Group& g) {
@@ -172,11 +195,10 @@ void Skin::makeGroupSet(Group& g) {
         {g.posOut.b, 0, g.posOut.sz},
         {g.nrmOut.b, 0, g.nrmOut.sz},
     };
-    vkMakeSet(m_dev, m_pool, m_dsl, skelBinds(), g.set, bi);
+    vkMakeSet(m_dev, m_pools.back(), m_dsl, skelBinds(), g.set, bi);
 }
 
-void Skin::stepCharacter(const entt::registry& reg, const Skeleton& s) {
-    Character& c = m_chars[(size_t)s.charGpu];
+void Skin::stepCharacter(const entt::registry& reg, const Skeleton& s, Character& c) {
     auto worldOf = [&](entt::entity e) {
         if (e != entt::null)
             if (const auto* wt = reg.try_get<WorldTransform>(e))
@@ -218,18 +240,19 @@ void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
     if (m_pl == VK_NULL_HANDLE)
         return;
     for (const auto e : reg.view<Skeleton>()) {
-        const auto& s = reg.get<Skeleton>(e);
-        if (s.charGpu < 0 || (size_t)s.charGpu >= m_chars.size() || m_chars[s.charGpu].dead)
+        const auto ce = m_ent.find(e);
+        if (ce == m_ent.end() || m_chars[(size_t)ce->second].dead)
             continue;
-        stepCharacter(reg, s);
-        for (int gid : s.groups)
+        const Skeleton& s = reg.get<Skeleton>(e);
+        Character& c = m_chars[(size_t)ce->second];
+        stepCharacter(reg, s, c);
+        for (int gid : c.groups)
             if ((size_t)gid < m_groups.size() && !m_groups[gid].dead)
                 packMorphs(m_groups[gid]);
-        for (int gid : s.groups) {
+        for (int gid : c.groups) {
             Group& g = m_groups[gid];
             if (g.dead || g.nV <= 0)
                 continue;
-            const Character& c = m_chars[(size_t)g.charGpu];
             const Buf* srcs[7] = {&g.pos0, &g.nrm0, &g.joints, &g.weights, &g.deltas, &c.jointDQ, &g.activeMorphs};
             VkBufferMemoryBarrier pre[7];
             for (int i = 0; i < 7; ++i)
@@ -250,11 +273,20 @@ void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
     }
 }
 
-void Skin::setMorph(const entt::registry& reg, entt::entity skel, const std::string& name, float weight) {
+std::unordered_map<entt::entity, int>::const_iterator Skin::charFor(const entt::registry& reg, entt::entity skel) const {
     if (!reg.valid(skel) || !reg.all_of<Skeleton>(skel))
+        return m_ent.end();
+    const auto ce = m_ent.find(skel);
+    if (ce == m_ent.end() || m_chars[(size_t)ce->second].dead)
+        return m_ent.end();
+    return ce;
+}
+
+void Skin::setMorph(const entt::registry& reg, entt::entity skel, const std::string& name, float weight) {
+    const auto ce = charFor(reg, skel);
+    if (ce == m_ent.end())
         return;
-    const Skeleton& s = reg.get<Skeleton>(skel);
-    for (int gid : s.groups) {
+    for (int gid : m_chars[(size_t)ce->second].groups) {
         auto it = m_groups[gid].nameToTarget.find(name);
         if (it != m_groups[gid].nameToTarget.end())
             m_groups[gid].morphW[(size_t)it->second] = weight;
@@ -262,10 +294,10 @@ void Skin::setMorph(const entt::registry& reg, entt::entity skel, const std::str
 }
 
 float Skin::getMorph(const entt::registry& reg, entt::entity skel, const std::string& name) {
-    if (!reg.valid(skel) || !reg.all_of<Skeleton>(skel))
+    const auto ce = charFor(reg, skel);
+    if (ce == m_ent.end())
         return 0.0f;
-    const Skeleton& s = reg.get<Skeleton>(skel);
-    for (int gid : s.groups) {
+    for (int gid : m_chars[(size_t)ce->second].groups) {
         auto it = m_groups[gid].nameToTarget.find(name);
         if (it != m_groups[gid].nameToTarget.end())
             return m_groups[gid].morphW[(size_t)it->second];
@@ -274,15 +306,20 @@ float Skin::getMorph(const entt::registry& reg, entt::entity skel, const std::st
 }
 
 void Skin::resetMorphs(const entt::registry& reg, entt::entity skel) {
-    if (!reg.valid(skel) || !reg.all_of<Skeleton>(skel))
+    const auto ce = charFor(reg, skel);
+    if (ce == m_ent.end())
         return;
-    const Skeleton& s = reg.get<Skeleton>(skel);
-    for (int gid : s.groups)
+    for (int gid : m_chars[(size_t)ce->second].groups)
         m_groups[gid].morphW = m_groups[gid].morphW0; // back to the file's frame-0 shape
 }
 
-void Skin::destroyCharacter(int charGpu) {
-    if (charGpu < 0 || (size_t)charGpu >= m_chars.size() || m_chars[(size_t)charGpu].dead)
+void Skin::destroyCharacter(entt::entity e) {
+    const auto ce = m_ent.find(e);
+    if (ce == m_ent.end())
+        return;
+    const int charGpu = ce->second;
+    m_ent.erase(ce);
+    if (m_chars[(size_t)charGpu].dead)
         return;
     // mark dead first: the groups' descriptor sets stay allocated (pool freed at shutdown) but
     // are never recorded again
@@ -292,16 +329,28 @@ void Skin::destroyCharacter(int charGpu) {
             g.dead = true;
 }
 
+// the ECS is the source of truth for which skeletons exist: a Skeleton destroy retires the
+// character (buffers stay allocated until shutdown; the renderer aliases the group outputs)
+void Skin::onSkeletonDestroyed(entt::registry&, entt::entity e) {
+    destroyCharacter(e);
+}
+
+void Skin::watch(entt::registry& reg) {
+    reg.on_destroy<Skeleton>().connect<&Skin::onSkeletonDestroyed>(this);
+}
+
 void Skin::shutdown() {
     if (m_dev == VK_NULL_HANDLE)
         return;
+    m_ent.clear();
     for (auto& c : m_chars)
         vkFreeBuffer(m_dev, c.jointDQ.b, c.jointDQ.m);
     for (auto& g : m_groups)
         for (auto& b : {g.pos0, g.nrm0, g.joints, g.weights, g.deltas, g.activeMorphs, g.posOut, g.nrmOut})
             vkFreeBuffer(m_dev, b.b, b.m);
-    if (m_pool)
-        vkDestroyDescriptorPool(m_dev, m_pool, nullptr);
+    for (auto& p : m_pools)
+        if (p)
+            vkDestroyDescriptorPool(m_dev, p, nullptr);
     if (m_dsl)
         vkDestroyDescriptorSetLayout(m_dev, m_dsl, nullptr);
     if (m_pl)

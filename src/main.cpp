@@ -106,6 +106,10 @@ int main(int argc, char** argv) {
         XrFrame fr; // this frame's headset state (head, eyes, controllers); frame-local, not world state
         if (w.xr)
             fr = w.xr->poll();
+        // frame start, previous frame's GPU work done (sync present / XR waitFrame): release
+        // the resources queued by the last frame's entity destroys
+        w.renderer.flushFrees();
+        w.gpuSim.soft.flushFrees();
         const auto tPoll = std::chrono::steady_clock::now();
         stepMouse(w);
         stepKeyboard(w);

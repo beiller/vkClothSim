@@ -196,7 +196,7 @@ Renderer::GpuMeshRef Renderer::addMeshShared(const Mesh& m, VkBuffer pos, VkDevi
     return {(int)m_geoms.size() - 1, MeshGpu{VertexStore{pos, posMem, n}, VertexStore{nrm, nrmMem, n}}};
 }
 
-int Renderer::addInstance(int geom) {
+int Renderer::allocInstance(int geom) {
     const GpuMesh& g = m_geoms[geom];
     InstancedMesh inst;
     inst.geom = geom;
@@ -241,11 +241,82 @@ int Renderer::addInstance(int geom) {
     return id;
 }
 
-int Renderer::addTexture(const void* rgba, uint32_t w, uint32_t h) {
+void Renderer::addTexture(entt::entity e, const void* rgba, uint32_t w, uint32_t h) {
     GpuTexture t;
     vkMakeImage2D(m_dev, m_pdev, w, h, rgba, t.img, t.mem, t.view);
     m_texs.push_back(t);
-    return (int)m_texs.size() - 1;
+    m_entTex[e] = (int)m_texs.size() - 1;
+}
+
+int Renderer::instFor(entt::entity e, int geom) {
+    auto it = m_entInst.find(e);
+    if (it != m_entInst.end() && !m_insts[(size_t)it->second].dead && m_insts[(size_t)it->second].geom == geom)
+        return it->second;
+    if (it != m_entInst.end())
+        queueFreeInst(it->second); // the geom changed: replace the slot
+    const int inst = allocInstance(geom);
+    m_entInst[e] = inst;
+    return inst;
+}
+
+int Renderer::instOf(entt::entity e) const {
+    const auto it = m_entInst.find(e);
+    return it != m_entInst.end() ? it->second : -1;
+}
+
+int Renderer::textureId(entt::entity e) const {
+    const auto it = m_entTex.find(e);
+    return it != m_entTex.end() ? it->second : -1;
+}
+
+void Renderer::queueFreeInst(int inst) {
+    m_insts[(size_t)inst].dead = true;
+    m_freeInst.push_back(inst);
+}
+
+// the ECS is the source of truth for which entities exist: a component destroy (or a mass
+// destroy) pushes the free back. GPU resources wait for the next frame start (the previous
+// frame may still be reading them); the descriptor set itself is pool-owned and stays
+// allocated (its slot is never drawn or reused, so its stale bindings are harmless)
+void Renderer::onRenderableDestroyed(entt::registry&, entt::entity e) {
+    const auto it = m_entInst.find(e);
+    if (it != m_entInst.end()) {
+        queueFreeInst(it->second);
+        m_entInst.erase(it);
+    }
+}
+
+void Renderer::onTextureDestroyed(entt::registry&, entt::entity e) {
+    // a texture may still be bound by a live instance's descriptor; content destroys a texture
+    // only after the materials/meshes that use it
+    const auto it = m_entTex.find(e);
+    if (it != m_entTex.end()) {
+        m_freeTex.push_back(it->second);
+        m_entTex.erase(it);
+    }
+}
+
+void Renderer::watch(entt::registry& reg) {
+    reg.on_destroy<Renderable>().connect<&Renderer::onRenderableDestroyed>(this);
+    reg.on_destroy<Texture>().connect<&Renderer::onTextureDestroyed>(this);
+}
+
+void Renderer::flushFrees() {
+    for (const int inst : m_freeInst) {
+        InstancedMesh& im = m_insts[(size_t)inst];
+        vkFreeBuffer(m_dev, im.modelUbuf, im.modelMem);
+        im.modelUbuf = VK_NULL_HANDLE;
+        im.modelMem = VK_NULL_HANDLE;
+    }
+    m_freeInst.clear();
+    for (const int id : m_freeTex) {
+        GpuTexture& t = m_texs[(size_t)id];
+        vkFreeImage2D(m_dev, t.img, t.mem, t.view);
+        t.img = VK_NULL_HANDLE;
+        t.mem = VK_NULL_HANDLE;
+        t.view = VK_NULL_HANDLE;
+    }
+    m_freeTex.clear();
 }
 
 void Renderer::setTexture(int inst, int channel, int texId) {
@@ -304,7 +375,8 @@ void Renderer::writeViewUbo(const Mat4& vp, const V3& cam, float envIntensity) {
 void Renderer::prepBuffers(const entt::registry& reg) {
     writeLights(reg);
     for (auto [e, rend] : reg.view<Renderable>().each()) {
-        InstancedMesh& inst = m_insts[rend.inst];
+        const int inst = instFor(e, rend.geom); // first sight: allocate the slot
+        InstancedMesh& im = m_insts[(size_t)inst];
         V3 base{1.0f, 1.0f, 1.0f}, emissive{0.0f, 0.0f, 0.0f};
         float metallic = 0.0f, roughness = 0.5f, baseAlpha = 1.0f, alphaCutoff = 0.5f;
         int alphaMode = 0;
@@ -318,23 +390,18 @@ void Renderer::prepBuffers(const entt::registry& reg) {
                 alphaCutoff = mat->alphaCutoff;
                 alphaMode = mat->alphaMode;
                 const entt::entity slots[kTexChannels] = {mat->tex, mat->texMR, mat->texNormal, mat->texEmissive};
-                for (int c = 0; c < kTexChannels; ++c) {
-                    int texId = -1;
-                    if (slots[c] != entt::null)
-                        if (const auto* tx = reg.try_get<Texture>(slots[c]))
-                            texId = tx->texId;
-                    setTexture(rend.inst, c, texId); // no-ops when the id is unchanged
-                }
+                for (int c = 0; c < kTexChannels; ++c)
+                    setTexture(inst, c, textureId(slots[c])); // no-ops when the id is unchanged
             }
         // soft bodies resolve no WorldTransform (geometry is world-space in the GPU buffer) -> identity
         Mat4 model = mat4Identity();
         if (const auto* wt = reg.try_get<WorldTransform>(e)) {
             model = wt->toMat4();
-            inst.wpos = wt->pos;
+            im.wpos = wt->pos;
         }
-        inst.alphaMode = alphaMode;
+        im.alphaMode = alphaMode;
         const ModelUbo mb = packModel(model, base, metallic, roughness, emissive, baseAlpha, alphaCutoff, alphaMode);
-        vkWriteBuffer(m_dev, inst.modelMem, &mb, sizeof(ModelUbo));
+        vkWriteBuffer(m_dev, im.modelMem, &mb, sizeof(ModelUbo));
     }
 }
 
@@ -360,10 +427,13 @@ void Renderer::renderScenePass(VkCommandBuffer cmd, VkApp& app, const entt::regi
     for (auto [e, rend] : reg.view<Renderable>().each()) {
         if (isHidden(reg, e))
             continue;
-        if (m_insts[rend.inst].alphaMode == 2) // BLEND goes to the sorted pass
-            blend.push_back(rend.inst);
+        const int inst = instOf(e); // prepBuffers ran first this frame, so the slot exists
+        if (inst < 0)
+            continue;
+        if (m_insts[(size_t)inst].alphaMode == 2) // BLEND goes to the sorted pass
+            blend.push_back(inst);
         else
-            drawInstance(cmd, m_pl, m_geoms[m_insts[rend.inst].geom], m_insts[rend.inst]);
+            drawInstance(cmd, m_pl, m_geoms[m_insts[(size_t)inst].geom], m_insts[(size_t)inst]);
     }
     if (blend.size()) {
         // transparent: back-to-front by camera distance
@@ -681,7 +751,11 @@ void Renderer::drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgI
 void Renderer::shutdown() {
     if (m_dev == VK_NULL_HANDLE)
         return;
-    for (auto& inst : m_insts)
+    m_entInst.clear();
+    m_entTex.clear();
+    m_freeInst.clear();
+    m_freeTex.clear();
+    for (auto& inst : m_insts) // already-flushed slots hold null handles (a no-op free)
         vkFreeBuffer(m_dev, inst.modelUbuf, inst.modelMem);
     for (auto& g : m_geoms) {
         if (!g.externalPosNrm) {

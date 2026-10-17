@@ -7,6 +7,7 @@
 #include "xr_frame.hpp"
 #include <entt/entt.hpp>
 #include <imgui.h>
+#include <unordered_map>
 #include <vector>
 
 class VkApp;
@@ -34,8 +35,17 @@ public:
     // the renderer uploads only the uv + index buffers and aliases the rest
     GpuMeshRef addMeshShared(const Mesh& m, VkBuffer pos, VkDeviceMemory posMem, VkBuffer nrm,
                              VkDeviceMemory nrmMem, uint32_t n);
-    int addInstance(int geom); // per-instance model UBO + descriptor set; the ECS keeps the id
-    int addTexture(const void* rgba, uint32_t w, uint32_t h);
+    // the entity's instance slot (per-instance model UBO + descriptor set); the ECS keeps only
+    // the geom data. Allocated on first prepBuffers sight; freed one frame after the entity's
+    // Renderable dies (flushFrees at frame start)
+    int instFor(entt::entity e, int geom);
+    int instOf(entt::entity e) const; // -1 when the entity has no live instance
+    int textureId(entt::entity e) const; // -1 when the entity has no texture
+    void addTexture(entt::entity e, const void* rgba, uint32_t w, uint32_t h);
+    // register the destroy observers: Renderable/Texture teardowns queue their resources for
+    // the next frame-start flush (the previous frame may still be reading them)
+    void watch(entt::registry& reg);
+    void flushFrees();
     void setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h);
     void setViewProj(const Mat4& vp, const V3& camPos);
     void shutdown();
@@ -71,6 +81,7 @@ private:
 
     struct InstancedMesh {
         int geom = -1;
+        bool dead = false; // queued for the frame-start flush; never drawn or reused
         VkBuffer modelUbuf = VK_NULL_HANDLE;
         VkDeviceMemory modelMem = VK_NULL_HANDLE;
         VkDescriptorSet set = VK_NULL_HANDLE;
@@ -88,6 +99,10 @@ private:
     };
 
     static void drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const InstancedMesh& inst);
+    int allocInstance(int geom); // create the UBO + descriptor set slot
+    void queueFreeInst(int inst); // mark dead + queue for flushFrees
+    void onRenderableDestroyed(entt::registry&, entt::entity e); // destroy-observer handlers
+    void onTextureDestroyed(entt::registry&, entt::entity e);
     bool isHidden(const entt::registry& reg, entt::entity e) const; // Visible flag on e or any ancestor
     void rebuildTonemapSet(VkApp& app);
     void writeViewUbo(const Mat4& vp, const V3& cam, float envIntensity);
@@ -136,6 +151,9 @@ private:
     std::vector<GpuMesh> m_geoms;
     std::vector<InstancedMesh> m_insts;
     std::vector<GpuTexture> m_texs;
+    std::unordered_map<entt::entity, int> m_entInst; // Renderable entity -> m_insts index
+    std::unordered_map<entt::entity, int> m_entTex;  // Texture entity -> m_texs index
+    std::vector<int> m_freeInst, m_freeTex;          // slots awaiting the frame-start flush
     GpuTexture m_white;        // fallback for albedo/MR/emissive (texel 1 = factor only)
     GpuTexture m_neutralNrm;   // fallback for the normal channel (texel (0.5,0.5,1) = identity)
     VkSampler m_texSampler = VK_NULL_HANDLE;

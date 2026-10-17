@@ -605,8 +605,8 @@ void finishSkinned(GltfCtx& c) {
             skelComp.joints = std::move(jointEntities);
             skelComp.invBinds = std::move(invBinds);
             skelComp.placement = c.nodeEntities[prims[0].nodeIdx];
-            skelComp.charGpu = c.w.gpuSim.skin.addCharacter((int)sk.joints_count);
             const entt::entity skelEnt = c.w.reg.create();
+            c.w.gpuSim.skin.addCharacter(skelEnt, (int)sk.joints_count);
             c.w.reg.emplace<Name>(skelEnt, skelName);
             c.w.reg.emplace<Skeleton>(skelEnt, std::move(skelComp));
             c.skinChars[skin] = skelEnt;
@@ -614,7 +614,6 @@ void finishSkinned(GltfCtx& c) {
         const entt::entity skelEnt = c.skinChars[skin];
         if (skelEnt == entt::null)
             continue;
-        const int charGpu = c.w.reg.get<Skeleton>(skelEnt).charGpu;
 
         // group (once per (skin, POSITION accessor))
         std::vector<float> pos0;
@@ -702,10 +701,9 @@ void finishSkinned(GltfCtx& c) {
         g.initWeights.assign((size_t)nT, 0.0f);
         for (int t = 0; t < nT && t < (int)gm0.weights_count; ++t)
             g.initWeights[t] = (float)gm0.weights[t];
-        const int gid = c.w.gpuSim.skin.addGroup(charGpu, g);
+        const int gid = c.w.gpuSim.skin.addGroup(skelEnt, g);
         if (gid < 0)
             continue;
-        c.w.reg.get<Skeleton>(skelEnt).groups.push_back(gid);
         const MeshGpu rw = c.w.gpuSim.skin.groupOut(gid);
         for (const auto& pp : prims) {
             const tg3_mesh& gm = c.m->meshes[pp.meshIdx];

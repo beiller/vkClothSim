@@ -133,9 +133,13 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd, const entt::registry& reg)
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipe);
             vkCmdPushConstants(cmd, m_shadowPl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                sizeof(Pc), &pc);
-            for (auto [e, rend] : reg.view<Renderable>().each())
-                if (!isHidden(reg, e) && !rend.noShadow && m_insts[rend.inst].alphaMode != 2)
-                    drawInstance(cmd, m_shadowPl, m_geoms[m_insts[rend.inst].geom], m_insts[rend.inst]);
+            for (auto [e, rend] : reg.view<Renderable>().each()) {
+                if (isHidden(reg, e) || rend.noShadow)
+                    continue;
+                const int inst = instOf(e);
+                if (inst >= 0 && m_insts[(size_t)inst].alphaMode != 2)
+                    drawInstance(cmd, m_shadowPl, m_geoms[m_insts[(size_t)inst].geom], m_insts[(size_t)inst]);
+            }
             vkCmdEndRenderPass(cmd);
         }
     }
