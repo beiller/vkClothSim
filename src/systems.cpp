@@ -256,7 +256,9 @@ entt::entity spawnVrRoot(Engine& w) {
 void spawnControllers(Engine& w) {
     // grips are children of the VR root; their LOCAL Transform is set to the raw OpenXR grip each
     // frame, so world = walkPos + grip (head-independent -> no drift).
-    // grip visual from the std geometry library (the engine has no mesh generators of its own)
+    // grip visual from the std geometry library (the engine has no mesh generators of its own).
+    // the engine gives hands no physics body: a scene script may add one (grab anchor, soft-sim
+    // collision) with physics.kinematic and drive its Transform - the rigid step pulls it
     std::string err;
     const int geom = w.script.callMeshGen("capsule", {{"halfLen", 0.06}, {"radius", 0.03}}, err);
     if (geom < 0) {
@@ -264,16 +266,12 @@ void spawnControllers(Engine& w) {
         std::exit(1);
     }
     const entt::entity gripMat = spawnMaterial(w, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f, V3{0.0f, 0.0f, 0.0f});
-    const entt::entity handShape = w.reg.create();
-    w.reg.emplace<CapsuleShape>(handShape, 0.06f, 0.03f); // matches the grip visual
     for (int h = 0; h < 2; ++h) {
         entt::entity e = w.reg.create();
         w.reg.emplace<Transform>(e, V3{0, 0, 0}, V4{0, 0, 0, 1}); // local rel. to vr root; per frame
         if (w.vrRoot != entt::null)
             w.reg.emplace<Parent>(e, w.vrRoot);
         w.reg.emplace<ControllerInput>(e, ControllerInput{h});
-        if (h == 1)
-            addKinematicBody(w, e, {ColliderSpec{handShape, {}}}); // hand: joints + soft-sim collision
         w.reg.emplace<Renderable>(e, w.renderer.addInstance(geom));
         w.reg.emplace<MaterialRef>(e, gripMat);
         w.reg.emplace<Name>(e, h == 0 ? "controller L" : "controller R");
@@ -310,8 +308,6 @@ void stepControllers(Engine& w, const XrFrame& fr) {
             t = Transform{c.pos, c.quat};
         else if (cam != entt::null)
             t = transformCompose(headLocal, Transform{restPose(ci.hand), V4{0, 0, 0, 1}});
-        if (auto* kb = w.reg.try_get<KinematicBody>(e))
-            w.rigid.setKinematicPose(kb->id, vAdd(ci.aimPos, walkPos(w)), ci.aimQuat);
     });
 }
 
@@ -357,6 +353,13 @@ void stepKeyboard(Engine& w) {
 }
 
 void stepRigid(Engine& w) {
+    // kinematic bodies are driven from the ECS (the XR step or a scene script writes the owning
+    // entity's Transform); pull each one's world pose into Jolt before the step so this step
+    // integrates against the pose that was just written
+    for (auto [e, kb] : w.reg.view<KinematicBody>().each()) {
+        const Transform wt = worldTransform(w.reg, e);
+        w.rigid.setKinematicPose(kb.id, wt.pos, wt.quat);
+    }
     w.rigid.step();
     for (auto [entity, body, t] : w.reg.view<RigidBody, Transform>().each()) {
         // Jolt poses are rigid: preserve the entity's scale

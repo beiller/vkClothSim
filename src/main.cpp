@@ -19,10 +19,12 @@ int main(int argc, char** argv) {
     if (!app.initInstance(900, 900, "3dsim"))
         return 1;
 
-    Engine w;
+    Engine w; // CODE SMELL - short variable name "w" reflects the old name of "world"
     w.app = &app;
     bool wantHdri = false, wantShadow = false, wantHier = false, wantNoVr = false;
     std::string scenePath;
+    //CODE SMELL - these are legacy launch options (for scenes)
+    // we should default to "demo" scene, and allow optional specification of a scene
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hdri") == 0)
             wantHdri = true;
@@ -107,13 +109,17 @@ int main(int argc, char** argv) {
         const auto tPoll = std::chrono::steady_clock::now();
         stepMouse(w);
         stepKeyboard(w);
+        // activate any script entities spawned since last frame (fixpoint), then run _animate:
+        // locomotion (walk) moves the VR root BEFORE stepXr bakes the root's walkPos into the
+        // camera views, so the camera and the scene share one root pose within the frame. If the
+        // camera lagged a walk step, the perceived hand position (grip-eye + this frame's walk
+        // increment) would jitter by that increment while the stick is held
+        w.script.activateScripts();
+        w.script.animateAll(dt);
         if (w.xr) {
             stepXr(w, fr);
             stepControllers(w, fr);
         }
-        // activate any script entities spawned since last frame (fixpoint), then run _animate
-        w.script.activateScripts();
-        w.script.animateAll(dt);
 
         // sim runs at a fixed kFrameDt rate, decoupled from the render rate; animation and
         // cameras step with the graphics

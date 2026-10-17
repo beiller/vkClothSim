@@ -1,9 +1,12 @@
 -- VR controller (right hand): the stick walks the "vr root" anchor in the VR head's ("vr cam")
--- frame; the trigger grabs/releases a capsule via a Jolt point joint. Always runs - without a
--- headset the controller is simply inactive and nothing moves.
+-- frame; the trigger grabs/releases a capsule via a Jolt point joint. The grab anchor is a
+-- kinematic capsule this script drives from the aim pose - the rigid step pulls kinematic
+-- poses from the ECS before each step, so a pose written in _physics is live for that step.
+-- Always runs - without a headset the controller is simply inactive and nothing moves.
 local M = {}
 
 local ctrlH, ctrlL, rootH, headH
+local handAnchor = nil -- kinematic grab anchor (right hand); created on the first physics step
 local joint = nil
 local marker = nil
 local markerGeom = nil
@@ -51,7 +54,9 @@ local function release()
     end
 end
 
--- stick walks the vr root in the head's flattened XZ frame
+-- stick walks the vr root in the head's flattened XZ frame. Render-rate (called from _animate,
+-- NOT _physics): the root is the visual locomotion anchor - stepping it at the physics rate
+-- makes the in-hand view (head + hand parented under it) alias against the render and jitter
 local function walk(dt)
     local sx, sy = scene.get(ctrlH, "axis_0"), scene.get(ctrlH, "axis_1")
     if sx * sx + sy * sy < kDead * kDead then
@@ -65,6 +70,30 @@ local function walk(dt)
     local d = scene.vadd(scene.vscale(scene.vnorm(fwd), sy), scene.vscale(scene.vnorm(rgt), sx))
     local p = scene.component(rootH, "Transform").pos
     scene.replace(rootH, "Transform", { pos = {p[1] + d[1] * kSpeed * dt, 0, p[3] + d[3] * kSpeed * dt} })
+end
+
+-- the grab anchor: a kinematic capsule under the vr root, so its local pose = the raw aim
+-- pose (walkPos comes from the parent chain). Created on first use: the controller entities
+-- don't exist until the engine spawns them, after scene load
+local function ensureAnchor()
+    if handAnchor then
+        return
+    end
+    handAnchor = scene.entity("hand anchor")
+    scene.emplace(handAnchor, "Transform")
+    scene.add_child(rootH, handAnchor)
+    physics.kinematic(handAnchor, { { shape = physics.capsule(0.06, 0.03) } })
+end
+
+-- per step: drive the anchor from the right hand's aim pose (inactive: it stays put)
+local function poseAnchor()
+    if scene.get(ctrlH, "active") < 0.5 then
+        return
+    end
+    local ap = scene.get(ctrlH, "aim_pos")
+    local aq = {scene.get(ctrlH, "aim_qx"), scene.get(ctrlH, "aim_qy"),
+                scene.get(ctrlH, "aim_qz"), scene.get(ctrlH, "aim_qw")}
+    scene.replace(handAnchor, "Transform", { pos = ap, quat = aq })
 end
 
 local function grab()
@@ -89,11 +118,11 @@ local function grab()
             scene.get(ctrlH, "aim_qz"), scene.get(ctrlH, "aim_qw"),
         }
         local fwd = scene.qrot(aq, {0, 0, -1})
-        -- exclude the controller's own kinematic anchor: the ray starts at its center and a
-        -- convex self-hit would otherwise always win at fraction 0
-        local hit = physics.raycast(aimWorld, fwd, kGrabRange, { ctrlH })
+        -- exclude the kinematic anchor: the ray starts at its center and a convex self-hit
+        -- would otherwise always win at fraction 0
+        local hit = physics.raycast(aimWorld, fwd, kGrabRange, { handAnchor })
         if hit and hit.entity and physics.is_dynamic(hit.entity) then
-            joint = physics.create_joint(ctrlH, hit.entity, "point", hit.pos)
+            joint = physics.create_joint(handAnchor, hit.entity, "point", hit.pos)
             spawnMarker(hit.entity, hit.pos)
         end
     end
@@ -130,29 +159,33 @@ local function updateLaser(hand, ctrl, matName)
     scene.replace(lasers[hand], "Transform", {pos = pos, quat = quat})
 end
 
--- per render frame: the beam tracks the aim pose at render rate
-function M._animate(self)
+-- per render frame: locomotion (the visual anchor steps at render rate) + laser tracking
+function M._animate(self, dt)
     if not ctrlH then
         ctrlH = scene.find("controller R")
     end
     if not ctrlL then
         ctrlL = scene.find("controller L")
     end
-    updateLaser("R", ctrlH, "laser R")
-    updateLaser("L", ctrlL, "laser L")
-end
-
-function M._physics(self, dt)
     if not rootH then
         rootH = scene.find("vr root")
     end
     if not headH then
         headH = scene.find("vr cam")
     end
+    if ctrlH and rootH and headH then
+        walk(dt)
+    end
+    updateLaser("R", ctrlH, "laser R")
+    updateLaser("L", ctrlL, "laser L")
+end
+
+function M._physics(self, dt)
     if not ctrlH or not rootH or not headH then
         return
     end
-    walk(dt)
+    ensureAnchor()
+    poseAnchor()
     grab()
 end
 

@@ -45,6 +45,8 @@ entt::entity findActiveCamera(const Engine& w);
 Transform worldTransform(entt::registry& reg, entt::entity e);
 Mat4 cameraViewProj(Engine& w, entt::entity cam, float aspect);
 
+// pull each kinematic body's world Transform from the ECS into Jolt, step the sim, then copy
+// the dynamic bodies' poses back into the ECS (kinematic poses are script/XR-owned, never copied back)
 void stepRigid(Engine& w);
 // compose each entity's Transform through its Parent chain into a WorldTransform
 void resolveWorldTransforms(Engine& w);
@@ -61,10 +63,10 @@ void stepXr(Engine& w, const XrFrame& fr);
 // head-independent VR locomotion anchor: a root the VR head camera + grips are parented under;
 // also spawns the "vr cam" (the VR head camera)
 entt::entity spawnVrRoot(Engine& w);
-// create a tracked controller entity per hand, parented to the VR root; right hand gets a
-// kinematic Jolt body (hand anchor for joints)
+// create a tracked controller entity per hand, parented to the VR root (grip visual + input
+// state); physics bodies are a scene-script choice (physics.kinematic)
 void spawnControllers(Engine& w);
-// headset controller poses -> controller entities' local Transform + ControllerInput + drive hand body
+// headset controller poses -> controller entities' local Transform + ControllerInput
 void stepControllers(Engine& w, const XrFrame& fr);
 // GLFW -> "mouse" entity (position + buttons)
 void stepMouse(Engine& w);
