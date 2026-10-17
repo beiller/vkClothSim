@@ -63,9 +63,8 @@ inline Transform transformInvert(const Transform& t) {
             {1.0f / t.scale.x, 1.0f / t.scale.y, 1.0f / t.scale.z}};
 }
 
-// per-entity Lua behavior script: file is a module (loaded once, cached) with optional
-// lifecycle hooks _on_ready(self) / _animate(self, dt) / _physics(self, dt). The inst/hook
-// registry refs are owned by SceneScript (unrefed on destroy/shutdown).
+// per-entity Lua behavior: file is a module (loaded once, cached) with optional _on_ready /
+// _animate / _physics(self, dt) hooks; SceneScript owns the inst/hook registry refs
 struct LuaScript {
     std::string file; // include-relative module path
     int inst = -1;    // registry ref to the per-entity instance table (self)
@@ -76,9 +75,8 @@ struct LuaScript {
     bool ready = false;
 };
 
-// shared collision geometry: one shape entity referenced by many bodies' colliders. Pure data:
-// the rigid sim holds its own lazy Jolt projection (built on first use), the soft sim reads the
-// geometry live each step
+// shared collision geometry: one shape entity referenced by many bodies' colliders; the rigid
+// sim holds a lazy Jolt projection, the soft sim reads the geometry live each step
 struct CapsuleShape {
     float halfLen = 0.0f;
     float radius = 0.0f;
@@ -88,28 +86,24 @@ struct BoxShape {
     V3 half{};
 };
 
-// a body's collision: a shared shape entity + a local Transform placing it in the body's frame.
-// Collider entities are children of a RigidBody or KinematicBody entity; the CPU sim builds the
-// Jolt body from them at spawn, the GPU soft sim reads the capsule ones (boxes are CPU-sim only)
+// a body's collision: a shared shape entity + a local Transform (body frame). Colliders are
+// standalone data entities referenced by the bodies; world pose = body world ∘ collider local
 struct Collider {
     entt::entity shape = entt::null;
 };
 
-// a Jolt rigid body integrated by the CPU sim: its pose is written back to the entity's Transform
-// each step (the collider children's world poses then feed the GPU soft sim). The material
-// params apply at spawn; the Jolt body is not updated after creation. The body is built lazily
-// from the entity's collider children on the first sim step after this component appears
+// a Jolt rigid body: pose written back to the Transform each step; params apply at spawn; built
+// lazily from colliders[] (one collider entity may serve many bodies)
 struct RigidBody {
     float friction = 0.7f;
     float restitution = 0.05f;
     float damping = 0.05f;
     bool isStatic = false; // static = world-anchored (no integration)
+    std::vector<entt::entity> colliders;
 };
 
-// a kinematic body constraint: a fixed-space point between bodyA and bodyB (a point constraint);
-// bodyB == null anchors bodyA to the world. type: 0 = point. The constraint is created lazily
-// once both endpoint bodies exist. A Joint entity is a standalone (usually parented under one
-// endpoint so it cascades on destroy); destroying it releases the constraint
+// a fixed-space point constraint between bodyA and bodyB (bodyB == null = world anchor),
+// created lazily once both endpoint bodies exist; destroying the Joint releases it
 struct Joint {
     entt::entity bodyA = entt::null;
     entt::entity bodyB = entt::null; // entt::null = world anchor
@@ -126,12 +120,9 @@ struct SoftBodyData {
     std::vector<float> cons;
 };
 
-// camera: pose lives in the entity's Transform, projection params here; active = the current
-// camera the window renders (exactly one by convention). The engine swaps it per display mode:
-// the VR head camera ("vr cam") while presenting, the scene's fly camera otherwise.
-// a camera is a set of views, each of which renders one image. A single camera has one view,
-// derived from the entity's Transform + fov (nViews = 0). A stereo head (the VR camera) stores
-// its two eye views here: per-eye pose + lens tangents, filled each frame from the headset poll.
+// camera: pose in the Transform, projection params here; active = the camera the window renders
+// (exactly one by convention; the engine swaps it per display mode). A camera is a set of views:
+// 0 = single (from Transform + fov), 2 = stereo eye views (pose + lens tangents, filled per frame)
 struct Camera {
     float fovDeg = 50.0f;
     float nearP = 0.1f;
@@ -141,8 +132,8 @@ struct Camera {
     View views[2];
 };
 
-// a tracked controller (left/right). Its Transform is the grip pose, local under the VR root; the
-// aim pose (ref space) + inputs feed grab/locomotion from Lua. Resolved to world by the rig chain.
+// a tracked controller (left/right): Transform = grip pose, local under the VR root; the aim
+// pose (ref space) + inputs feed grab/locomotion from Lua
 struct ControllerInput {
     int hand = -1;          // 0 left, 1 right
     float triggers[2] = {}; // 0 = trigger, 1 = squeeze (0..1)
@@ -153,9 +144,11 @@ struct ControllerInput {
     bool active = false;
 };
 
-// marker: the entity owns a kinematic Jolt body (grab anchor etc.) driven from its Transform;
-// the rigid sim holds the entity -> body mapping
-struct KinematicBody {};
+// the entity owns a kinematic Jolt body (grab anchor etc.) driven from its Transform; the rigid
+// sim holds the entity -> body mapping
+struct KinematicBody {
+    std::vector<entt::entity> colliders;
+};
 
 // mouse pointer state (window-relative); "mouse" entity
 struct MouseInput {
@@ -187,14 +180,10 @@ struct Geometry {
     Mesh mesh;
 };
 
-// one per skinned character (a glTF skin): the ECS source of truth for a skeleton. The Skin
-// manager owns the GPU resources and discovers skeletons by viewing this component in step(), so
-// any number of skeletons (characters) are supported. joints are in the skin's joints[] order;
-// placement is the representative node whose WorldTransform carries the whole character rigidly
-// (excluded from the per-joint deformation matrix). meshes[] is the forward ownership list of
-// this skeleton's skinned prim entities (they alias the skeleton's group vertex buffers); the
-// skeleton is a child of the glTF root entity so destroying the root cascades to it (freezing
-// the meshes in their last pose)
+// one per skinned character (glTF skin); the Skin manager owns the GPU resources and discovers
+// skeletons by viewing this component. joints are in the skin's joints[] order; placement is the
+// representative node; meshes[] = this skeleton's skinned prims (they alias the group vertex
+// buffers); a child of the glTF root so destroying the root cascades (freezing the last pose)
 struct Skeleton {
     std::string name;
     std::vector<entt::entity> joints;
@@ -203,16 +192,15 @@ struct Skeleton {
     std::vector<entt::entity> meshes;
 };
 
-// shared texture entity: one per asset path; materials link by entity ref, so users share one
-// GPU copy. The renderer uploads the file lazily on first sight (a file-backed path); glTF
-// embedded textures are uploaded eagerly at import (their bytes exist only then)
+// shared texture entity: one per asset path; materials link by ref (shared GPU copy). File
+// paths upload lazily on first sight; glTF embedded textures eagerly (their bytes exist only at
+// import)
 struct Texture {
     std::string path;
 };
 
-// owned by material entities only; meshes point at it via MaterialRef, so many meshes can share
-// one material (and editing it updates all users). The map slots mirror glTF PBR textures;
-// factors multiply the sampled texel (a null slot falls back to a neutral 1x1 in the shader)
+// owned by material entities; meshes point at it via MaterialRef (many meshes share one). The
+// map slots mirror glTF PBR; factors multiply the sampled texel (null slot = neutral 1x1)
 struct Material {
     V3 baseColor{1.0f, 1.0f, 1.0f};
     float metallic = 0.0f;
@@ -236,6 +224,28 @@ struct MaterialRef {
 struct Name {
     std::string id;
 };
+
+// first entity with a matching Name (entt::null if none)
+inline entt::entity findNamedEntity(const entt::registry& reg, const std::string& name) {
+    for (auto [e, n] : reg.view<Name>().each())
+        if (n.id == name)
+            return e;
+    return entt::null;
+}
+
+// compose an entity's Transform through its Parent chain (world space)
+inline Transform worldTransform(const entt::registry& reg, entt::entity e) {
+    Transform acc{};
+    bool have = false;
+    while (e != entt::null) {
+        const Transform& t = reg.get<Transform>(e);
+        acc = have ? transformCompose(t, acc) : t;
+        have = true;
+        const auto* p = reg.try_get<Parent>(e);
+        e = p ? p->e : entt::null;
+    }
+    return acc;
+}
 
 // ---- UI: windows and widgets are entities. A widget is a child (Parent) of its window or
 // section, drawn inside it by drawUi in spawn order. UI entities carry no Transform.

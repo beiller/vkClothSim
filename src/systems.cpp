@@ -25,14 +25,6 @@ entt::entity spawnMaterial(Engine& w, const V3& baseColor, float metallic, float
     return e;
 }
 
-entt::entity findNamedEntity(const Engine& w, const std::string& name) {
-    entt::entity out = entt::null;
-    w.reg.view<Name>().each([&](entt::entity e, const Name& n) {
-        if (n.id == name)
-            out = e;
-    });
-    return out;
-}
 
 entt::entity textureBytes(Engine& w, const std::string& id, const uint8_t* rgba, int wpx, int hpx) {
     for (auto [e, tx] : w.reg.view<Texture>().each())
@@ -59,19 +51,6 @@ static V3 walkPos(const Engine& w) {
     return w.vrRoot != entt::null ? w.reg.get<Transform>(w.vrRoot).pos : V3{0, 0, 0};
 }
 
-Transform worldTransform(entt::registry& reg, entt::entity e) {
-    Transform acc{};
-    bool have = false;
-    while (e != entt::null) {
-        const Transform& t = reg.get<Transform>(e);
-        acc = have ? transformCompose(t, acc) : t;
-        have = true;
-        const auto* p = reg.try_get<Parent>(e);
-        e = p ? p->e : entt::null;
-    }
-    return acc;
-}
-
 Mat4 cameraViewProj(Engine& w, entt::entity cam, float aspect) {
     const Transform wt = worldTransform(w.reg, cam);
     const Camera& c = w.reg.get<Camera>(cam);
@@ -90,9 +69,9 @@ void stepXr(Engine& w, const XrFrame& fr) {
         return;
     Camera& c = w.reg.get<Camera>(cam);
     if (havePose) {
-        // the VR head camera tracks the XR pose. It's a child of the VR root, so its LOCAL Transform
-        // is the reported head pose and its world = walkPos + head. The per-eye views are data on the
-        // camera (not entities), so they get walkPos added directly.
+        // the VR head camera tracks the XR pose: a child of the VR root, so its LOCAL Transform is
+        // the head pose and its world = walkPos + head; the per-eye views (camera data, not
+        // entities) get walkPos added directly
         const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
         Transform& t = w.reg.get<Transform>(cam);
         t.pos = mid;
@@ -127,11 +106,9 @@ static V3 restPose(int hand) {
 }
 
 entt::entity spawnVrRoot(Engine& w) {
-    // head-independent locomotion anchor. The VR head camera and the grips are parented under it;
-    // its world Transform is walkPos, a translation driven only by stick locomotion (identity
-    // rotation), never the head. So head/grip world = walkPos + pose, and head motion can't leak
-    // into the grips (no drift). The VR head camera is a camera like the scene's fly camera, but
-    // C++-driven (XR pose, local to the root) instead of script-driven.
+    // head-independent locomotion anchor: its world Transform is walkPos, a translation driven
+    // only by stick locomotion, so head/grip world = walkPos + pose (head motion can't leak into
+    // the grips); the vr cam is C++-driven (XR pose) instead of script-driven
     entt::entity root = w.reg.create();
     w.reg.emplace<Transform>(root, V3{0, 0, 0}, V4{0, 0, 0, 1});
     w.reg.emplace<Name>(root, "vr root");
@@ -146,12 +123,9 @@ entt::entity spawnVrRoot(Engine& w) {
 }
 
 void spawnControllers(Engine& w) {
-    // grips are children of the VR root; their LOCAL Transform is set to the raw OpenXR grip each
-    // frame, so world = walkPos + grip (head-independent -> no drift).
-    // grip visual from the std geometry library (the engine has no mesh generators of its own).
-    // the engine gives hands no physics body: a scene script may add one (grab anchor, soft-sim
-    // collision) with a KinematicBody component + collider child and drive its Transform - the
-    // rigid step pulls it
+    // grips are children of the VR root (LOCAL = the raw OpenXR grip pose, set each frame, so
+    // world = walkPos + grip). Grip visual from the std geometry library; the engine gives hands
+    // no physics body - a scene script may add one (a KinematicBody + colliders)
     std::string err;
     const entt::entity geom = w.script.callMeshGen("capsule", {{"halfLen", 0.06}, {"radius", 0.03}}, err);
     if (geom == entt::null) {
@@ -249,9 +223,8 @@ void stepRigid(Engine& w) {
     // new body/joint components project first, so a script that created them this step sees them
     // bound before the step integrates
     w.rigid.project(w.reg);
-    // kinematic bodies are driven from the ECS (the XR step or a scene script writes the owning
-    // entity's Transform); pull each one's world pose into Jolt before the step so this step
-    // integrates against the pose that was just written
+    // kinematic bodies are driven from the ECS: pull each one's world pose into Jolt before the
+    // step so this step integrates against the pose that was just written
     for (const auto e : w.reg.view<KinematicBody>()) {
         const Transform wt = worldTransform(w.reg, e);
         w.rigid.setKinematicPose(e, wt.pos, wt.quat);
@@ -326,27 +299,8 @@ void resolveWorldTransforms(Engine& w) {
     }
 }
 
-void syncColliders(Engine& w) {
-    CapsuleGPU* caps = w.gpuSim.soft.caps();
-    int n = 0;
-    for (auto [e, col] : w.reg.view<Collider>().each()) {
-        auto* cs = w.reg.try_get<CapsuleShape>(col.shape); // box shapes are CPU-sim only
-        if (!cs || n >= Soft::kMaxCapsules)
-            continue;
-        // world pose: its own (a local offset), or, with no Transform, the parent body's origin
-        const WorldTransform* wt = w.reg.try_get<WorldTransform>(e);
-        if (!wt) {
-            if (const auto* p = w.reg.try_get<Parent>(e))
-                wt = w.reg.try_get<WorldTransform>(p->e);
-            if (!wt)
-                continue;
-        }
-        fillCapsule(caps[n++], wt->pos, wt->quat, cs->halfLen, cs->radius);
-    }
-    w.gpuSim.soft.uploadCapsules(n);
-}
-
 void stepSoft(Engine& w, VkCommandBuffer cmd) {
+    w.gpuSim.soft.syncCapsules(w); // the capsule list tracks the bodies' world poses this step
     // new SoftBodyData components project first (geometry upload + sim buffers), so a body
     // created this step simulates on this step
     w.gpuSim.soft.project(w);

@@ -2,7 +2,6 @@
 
 #include "engine.hpp"
 #include "softbody_spv.hpp"
-#include "systems.hpp"
 #include "vk/vkutil.hpp"
 #include <cmath>
 #include <cstdio>
@@ -48,6 +47,32 @@ void Soft::init(VkDevice dev, VkPhysicalDevice pdev) {
 
 void Soft::setFloor(float y) {
     m_floorY = y;
+}
+
+void Soft::syncCapsules(Engine& w) {
+    CapsuleGPU* caps = m_caps.data();
+    int n = 0;
+    const auto push = [&](entt::entity e, const std::vector<entt::entity>& cols) {
+        const auto* wt = w.reg.try_get<WorldTransform>(e);
+        if (!wt)
+            return;
+        for (entt::entity c : cols) {
+            const auto* col = w.reg.try_get<Collider>(c);
+            auto* cs = col ? w.reg.try_get<CapsuleShape>(col->shape) : nullptr; // boxes are CPU-sim only
+            if (!cs || n >= kMaxCapsules)
+                continue;
+            // no collider Transform = at the body's origin
+            Transform t = *wt;
+            if (const auto* lt = w.reg.try_get<Transform>(c))
+                t = transformCompose(t, *lt);
+            fillCapsule(caps[n++], t.pos, t.quat, cs->halfLen, cs->radius);
+        }
+    };
+    for (auto [e, rb] : w.reg.view<RigidBody>().each())
+        push(e, rb.colliders);
+    for (auto [e, kb] : w.reg.view<KinematicBody>().each())
+        push(e, kb.colliders);
+    uploadCapsules(n);
 }
 
 // first sight: a SoftBodyData component without a GPU body. The vertex data comes from the

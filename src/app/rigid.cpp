@@ -72,15 +72,16 @@ JPH::ShapeRefC RigidScene::buildShape(const std::vector<ColliderDesc>& colliders
     return applyBodyScale(compound.Create().Get(), scale);
 }
 
-// the body's collider children: a shared shape entity ref + the local Transform in the body's
-// frame (colliders are children of the body entity)
-std::vector<ColliderDesc> RigidScene::colliderDescs(const entt::registry& reg, entt::entity e) {
+// the body's referenced colliders: a shared shape entity ref + the local Transform in the
+// body's frame
+std::vector<ColliderDesc> RigidScene::colliderDescs(const entt::registry& reg,
+                                                    const std::vector<entt::entity>& cols) {
     std::vector<ColliderDesc> out;
-    for (auto [c, col] : reg.view<Collider>().each()) {
-        const auto* p = reg.try_get<Parent>(c);
-        if (!p || p->e != e)
+    for (entt::entity c : cols) {
+        const auto* col = reg.try_get<Collider>(c);
+        if (!col)
             continue;
-        const JPH::Shape* s = shape(reg, col.shape);
+        const JPH::Shape* s = shape(reg, col->shape);
         if (!s)
             continue;
         // no Transform = at the body's origin, unrotated
@@ -247,15 +248,15 @@ void RigidScene::project(const entt::registry& reg) {
         const auto* t = reg.try_get<Transform>(e); // a body needs a pose; retry once it appears
         if (!t)
             continue;
-        buildBody(e, colliderDescs(reg, e), rb, *t);
+        buildBody(e, colliderDescs(reg, rb.colliders), rb, *t);
     }
-    for (entt::entity e : reg.view<KinematicBody>()) {
+    for (auto [e, kb] : reg.view<KinematicBody>().each()) {
         if (m_body.count(e))
             continue;
         const auto* t = reg.try_get<Transform>(e);
         if (!t)
             continue;
-        buildKinematic(e, colliderDescs(reg, e), *t);
+        buildKinematic(e, colliderDescs(reg, kb.colliders), *t);
     }
     for (auto [e, j] : reg.view<Joint>().each()) {
         if (m_jointIdx.count(e))

@@ -24,6 +24,9 @@ public:
     void project(Engine& w);
     // scene ground: the soft-body floor plane (top face of the ground box); -inf = no floor
     void setFloor(float y);
+    // upload the live capsule list: every body's referenced colliders composed to world
+    // (body world ∘ collider local); call after resolveWorldTransforms, before record
+    void syncCapsules(Engine& w);
     // live capsule list: the caller fills the staging array (any order, capped) then uploads;
     // identity-free, so destroyed capsules just fall out next step
     static constexpr int kMaxCapsules = 16384;

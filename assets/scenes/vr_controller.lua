@@ -114,10 +114,9 @@ local function ensureAnchor()
     handAnchor = scene.entity("hand anchor")
     scene.replace(handAnchor, "Transform", {})
     scene.add_child(rootH, handAnchor)
-    scene.replace(handAnchor, "KinematicBody", {})
     local aCol = scene.entity()
     scene.replace(aCol, "Collider", { shape = anchorShape })
-    scene.add_child(handAnchor, aCol)
+    scene.replace(handAnchor, "KinematicBody", { colliders = { aCol } })
 end
 
 -- per step: drive the anchor from the right hand's aim pose (inactive: it stays put)

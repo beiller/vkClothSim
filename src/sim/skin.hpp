@@ -25,15 +25,11 @@ struct SkelGroupDesc {
     std::vector<float> initWeights; // nTargets: the file's static (frame-0) morph strengths; the startup + reset state
 };
 
-// GPU dual-quaternion skinning + shape keys. The ECS `Skeleton` component (on a skeleton
-// entity, a child of the glTF root) is the source of truth for which skeletons exist and how
-// they bind to the scene; this manager owns the Vulkan resources (one compute pipeline; per-
-// skeleton joint-DQ buffers; per-group vertex buffers + morph state) keyed by id, and step()
-// discovers skeletons by viewing the `Skeleton` component, so any number of skeletons are
-// supported. Groups and skeletons are registered at load time (before build); step() records
-// one dispatch per group on the sim command buffer, before the soft sim, at the fixed sim rate.
-// A skeleton death freezes its meshes in the last pose: the group buffers stay (the renderer
-// still draws them) and are freed, one frame later, when the last aliasing mesh dies.
+// GPU dual-quaternion skinning + shape keys: the `Skeleton` component (a child of the glTF
+// root) is the source of truth; this manager owns the Vulkan resources (joint-DQ + per-group
+// vertex buffers, morph state) and step() dispatches one pass per group before stepSoft.
+// A skeleton death freezes its meshes in the last pose; the group buffers are freed one frame
+// after the last aliasing mesh dies
 class Skin {
 public:
     static constexpr int kMaxActiveMorphs = 256; // a Daz character's full stack is 190-222 targets, all nonzero
@@ -55,8 +51,6 @@ public:
     void step(const entt::registry& reg, VkCommandBuffer cmd);
     // morph weights live per group; a name applies to every group of the skeleton that has it
     void setMorph(const entt::registry& reg, entt::entity skel, const std::string& name, float weight);
-    float getMorph(const entt::registry& reg, entt::entity skel, const std::string& name);
-    void resetMorphs(const entt::registry& reg, entt::entity skel);
     void destroySkeleton(entt::entity e);
     // register the destroy observers: a Skeleton teardown freezes the skeleton (its meshes keep
     // drawing the last pose); a mesh (Renderable) teardown unlinks it and may free the group

@@ -28,8 +28,7 @@ function M._on_ready(self)
     scene.replace(gShape, "BoxShape", { half = { 40, 1, 40 } })
     local gCol = scene.entity()
     scene.replace(gCol, "Collider", { shape = gShape })
-    scene.add_child(ground, gCol)
-    scene.replace(ground, "RigidBody", { isStatic = 1 })
+    scene.replace(ground, "RigidBody", { isStatic = 1, colliders = { gCol } })
     soft.floor(0.0001)
 
     -- 50 scattered dynamic capsules, all sharing one shape, one material, one geometry
@@ -37,6 +36,8 @@ function M._on_ready(self)
     local cap_r = 0.5 * world_scale
     local capShape = scene.entity()
     scene.replace(capShape, "CapsuleShape", { halfLen = cap_length, radius = cap_r })
+    local capCol = scene.entity()
+    scene.replace(capCol, "Collider", { shape = capShape })
     local capGeom = geom(mesh.capsule({ halfLen = cap_length, radius = cap_r }))
     local matCapsule = scene.find("mat_capsule")
     math.randomseed(12345)
@@ -50,10 +51,7 @@ function M._on_ready(self)
         scene.replace(e, "Transform", { pos = {px, py, pz}, quat = q })
         scene.replace(e, "Renderable", { geom = capGeom })
         scene.replace(e, "MaterialRef", { material = matCapsule })
-        local col = scene.entity()
-        scene.replace(col, "Collider", { shape = capShape })
-        scene.add_child(e, col)
-        scene.replace(e, "RigidBody", {})
+        scene.replace(e, "RigidBody", { colliders = { capCol } })
     end
 
     -- soft bodies; the entity's Transform is the pinned (spawn) pose, the cloth is released after PIN_SECS
@@ -75,6 +73,19 @@ function M._on_ready(self)
     scene.replace(ball, "MaterialRef", { material = scene.find("mat_ball") })
     scene.replace(ball, "SoftBodyData", { cons = mesh.ballCons(ballT), ["params.mass"] = 2.0 })
 
+    -- SimParams{} / kDefaultSteps defaults, as the JSON "reset-params" button expects
+    scene.button("reset-params", function()
+        for _, h in ipairs({ clothH, ball }) do
+            scene.set(h, "SoftBodyData.params.mass", 1.0)
+            scene.set(h, "SoftBodyData.params.damping", 0.96)
+            scene.set(h, "SoftBodyData.params.passes", 8)
+            scene.set(h, "SoftBodyData.params.stiffness", 1.0)
+            scene.set(h, "SoftBodyData.params.tension", 1.0)
+            scene.set(h, "SoftBodyData.params.friction", 2.0)
+            scene.set(h, "SoftBodyData.steps", 3)
+        end
+    end)
+
     -- glft tests
     -- local m = scene.entity("model")
     -- scene.replace(m, "Transform", { pos = { 0, 3, 0 } })
@@ -91,7 +102,7 @@ function M._physics(self, dt)
     end
     pinTime = pinTime + dt
     if pinTime >= PIN_SECS then
-        scene.set(clothH, "pinned", 0)
+        scene.set(clothH, "SoftBodyData.pinned", 0)
         released = true
     end
 end

@@ -19,20 +19,12 @@ int main(int argc, char** argv) {
     if (!app.initInstance(900, 900, "3dsim"))
         return 1;
 
-    Engine w; // CODE SMELL - short variable name "w" reflects the old name of "world"
-    w.app = &app;
-    bool wantHdri = false, wantShadow = false, wantHier = false, wantNoVr = false;
+    Engine engine;
+    engine.app = &app;
+    bool wantNoVr = false;
     std::string scenePath;
-    //CODE SMELL - these are legacy launch options (for scenes)
-    // we should default to "demo" scene, and allow optional specification of a scene
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--hdri") == 0)
-            wantHdri = true;
-        else if (std::strcmp(argv[i], "--shadow") == 0)
-            wantShadow = true;
-        else if (std::strcmp(argv[i], "--hier") == 0)
-            wantHier = true;
-        else if (std::strcmp(argv[i], "--no-vr") == 0)
+        if (std::strcmp(argv[i], "--no-vr") == 0)
             wantNoVr = true;
         else if (std::strcmp(argv[i], "--scene") == 0)
             scenePath = argv[++i];
@@ -40,40 +32,32 @@ int main(int argc, char** argv) {
     // VR: auto-detect the OpenXR runtime (creates the Vulkan device through it, so this must
     // run before the scene); no runtime/HMD -> plain window mode. --no-vr skips detection.
     if (!wantNoVr) {
-        w.xr = std::make_unique<Xr>();
-        if (!w.xr->createDevice(app))
-            w.xr.reset();
+        engine.xr = std::make_unique<Xr>();
+        if (!engine.xr->createDevice(app))
+            engine.xr.reset();
     }
-    app.initDevice(w.xr ? w.xr->device() : app.makeDevice());
-    if (scenePath.empty()) {
-        if (wantHdri)
-            scenePath = "assets/scenes/hdri.json";
-        else if (wantShadow)
-            scenePath = "assets/scenes/shadow.json";
-        else if (wantHier)
-            scenePath = "assets/scenes/tree.json";
-        else
-            scenePath = "assets/scenes/demo.json";
-    }
-    createScene(w, scenePath);
-    spawnFpsHud(w);
-    if (w.xr) {
-        if (w.xr->init(app)) {
-            std::vector<std::vector<VkImage>> imgs(w.xr->eyeCount());
+    app.initDevice(engine.xr ? engine.xr->device() : app.makeDevice());
+    if (scenePath.empty())
+        scenePath = "assets/scenes/demo.json";
+    createScene(engine, scenePath);
+    spawnFpsHud(engine);
+    if (engine.xr) {
+        if (engine.xr->init(app)) {
+            std::vector<std::vector<VkImage>> imgs(engine.xr->eyeCount());
             VkExtent2D exts[2];
             for (int i = 0; i < 2; ++i) {
-                exts[i] = w.xr->extent(i < w.xr->eyeCount() ? i : 0);
-                if (i < w.xr->eyeCount())
-                    imgs[i] = w.xr->images(i);
+                exts[i] = engine.xr->extent(i < engine.xr->eyeCount() ? i : 0);
+                if (i < engine.xr->eyeCount())
+                    imgs[i] = engine.xr->images(i);
             }
-            w.renderer.initXrTarget(app, w.xr->format(), w.xr->eyeCount(), imgs, exts);
-            spawnVrRoot(w);
-            spawnControllers(w);
+            engine.renderer.initXrTarget(app, engine.xr->format(), engine.xr->eyeCount(), imgs, exts);
+            spawnVrRoot(engine);
+            spawnControllers(engine);
         } else
             std::printf(
                 "3dsim: no OpenXR session, using virtual head (LMB drag = look, WASD/QE = move, shift = fast)\n");
     }
-    spawnInputEntities(w);
+    spawnInputEntities(engine);
 
     initImGui(app);
 
@@ -94,36 +78,34 @@ int main(int argc, char** argv) {
         ++fpsFrames;
         if (fpsAccum >= 0.5f) {
             fps = (float)fpsFrames / fpsAccum;
-            w.phase = {msPoll / fpsFrames, msSim / fpsFrames, msRender / fpsFrames, msXrEnd / fpsFrames,
+            engine.phase = {msPoll / fpsFrames, msSim / fpsFrames, msRender / fpsFrames, msXrEnd / fpsFrames,
                        msIdle / fpsFrames};
             msPoll = msSim = msRender = msXrEnd = msIdle = 0.0f;
             fpsAccum = 0.0f;
             fpsFrames = 0;
         }
-        w.fps = fps;
+        engine.fps = fps;
 
         app.pollEvents();
         XrFrame fr; // this frame's headset state (head, eyes, controllers); frame-local, not world state
-        if (w.xr)
-            fr = w.xr->poll();
+        if (engine.xr)
+            fr = engine.xr->poll();
         // frame start, previous frame's GPU work done (sync present / XR waitFrame): release
         // the resources queued by the last frame's entity destroys
-        w.renderer.flushFrees();
-        w.gpuSim.soft.flushFrees();
-        w.gpuSim.skin.flushFrees();
+        engine.renderer.flushFrees();
+        engine.gpuSim.soft.flushFrees();
+        engine.gpuSim.skin.flushFrees();
         const auto tPoll = std::chrono::steady_clock::now();
-        stepMouse(w);
-        stepKeyboard(w);
-        // activate any script entities spawned since last frame (fixpoint), then run _animate:
-        // locomotion (walk) moves the VR root BEFORE stepXr bakes the root's walkPos into the
-        // camera views, so the camera and the scene share one root pose within the frame. If the
-        // camera lagged a walk step, the perceived hand position (grip-eye + this frame's walk
-        // increment) would jitter by that increment while the stick is held
-        w.script.activateScripts();
-        w.script.animateAll(dt);
-        if (w.xr) {
-            stepXr(w, fr);
-            stepControllers(w, fr);
+        stepMouse(engine);
+        stepKeyboard(engine);
+        // activate scripts to fixpoint, then _animate: walk locomotion moves the VR root
+        // BEFORE stepXr bakes walkPos into the camera views, so camera and scene share one root
+        // pose this frame (a lagged walk step would jitter the perceived hand position)
+        engine.script.activateScripts();
+        engine.script.animateAll(dt);
+        if (engine.xr) {
+            stepXr(engine, fr);
+            stepControllers(engine, fr);
         }
 
         // sim runs at a fixed kFrameDt rate, decoupled from the render rate; animation and
@@ -132,54 +114,53 @@ int main(int argc, char** argv) {
         if (simAccum > 0.1f)
             simAccum = 0.1f;
         while (simAccum >= kFrameDt) {
-            w.script.physicsAll(kFrameDt);
-            stepRigid(w);
-            resolveWorldTransforms(w);
-            syncColliders(w);
+            engine.script.physicsAll(kFrameDt);
+            stepRigid(engine);
+            resolveWorldTransforms(engine);
             VkCommandBuffer simCmd = app.beginCommands();
-            w.gpuSim.skin.step(w.reg, simCmd); // GPU skin before the cloth sim (cloth-on-skeleton hook)
-            stepSoft(w, simCmd);
+            engine.gpuSim.skin.step(engine.reg, simCmd); // GPU skin before the cloth sim (cloth-on-skeleton hook)
+            stepSoft(engine, simCmd);
             app.submit(simCmd);
             simAccum -= kFrameDt;
         }
         // 0-step frames still need fresh world transforms for the renderer (camera, VR head,
         // animation)
-        resolveWorldTransforms(w);
+        resolveWorldTransforms(engine);
         const auto tSim = std::chrono::steady_clock::now();
 
-        const entt::entity cam = findActiveCamera(w); // current camera (swapped by display mode)
+        const entt::entity cam = findActiveCamera(engine); // current camera (swapped by display mode)
         if (cam != entt::null)
-            w.renderer.setViewProj(cameraViewProj(w, cam, (float)app.extent().width / (float)app.extent().height),
-                                   worldTransform(w.reg, cam).pos);
+            engine.renderer.setViewProj(cameraViewProj(engine, cam, (float)app.extent().width / (float)app.extent().height),
+                                   worldTransform(engine.reg, cam).pos);
         imguiNewFrame();
-        drawUi(w);
-        if (w.showDemo) // ImGui's own demo window, not ours to decompose
-            ImGui::ShowDemoWindow(&w.showDemo);
+        drawUi(engine);
+        if (engine.showDemo) // ImGui's own demo window, not ours to decompose
+            ImGui::ShowDemoWindow(&engine.showDemo);
         ImGui::Render();
 
         const uint32_t idx = app.acquireNextImage();
         VkCommandBuffer cmd = app.beginCommands();
-        if (w.xr) {
+        if (engine.xr) {
             uint32_t imgIdx[2] = {0, 0};
             if (fr.shouldRender)
-                for (int i = 0; i < w.xr->eyeCount(); ++i) {
-                    w.xr->acquireImage(i);
-                    imgIdx[i] = (uint32_t)w.xr->imageIndex(i);
+                for (int i = 0; i < engine.xr->eyeCount(); ++i) {
+                    engine.xr->acquireImage(i);
+                    imgIdx[i] = (uint32_t)engine.xr->imageIndex(i);
                 }
-            w.renderer.drawVr(cmd, app, idx, w.reg, w.render, ImGui::GetDrawData(), cam,
-                              fr.shouldRender ? imgIdx : nullptr, fr.shouldRender ? w.xr->eyeCount() : 0);
+            engine.renderer.drawVr(cmd, app, idx, engine.reg, engine.render, ImGui::GetDrawData(), cam,
+                              fr.shouldRender ? imgIdx : nullptr, fr.shouldRender ? engine.xr->eyeCount() : 0);
             if (fr.shouldRender)
-                for (int i = 0; i < w.xr->eyeCount(); ++i)
-                    w.xr->releaseImage(i);
+                for (int i = 0; i < engine.xr->eyeCount(); ++i)
+                    engine.xr->releaseImage(i);
         } else {
-            draw(w, cmd, idx, ImGui::GetDrawData());
+            draw(engine, cmd, idx, ImGui::GetDrawData());
         }
         const auto tRender = std::chrono::steady_clock::now();
-        if (w.xr)
-            w.xr->endFrame(fr.shouldRender);
+        if (engine.xr)
+            engine.xr->endFrame(fr.shouldRender);
         const auto tXrEnd = std::chrono::steady_clock::now();
         app.present(idx,
-                    !w.xr); // window: sync present (vsync wait shows in 'idle'); VR: compositor paces via waitFrame
+                    !engine.xr); // window: sync present (vsync wait shows in 'idle'); VR: compositor paces via waitFrame
         msPoll += msBetween(nowFrame, tPoll);
         msSim += msBetween(tPoll, tSim);
         msRender += msBetween(tSim, tRender);
@@ -188,11 +169,11 @@ int main(int argc, char** argv) {
     }
 
     shutdownImGui();
-    w.gpuSim.shutdown(); // frees the skinned groups' pos/nrm the renderer only aliases
-    w.script.shutdown();
-    w.renderer.shutdown();
-    if (w.xr)
-        w.xr->shutdown();
+    engine.gpuSim.shutdown(); // frees the skinned groups' pos/nrm the renderer only aliases
+    engine.script.shutdown();
+    engine.renderer.shutdown();
+    if (engine.xr)
+        engine.xr->shutdown();
     app.shutdown();
     return 0;
 }

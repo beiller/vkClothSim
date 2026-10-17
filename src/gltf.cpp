@@ -548,10 +548,9 @@ std::vector<std::string> targetNames(const tg3_mesh& gm) {
     return out;
 }
 
-// phase B for skinned meshes (run after all buildNode calls, so every joint entity exists).
-// Pending prims are grouped by (skin, POSITION accessor): a group shares its rest data,
-// joints/weights and morph deltas - never per primitive, that's the 4.1 GB trap. One
-// skeleton per skin (parented under the load root), one group per distinct POSITION accessor.
+// phase B for skinned meshes (run after all buildNode calls). Pending prims are grouped by
+// (skin, POSITION accessor): the group shares rest data, joints/weights and morph deltas -
+// never per primitive (that's the 4.1 GB trap). One skeleton per skin under the load root
 void finishSkinned(GltfCtx& c) {
     if (c.pending.empty())
         return;
@@ -567,8 +566,8 @@ void finishSkinned(GltfCtx& c) {
         const tg3_primitive& p0 = gm0.primitives[prims[0].primIdx];
 
         // character (once per skin): joint entities + inverse bind matrices + one
-        // representative mesh node as the shared placement. The ECS `Skeleton` component (on a
-        // dedicated character entity) is the source of truth the Skin compute filters on.
+        // representative node as placement; the `Skeleton` component (on the character entity)
+        // is the source of truth the Skin compute filters on
         if (c.skinChars[skin] == entt::null) {
             const tg3_skin& sk = c.m->skins[skin];
             const std::string skelName = s(sk.name);
@@ -742,8 +741,7 @@ void finishSkinned(GltfCtx& c) {
             const std::string cname = mName.empty() ? "prim" : (gm.primitives_count > 1 ? mName + "_" + std::to_string(pp.primIdx) : mName);
             c.w.reg.emplace<Name>(child, cname);
             // a skinned prim IS its geometry: the renderer aliases the group's pos/nrm buffers
-            // into this prim's slot (its own uv/index buffers), and the mesh entity doubles as
-            // the geometry key
+            // into this slot (its own uv/index buffers); the mesh entity doubles as the geometry key
             c.w.renderer.addSharedMesh(child, pm, rw.pos.buffer, rw.pos.memory, rw.nrm.buffer, rw.nrm.memory, (uint32_t)nV);
             addMesh(c.w, child, child, materialFor(c, p.material), c.nodeEntities[pp.nodeIdx]);
             c.w.gpuSim.skin.linkMesh(child, gid);

@@ -53,7 +53,8 @@ public:
 
 private:
     // the body's collider children (shape entity ref + local Transform)
-    std::vector<ColliderDesc> colliderDescs(const entt::registry& reg, entt::entity e);
+    std::vector<ColliderDesc> colliderDescs(const entt::registry& reg,
+                                            const std::vector<entt::entity>& cols);
     // a single identity-local collider -> the shared shape directly; anything else a compound;
     // a non-unit scale wraps the result in a Jolt ScaledShape
     JPH::ShapeRefC buildShape(const std::vector<ColliderDesc>& colliders, const V3& scale);

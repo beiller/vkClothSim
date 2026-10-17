@@ -9,9 +9,21 @@
 #include <utility>
 #include <vector>
 
-// Ref = entity reference, Str = a string, Quat/FloatArr/UIntArr have no UI widget (vocabulary
-// + text only); the editor draws the kinds it has widgets for and skips the rest
-enum class FieldKind { SliderF, SliderI, Checkbox, Color, DragV3, Ref, Str, Quat, FloatArr, UIntArr };
+// Ref = entity reference, Str = a string, Quat/FloatArr/UIntArr/EntArr have no UI widget
+// (vocabulary + text only); the editor draws the kinds it has widgets for and skips the rest
+enum class FieldKind {
+    SliderF,
+    SliderI,
+    Checkbox,
+    Color,
+    DragV3,
+    Ref,
+    Str,
+    Quat,
+    FloatArr,
+    UIntArr,
+    EntArr // an array of entity references
+};
 
 struct FieldDesc {
     const char* name;
@@ -91,9 +103,11 @@ static const FieldDesc kRigidBody[] = {
     {"restitution", OFF(RigidBody, restitution), FieldKind::SliderF, 0.0f, 1.0f},
     {"damping", OFF(RigidBody, damping), FieldKind::SliderF, 0.0f, 1.0f},
     {"isStatic", OFF(RigidBody, isStatic), FieldKind::Checkbox},
+    {"colliders", OFF(RigidBody, colliders), FieldKind::EntArr},
 };
-// KinematicBody is a marker (no fields); in the table so the vocabulary can create it
-static const std::span<const FieldDesc> kKinematicBody = {};
+static const FieldDesc kKinematicBody[] = {
+    {"colliders", OFF(KinematicBody, colliders), FieldKind::EntArr},
+};
 static const FieldDesc kCapsuleShape[] = {
     {"halfLen", OFF(CapsuleShape, halfLen), FieldKind::SliderF, 0.0f, 10.0f},
     {"radius", OFF(CapsuleShape, radius), FieldKind::SliderF, 0.0f, 5.0f},

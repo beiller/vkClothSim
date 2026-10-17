@@ -21,12 +21,14 @@ bool resolveEntityField(const Engine& w, entt::entity ent, const std::string& fi
         return false;
     }
 
-    // optional qualifier: Component.field
+    // optional qualifier: Component.field (strip it; the lookup is on the bare field name)
     const TypeDesc* qual = nullptr;
-    if (const auto d2 = field.find('.'); d2 != std::string::npos)
+    size_t dot = field.find('.');
+    if (dot != std::string::npos)
         for (auto& [t, b] : comps)
-            if (field.substr(0, d2) == t->name)
+            if (field.substr(0, dot) == t->name)
                 qual = t;
+    const std::string fn = qual ? field.substr(dot + 1) : field;
 
     const FieldDesc* match = nullptr;
     void* matchBase = nullptr;
@@ -34,18 +36,19 @@ bool resolveEntityField(const Engine& w, entt::entity ent, const std::string& fi
     for (auto& [t, b] : comps) {
         if (qual && t != qual)
             continue;
-        if (const FieldDesc* f = findField(t, field)) {
+        if (const FieldDesc* f = findField(t, fn)) {
             match = f;
             matchBase = (char*)b + f->offset;
             ++matches;
         }
     }
     // field not on the entity: follow its MaterialRef to the shared material (indirection), so
-    // "ball.roughness" addresses the material many meshes may share
-    if (matches == 0)
+    // "ball.roughness" addresses the material many meshes may share (an explicit qualifier does
+    // not fall through)
+    if (matches == 0 && !qual)
         if (const auto* ref = w.reg.try_get<MaterialRef>(ent))
             for (auto& [t, b] : refl::entityFields(w.reg, ref->mat)) {
-                if (const FieldDesc* f = findField(t, field)) {
+                if (const FieldDesc* f = findField(t, fn)) {
                     match = f;
                     matchBase = (char*)b + f->offset;
                     ++matches;
@@ -147,6 +150,7 @@ static bool applySet(const UrlRef& r, const float* vals, int n, std::string& err
         return false;
     case FieldKind::FloatArr:
     case FieldKind::UIntArr:
+    case FieldKind::EntArr:
         err = "field is an array (set it with scene.replace)";
         return false;
     }
@@ -194,6 +198,7 @@ static bool applyGet(const UrlRef& r, float* vals, int maxN, int& n, std::string
     case FieldKind::Str:
     case FieldKind::FloatArr:
     case FieldKind::UIntArr:
+    case FieldKind::EntArr:
         err = "field is not a number (read it with scene.component)";
         return false;
     }

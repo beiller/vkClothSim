@@ -345,10 +345,9 @@ void Renderer::queueFreeInst(int inst) {
     m_freeInst.push_back(inst);
 }
 
-// the ECS is the source of truth for which entities exist: a component destroy (or a mass
-// destroy) pushes the free back. GPU resources wait for the next frame start (the previous
-// frame may still be reading them); the descriptor set itself is pool-owned and stays
-// allocated (its slot is never drawn or reused, so its stale bindings are harmless)
+// the ECS is the source of truth: a component destroy (or mass destroy) pushes the free back;
+// GPU resources wait for the next frame start (the previous frame may still read them). The
+// descriptor set is pool-owned and stays allocated (its stale bindings are never drawn)
 void Renderer::onRenderableDestroyed(entt::registry&, entt::entity e) {
     const auto it = m_entInst.find(e);
     if (it != m_entInst.end()) {

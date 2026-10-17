@@ -2,7 +2,6 @@
 
 #include "assets.hpp"
 #include "gltf.hpp"
-#include "systems.hpp"
 #include "url.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -160,7 +159,7 @@ bool optBool(lua_State* L, int tidx, const char* key) {
 entt::entity entityOrName(const Engine& w, lua_State* L, int idx) {
     if (lua_isnumber(L, idx))
         return readEnt(L, idx);
-    return findNamedEntity(w, luaL_checkstring(L, idx));
+    return findNamedEntity(w.reg, luaL_checkstring(L, idx));
 }
 
 // the skeleton entity at e or among its descendants (a gltf model spans many entities: joints,
@@ -220,17 +219,12 @@ void SceneScript::init(Engine& w) {
     reg("set_pose", lSetPose);           // set_pose(name | entity, {x,y,z}, {qx,qy,qz,qw})
     reg("get_pose", lGetPose);           // get_pose(name | entity) -> {{x,y,z}, {qx,qy,qz,qw}}
     reg("set_morph", lSetMorph);         // set_morph(name | entity, target, weight)
-    reg("get_morph", lGetMorph);         // get_morph(name | entity, target) -> weight
-    reg("reset_morphs", lResetMorphs);   // reset_morphs(name | entity)
     reg("joints", lJoints);              // joints(name | entity) -> {joint, ...} (skeleton joints)
     reg("time", lTime);                  // time() -> seconds since scene start
     reg("button", lButton);              // button(name, fn())
     reg("attach_script", lAttachScript); // attach_script(entity, file, params?)
     reg("destroy", lDestroy);            // destroy(entity)
     reg("add_child", lAddChild);         // add_child(parent, child)
-    reg("remove_child", lRemoveChild);   // remove_child(child)
-    reg("get_parent", lGetParent);       // get_parent(child) -> entity | nil
-    reg("get_children", lGetChildren);   // get_children(entity) -> {entity, ...}
     reg("vadd", lvAdd);
     reg("vsub", lvSub);
     reg("vscale", lvScale);
@@ -244,7 +238,6 @@ void SceneScript::init(Engine& w) {
     reg("qrot", lqRot);
     reg("qfromto", lqFromTo);
     reg("find", lFind);        // find(name) -> handle | nil
-    reg("is_vr", lIsVr);       // is_vr() -> bool
     reg("key_down", lKeyDown); // key_down(entity, code) -> bool
     lua_setglobal(L, "scene");
 
@@ -595,9 +588,8 @@ int SceneScript::lGltf(lua_State* L) {
     return 1;
 }
 
-// {field = number | boolean | string | {numbers}} at idx -> CompFields (struct-form
-// vocabulary); sets err. Integers double as entity handles, arrays hold vectors, quaternions,
-// or full FloatArr/UIntArr payloads
+// {field = number | boolean | string | {numbers}} at idx -> CompFields (the struct-form
+// vocabulary; integers double as entity handles, arrays hold vectors/quaternions/arr payloads)
 bool SceneScript::readCompFields(lua_State* L, int idx, CompFields& out, std::string& err) {
     lua_pushnil(L);
     while (lua_next(L, idx) != 0) {
@@ -854,27 +846,6 @@ int SceneScript::lSetMorph(lua_State* L) {
 }
 
 // get_morph(name|entity, target) -> weight (0 if the target is unknown)
-int SceneScript::lGetMorph(lua_State* L) {
-    auto* self = sSelf(L);
-    Engine& w = self->w();
-    const entt::entity skel = skelEntity(w, entityOrName(w, L, 1));
-    if (skel == entt::null)
-        return luaL_error(L, "scene.get_morph: not a skinned character");
-    lua_pushnumber(L, w.gpuSim.skin.getMorph(w.reg, skel, luaL_checkstring(L, 2)));
-    return 1;
-}
-
-// reset_morphs(name|entity): all morph weights of the character back to zero
-int SceneScript::lResetMorphs(lua_State* L) {
-    auto* self = sSelf(L);
-    Engine& w = self->w();
-    const entt::entity skel = skelEntity(w, entityOrName(w, L, 1));
-    if (skel == entt::null)
-        return luaL_error(L, "scene.reset_morphs: not a skinned character");
-    w.gpuSim.skin.resetMorphs(w.reg, skel);
-    return 0;
-}
-
 // joints(name | entity) -> {joint, ...}: the skinned character's joint entities, in the skin's joints[] order
 int SceneScript::lJoints(lua_State* L) {
     auto* self = sSelf(L);
@@ -994,40 +965,6 @@ int SceneScript::lAddChild(lua_State* L) {
     return 0;
 }
 
-int SceneScript::lRemoveChild(lua_State* L) {
-    auto* self = sSelf(L);
-    Engine& w = self->w();
-    const entt::entity child = readEnt(L, 1);
-    if (w.reg.valid(child))
-        w.reg.remove<Parent>(child);
-    return 0;
-}
-
-int SceneScript::lGetParent(lua_State* L) {
-    auto* self = sSelf(L);
-    const Engine& w = self->w();
-    const entt::entity child = readEnt(L, 1);
-    if (const auto* p = w.reg.try_get<Parent>(child)) {
-        pushEnt(L, p->e);
-        return 1;
-    }
-    return 0; // nil
-}
-
-int SceneScript::lGetChildren(lua_State* L) {
-    auto* self = sSelf(L);
-    const Engine& w = self->w();
-    const entt::entity e = readEnt(L, 1);
-    lua_newtable(L);
-    int i = 1;
-    for (auto [c, p] : w.reg.view<Parent>().each())
-        if (p.e == e) {
-            lua_pushinteger(L, (lua_Integer)entt::to_integral(c));
-            lua_seti(L, -2, i++);
-        }
-    return 1;
-}
-
 int SceneScript::lvAdd(lua_State* L) {
     pushV3(L, vAdd(readV3(L, 1), readV3(L, 2)));
     return 1;
@@ -1091,7 +1028,7 @@ int SceneScript::lqFromTo(lua_State* L) {
 int SceneScript::lFind(lua_State* L) {
     auto* self = sSelf(L);
     const std::string name = luaL_checkstring(L, 1);
-    const entt::entity e = findNamedEntity(self->w(), name);
+    const entt::entity e = findNamedEntity(self->w().reg, name);
     if (e == entt::null) {
         lua_pushnil(L);
         return 1;
@@ -1100,14 +1037,7 @@ int SceneScript::lFind(lua_State* L) {
     return 1;
 }
 
-int SceneScript::lIsVr(lua_State* L) {
-    // presenting == the VR head camera is the active one (stepXr sets its Camera.active each frame)
-    auto* self = sSelf(L);
-    const Engine& w = self->w();
-    const bool vr = w.vrCam != entt::null && w.reg.get<Camera>(w.vrCam).active;
-    lua_pushboolean(L, vr);
-    return 1;
-}
+
 
 int SceneScript::lKeyDown(lua_State* L) {
     auto* self = sSelf(L);

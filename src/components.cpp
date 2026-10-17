@@ -77,12 +77,7 @@ Cmp cmpFor(const std::string& name) {
     return Cmp::None;
 }
 
-// marker types (no storage data) are checked by presence, not by a component pointer
-bool isMarker(Cmp c) {
-    return c == Cmp::KinematicBody;
-}
-
-// pointer to the component's storage; null for marker types and absent components. The
+// pointer to the component's storage; null for absent components. The
 // registry may be const (the storage is only const behind the reference, so the result is
 // writable through a non-const view of the same registry).
 void* base(const entt::registry& reg, entt::entity e, Cmp c) {
@@ -102,7 +97,7 @@ void* base(const entt::registry& reg, entt::entity e, Cmp c) {
     case Cmp::RigidBody:
         return const_cast<RigidBody*>(reg.try_get<RigidBody>(e));
     case Cmp::KinematicBody:
-        return nullptr; // marker type: no storage to point at (see hasComp)
+        return const_cast<KinematicBody*>(reg.try_get<KinematicBody>(e));
     case Cmp::CapsuleShape:
         return const_cast<CapsuleShape*>(reg.try_get<CapsuleShape>(e));
     case Cmp::BoxShape:
@@ -126,8 +121,6 @@ void* base(const entt::registry& reg, entt::entity e, Cmp c) {
 }
 
 bool hasComp(const entt::registry& reg, entt::entity e, Cmp c) {
-    if (isMarker(c))
-        return reg.all_of<KinematicBody>(e);
     return base(reg, e, c) != nullptr;
 }
 
@@ -360,6 +353,18 @@ bool writeField(const TypeDesc* t, void* b, const CompField& f, std::string& err
             dstArr[i] = (uint32_t)src[i]; // exact for values < 2^24
         return true;
     }
+    case FieldKind::EntArr: {
+        if (!f.isArr) {
+            err = "field '" + f.name + "' expects an array of entity handles";
+            return false;
+        }
+        const std::vector<float> src = f.arr.empty() ? std::vector<float>(f.v, f.v + f.n) : f.arr;
+        auto& dstArr = *(std::vector<entt::entity>*)dst;
+        dstArr.resize(src.size());
+        for (size_t i = 0; i < src.size(); ++i)
+            dstArr[i] = (entt::entity)src[i];
+        return true;
+    }
     }
     return true;
 }
@@ -410,13 +415,23 @@ bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typ
     if (!hasComp(reg, e, c))
         emplaceDefault(reg, e, c);
     void* b = base(reg, e, c);
-    if (!b && !fields.empty()) {
-        err = "component '" + typeName + "' has no fields";
-        return false;
-    }
-    for (const auto& f : fields)
+    for (auto f : fields) {
+        // a string on a Ref field = an earlier-defined entity's name (define before use)
+        if (f.isStr)
+            if (const FieldDesc* d = findField(t, f.name))
+                if (d->kind == FieldKind::Ref) {
+                    const entt::entity r = findNamedEntity(reg, f.str);
+                    if (r == entt::null) {
+                        err = "field '" + f.name + "': unknown entity '" + f.str + "' (define it before use)";
+                        return false;
+                    }
+                    f.isStr = false;
+                    f.hasEnt = true;
+                    f.ent = r;
+                }
         if (!writeField(t, b, f, err))
             return false;
+    }
     if (c == Cmp::Geometry && !validateGeometry(reg, e, err))
         return false;
     return true;
@@ -440,11 +455,9 @@ bool compGet(const entt::registry& reg, entt::entity e, const std::string& type,
         return false;
     if (!hasComp(reg, e, c))
         return false;
-    void* b = base(reg, e, c); // null for marker types (no fields to read)
+    void* b = base(reg, e, c);
     const TypeDesc* t = refl::findType(cmpName(c));
     for (const auto& d : t->fields) {
-        if (!b)
-            break;
         const char* src = (const char*)b + d.offset;
         CompField f{d.name, {}, 0};
         switch (d.kind) {
@@ -487,6 +500,15 @@ bool compGet(const entt::registry& reg, entt::entity e, const std::string& type,
         case FieldKind::UIntArr: {
             f.isArr = true;
             const auto& a = *(const std::vector<uint32_t>*)src;
+            f.arr.resize(a.size());
+            for (size_t i = 0; i < a.size(); ++i)
+                f.arr[i] = (float)a[i];
+            f.n = (int)f.arr.size();
+            break;
+        }
+        case FieldKind::EntArr: {
+            f.isArr = true;
+            const auto& a = *(const std::vector<entt::entity>*)src;
             f.arr.resize(a.size());
             for (size_t i = 0; i < a.size(); ++i)
                 f.arr[i] = (float)a[i];

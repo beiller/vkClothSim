@@ -297,26 +297,6 @@ void Skin::setMorph(const entt::registry& reg, entt::entity skel, const std::str
     }
 }
 
-float Skin::getMorph(const entt::registry& reg, entt::entity skel, const std::string& name) {
-    const auto ce = skelFor(reg, skel);
-    if (ce == m_ent.end())
-        return 0.0f;
-    for (int gid : m_skels[(size_t)ce->second].groups) {
-        auto it = m_groups[gid].nameToTarget.find(name);
-        if (it != m_groups[gid].nameToTarget.end())
-            return m_groups[gid].morphW[(size_t)it->second];
-    }
-    return 0.0f;
-}
-
-void Skin::resetMorphs(const entt::registry& reg, entt::entity skel) {
-    const auto ce = skelFor(reg, skel);
-    if (ce == m_ent.end())
-        return;
-    for (int gid : m_skels[(size_t)ce->second].groups)
-        m_groups[gid].morphW = m_groups[gid].morphW0; // back to the file's frame-0 shape
-}
-
 int Skin::meshRefs(int groupId) const {
     int refs = 0;
     for (const auto& [m, g] : m_meshGroup)

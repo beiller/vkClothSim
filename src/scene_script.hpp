@@ -13,9 +13,8 @@ struct lua_State;
 struct LuaScript;
 struct Engine;
 
-// Embedded Lua 5.4 host for scene behavior scripts (scene .json + .lua).
-// Scripts see only the `scene` table (io/os/debug/package are removed); errors go to
-// stderr and never crash the engine.
+// Embedded Lua 5.4 host for scene behavior scripts; scripts see only the `scene` table
+// (io/os/debug/package are removed); errors go to stderr and never crash the engine
 class SceneScript {
 public:
     SceneScript() = default;
@@ -88,17 +87,12 @@ private:
     static int lSetPose(lua_State* L);
     static int lGetPose(lua_State* L);
     static int lSetMorph(lua_State* L);
-    static int lGetMorph(lua_State* L);
-    static int lResetMorphs(lua_State* L);
     static int lJoints(lua_State* L);
     static int lTime(lua_State* L);
     static int lButton(lua_State* L);
     static int lAttachScript(lua_State* L);
     static int lDestroy(lua_State* L);
     static int lAddChild(lua_State* L);
-    static int lRemoveChild(lua_State* L);
-    static int lGetParent(lua_State* L);
-    static int lGetChildren(lua_State* L);
     static int lvAdd(lua_State* L);
     static int lvSub(lua_State* L);
     static int lvScale(lua_State* L);
@@ -112,7 +106,6 @@ private:
     static int lqRot(lua_State* L);
     static int lqFromTo(lua_State* L);
     static int lFind(lua_State* L);
-    static int lIsVr(lua_State* L);
     static int lKeyDown(lua_State* L);
     static int lRaycast(lua_State* L);
 

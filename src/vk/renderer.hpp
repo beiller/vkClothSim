@@ -40,10 +40,9 @@ public:
     // geometry entity -> an existing slot whose pos/nrm buffers the soft sim reads and writes
     // (one buffer, two users; the slot owns it, as the old soft.body path did)
     void shareGeomSlot(entt::entity geomEnt, int slot);
-    // the entity's instance slot (per-instance model UBO + descriptor set); the ECS keeps only
-    // the geom data. The geometry entity's vertex data is uploaded lazily on first sight; the
-    // instance is allocated on first prepBuffers sight and freed one frame after the entity's
-    // Renderable dies (flushFrees at frame start). -1 when the geometry is missing
+    // the entity's instance slot (per-instance model UBO + descriptor set); vertex data uploads
+    // lazily on first sight, the slot is freed one frame after the Renderable dies (flushFrees).
+    // -1 when the geometry is missing
     int instFor(entt::entity e, entt::entity geomEnt, const entt::registry& reg);
     int instOf(entt::entity e) const; // -1 when the entity has no live instance
     int textureId(entt::entity e) const; // -1 when the entity has no uploaded texture

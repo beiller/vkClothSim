@@ -113,14 +113,7 @@ void spawnJsonWidgets(Engine& w, entt::entity parent, const json& arr, const std
             spawnWidget(w, parent, UIText{label});
         } else if (type == "button") {
             const auto action = W.at("action").get<std::string>();
-            if (action == "reset-params") {
-                spawnWidget(w, parent, UIButton{label, [&w] {
-                                                    for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
-                                                        sb.params = SimParams{};
-                                                        sb.steps = kDefaultSteps;
-                                                    }
-                                                }});
-            } else if (action == "demo-window") {
+            if (action == "demo-window") { // the one engine-level action (Engine::showDemo)
                 spawnWidget(w, parent, UIButton{label, [&w] { w.showDemo = true; }});
             } else {
                 // behavior: the scene script must register a handler under this name
@@ -152,10 +145,9 @@ void buildUi(Engine& w, const json& j, const std::string& path) {
 
 // ---- scene objects
 
-// a "components" block: emplace each named component (struct-shape fields, the same
-// vocabulary as Lua scene.replace; omitted fields keep the C++ struct defaults). Values:
-// numbers (scalars, or integers for entity refs), booleans, strings, arrays of numbers
-// (vectors, quaternions, or full FloatArr/UIntArr payloads)
+// a "components" block: emplace each named component (the same struct-shape vocabulary as Lua
+// scene.replace; omitted fields keep the C++ defaults). Values: numbers, booleans, strings,
+// arrays of numbers
 void addComponents(entt::registry& reg, entt::entity e, const json& cj, const std::string& p, const std::string& what) {
     for (const auto& [tn, fj] : cj.items()) {
         CompFields fields;
@@ -198,11 +190,8 @@ void addComponents(entt::registry& reg, entt::entity e, const json& cj, const st
     }
 }
 
-// one scene object: Name + "components" + "texture" (a path on a texture object = shared texture
-// entity; a name on a material object = reference to an earlier texture object) + "mesh" (a stdlib
-// generator built into a geometry entity, bound via the object's Renderable geom) + "gltf" (a
-// glTF/GLB model built under the object) + "script" (behavior).
-// Referenced names must be defined earlier in "objects" (define before use)
+// one scene object: Name + "components" + "gltf" + "script". Textures are ordinary objects; a
+// string on a Ref-kind field names an earlier-defined object (define before use)
 void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh) {
     const auto name = o.at("name").get<std::string>();
     const std::string what = "object '" + name + "'";
@@ -211,45 +200,6 @@ void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh)
 
     if (o.contains("components"))
         addComponents(w.reg, e, o["components"], p, what + ":");
-
-    if (o.contains("texture")) {
-        const auto tex = o["texture"].get<std::string>();
-        if (w.reg.try_get<Material>(e)) {
-            // a material references an earlier texture object by name (define before use)
-            const entt::entity texE = findNamedEntity(w, tex);
-            if (texE == entt::null || !w.reg.try_get<Texture>(texE))
-                fail(p, what + ": unknown texture '" + tex + "' (define the texture object first)");
-            w.reg.get<Material>(e).tex = texE;
-        } else {
-            // texture object: a top-level entity; the renderer uploads the file lazily on first use
-            w.reg.emplace<Texture>(e, tex);
-        }
-    }
-
-    if (o.contains("mesh")) {
-        if (!allowMesh)
-            fail(p, what + ": the camera object cannot have a mesh");
-        const json& mj = o.at("mesh");
-        const auto type = mj.at("type").get<std::string>();
-        // mesh params (everything but "type") go to the std generator as a table
-        std::vector<std::pair<std::string, double>> params;
-        for (const auto& [k, v] : mj.items()) {
-            if (k == "type")
-                continue;
-            if (!v.is_number())
-                fail(p, what + ": mesh param '" + k + "' must be a number");
-            params.emplace_back(k, v.get<double>());
-        }
-        std::string err;
-        const entt::entity geom = w.script.callMeshGen(type, params, err);
-        if (geom == entt::null)
-            fail(p, what + ": mesh '" + type + "': " + err);
-        const auto matName = o.at("material").get<std::string>();
-        auto matE = findNamedEntity(w, matName);
-        if (matE == entt::null || !w.reg.try_get<Material>(matE))
-            fail(p, what + ": unknown material '" + matName + "'");
-        addMesh(w, e, geom, matE, entt::null, o.value("noShadow", false));
-    }
 
     if (o.contains("gltf")) {
         if (!allowMesh)
@@ -263,7 +213,7 @@ void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh)
     if (o.contains("script")) {
         auto& ls = w.reg.emplace<LuaScript>(e);
         ls.file = o["script"].get<std::string>();
-    } else if (!o.contains("mesh") && !o.contains("gltf") && !w.reg.try_get<Transform>(e)) {
+    } else if (!o.contains("gltf") && !w.reg.try_get<Transform>(e)) {
         w.reg.emplace<Transform>(e); // identity; lets a plain container parent children
     }
 }
@@ -305,17 +255,16 @@ void createScene(Engine& w, const std::string& path) {
     w.gpuSim.init(w.app->device(), w.app->pdev());
     w.renderer.init(*w.app, (int)objects.size() + 2, cameraViewProj(w, w.cam, (float)ext.width / (float)ext.height));
 
-    // geometry stdlib: the engine always loads "scenes/mesh" as the global `mesh` and the
-    // geometry module (for declarative meshes + VR controller grips); scene scripts use the
-    // global `mesh` to generate their own geometry
+    // geometry stdlib: the engine always loads "scenes/mesh" as the global `mesh` (declarative
+    // meshes + VR grips); scene scripts use it to generate their own geometry
     w.script.init(w);
     std::string err;
     if (!w.script.loadMeshStdlib(err))
         fail(p, "geometry stdlib: " + err);
 
-    // destroy observers: the subsystems hold their own resource handles (entity -> id) and
-    // reclaim them when the ECS destroys the owning component (GPU frees defer one frame).
-    // Registered before any script/content runs, since a _on_ready may destroy entities
+    // destroy observers: the subsystems hold entity -> id handles and reclaim them on component
+    // destroy (GPU frees defer one frame); registered before any script runs (a _on_ready may
+    // destroy entities)
     w.renderer.watch(w.reg);
     w.rigid.watch(w.reg);
     w.gpuSim.soft.watch(w.reg);
@@ -325,10 +274,8 @@ void createScene(Engine& w, const std::string& path) {
         if (&o != camObj)
             buildObject(w, o, p, true);
 
-    // activate every script entity to fixpoint; a _on_ready may spawn more script entities,
-    // which activate in the same pass. Script entities are declared per-object in the JSON
-    // ("script" field) and run before sim.build() and the UI so URLs and the editor tab see
-    // their spawned entities
+    // activate every script entity to fixpoint (a _on_ready may spawn more); runs before
+    // sim.build() and the UI so URLs and the editor tab see their spawned entities
     w.script.activateScripts();
 
     // set block after the script: URLs may point at script-spawned entities

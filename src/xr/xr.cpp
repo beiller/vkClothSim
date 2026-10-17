@@ -103,10 +103,9 @@ bool Xr::createInstance() {
 }
 
 void Xr::createShadowInstance() {
-    // SteamVR refuses xrCreateSession unless the vulkan-enable2 requirements/device
-    // queries happened first (mirrors the sequence a conforming app performs). The
-    // device query needs our vkGetInstanceProcAddr, which the runtime only gets if an
-    // instance was created through xrCreateVulkanInstanceKHR, so make a shadow one.
+    // SteamVR refuses xrCreateSession unless the vulkan-enable2 device queries ran first; the
+    // device query needs our proc-addr, which the runtime only gets from an instance created
+    // via xrCreateVulkanInstanceKHR, so make a shadow instance
     PFN_xrCreateVulkanInstanceKHR createVkJ = nullptr;
     m_loader.xrGetInstanceProcAddr(m_inst, "xrCreateVulkanInstanceKHR", (PFN_xrVoidFunction*)&createVkJ);
     if (createVkJ) {
@@ -159,9 +158,8 @@ void Xr::queryRuntimeVulkan(VkApp& app) {
 }
 
 bool Xr::createVulkanDevice(VkApp& app) {
-    // Create the device through the runtime so the compositor registers our pfn+device and
-    // resolves 1.1 core fns (vkGet*MemoryRequirements2KHR) via instance-proc instead of
-    // device-proc (which returns NULL for the KHR alias and crashes the compositor).
+    // create the device through the runtime so the compositor registers the pfn+device and
+    // resolves 1.1 core fns via instance-proc (device-proc returns NULL for the KHR alias)
     PFN_xrCreateVulkanDeviceKHR createDevJ = nullptr;
     m_loader.xrGetInstanceProcAddr(m_inst, "xrCreateVulkanDeviceKHR", (PFN_xrVoidFunction*)&createDevJ);
     if (!createDevJ) {
@@ -326,11 +324,9 @@ void Xr::initActions() {
         std::printf("xr: createAction failed\n");
         return;
     }
-    // Suggest bindings per interaction profile; each list only contains paths valid for that
-    // profile (a single unsupported path rejects the whole suggestion). SteamVR matches the
-    // connected hardware to whichever profile it supports and skips the rest.
-    // IMPORTANT: this must run before attaching the action set, or the runtime rejects it with
-    // XR_ERROR_ACTIONSETS_ALREADY_ATTACHED.
+    // bindings per interaction profile; each list must only contain paths valid for that
+    // profile (one unsupported path rejects the whole suggestion). Must run before attaching
+    // the action set, or the runtime rejects it (ACTIONSETS_ALREADY_ATTACHED)
     struct Bind {
         XrAction action;
         const char* leaf;
