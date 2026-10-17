@@ -459,19 +459,24 @@ void Xr::pollEvents() {
     }
 }
 
-XrFrame Xr::poll() {
+void Xr::waitFrame() {
+    // session state events (READY -> begin session) must be visible before the wait
     pollEvents();
-    XrFrame fr;
-    fr.running = m_running;
     if (!m_running)
-        return fr;
-
+        return;
     XrFrameWaitInfo wi{};
     wi.type = XR_TYPE_FRAME_WAIT_INFO;
     xrafail(m_loader.xrWaitFrame(m_session, &wi, &m_fs), "waitFrame");
     XrFrameBeginInfo bi{};
     bi.type = XR_TYPE_FRAME_BEGIN_INFO;
     xrafail(m_loader.xrBeginFrame(m_session, &bi), "beginFrame");
+}
+
+XrFrame Xr::poll() {
+    XrFrame fr;
+    fr.running = m_running;
+    if (!m_running)
+        return fr;
     fr.shouldRender = m_fs.shouldRender != 0;
 
     XrViewLocateInfo li{};

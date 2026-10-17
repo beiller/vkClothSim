@@ -72,7 +72,10 @@ public:
     bool init(VkApp& app) override;
     void shutdown() override;
 
-    // per-frame: events + wait/begin frame + locate views
+    // compositor pacing wait (the VR counterpart of the window's sync present wait):
+    // xrWaitFrame + beginFrame
+    void waitFrame() override;
+    // per-frame: events + locate views + controller actions (after waitFrame)
     XrFrame poll() override;
     // must run once per poll() while the session is running
     void endFrame(bool render) override;

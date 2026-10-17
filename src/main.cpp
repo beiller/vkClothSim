@@ -14,6 +14,29 @@ static float msBetween(std::chrono::steady_clock::time_point a, std::chrono::ste
     return std::chrono::duration<float, std::milli>(b - a).count();
 }
 
+// per-frame phase intervals (ms); wait is the HMD pacing wait, measured inside poll and
+// republished as idle
+struct PhaseWatch {
+    float poll = 0.0f, wait = 0.0f, sim = 0.0f, rend = 0.0f, xend = 0.0f, tail = 0.0f;
+    void reset() { poll = wait = sim = rend = xend = tail = 0.0f; }
+};
+
+// VR: real work per frame (excl. the HMD pacing wait); a frame whose work exceeds the HMD
+// budget drops a frame; logs 120-frame windows
+struct PaceWatch {
+    float total = 0.0f, max = 0.0f;
+    int frames = 0;
+    void add(float work) {
+        total += work;
+        if (work > max)
+            max = work;
+        if (++frames % 120 == 0) {
+            std::fprintf(stderr, "3dsim: vr work avg %.1f ms, max %.1f ms\n", total / 120, max);
+            total = max = 0.0f;
+        }
+    }
+};
+
 int main(int argc, char** argv) {
     VkApp app;
     if (!app.initInstance(900, 900, "3dsim"))
@@ -69,7 +92,8 @@ int main(int argc, char** argv) {
     int fpsFrames = 0;
     float fps = 0.0f;
     float simAccum = 0.0f;
-    float msPoll = 0.0f, msSim = 0.0f, msRender = 0.0f, msXrEnd = 0.0f, msIdle = 0.0f;
+    PhaseWatch phaseMs;
+    PaceWatch pace;
     while (!app.windowShouldClose()) {
         const auto nowFrame = std::chrono::steady_clock::now();
         const float dt = std::chrono::duration<float>(nowFrame - lastFrame).count();
@@ -78,18 +102,24 @@ int main(int argc, char** argv) {
         ++fpsFrames;
         if (fpsAccum >= 0.5f) {
             fps = (float)fpsFrames / fpsAccum;
-            engine.phase = {msPoll / fpsFrames, msSim / fpsFrames, msRender / fpsFrames, msXrEnd / fpsFrames,
-                       msIdle / fpsFrames};
-            msPoll = msSim = msRender = msXrEnd = msIdle = 0.0f;
+            engine.phase = {(phaseMs.poll - phaseMs.wait) / fpsFrames, phaseMs.sim / fpsFrames,
+                       phaseMs.rend / fpsFrames, phaseMs.xend / fpsFrames,
+                       (phaseMs.wait + phaseMs.tail) / fpsFrames};
+            phaseMs.reset();
             fpsAccum = 0.0f;
             fpsFrames = 0;
         }
         engine.fps = fps;
 
+        float wait = 0.0f; // HMD pacing wait (0 in window mode)
         app.pollEvents();
         XrFrame fr; // this frame's headset state (head, eyes, controllers); frame-local, not world state
-        if (engine.xr)
+        if (engine.xr) {
+            const auto tWait = std::chrono::steady_clock::now();
+            engine.xr->waitFrame();
+            wait = msBetween(tWait, std::chrono::steady_clock::now());
             fr = engine.xr->poll();
+        }
         // frame start, previous frame's GPU work done (sync present / XR waitFrame): release
         // the resources queued by the last frame's entity destroys
         engine.renderer.flushFrees();
@@ -159,13 +189,15 @@ int main(int argc, char** argv) {
         if (engine.xr)
             engine.xr->endFrame(fr.shouldRender);
         const auto tXrEnd = std::chrono::steady_clock::now();
-        app.present(idx,
-                    !engine.xr); // window: sync present (vsync wait shows in 'idle'); VR: compositor paces via waitFrame
-        msPoll += msBetween(nowFrame, tPoll);
-        msSim += msBetween(tPoll, tSim);
-        msRender += msBetween(tSim, tRender);
-        msXrEnd += msBetween(tRender, tXrEnd);
-        msIdle += msBetween(tXrEnd, std::chrono::steady_clock::now());
+        app.present(idx, !engine.xr);
+        phaseMs.poll += msBetween(nowFrame, tPoll); // incl. wait; republished into idle
+        phaseMs.wait += wait;
+        phaseMs.sim += msBetween(tPoll, tSim);
+        phaseMs.rend += msBetween(tSim, tRender);
+        phaseMs.xend += msBetween(tRender, tXrEnd);
+        phaseMs.tail += msBetween(tXrEnd, std::chrono::steady_clock::now());
+        if (engine.xr)
+            pace.add(msBetween(nowFrame, tXrEnd) - wait);
     }
 
     shutdownImGui();

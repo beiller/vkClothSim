@@ -46,7 +46,8 @@ Use a functional style where possible.
 
 ## Conventions
 
-- minimal comments, descriptive names, concise output
+- minimal comments, do not document history of changes etc. USE COMMENTS SPARINGLY!
+- descriptive function /variable names, concise output
 - reconfigure CMake after shader edits (SPIR-V is baked at configure time)
 - sim runs at a fixed timestep, decoupled from the render rate
 

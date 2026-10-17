@@ -15,7 +15,10 @@ struct IXrBackend {
     virtual VkDevice device() const = 0;
     virtual bool init(VkApp& app) = 0;
     virtual void shutdown() = 0;
-    // per-frame: events + wait/begin frame + head pose
+    // compositor pacing wait (the VR counterpart of the window's sync present wait); no-op for
+    // backends without a compositor
+    virtual void waitFrame() {}
+    // per-frame: events + head pose + controller actions (after waitFrame)
     virtual XrFrame poll() = 0;
     // must run once per poll() while the session is running
     virtual void endFrame(bool render) = 0;

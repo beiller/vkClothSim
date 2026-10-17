@@ -11,11 +11,11 @@
 class VkApp;
 
 struct PhaseMs {
-    float poll = 0.0f;   // glfw events + xrWaitFrame (frame pacing)
+    float poll = 0.0f;   // glfw events + XR pose/action queries + free flushes
     float sim = 0.0f;    // input + scripts + fixed-step physics
     float render = 0.0f; // imgui + swapchain acquire + scene draw
     float xrEnd = 0.0f;  // xrEndFrame (runtime present)
-    float idle = 0.0f;   // waiting for the display to present (window: vsync; VR: ~0, pacing is in poll)
+    float idle = 0.0f;   // HMD pacing wait (VR)
 };
 
 struct Engine {
