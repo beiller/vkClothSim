@@ -3,15 +3,20 @@
 #include <string>
 #include <vector>
 
-// component construction in the struct-form field vocabulary ("pos", "quat", "color", ...) -
-// one core for the JSON loader and the Lua scene.* verbs. Pure-data components are
-// table-driven over reflect.hpp; subsystem components (Jolt bodies, GPU soft bodies, renderer
-// instances) keep their domain verbs for now and join this vocabulary later as constructor
-// hooks on the same registry (the verbs would call the same CompFields interface).
+// component construction in the struct-form field vocabulary - one core for the JSON loader
+// and the Lua scene.* verbs. Every reflect.hpp type is writable from the vocabulary; the field
+// tables (names, kinds, offsets) come from reflect.hpp, so a component and its API surface are
+// the same table. Types not in the table (Skeleton, Name, ...) are not writable.
 struct CompField {
     std::string name;
     float v[4] = {};
-    int n = 0; // 1 = scalar, 3 = vec3, 4 = quat
+    int n = 0; // 0 = none, 1 = scalar v[0], 3/4 = small array in v[0..n-1], arrays in arr: n = count
+    bool isArr = false; // the value was an array (v[0..n-1] when it fits, arr otherwise)
+    std::vector<float> arr; // full numeric array value (arrays longer than 4)
+    bool isStr = false;     // the value was a string
+    std::string str;
+    bool hasEnt = false;      // the value was an integer (an entity handle)
+    entt::entity ent = entt::null; // valid when hasEnt
 };
 using CompFields = std::vector<CompField>;
 
@@ -22,6 +27,6 @@ bool compEmplace(entt::registry& reg, entt::entity e, const std::string& type, c
 bool compReplace(entt::registry& reg, entt::entity e, const std::string& type, const CompFields& fields,
                  std::string& err);
 // read a component's fields (struct form); false if the entity lacks it
-bool compGet(entt::registry& reg, entt::entity e, const std::string& type, CompFields& out);
-// remove; pure-data components only
+bool compGet(const entt::registry& reg, entt::entity e, const std::string& type, CompFields& out);
+// remove
 bool compRemove(entt::registry& reg, entt::entity e, const std::string& type, std::string& err);

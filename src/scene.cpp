@@ -153,7 +153,9 @@ void buildUi(Engine& w, const json& j, const std::string& path) {
 // ---- scene objects
 
 // a "components" block: emplace each named component (struct-shape fields, the same
-// vocabulary as Lua scene.emplace; omitted fields keep the C++ struct defaults)
+// vocabulary as Lua scene.replace; omitted fields keep the C++ struct defaults). Values:
+// numbers (scalars, or integers for entity refs), booleans, strings, arrays of numbers
+// (vectors, quaternions, or full FloatArr/UIntArr payloads)
 void addComponents(entt::registry& reg, entt::entity e, const json& cj, const std::string& p, const std::string& what) {
     for (const auto& [tn, fj] : cj.items()) {
         CompFields fields;
@@ -163,17 +165,30 @@ void addComponents(entt::registry& reg, entt::entity e, const json& cj, const st
             if (fv.is_number() || fv.is_boolean()) {
                 f.v[0] = fv.is_boolean() ? (fv.get<bool>() ? 1.0f : 0.0f) : fv.get<float>();
                 f.n = 1;
-            } else if (fv.is_array()) {
-                if (fv.size() > 4)
-                    fail(p, what + " field '" + fn + "': expected at most 4 values");
-                for (size_t i = 0; i < fv.size(); ++i) {
-                    if (!fv[i].is_number())
-                        fail(p, what + " field '" + fn + "': values must be numbers");
-                    f.v[i] = fv[i].get<float>();
+                if (fv.is_number() && fv.is_number_integer()) {
+                    f.hasEnt = true;
+                    f.ent = (entt::entity)fv.get<int64_t>();
                 }
+            } else if (fv.is_array()) {
+                f.isArr = true;
+                if (fv.size() <= 4)
+                    for (size_t i = 0; i < fv.size(); ++i) {
+                        if (!fv[i].is_number())
+                            fail(p, what + " field '" + fn + "': values must be numbers");
+                        f.v[i] = fv[i].get<float>();
+                    }
+                else
+                    for (size_t i = 0; i < fv.size(); ++i) {
+                        if (!fv[i].is_number())
+                            fail(p, what + " field '" + fn + "': values must be numbers");
+                        f.arr.push_back(fv[i].get<float>());
+                    }
                 f.n = (int)fv.size();
+            } else if (fv.is_string()) {
+                f.isStr = true;
+                f.str = fv.get<std::string>();
             } else {
-                fail(p, what + " field '" + fn + "': expected a number, boolean, or array");
+                fail(p, what + " field '" + fn + "': expected a number, boolean, string, or array");
             }
             fields.push_back(f);
         }
@@ -184,9 +199,9 @@ void addComponents(entt::registry& reg, entt::entity e, const json& cj, const st
 }
 
 // one scene object: Name + "components" + "texture" (a path on a texture object = shared texture
-// entity; a name on a material object = reference to an earlier texture object) + "mesh" (render.mesh
-// equivalent; placed by the components' Transform) + "gltf" (a glTF/GLB model built under the
-// object) + "script" (behavior).
+// entity; a name on a material object = reference to an earlier texture object) + "mesh" (a stdlib
+// generator built into a geometry entity, bound via the object's Renderable geom) + "gltf" (a
+// glTF/GLB model built under the object) + "script" (behavior).
 // Referenced names must be defined earlier in "objects" (define before use)
 void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh) {
     const auto name = o.at("name").get<std::string>();
@@ -205,8 +220,9 @@ void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh)
             if (texE == entt::null || !w.reg.try_get<Texture>(texE))
                 fail(p, what + ": unknown texture '" + tex + "' (define the texture object first)");
             w.reg.get<Material>(e).tex = texE;
-        } else if (!textureFor(w, e, tex)) { // texture object: a top-level entity from an asset path
-            fail(p, what + ": cannot load texture '" + tex + "'");
+        } else {
+            // texture object: a top-level entity; the renderer uploads the file lazily on first use
+            w.reg.emplace<Texture>(e, tex);
         }
     }
 
@@ -225,8 +241,8 @@ void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh)
             params.emplace_back(k, v.get<double>());
         }
         std::string err;
-        const int geom = w.script.callMeshGen(type, params, err);
-        if (geom < 0)
+        const entt::entity geom = w.script.callMeshGen(type, params, err);
+        if (geom == entt::null)
             fail(p, what + ": mesh '" + type + "': " + err);
         const auto matName = o.at("material").get<std::string>();
         auto matE = findNamedEntity(w, matName);
@@ -318,9 +334,9 @@ void createScene(Engine& w, const std::string& path) {
     // set block after the script: URLs may point at script-spawned entities
     if (j.contains("set")) {
         for (const auto& [k, v] : j["set"].items()) {
-            float vals[3];
+            float vals[4];
             int n = v.is_array() ? (int)v.size() : 1;
-            if (n > 3)
+            if (n > 4)
                 fail(p, "set '" + k + "': too many values");
             if (v.is_array())
                 for (int i = 0; i < n; ++i)

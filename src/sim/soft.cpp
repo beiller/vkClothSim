@@ -1,8 +1,11 @@
 #include "sim/soft.hpp"
 
+#include "engine.hpp"
 #include "softbody_spv.hpp"
+#include "systems.hpp"
 #include "vk/vkutil.hpp"
 #include <cmath>
+#include <cstdio>
 
 namespace {
 
@@ -45,6 +48,66 @@ void Soft::init(VkDevice dev, VkPhysicalDevice pdev) {
 
 void Soft::setFloor(float y) {
     m_floorY = y;
+}
+
+// first sight: a SoftBodyData component without a GPU body. The vertex data comes from the
+// Renderable's geometry entity; it is lifted to world space at the entity's pose (the sim owns
+// the world-space copy from then on) and uploaded through the renderer
+void Soft::project(Engine& w) {
+    for (auto [e, sb] : w.reg.view<SoftBodyData>().each()) {
+        if (m_ent.count(e))
+            continue;
+        const auto fail = [this, &w, e](const char* why) {
+            if (m_warned.insert(e).second) {
+                const auto* n = w.reg.try_get<Name>(e);
+                std::fprintf(stderr, "3dsim: soft body '%s': %s\n", n ? n->id.c_str() : "?", why);
+            }
+        };
+        const auto* rend = w.reg.try_get<Renderable>(e);
+        const auto* geom = rend ? w.reg.try_get<Geometry>(rend->geom) : nullptr;
+        if (!geom) {
+            fail("no geometry (Renderable.geom)");
+            continue;
+        }
+        const int nv = geom->mesh.vertexCount();
+        if (nv <= 0 || sb.cons.size() % 4 != 0) {
+            fail("bad vertex or constraint data (cons = flat {a, b, rest, k} quads)");
+            continue;
+        }
+        bool bad = false;
+        for (size_t i = 0; i + 3 < sb.cons.size(); i += 4)
+            if (sb.cons[i] < 0 || sb.cons[i] >= nv || sb.cons[i + 1] < 0 || sb.cons[i + 1] >= nv) {
+                bad = true;
+                break;
+            }
+        if (bad) {
+            fail("constraint vertex index out of range");
+            continue;
+        }
+        std::vector<sim::Constraint> cons;
+        cons.reserve(sb.cons.size() / 4);
+        for (size_t i = 0; i + 3 < sb.cons.size(); i += 4)
+            cons.push_back({(int)sb.cons[i], (int)sb.cons[i + 1], sb.cons[i + 2], sb.cons[i + 3]});
+        Mesh m = geom->mesh;
+        Transform t{};
+        if (w.reg.try_get<Transform>(e))
+            t = worldTransform(w.reg, e);
+        for (int i = 0; i < nv; ++i) {
+            const V3 v = vAdd(quatRotate(t.quat, V3{m.pos[3 * i], m.pos[3 * i + 1], m.pos[3 * i + 2]}), t.pos);
+            m.pos[3 * i] = v.x;
+            m.pos[3 * i + 1] = v.y;
+            m.pos[3 * i + 2] = v.z;
+            if (m.nrm.size() == m.pos.size()) {
+                const V3 n = quatRotate(t.quat, V3{m.nrm[3 * i], m.nrm[3 * i + 1], m.nrm[3 * i + 2]});
+                m.nrm[3 * i] = n.x;
+                m.nrm[3 * i + 1] = n.y;
+                m.nrm[3 * i + 2] = n.z;
+            }
+        }
+        const Renderer::GpuMeshRef ref = w.renderer.addMesh(m);
+        w.renderer.shareGeomSlot(rend->geom, ref.geom); // draw the sim's RW buffer, not a static copy
+        addSoftBody(e, m, cons, ref.rw);
+    }
 }
 
 void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw) {

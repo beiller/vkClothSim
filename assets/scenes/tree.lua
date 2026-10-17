@@ -1,7 +1,7 @@
--- fractal tree builder: spawns kinematic capsule branches in a parent chain and attaches a
--- branch script to each; also spawns the ground (mesh is the engine-loaded geometry stdlib
--- global; lights and UI live in tree.json)
-
+-- fractal tree builder: spawns capsule branches in a parent chain and attaches a branch
+-- script to each; also spawns the ground (mesh is the engine-loaded geometry stdlib global;
+-- lights and UI live in tree.json). Branches are visual: the branch script drives their
+-- Transforms, no physics bodies.
 local M = {}
 
 local kMaxDepth = 5
@@ -20,6 +20,12 @@ local depthColor = {
 -- one material + one shared geometry per depth (branches of a depth reuse both)
 local capGeom = {}
 
+local function geom(t)
+    local g = scene.entity()
+    scene.replace(g, "Geometry", t)
+    return g
+end
+
 local function childCount(depth)
     if depth == 0 then
         return 1 -- trunk
@@ -36,6 +42,7 @@ local function childCount(depth)
     end
 end
 
+-- random unit direction
 local function randUnit()
     local v = { math.random() * 2 - 1, math.random() * 2 - 1, math.random() * 2 - 1 }
     local l = scene.vlen(v)
@@ -71,7 +78,12 @@ local function addBranch(parent, parentWQ, parentWPos, parentDir, depth)
     local phase = 0.35 * depth      -- outward lag -> bend travels to the tips
     local isClock = depth == 0
     local e = scene.entity()
-    render.mesh(e, capGeom[depth], "mat_d" .. depth, localPos, localQuat, { parent = parent })
+    scene.replace(e, "Transform", { pos = localPos, quat = localQuat })
+    scene.replace(e, "Renderable", { geom = capGeom[depth] })
+    scene.replace(e, "MaterialRef", { material = scene.find("mat_d" .. depth) })
+    if parent then
+        scene.add_child(parent, e)
+    end
     scene.attach_script(e, "scenes/branch", { pos = localPos, quat = localQuat, amp = amp, phase = phase, isClock = isClock })
     if depth >= kMaxDepth then
         return
@@ -82,13 +94,16 @@ local function addBranch(parent, parentWQ, parentWPos, parentDir, depth)
 end
 
 function M._on_ready(self)
-    -- static ground
+    -- static ground (visual only)
     local ground = scene.entity("ground")
-    render.mesh(ground, render.geometry(mesh.box({ 28, 1, 28 })), "mat_ground", { 0, -1, 0 })
+    scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
+    scene.replace(ground, "Renderable", { geom = geom(mesh.box({ 28, 1, 28 })) })
+    scene.replace(ground, "MaterialRef", { material = scene.find("mat_ground") })
 
     for d = 0, kMaxDepth do
-        render.material("mat_d" .. d, depthColor[d], 0.1, 0.6)
-        capGeom[d] = render.geometry(mesh.capsule({ halfLen = halfLen[d], radius = radius[d] }))
+        local m = scene.entity("mat_d" .. d)
+        scene.replace(m, "Material", { baseColor = depthColor[d], metallic = 0.1, roughness = 0.6 })
+        capGeom[d] = geom(mesh.capsule({ halfLen = halfLen[d], radius = radius[d] }))
     end
     math.randomseed(20260929)
     addBranch(nil, { 0, 0, 0, 1 }, { 0, 0, 0 }, { 0, 1, 0 }, 0)

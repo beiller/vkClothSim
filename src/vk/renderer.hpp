@@ -8,6 +8,7 @@
 #include <entt/entt.hpp>
 #include <imgui.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class VkApp;
@@ -31,19 +32,26 @@ public:
 
     void init(VkApp& app, int nInstances, const Mat4& viewProj);
     GpuMeshRef addMesh(const Mesh& mesh);
-    // a GpuMesh whose pos/nrm buffers are owned by the Skeleton (freed by Skeleton::shutdown):
-    // the renderer uploads only the uv + index buffers and aliases the rest
-    GpuMeshRef addMeshShared(const Mesh& m, VkBuffer pos, VkDeviceMemory posMem, VkBuffer nrm,
-                             VkDeviceMemory nrmMem, uint32_t n);
+    // a GpuMesh whose pos/nrm buffers are owned by the Skin (freed with the last aliasing
+    // mesh): the renderer uploads only the uv + index buffers and aliases the rest; the prim
+    // entity IS the geometry (m_entGeom key)
+    void addSharedMesh(entt::entity geomEnt, const Mesh& m, VkBuffer pos, VkDeviceMemory posMem, VkBuffer nrm,
+                       VkDeviceMemory nrmMem, uint32_t n);
+    // geometry entity -> an existing slot whose pos/nrm buffers the soft sim reads and writes
+    // (one buffer, two users; the slot owns it, as the old soft.body path did)
+    void shareGeomSlot(entt::entity geomEnt, int slot);
     // the entity's instance slot (per-instance model UBO + descriptor set); the ECS keeps only
-    // the geom data. Allocated on first prepBuffers sight; freed one frame after the entity's
-    // Renderable dies (flushFrees at frame start)
-    int instFor(entt::entity e, int geom);
+    // the geom data. The geometry entity's vertex data is uploaded lazily on first sight; the
+    // instance is allocated on first prepBuffers sight and freed one frame after the entity's
+    // Renderable dies (flushFrees at frame start). -1 when the geometry is missing
+    int instFor(entt::entity e, entt::entity geomEnt, const entt::registry& reg);
     int instOf(entt::entity e) const; // -1 when the entity has no live instance
-    int textureId(entt::entity e) const; // -1 when the entity has no texture
+    int textureId(entt::entity e) const; // -1 when the entity has no uploaded texture
+    // the texture id for an entity, uploading its Texture{path} file lazily on first sight
+    int textureFor(entt::entity e, const entt::registry& reg);
     void addTexture(entt::entity e, const void* rgba, uint32_t w, uint32_t h);
-    // register the destroy observers: Renderable/Texture teardowns queue their resources for
-    // the next frame-start flush (the previous frame may still be reading them)
+    // register the destroy observers: Renderable/Texture/Geometry teardowns queue their
+    // resources for the next frame-start flush (the previous frame may still be reading them)
     void watch(entt::registry& reg);
     void flushFrees();
     void setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h);
@@ -101,9 +109,10 @@ private:
     static void drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const InstancedMesh& inst);
     int allocInstance(int geom); // create the UBO + descriptor set slot
     void queueFreeInst(int inst); // mark dead + queue for flushFrees
+    int geomFor(entt::entity g, const entt::registry& reg); // geometry entity -> m_geoms index (lazy upload)
     void onRenderableDestroyed(entt::registry&, entt::entity e); // destroy-observer handlers
     void onTextureDestroyed(entt::registry&, entt::entity e);
-    bool isHidden(const entt::registry& reg, entt::entity e) const; // Visible flag on e or any ancestor
+    void onGeometryDestroyed(entt::registry&, entt::entity e);
     void rebuildTonemapSet(VkApp& app);
     void writeViewUbo(const Mat4& vp, const V3& cam, float envIntensity);
     void writeLights(const entt::registry& reg);
@@ -153,6 +162,8 @@ private:
     std::vector<GpuTexture> m_texs;
     std::unordered_map<entt::entity, int> m_entInst; // Renderable entity -> m_insts index
     std::unordered_map<entt::entity, int> m_entTex;  // Texture entity -> m_texs index
+    std::unordered_map<entt::entity, int> m_entGeom; // geometry entity -> m_geoms index (lazy upload)
+    std::unordered_set<entt::entity> m_geomWarned, m_texWarned; // missing-data warnings, once each
     std::vector<int> m_freeInst, m_freeTex;          // slots awaiting the frame-start flush
     GpuTexture m_white;        // fallback for albedo/MR/emissive (texel 1 = factor only)
     GpuTexture m_neutralNrm;   // fallback for the normal channel (texel (0.5,0.5,1) = identity)

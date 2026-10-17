@@ -10,43 +10,70 @@ local PIN_SECS = 3.0
 
 local world_scale = 0.666
 
+-- stdlib geometry tables are the Geometry struct itself: stash one in a geometry entity
+-- (the renderer uploads it lazily on first sight)
+local function geom(t)
+    local g = scene.entity()
+    scene.replace(g, "Geometry", t)
+    return g
+end
+
 function M._on_ready(self)
     -- ground: one entity with a visual box + static box collider; the soft sim's floor is explicit
     local ground = scene.entity("ground")
-    render.mesh(ground, render.geometry(mesh.box({ 55, 1, 55 })), "mat_ground", { 0, -1, 0 })
-    physics.body(ground, { {shape = physics.box(40, 1, 40)} }, { static = 1 })
+    scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
+    scene.replace(ground, "Renderable", { geom = geom(mesh.box({ 55, 1, 55 })) })
+    scene.replace(ground, "MaterialRef", { material = scene.find("mat_ground") })
+    local gShape = scene.entity()
+    scene.replace(gShape, "BoxShape", { half = { 40, 1, 40 } })
+    local gCol = scene.entity()
+    scene.replace(gCol, "Collider", { shape = gShape })
+    scene.add_child(ground, gCol)
+    scene.replace(ground, "RigidBody", { isStatic = 1 })
     soft.floor(0.0001)
 
     -- 50 scattered dynamic capsules, all sharing one shape, one material, one geometry
     local cap_length = 0.9 * world_scale
     local cap_r = 0.5 * world_scale
-    local cap = physics.capsule(cap_length, cap_r)
-    local capGeom = render.geometry(mesh.capsule({ halfLen = cap_length, radius = cap_r }))
+    local capShape = scene.entity()
+    scene.replace(capShape, "CapsuleShape", { halfLen = cap_length, radius = cap_r })
+    local capGeom = geom(mesh.capsule({ halfLen = cap_length, radius = cap_r }))
+    local matCapsule = scene.find("mat_capsule")
     math.randomseed(12345)
     for i = 1, 50 do
         local px = (math.random() * 2 - 1) * 2 * world_scale
         local py = 4.5 + 3.5 * math.random()
         local pz = (math.random() * 2 - 1) * 2 * world_scale
         local q = scene.qmul(scene.qaxis({0, 1, 0}, math.random() * 2 * math.pi),
-                             scene.qaxis({1, 0, 0}, (math.random() * 2 - 1) * 0.9))
+                              scene.qaxis({1, 0, 0}, (math.random() * 2 - 1) * 0.9))
         local e = scene.entity()
-        render.mesh(e, capGeom, "mat_capsule", {px, py, pz}, q)
-        physics.body(e, { {shape = cap} })
+        scene.replace(e, "Transform", { pos = {px, py, pz}, quat = q })
+        scene.replace(e, "Renderable", { geom = capGeom })
+        scene.replace(e, "MaterialRef", { material = matCapsule })
+        local col = scene.entity()
+        scene.replace(col, "Collider", { shape = capShape })
+        scene.add_child(e, col)
+        scene.replace(e, "RigidBody", {})
     end
 
     -- soft bodies; the entity's Transform is the pinned (spawn) pose, the cloth is released after PIN_SECS
     local clothSpan = 8.0 * world_scale
     local clothDim = 128
-    local clothGeom = mesh.plane({ cw = clothDim, ch = clothDim, span = clothSpan })
+    local clothGeom = geom(mesh.plane({ cw = clothDim, ch = clothDim, span = clothSpan }))
     clothH = scene.entity("cloth")
-    scene.emplace(clothH, "Transform", { pos = {0, 10, 0} })
-    soft.body(clothH, clothGeom, mesh.planeCons({ cw = clothDim, ch = clothDim, span = clothSpan }), "mat_cloth", 1.0)
-    scene.set(clothH, "pinned", 1)
+    scene.replace(clothH, "Transform", { pos = {0, 10, 0} })
+    scene.replace(clothH, "Renderable", { geom = clothGeom })
+    scene.replace(clothH, "MaterialRef", { material = scene.find("mat_cloth") })
+    scene.replace(clothH, "SoftBodyData",
+                  { cons = mesh.planeCons({ cw = clothDim, ch = clothDim, span = clothSpan }),
+                    pinned = 1, ["params.mass"] = 1.0 })
 
-    local ballGeom = mesh.sphere({ subdiv = 4, radius = 1.5 * world_scale })
+    local ballT = mesh.sphere({ subdiv = 4, radius = 1.5 * world_scale })
     local ball = scene.entity("ball")
-    scene.emplace(ball, "Transform", { pos = {0, 12, 0} })
-    soft.body(ball, ballGeom, mesh.ballCons(ballGeom), "mat_ball", 2.0)
+    scene.replace(ball, "Transform", { pos = {0, 12, 0} })
+    scene.replace(ball, "Renderable", { geom = geom(ballT) })
+    scene.replace(ball, "MaterialRef", { material = scene.find("mat_ball") })
+    scene.replace(ball, "SoftBodyData", { cons = mesh.ballCons(ballT), ["params.mass"] = 2.0 })
 
     -- glft tests
     -- local m = scene.entity("model")

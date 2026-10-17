@@ -1,8 +1,9 @@
 -- standard geometry library (engine loads this for every scene, global `mesh`)
 --
 -- geometry table: { pos = {x,y,z,...}, nrm = {x,y,z,...}, uv = {u,v,...}, idx = {0,1,2,...} }
---   (nrm/uv optional, vertex indices are 1-based Lua)
--- constraints: flat array { a, b, rest, k, ... } (1-based vertex indices)
+--   (nrm/uv optional). The table is the Geometry component's data: vertex indices are
+--   0-based, as in Vulkan, so `scene.replace(g, "Geometry", mesh.box({...}))` works as-is.
+-- constraints: flat array { a, b, rest, k, ... } (0-based vertex indices)
 
 local m = {}
 
@@ -36,22 +37,22 @@ function m.capsule(p)
         for j = 0, S - 1 do
             local phi = j / S * twoPi
             local cp, sp = math.cos(phi), math.sin(phi)
-            local v = i * S + j + 1
-            pos[3 * v - 2], pos[3 * v - 1], pos[3 * v] = cr * cp, y, cr * sp
+            local v = i * S + j
+            pos[3 * v + 1], pos[3 * v + 2], pos[3 * v + 3] = cr * cp, y, cr * sp
             if pole then -- degenerate ring: all segments share the vertical normal
-                nrm[3 * v - 2], nrm[3 * v - 1], nrm[3 * v] = 0, ny, 0
+                nrm[3 * v + 1], nrm[3 * v + 2], nrm[3 * v + 3] = 0, ny, 0
             else
-                nrm[3 * v - 2], nrm[3 * v - 1], nrm[3 * v] = cp, ny, sp
+                nrm[3 * v + 1], nrm[3 * v + 2], nrm[3 * v + 3] = cp, ny, sp
             end
-            uv[2 * v - 1], uv[2 * v] = j / S, i / M
+            uv[2 * v + 1], uv[2 * v + 2] = j / S, i / M
         end
     end
     for i = 0, M - 1 do
         for j = 0, S - 1 do
-            local a = i * S + j + 1
-            local b = i * S + ((j + 1) % S) + 1
-            local c = (i + 1) * S + j + 1
-            local d = (i + 1) * S + ((j + 1) % S) + 1
+            local a = i * S + j
+            local b = i * S + ((j + 1) % S)
+            local c = (i + 1) * S + j
+            local d = (i + 1) * S + ((j + 1) % S)
             local n = #idx
             idx[n + 1], idx[n + 2], idx[n + 3] = a, b, d
             idx[n + 4], idx[n + 5], idx[n + 6] = a, d, c
@@ -114,7 +115,7 @@ function m.sphere(p)
         uv[2 * i] = 0.5 + math.asin(d[2]) / math.pi
     end
     for i = 1, #tris do
-        idx[i] = tris[i] + 1
+        idx[i] = tris[i]
     end
     return { pos = pos, nrm = nrm, uv = uv, idx = idx }
 end
@@ -130,17 +131,17 @@ function m.box(p)
         { { 0, 1, 0 }, { { -hx, hy, -hz }, { -hx, hy, hz }, { hx, hy, hz }, { hx, hy, -hz } } },
         { { 0, -1, 0 }, { { -hx, -hy, hz }, { -hx, -hy, -hz }, { hx, -hy, -hz }, { hx, -hy, hz } } },
         { { 0, 0, 1 }, { { -hx, -hy, hz }, { hx, -hy, hz }, { hx, hy, hz }, { -hx, hy, hz } } },
-        { { 0, 0, -1 }, { { hx, -hy, -hz }, { -hx, -hy, -hz }, { -hx, hy, -hz }, { hx, hy, -hz } } },
+        { { 0, 0, -1 }, { { hx, -hy, -hz }, { -hx, -hy, -hz }, { hx, hy, -hz }, { -hx, hy, -hz } } },
     }
-    local v0 = 0
+    local v0 = -1
     for _, f in ipairs(faces) do
         local n, corners = f[1], f[2]
         for i = 1, 4 do
             local c = corners[i]
             v0 = v0 + 1
-            pos[3 * v0 - 2], pos[3 * v0 - 1], pos[3 * v0] = c[1], c[2], c[3]
-            nrm[3 * v0 - 2], nrm[3 * v0 - 1], nrm[3 * v0] = n[1], n[2], n[3]
-            uv[2 * v0 - 1], uv[2 * v0] = 0, 0
+            pos[3 * v0 + 1], pos[3 * v0 + 2], pos[3 * v0 + 3] = c[1], c[2], c[3]
+            nrm[3 * v0 + 1], nrm[3 * v0 + 2], nrm[3 * v0 + 3] = n[1], n[2], n[3]
+            uv[2 * v0 + 1], uv[2 * v0 + 2] = 0, 0
         end
         local base = #idx
         local a, b, c, d = v0 - 3, v0 - 2, v0 - 1, v0
@@ -157,17 +158,17 @@ function m.plane(p)
     local pos, nrm, uv, idx = {}, {}, {}, {}
     for gy = 0, ch - 1 do
         for gx = 0, cw - 1 do
-            local v = gy * cw + gx + 1
-            pos[3 * v - 2] = -span / 2 + span * gx / (cw - 1)
-            pos[3 * v - 1] = 0
-            pos[3 * v] = -span / 2 + span * gy / (ch - 1)
-            nrm[3 * v - 2], nrm[3 * v - 1], nrm[3 * v] = 0, 1, 0
-            uv[2 * v - 1], uv[2 * v] = gx / (cw - 1), gy / (ch - 1)
+            local v = gy * cw + gx
+            pos[3 * v + 1] = -span / 2 + span * gx / (cw - 1)
+            pos[3 * v + 2] = 0
+            pos[3 * v + 3] = -span / 2 + span * gy / (ch - 1)
+            nrm[3 * v + 1], nrm[3 * v + 2], nrm[3 * v + 3] = 0, 1, 0
+            uv[2 * v + 1], uv[2 * v + 2] = gx / (cw - 1), gy / (ch - 1)
         end
     end
     for gy = 0, ch - 2 do
         for gx = 0, cw - 2 do
-            local a = gy * cw + gx + 1
+            local a = gy * cw + gx
             local n = #idx
             idx[n + 1], idx[n + 2], idx[n + 3] = a, a + cw, a + 1
             idx[n + 4], idx[n + 5], idx[n + 6] = a + 1, a + cw, a + cw + 1
@@ -186,7 +187,7 @@ function m.planeCons(p)
     local function add(a, b, rest, k)
         n = n + 1
         local e = 4 * n - 3
-        cons[e], cons[e + 1], cons[e + 2], cons[e + 3] = a + 1, b + 1, rest, k
+        cons[e], cons[e + 1], cons[e + 2], cons[e + 3] = a, b, rest, k
     end
     for i = 0, cw * ch - 1 do
         local gx, gy = i % cw, math.floor(i / cw)
@@ -209,9 +210,9 @@ end
 -- edge springs + antipodal ties that hold a sphere's shape against gravity
 function m.ballCons(p)
     local pos, idx = p.pos, p.idx
-    local n = #pos / 3
+    local n = #pos // 3
     local function vAt(i)
-        return pos[3 * i - 2], pos[3 * i - 1], pos[3 * i]
+        return pos[3 * i + 1], pos[3 * i + 2], pos[3 * i + 3]
     end
     local function dist(a, b)
         local ax, ay, az = vAt(a)
@@ -239,19 +240,19 @@ function m.ballCons(p)
         end
     end
     local cx, cy, cz = 0, 0, 0
-    for i = 1, n do
+    for i = 0, n - 1 do
         local x, y, z = vAt(i)
         cx, cy, cz = cx + x, cy + y, cz + z
     end
     cx, cy, cz = cx / n, cy / n, cz / n
     local dir = {}
-    for i = 1, n do
+    for i = 0, n - 1 do
         local x, y, z = vAt(i)
         dir[i] = norm3({ x - cx, y - cy, z - cz })
     end
-    for i = 1, n do
+    for i = 0, n - 1 do
         local partner, bestDot = -1, 1e30
-        for j = 1, n do
+        for j = 0, n - 1 do
             if j ~= i then
                 local di, dj = dir[i], dir[j]
                 local d = di[1] * dj[1] + di[2] * dj[2] + di[3] * dj[3]

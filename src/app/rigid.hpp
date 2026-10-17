@@ -32,41 +32,41 @@ struct ColliderDesc {
 class RigidScene {
 public:
     void init();
-    // rigid body from its colliders: a single identity-local collider reuses a shared shape,
-    // anything else builds a compound. isStatic = fixed collider (ground) vs integrated.
-    // scale = the entity's Transform scale, applied to the shape (Jolt bodies are rigid)
-    void addRigidBody(entt::entity e, const RigidBody& body, const std::vector<ColliderDesc>& colliders, const V3& pos,
-                      const V4& quat, const V3& scale, bool isStatic);
-    // kinematic body = user-driven anchor for joints; infinite mass, pose set via setKinematicPose
-    void addKinematicBody(entt::entity e, const std::vector<ColliderDesc>& colliders, const V3& pos,
-                          const V4& quat, const V3& scale);
     void removeBody(entt::entity e); // the Jolt body + the joints that attach to it
     bool hasBody(entt::entity e) const;
     void setKinematicPose(entt::entity e, const V3& pos, const V4& quat);
+    // project new components (RigidBody/KinematicBody/Joint) to Jolt bodies/constraints (the
+    // caller pulls the kinematic poses before step so a body created this step is bound before
+    // the step integrates)
+    void project(const entt::registry& reg);
     void step();
     Transform pose(entt::entity e) const;
     RayHit raycast(const V3& origin, const V3& dir, float maxDist,
                    const std::vector<entt::entity>& excludes = {}) const;
-    // joint between two bodies; type = "point" (ball-socket); grabPos = world point the
-    // joint anchors (the ray collision point); returns joint id or -1
-    int createJoint(entt::entity a, entt::entity b, const char* type, const V3& grabPos);
-    void destroyJoint(int jointId);
-    bool isDynamic(entt::entity e) const;
     entt::entity entityFor(JPH::BodyID id) const; // reverse lookup (a raycast hit -> ECS entity)
     // the lazy Jolt projection of a shape entity (its CapsuleShape/BoxShape data), cached here
     const JPH::Shape* shape(const entt::registry& reg, entt::entity e);
-    // register the destroy observers (body + shape teardowns; CPU-only, so immediate)
+    // register the destroy observers (body + shape + joint teardowns; CPU-only, so immediate)
     void watch(entt::registry& reg);
 
     int velocitySteps = 10; // applied in step(); the UI slider binds to it
 
 private:
+    // the body's collider children (shape entity ref + local Transform)
+    std::vector<ColliderDesc> colliderDescs(const entt::registry& reg, entt::entity e);
     // a single identity-local collider -> the shared shape directly; anything else a compound;
     // a non-unit scale wraps the result in a Jolt ScaledShape
     JPH::ShapeRefC buildShape(const std::vector<ColliderDesc>& colliders, const V3& scale);
+    void buildBody(entt::entity e, const std::vector<ColliderDesc>& colliders, const RigidBody& body,
+                   const Transform& t);
+    void buildKinematic(entt::entity e, const std::vector<ColliderDesc>& colliders, const Transform& t);
+    bool makeJoint(entt::entity e, const Joint& j); // false = unsupported type
+    void releaseJoint(int idx);
     void onBodyDestroyed(entt::registry&, entt::entity e); // destroy-observer handlers
     void onShapeDestroyed(entt::registry&, entt::entity e);
+    void onJointDestroyed(entt::registry&, entt::entity e);
     struct JointEntry {
+        entt::entity ent = entt::null; // the Joint entity (its destroy releases the constraint)
         JPH::Ref<JPH::Constraint> constraint; // owning ref; RemoveConstraint drops the manager's, we drop ours
         bool alive = false;
     };
@@ -79,6 +79,7 @@ private:
     JPH::BroadPhaseLayerInterfaceTable* m_bpl = nullptr;
     JPH::ObjectVsBroadPhaseLayerFilterTable* m_ovb = nullptr;
     std::vector<JointEntry> m_joints;
+    std::unordered_map<entt::entity, int> m_jointIdx; // Joint entity -> m_joints index
     std::unordered_map<entt::entity, JPH::BodyID> m_body;
     std::unordered_map<entt::entity, JPH::ShapeRefC> m_shape;
 };

@@ -72,11 +72,32 @@ JPH::ShapeRefC RigidScene::buildShape(const std::vector<ColliderDesc>& colliders
     return applyBodyScale(compound.Create().Get(), scale);
 }
 
-void RigidScene::addRigidBody(entt::entity e, const RigidBody& body, const std::vector<ColliderDesc>& colliders,
-                              const V3& pos, const V4& quat, const V3& scale, bool isStatic) {
+// the body's collider children: a shared shape entity ref + the local Transform in the body's
+// frame (colliders are children of the body entity)
+std::vector<ColliderDesc> RigidScene::colliderDescs(const entt::registry& reg, entt::entity e) {
+    std::vector<ColliderDesc> out;
+    for (auto [c, col] : reg.view<Collider>().each()) {
+        const auto* p = reg.try_get<Parent>(c);
+        if (!p || p->e != e)
+            continue;
+        const JPH::Shape* s = shape(reg, col.shape);
+        if (!s)
+            continue;
+        // no Transform = at the body's origin, unrotated
+        const Transform t = reg.try_get<Transform>(c) ? reg.get<Transform>(c) : Transform{};
+        out.push_back({s, t});
+    }
+    return out;
+}
+
+void RigidScene::buildBody(entt::entity e, const std::vector<ColliderDesc>& colliders, const RigidBody& body,
+                           const Transform& t) {
+    if (colliders.empty())
+        return; // nothing to collide with yet; retried each step until colliders appear
     auto& bi = m_phys->GetBodyInterface();
-    JPH::ShapeRefC shape = buildShape(colliders, scale);
-    JPH::BodyCreationSettings cs(shape, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat),
+    JPH::ShapeRefC shape = buildShape(colliders, t.scale);
+    const bool isStatic = body.isStatic;
+    JPH::BodyCreationSettings cs(shape, JPH::RVec3(t.pos.x, t.pos.y, t.pos.z), jQuat(t.quat),
                                  isStatic ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic, isStatic ? 0 : 1);
     cs.mFriction = body.friction;
     cs.mRestitution = body.restitution;
@@ -92,10 +113,11 @@ void RigidScene::addRigidBody(entt::entity e, const RigidBody& body, const std::
     m_body[e] = id;
 }
 
-void RigidScene::addKinematicBody(entt::entity e, const std::vector<ColliderDesc>& colliders, const V3& pos,
-                                  const V4& quat, const V3& scale) {
+void RigidScene::buildKinematic(entt::entity e, const std::vector<ColliderDesc>& colliders, const Transform& t) {
+    if (colliders.empty())
+        return; // retried each step until colliders appear
     auto& bi = m_phys->GetBodyInterface();
-    JPH::BodyCreationSettings cs(buildShape(colliders, scale), JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat),
+    JPH::BodyCreationSettings cs(buildShape(colliders, t.scale), JPH::RVec3(t.pos.x, t.pos.y, t.pos.z), jQuat(t.quat),
                                  JPH::EMotionType::Kinematic, 1);
     m_body[e] = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
 }
@@ -107,14 +129,15 @@ void RigidScene::removeBody(entt::entity e) {
     const JPH::BodyID id = it->second;
     m_body.erase(it);
     m_phys->GetBodyInterface().RemoveBody(id); // also detaches its constraints from the world
-    // drop our owning refs of the detached constraints (releasing frees them)
-    for (auto& j : m_joints) {
-        if (!j.alive)
+    // drop our owning refs of the detached constraints (releasing frees them); the Joint
+    // component (if still in the ECS) re-projects when the body comes back
+    for (size_t i = 0; i < m_joints.size(); ++i) {
+        if (!m_joints[i].alive)
             continue;
-        const auto* two = static_cast<const JPH::TwoBodyConstraint*>(j.constraint.GetPtr());
+        const auto* two = static_cast<const JPH::TwoBodyConstraint*>(m_joints[i].constraint.GetPtr());
         if (two->GetBody1()->GetID() == id || two->GetBody2()->GetID() == id) {
-            j.constraint = nullptr;
-            j.alive = false;
+            m_jointIdx.erase(m_joints[i].ent);
+            releaseJoint((int)i);
         }
     }
 }
@@ -160,6 +183,7 @@ void RigidScene::onShapeDestroyed(entt::registry&, entt::entity e) {
 void RigidScene::watch(entt::registry& reg) {
     reg.on_destroy<RigidBody>().connect<&RigidScene::onBodyDestroyed>(this);
     reg.on_destroy<KinematicBody>().connect<&RigidScene::onBodyDestroyed>(this);
+    reg.on_destroy<Joint>().connect<&RigidScene::onJointDestroyed>(this);
     reg.on_destroy<CapsuleShape>().connect<&RigidScene::onShapeDestroyed>(this);
     reg.on_destroy<BoxShape>().connect<&RigidScene::onShapeDestroyed>(this);
 }
@@ -173,37 +197,73 @@ void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const V4& quat)
     bi.SetPositionAndRotation(it->second, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat), JPH::EActivation::Activate);
 }
 
-int RigidScene::createJoint(entt::entity a, entt::entity b, const char* type, const V3& grabPos) {
-    if (std::strcmp(type, "point") != 0)
-        return -1;
-    const auto ia = m_body.find(a), ib = m_body.find(b);
-    if (ia == m_body.end() || ib == m_body.end())
-        return -1;
+// the constraint from a Joint component; bodyB == null anchors bodyA to the world (Jolt's
+// fixed-to-world body)
+bool RigidScene::makeJoint(entt::entity e, const Joint& j) {
+    if (j.type != 0) {
+        std::fprintf(stderr, "3dsim: joint type %d not supported (0 = point)\n", j.type);
+        return false;
+    }
+    const auto ia = m_body.find(j.bodyA);
+    if (ia == m_body.end())
+        return false;
+    if (j.bodyB != entt::null && m_body.find(j.bodyB) == m_body.end())
+        return false;
     // no body locking: single-threaded between Update() calls, so the references stay valid
     JPH::Body* bodyA = m_phys->GetBodyLockInterface().TryGetBody(ia->second);
-    JPH::Body* bodyB = m_phys->GetBodyLockInterface().TryGetBody(ib->second);
+    JPH::Body* bodyB = j.bodyB == entt::null ? &JPH::Body::sFixedToWorld
+                                             : m_phys->GetBodyLockInterface().TryGetBody(m_body[j.bodyB]);
     if (!bodyA || !bodyB)
-        return -1;
+        return false;
     JPH::PointConstraintSettings cs;
     // LocalToBodyCOM: express the grab (collision) point in each body's COM-local space so the
     // grabbed point on the target follows the hand's grip, not the two centers of mass.
-    const JPH::RVec3 grab(grabPos.x, grabPos.y, grabPos.z);
+    const JPH::RVec3 grab(j.grabPos.x, j.grabPos.y, j.grabPos.z);
     cs.mSpace = JPH::EConstraintSpace::LocalToBodyCOM;
     cs.mPoint1 = bodyA->GetRotation().InverseRotate(grab - bodyA->GetPosition());
     cs.mPoint2 = bodyB->GetRotation().InverseRotate(grab - bodyB->GetPosition());
     JPH::TwoBodyConstraint* constraint = cs.Create(*bodyA, *bodyB);
     m_phys->AddConstraint(constraint);
-    m_joints.push_back({constraint, true});
-    return (int)m_joints.size() - 1;
+    m_joints.push_back({e, constraint, true});
+    return true;
 }
 
-void RigidScene::destroyJoint(int jointId) {
-    if (jointId < 0 || jointId >= (int)m_joints.size() || !m_joints[jointId].alive)
+void RigidScene::releaseJoint(int idx) {
+    if (idx < 0 || idx >= (int)m_joints.size() || !m_joints[idx].alive)
         return;
     // RemoveConstraint drops the manager's ref; releasing ours frees the constraint (never delete by hand)
-    m_phys->RemoveConstraint(m_joints[jointId].constraint);
-    m_joints[jointId].constraint = nullptr;
-    m_joints[jointId].alive = false;
+    m_phys->RemoveConstraint(m_joints[idx].constraint);
+    m_joints[idx].constraint = nullptr;
+    m_joints[idx].alive = false;
+}
+
+// the ECS is the source of truth: new components project to Jolt bodies/constraints. A
+// Joint whose endpoints are not (yet) bodies is retried the next step, so a script may create
+// body + joint in the same hook
+void RigidScene::project(const entt::registry& reg) {
+    for (auto [e, rb] : reg.view<RigidBody>().each()) {
+        if (m_body.count(e))
+            continue;
+        const auto* t = reg.try_get<Transform>(e); // a body needs a pose; retry once it appears
+        if (!t)
+            continue;
+        buildBody(e, colliderDescs(reg, e), rb, *t);
+    }
+    for (entt::entity e : reg.view<KinematicBody>()) {
+        if (m_body.count(e))
+            continue;
+        const auto* t = reg.try_get<Transform>(e);
+        if (!t)
+            continue;
+        buildKinematic(e, colliderDescs(reg, e), *t);
+    }
+    for (auto [e, j] : reg.view<Joint>().each()) {
+        if (m_jointIdx.count(e))
+            continue;
+        if (!makeJoint(e, j))
+            continue; // endpoints not ready (or an unsupported type); retried next step
+        m_jointIdx[e] = (int)m_joints.size() - 1;
+    }
 }
 
 void RigidScene::step() {
@@ -242,12 +302,10 @@ RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist,
     return out;
 }
 
-bool RigidScene::isDynamic(entt::entity e) const {
-    const auto it = m_body.find(e);
-    if (it == m_body.end())
-        return false;
-    JPH::BodyLockRead lock(m_phys->GetBodyLockInterface(), it->second);
-    if (!lock.Succeeded())
-        return false;
-    return lock.GetBody().IsDynamic();
+void RigidScene::onJointDestroyed(entt::registry&, entt::entity e) {
+    const auto it = m_jointIdx.find(e);
+    if (it == m_jointIdx.end())
+        return;
+    releaseJoint(it->second);
+    m_jointIdx.erase(it);
 }

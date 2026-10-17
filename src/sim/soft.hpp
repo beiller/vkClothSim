@@ -10,11 +10,18 @@
 #include "sim/sim.hpp"
 #include <limits>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
+
+struct Engine;
 
 class Soft {
 public:
     void init(VkDevice dev, VkPhysicalDevice pdev);
+    // first-sight allocation: a SoftBodyData component without a GPU body reads its vertex data
+    // from the Renderable's geometry, lifts it to world space at the entity's pose, uploads it,
+    // and allocates the sim buffers
+    void project(Engine& w);
     // scene ground: the soft-body floor plane (top face of the ground box); -inf = no floor
     void setFloor(float y);
     // live capsule list: the caller fills the staging array (any order, capped) then uploads;
@@ -72,6 +79,7 @@ private:
     int m_nCaps = 0;
     std::vector<GpuBody> m_body;
     std::unordered_map<entt::entity, int> m_ent; // body entity -> m_body index
+    std::unordered_set<entt::entity> m_warned;   // entities already warned about in project()
     std::vector<int> m_free;                     // retired bodies awaiting the frame-start flush
     VkPipeline m_softPipe = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_softDsl = VK_NULL_HANDLE;

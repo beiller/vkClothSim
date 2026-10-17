@@ -9,8 +9,12 @@ local ctrlH, ctrlL, rootH, headH
 local handAnchor = nil -- kinematic grab anchor (right hand); created on the first physics step
 local joint = nil
 local marker = nil
+local markerMat = nil
+local laserMatR = nil
+local laserMatL = nil
 local markerGeom = nil
 local laserGeom = nil
+local anchorShape = nil
 local lasers = {} -- hand -> laser entity, parented to that hand's grip mesh
 local kSpeed = 2.0
 local kDead = 0.12
@@ -19,13 +23,39 @@ local kMarkerRadius = 0.03
 local kLaserLen = 10.0
 local kLaserHalf = 0.002
 
+-- stdlib geometry tables are the Geometry struct itself: stash one in a geometry entity
+local function geom(t)
+    local g = scene.entity()
+    scene.replace(g, "Geometry", t)
+    return g
+end
+
+-- a PBR material as a pure-data entity (shared by ref, edited in place)
+local function material(name, baseColor, metallic, roughness, emissive)
+    local e = scene.entity(name)
+    local m = { baseColor = baseColor, metallic = metallic or 0, roughness = roughness or 0.5 }
+    if emissive then
+        m.emissive = emissive
+    end
+    scene.replace(e, "Material", m)
+    return e
+end
+
+-- grabbable bodies are RigidBody{isStatic = 0}
+local function isDynamic(e)
+    local rb = scene.component(e, "RigidBody")
+    return rb and rb.isStatic == 0
+end
+
 function M._on_ready(self)
-    render.material("grab_marker", {1, 0.1, 0.1}, 0.0, 0.35)
-    markerGeom = render.geometry(mesh.sphere({ radius = kMarkerRadius, subdiv = 2 }))
+    markerMat = material("grab_marker", {1, 0.1, 0.1}, 0.0, 0.35)
+    markerGeom = geom(mesh.sphere({ radius = kMarkerRadius, subdiv = 2 }))
     -- lasers: one very thin box per hand along its aim dir (aim = -z), lit by HDR emissive
-    laserGeom = render.geometry(mesh.box({kLaserHalf, kLaserHalf, kLaserLen / 2}))
-    render.material("laser R", {1, 0.05, 0.05}, 0, 1, nil, {3, 0.05, 0.05})
-    render.material("laser L", {0.05, 0.8, 1}, 0, 1, nil, {0.05, 2.5, 3})
+    laserGeom = geom(mesh.box({kLaserHalf, kLaserHalf, kLaserLen / 2}))
+    laserMatR = material("laser R", {1, 0.05, 0.05}, 0, 1, {3, 0.05, 0.05})
+    laserMatL = material("laser L", {0.05, 0.8, 1}, 0, 1, {0.05, 2.5, 3})
+    anchorShape = scene.entity()
+    scene.replace(anchorShape, "CapsuleShape", { halfLen = 0.06, radius = 0.03 })
 end
 
 -- place a small sphere on the grabbed capsule, at the joint anchor (Parent system)
@@ -39,13 +69,15 @@ local function spawnMarker(capEnt, hitPos)
     -- joint anchor (world hitPos) in the capsule's local frame
     local localPos = scene.qrot(scene.qinv(capQ), scene.vsub(hitPos, capPos))
     marker = scene.entity()
-    render.mesh(marker, markerGeom, "grab_marker", localPos, {0, 0, 0, 1})
+    scene.replace(marker, "Transform", { pos = localPos })
+    scene.replace(marker, "Renderable", { geom = markerGeom })
+    scene.replace(marker, "MaterialRef", { material = markerMat })
     scene.add_child(capEnt, marker)
 end
 
 local function release()
     if joint then
-        physics.destroy_joint(joint)
+        scene.destroy(joint)
         joint = nil
     end
     if marker then
@@ -80,9 +112,12 @@ local function ensureAnchor()
         return
     end
     handAnchor = scene.entity("hand anchor")
-    scene.emplace(handAnchor, "Transform")
+    scene.replace(handAnchor, "Transform", {})
     scene.add_child(rootH, handAnchor)
-    physics.kinematic(handAnchor, { { shape = physics.capsule(0.06, 0.03) } })
+    scene.replace(handAnchor, "KinematicBody", {})
+    local aCol = scene.entity()
+    scene.replace(aCol, "Collider", { shape = anchorShape })
+    scene.add_child(handAnchor, aCol)
 end
 
 -- per step: drive the anchor from the right hand's aim pose (inactive: it stays put)
@@ -121,8 +156,11 @@ local function grab()
         -- exclude the kinematic anchor: the ray starts at its center and a convex self-hit
         -- would otherwise always win at fraction 0
         local hit = physics.raycast(aimWorld, fwd, kGrabRange, { handAnchor })
-        if hit and hit.entity and physics.is_dynamic(hit.entity) then
-            joint = physics.create_joint(handAnchor, hit.entity, "point", hit.pos)
+        if hit and hit.entity and isDynamic(hit.entity) then
+            local j = scene.entity()
+            scene.replace(j, "Joint", { bodyA = handAnchor, bodyB = hit.entity, type = 0, grabPos = hit.pos })
+            scene.add_child(handAnchor, j)
+            joint = j
             spawnMarker(hit.entity, hit.pos)
         end
     end
@@ -141,7 +179,7 @@ local function laserPoseInGrip(ctrl)
     return scene.qrot(gripInv, scene.vsub(center, grip.pos)), scene.qmul(gripInv, aimQ)
 end
 
-local function updateLaser(hand, ctrl, matName)
+local function updateLaser(hand, ctrl, matEnt)
     if not ctrl or scene.get(ctrl, "active") < 0.5 then
         if lasers[hand] then
             scene.destroy(lasers[hand])
@@ -151,7 +189,9 @@ local function updateLaser(hand, ctrl, matName)
     end
     if not lasers[hand] then
         local e = scene.entity()
-        render.mesh(e, laserGeom, matName, nil, nil, { noShadow = true })
+        scene.replace(e, "Transform", {})
+        scene.replace(e, "Renderable", { geom = laserGeom, noShadow = true })
+        scene.replace(e, "MaterialRef", { material = matEnt })
         scene.add_child(ctrl, e)
         lasers[hand] = e
     end
@@ -176,8 +216,8 @@ function M._animate(self, dt)
     if ctrlH and rootH and headH then
         walk(dt)
     end
-    updateLaser("R", ctrlH, "laser R")
-    updateLaser("L", ctrlL, "laser L")
+    updateLaser("R", ctrlH, laserMatR)
+    updateLaser("L", ctrlL, laserMatL)
 end
 
 function M._physics(self, dt)

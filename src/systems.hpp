@@ -9,35 +9,18 @@
 #include <imgui.h>
 #include <vector>
 
-// add a visual to an entity: Renderable + MaterialRef + optional Parent (noShadow skips the shadow
-// pass); ensures a Transform (identity if absent) since a mesh without a pose sits at the origin
-void addMesh(Engine& w, entt::entity e, int geom, entt::entity mat, entt::entity parent, bool noShadow = false);
-// add a soft body to an entity: SoftBodyData + Renderable + MaterialRef; mass > 0 overrides the default
-void addSoftBody(Engine& w, entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
-                 float mass);
+// add a visual to an entity: Renderable(geom) + MaterialRef + optional Parent (noShadow skips the
+// shadow pass); ensures a Transform (identity if absent) since a mesh without a pose sits at the
+// origin. geom = the geometry entity holding the vertex data (a Geometry component)
+void addMesh(Engine& w, entt::entity e, entt::entity geom, entt::entity mat, entt::entity parent, bool noShadow = false);
 // shared material entity (Material, optional Name); meshes reference it via MaterialRef
 entt::entity spawnMaterial(Engine& w, const V3& baseColor, float metallic, float roughness, const V3& emissive,
                            const char* name = nullptr);
 // first entity with a matching Name (entt::null if none)
 entt::entity findNamedEntity(const Engine& w, const std::string& name);
-// one collider of a body: a shared shape entity + pose in the body's frame
-struct ColliderSpec {
-    entt::entity shape = entt::null;
-    Transform local{};
-};
-// add a rigid body to an entity (needs a Transform): a Jolt body built from the colliders' shared
-// shapes + one collider child entity per collider; isStatic = fixed collider (ground) vs integrated
-void addRigidBody(Engine& w, entt::entity e, const std::vector<ColliderSpec>& colliders, bool isStatic);
-// kinematic body: same collider children; the Jolt body follows the entity's pose each step
-void addKinematicBody(Engine& w, entt::entity e, const std::vector<ColliderSpec>& colliders);
-// one collider child entity: local Transform + Collider(shape) + Parent -> the body
-entt::entity addCollider(Engine& w, entt::entity body, entt::entity shape, const Transform& local);
-// load + upload a texture asset; emplace Texture on e; false if the asset is missing
-bool textureFor(Engine& w, entt::entity e, const std::string& path);
-// shared texture entity for a path (deduped, Name = path); null on failure — render.texture
-entt::entity textureEntity(Engine& w, const std::string& path);
-// shared texture entity from decoded RGBA8 bytes (e.g. a glTF-embedded image); deduped by id,
-// which doubles as the Name ("file.glb#img0" or a resolved file path)
+// shared texture entity from decoded RGBA8 bytes (a glTF image, embedded or external): deduped
+// by id, which doubles as the Name ("file.glb#img0" or a resolved file path); the upload is
+// eager because the bytes exist only at import time
 entt::entity textureBytes(Engine& w, const std::string& id, const uint8_t* rgba, int wpx, int hpx);
 // the active camera (entt::null if none)
 entt::entity findActiveCamera(const Engine& w);
@@ -45,12 +28,14 @@ entt::entity findActiveCamera(const Engine& w);
 Transform worldTransform(entt::registry& reg, entt::entity e);
 Mat4 cameraViewProj(Engine& w, entt::entity cam, float aspect);
 
-// pull each kinematic body's world Transform from the ECS into Jolt, step the sim, then copy
-// the dynamic bodies' poses back into the ECS (kinematic poses are script/XR-owned, never copied back)
+// project new RigidBody/KinematicBody/Joint components to Jolt, pull each kinematic body's
+// world Transform into Jolt, step the sim, then copy the dynamic bodies' poses back into the
+// ECS (kinematic poses are script/XR-owned, never copied back)
 void stepRigid(Engine& w);
 // compose each entity's Transform through its Parent chain into a WorldTransform
 void resolveWorldTransforms(Engine& w);
 void syncColliders(Engine& w);
+// first-sight projection of new SoftBodyData components to GPU bodies, then record the sim
 void stepSoft(Engine& w, VkCommandBuffer cmd);
 // query the ECS and render the scene (mono) to the swapchain image
 void draw(Engine& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui);
@@ -64,7 +49,7 @@ void stepXr(Engine& w, const XrFrame& fr);
 // also spawns the "vr cam" (the VR head camera)
 entt::entity spawnVrRoot(Engine& w);
 // create a tracked controller entity per hand, parented to the VR root (grip visual + input
-// state); physics bodies are a scene-script choice (physics.kinematic)
+// state); physics bodies are a scene-script choice (a KinematicBody component)
 void spawnControllers(Engine& w);
 // headset controller poses -> controller entities' local Transform + ControllerInput
 void stepControllers(Engine& w, const XrFrame& fr);

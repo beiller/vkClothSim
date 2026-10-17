@@ -163,14 +163,14 @@ entt::entity entityOrName(const Engine& w, lua_State* L, int idx) {
     return findNamedEntity(w, luaL_checkstring(L, idx));
 }
 
-// the skinned character (skeleton) entity at e or among its descendants (a gltf character
-// spans many entities: joints, mesh nodes, prims); entt::null if none
-entt::entity skelCharEntity(const Engine& w, entt::entity e) {
+// the skeleton entity at e or among its descendants (a gltf model spans many entities: joints,
+// mesh nodes, prims, and the skeleton under the root); entt::null if none
+entt::entity skelEntity(const Engine& w, entt::entity e) {
     if (e == entt::null)
         return entt::null;
     auto& reg = w.reg;
-    if (const auto* s = reg.try_get<SkelCharData>(e))
-        return s->skel;
+    if (reg.try_get<Skeleton>(e))
+        return e;
     std::map<unsigned, std::vector<entt::entity>> children;
     for (auto [c, p] : reg.view<Parent>().each())
         children[entt::to_integral(p.e)].push_back(c);
@@ -178,8 +178,8 @@ entt::entity skelCharEntity(const Engine& w, entt::entity e) {
     while (!stack.empty()) {
         const entt::entity cur = stack.back();
         stack.pop_back();
-        if (const auto* s = reg.try_get<SkelCharData>(cur))
-            return s->skel;
+        if (reg.try_get<Skeleton>(cur))
+            return cur;
         if (auto it = children.find(entt::to_integral(cur)); it != children.end())
             for (entt::entity c : it->second)
                 stack.push_back(c);
@@ -222,8 +222,7 @@ void SceneScript::init(Engine& w) {
     reg("set_morph", lSetMorph);         // set_morph(name | entity, target, weight)
     reg("get_morph", lGetMorph);         // get_morph(name | entity, target) -> weight
     reg("reset_morphs", lResetMorphs);   // reset_morphs(name | entity)
-    reg("joints", lJoints);              // joints(name | entity) -> {joint, ...} (skinned character joints)
-    reg("visible", lVisible);            // visible(name | entity, bool) - hides it and all descendants
+    reg("joints", lJoints);              // joints(name | entity) -> {joint, ...} (skeleton joints)
     reg("time", lTime);                  // time() -> seconds since scene start
     reg("button", lButton);              // button(name, fn())
     reg("attach_script", lAttachScript); // attach_script(entity, file, params?)
@@ -249,27 +248,15 @@ void SceneScript::init(Engine& w) {
     reg("key_down", lKeyDown); // key_down(entity, code) -> bool
     lua_setglobal(L, "scene");
 
-    lua_newtable(L);            // render: mesh assets, materials, and visuals
-    reg("geometry", lGeometry); // geometry(geomTable) -> shared mesh id
-    reg("texture", lTexture);   // texture(path) -> shared texture entity (one per path)
-    reg("material", lMaterial); // material(name, color, metallic, roughness, texEntity?, emissive?)
-    reg("mesh", lMesh);         // mesh(entity, geom, mat, pos?, quat?, {parent?, noShadow?})
-    reg("gltf", lGltf);         // gltf(entity, path) -> build under entity, returns the entity
+    lua_newtable(L); // render: external model import (everything else is scene.replace components)
+    reg("gltf", lGltf); // gltf(entity, path) -> build under entity, returns the entity
     lua_setglobal(L, "render");
 
-    lua_newtable(L);                     // physics: shapes, rigid + kinematic bodies, raycasts, joints
-    reg("capsule", lCapsuleShape);       // capsule(halfLen, radius) -> shared shape entity
-    reg("box", lBoxShape);               // box(hx, hy, hz) -> shared shape entity
-    reg("body", lBody);                  // body(entity, colliders, {static = 1}?) -> rigid body + collider children
-    reg("kinematic", lKinematic);        // kinematic(entity, colliders) -> kinematic body + collider children
-    reg("raycast", lRaycast);            // raycast(origin, dir, maxDist, excludes?) -> {hit,pos,dist,entity} | nil
-    reg("create_joint", lCreateJoint);   // create_joint(entA, entB, type, grabPos) -> joint id
-    reg("destroy_joint", lDestroyJoint); // destroy_joint(id)
-    reg("is_dynamic", lIsDynamic);       // is_dynamic(entity) -> bool
+    lua_newtable(L); // physics: scene queries (bodies are RigidBody/KinematicBody components)
+    reg("raycast", lRaycast); // raycast(origin, dir, maxDist, excludes?) -> {hit,pos,dist,entity} | nil
     lua_setglobal(L, "physics");
 
-    lua_newtable(L);          // soft: GPU soft bodies (a mesh + its constraints)
-    reg("body", lSoftBody);   // body(entity, geom, cons, mat, mass?) - entity's Transform = rest pose
+    lua_newtable(L); // soft: the sim's floor plane (bodies are SoftBodyData components)
     reg("floor", lSoftFloor); // floor(y) - the sim's floor plane height
     lua_setglobal(L, "soft");
     // unref a script entity's Lua refs when it is destroyed
@@ -317,18 +304,18 @@ bool SceneScript::loadMeshStdlib(std::string& err) {
     return true;
 }
 
-int SceneScript::callMeshGen(const std::string& gen, const std::vector<std::pair<std::string, double>>& params,
-                             std::string& err) {
+entt::entity SceneScript::callMeshGen(const std::string& gen, const std::vector<std::pair<std::string, double>>& params,
+                                      std::string& err) {
     if (m_geomModule < 0) {
         err = "no geometry module (scenes/mesh not loaded)";
-        return -1;
+        return entt::null;
     }
     lua_rawgeti(L, LUA_REGISTRYINDEX, m_geomModule);
     lua_getfield(L, -1, gen.c_str());
     if (!lua_isfunction(L, -1)) {
         err = "no mesh generator '" + gen + "' in geometry module";
         lua_pop(L, 2);
-        return -1;
+        return entt::null;
     }
     lua_createtable(L, (int)params.size(), 0);
     for (const auto& [k, v] : params) {
@@ -341,15 +328,18 @@ int SceneScript::callMeshGen(const std::string& gen, const std::vector<std::pair
         err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
         std::fprintf(stderr, "3dsim: mesh %s: %s\n", gen.c_str(), err.c_str());
         lua_pop(L, 2); // module, error
-        return -1;
+        return entt::null;
     }
     Mesh m = readGeom(L, lua_absindex(L, -1), err);
     lua_pop(L, 2); // module, geom
     if (!err.empty()) {
         std::fprintf(stderr, "3dsim: mesh %s: %s\n", gen.c_str(), err.c_str());
-        return -1;
+        return entt::null;
     }
-    return w().renderer.addMesh(m).geom;
+    // the vertex data lives in a geometry entity (the renderer uploads it lazily on first sight)
+    entt::entity ge = w().reg.create();
+    w().reg.emplace<Geometry>(ge, Geometry{m});
+    return ge;
 }
 
 Mesh SceneScript::readGeom(lua_State* L, int idx, std::string& err) {
@@ -371,47 +361,13 @@ Mesh SceneScript::readGeom(lua_State* L, int idx, std::string& err) {
         m.nrm.assign((size_t)3 * n, 0.0f);
     if (m.uv.empty())
         m.uv.assign((size_t)2 * n, 0.0f);
-    // Lua indices are 1-based; Vulkan wants 0-based
-    for (auto& i : m.indices) {
-        if (i < 1 || i > (uint32_t)n) {
+    // indices are 0-based (the stdlib convention); validate the range
+    for (uint32_t i : m.indices)
+        if (i >= (uint32_t)n) {
             err = "geometry: index out of range";
             return {};
         }
-        i -= 1;
-    }
     return m;
-}
-
-// geometry table at stack slot 1 (errors via luaL_error)
-Mesh SceneScript::checkGeom(lua_State* L, const char* what) {
-    std::string err;
-    Mesh m = readGeom(L, lua_absindex(L, 1), err);
-    if (!err.empty())
-        luaL_error(L, "%s: %s", what, err.c_str());
-    return m;
-}
-
-std::vector<sim::Constraint> SceneScript::readCons(lua_State* L, int idx, int nVerts, std::string& err) {
-    std::vector<sim::Constraint> out;
-    std::vector<float> flat;
-    if (!readNumArray(L, idx, flat, err)) {
-        err = "constraints " + err;
-        return out;
-    }
-    if (flat.size() % 4 != 0) {
-        err = "constraints length is not a multiple of 4 (a, b, rest, k)";
-        return out;
-    }
-    out.reserve(flat.size() / 4);
-    for (size_t i = 0; i < flat.size(); i += 4) {
-        const int a = (int)flat[i] - 1, b = (int)flat[i + 1] - 1;
-        if (a < 0 || a >= nVerts || b < 0 || b >= nVerts) {
-            err = "constraint index out of range";
-            return {};
-        }
-        out.push_back({a, b, flat[i + 2], flat[i + 3]});
-    }
-    return out;
 }
 
 bool SceneScript::hasButton(const std::string& name) const {
@@ -627,40 +583,6 @@ void SceneScript::reportError(const char* what) {
     lua_pop(L, 2); // traceback + error object
 }
 
-int SceneScript::lTexture(lua_State* L) {
-    auto* self = sSelf(L);
-    Engine& w = self->w();
-    const char* path = luaL_checkstring(L, 1);
-    const entt::entity e = textureEntity(w, path);
-    if (e == entt::null)
-        return luaL_error(L, "render.texture: cannot load texture '%s'", path);
-    pushEnt(L, e);
-    return 1;
-}
-
-int SceneScript::lMaterial(lua_State* L) {
-    auto* self = sSelf(L);
-    Engine& w = self->w();
-    const char* name = luaL_checkstring(L, 1);
-    auto color = readV3(L, 2);
-    const float metallic = (float)luaL_optnumber(L, 3, 0.0);
-    const float roughness = (float)luaL_optnumber(L, 4, 0.5);
-    entt::entity tex = entt::null;
-    if (!lua_isnoneornil(L, 5)) {
-        tex = readEnt(L, 5);
-        if (!w.reg.try_get<Texture>(tex))
-            return luaL_error(L, "scene.material '%s': texture must be a texture entity (render.texture)", name);
-    }
-    const V3 emissive = readV3(L, 6);
-    entt::entity e = findNamedEntity(w, name);
-    if (e == entt::null || !w.reg.try_get<Material>(e))
-        e = spawnMaterial(w, color, metallic, roughness, emissive, name);
-    if (tex != entt::null)
-        w.reg.get<Material>(e).tex = tex;
-    pushEnt(L, e);
-    return 1;
-}
-
 int SceneScript::lGltf(lua_State* L) {
     auto* self = sSelf(L);
     Engine& w = self->w();
@@ -673,15 +595,9 @@ int SceneScript::lGltf(lua_State* L) {
     return 1;
 }
 
-int SceneScript::lGeometry(lua_State* L) {
-    auto* self = sSelf(L);
-    Engine& w = self->w();
-    const Mesh m = checkGeom(L, "scene.geometry");
-    lua_pushinteger(L, w.renderer.addMesh(m).geom);
-    return 1;
-}
-
-// {field = number | boolean | {n, ...}} at idx -> CompFields (struct-form vocabulary); sets err
+// {field = number | boolean | string | {numbers}} at idx -> CompFields (struct-form
+// vocabulary); sets err. Integers double as entity handles, arrays hold vectors, quaternions,
+// or full FloatArr/UIntArr payloads
 bool SceneScript::readCompFields(lua_State* L, int idx, CompFields& out, std::string& err) {
     lua_pushnil(L);
     while (lua_next(L, idx) != 0) {
@@ -694,20 +610,40 @@ bool SceneScript::readCompFields(lua_State* L, int idx, CompFields& out, std::st
         } else if (lua_isnumber(L, -1)) {
             f.v[0] = (float)lua_tonumber(L, -1);
             f.n = 1;
+            if (lua_isinteger(L, -1)) {
+                f.hasEnt = true;
+                f.ent = readEnt(L, -1);
+            }
+        } else if (lua_isstring(L, -1)) {
+            f.isStr = true;
+            f.str = lua_tostring(L, -1);
         } else if (lua_istable(L, -1)) {
-            for (int i = 1; i <= 4; ++i) {
-                lua_geti(L, -1, i);
-                if (!lua_isnumber(L, -1)) {
+            const int t = lua_absindex(L, -1);
+            f.isArr = true;
+            for (int i = 1;; ++i) {
+                lua_geti(L, t, i);
+                if (lua_isnoneornil(L, -1)) {
                     lua_pop(L, 1);
                     break;
                 }
-                f.v[i - 1] = (float)lua_tonumber(L, -1);
+                if (!lua_isnumber(L, -1)) {
+                    lua_pop(L, 1);
+                    err = "field '" + std::string(name) + "' must be an array of numbers";
+                    lua_pop(L, 1); // value
+                    return false;
+                }
+                f.arr.push_back((float)lua_tonumber(L, -1));
                 lua_pop(L, 1);
                 f.n = i;
             }
+            if (f.n == 0) {
+                err = "field '" + std::string(name) + "' must be a non-empty array of numbers";
+                lua_pop(L, 1); // value
+                return false;
+            }
         } else {
             lua_pop(L, 1);
-            err = "field '" + std::string(name) + "' must be a number, boolean, or array";
+            err = "field '" + std::string(name) + "' must be a number, boolean, string, or array";
             return false;
         }
         out.push_back(f);
@@ -767,12 +703,17 @@ int SceneScript::lComponent(lua_State* L) {
     }
     lua_newtable(L);
     for (const auto& f : out) {
-        if (f.n == 1) {
+        if (f.isStr) {
+            lua_pushstring(L, f.str.c_str());
+        } else if (f.hasEnt) {
+            pushEnt(L, f.ent); // Ref fields come back as entity handles
+        } else if (!f.isArr && f.n == 1) {
             lua_pushnumber(L, f.v[0]);
-        } else {
+        } else { // vectors, quaternions, and arrays (0..n elements)
+            const float* src = f.isArr ? f.arr.data() : f.v;
             lua_createtable(L, f.n, 0);
             for (int i = 0; i < f.n; ++i) {
-                lua_pushnumber(L, f.v[i]);
+                lua_pushnumber(L, src[i]);
                 lua_seti(L, -2, i + 1);
             }
         }
@@ -790,164 +731,6 @@ int SceneScript::lCompRemove(lua_State* L) {
     if (!compRemove(w.reg, e, type, err))
         return luaL_error(L, "scene.remove %s: %s", type.c_str(), err.c_str());
     return 0;
-}
-
-int SceneScript::lMesh(lua_State* L) {
-    auto* self = sSelf(L);
-    Engine& w = self->w();
-    const entt::entity e = readEnt(L, 1);
-    const int geom = (int)luaL_checkinteger(L, 2);
-    const char* matName = luaL_checkstring(L, 3);
-    const bool hasOpts = lua_istable(L, 6);
-    const entt::entity parent = hasOpts ? optEnt(L, 6, "parent") : entt::null;
-    const bool noShadow = hasOpts ? optBool(L, 6, "noShadow") : false;
-    const entt::entity mat = findNamedEntity(w, matName);
-    if (mat == entt::null)
-        return luaL_error(L, "render.mesh: unknown material '%s'", matName);
-    // placement: create-or-assign the Transform with the given fields; the mesh core ensures a
-    // pose (identity) when none is given
-    CompFields tf;
-    if (lua_istable(L, 4)) {
-        const V3 pos = readV3(L, 4);
-        tf.push_back(CompField{"pos", {pos.x, pos.y, pos.z}, 3});
-    }
-    if (lua_istable(L, 5)) {
-        const V4 quat = readQuat(L, 5);
-        tf.push_back(CompField{"quat", {quat.x, quat.y, quat.z, quat.w}, 4});
-    }
-    if (!tf.empty()) {
-        std::string err;
-        if (!compReplace(w.reg, e, "Transform", tf, err))
-            return luaL_error(L, "render.mesh: %s", err.c_str());
-    }
-    addMesh(w, e, geom, mat, parent, noShadow);
-    pushEnt(L, e);
-    return 1;
-}
-
-// table on top of the stack: its ith numeric value
-static float tableNum(lua_State* L, int i) {
-    lua_geti(L, -1, i);
-    const float v = (float)lua_tonumber(L, -1);
-    lua_pop(L, 1);
-    return v;
-}
-
-// one collider spec: {shape = <shape entity>}, optionally at = {x, y, z} (local offset) and
-// rot = {x, y, z, w} (local rotation)
-static ColliderSpec readColliderSpec(Engine& w, lua_State* L, int idx) {
-    ColliderSpec d{};
-    const int t = lua_absindex(L, idx); // absolute: field pushes shift negative indexes
-    lua_getfield(L, t, "shape");
-    if (!lua_isinteger(L, -1)) {
-        lua_pop(L, 1);
-        luaL_error(L, "physics: collider needs shape = <shape entity>");
-    }
-    d.shape = readEnt(L, -1);
-    lua_pop(L, 1);
-    if (!w.reg.try_get<CapsuleShape>(d.shape) && !w.reg.try_get<BoxShape>(d.shape))
-        luaL_error(L, "physics: shape entity has no capsule/box shape");
-    lua_getfield(L, t, "at");
-    if (lua_istable(L, -1)) {
-        d.local.pos = V3{tableNum(L, 1), tableNum(L, 2), tableNum(L, 3)};
-        lua_pop(L, 1);
-    } else {
-        lua_pop(L, 1);
-    }
-    lua_getfield(L, t, "rot");
-    if (lua_istable(L, -1)) {
-        d.local.quat = V4{tableNum(L, 1), tableNum(L, 2), tableNum(L, 3), tableNum(L, 4)};
-        lua_pop(L, 1);
-    } else {
-        lua_pop(L, 1);
-    }
-    return d;
-}
-
-// collider list at idx: a list of {shape = ..., at?, rot?} specs
-static std::vector<ColliderSpec> readColliderList(Engine& w, lua_State* L, int idx, const char* what) {
-    std::vector<ColliderSpec> out;
-    if (!lua_istable(L, idx))
-        luaL_error(L, "%s: colliders must be a list of {shape = ...} specs", what);
-    for (lua_Integer i = 1;; ++i) {
-        lua_geti(L, idx, i);
-        if (!lua_istable(L, -1)) {
-            lua_pop(L, 1);
-            break;
-        }
-        out.push_back(readColliderSpec(w, L, -1));
-        lua_pop(L, 1);
-    }
-    if (out.empty())
-        luaL_error(L, "%s: at least one collider", what);
-    return out;
-}
-
-int SceneScript::lCapsuleShape(lua_State* L) {
-    auto* self = sSelf(L);
-    entt::entity e = self->w().reg.create();
-    self->w().reg.emplace<CapsuleShape>(e, (float)luaL_checknumber(L, 1), (float)luaL_checknumber(L, 2));
-    pushEnt(L, e);
-    return 1;
-}
-
-int SceneScript::lBoxShape(lua_State* L) {
-    auto* self = sSelf(L);
-    entt::entity e = self->w().reg.create();
-    self->w().reg.emplace<BoxShape>(
-        e, V3{(float)luaL_checknumber(L, 1), (float)luaL_checknumber(L, 2), (float)luaL_checknumber(L, 3)});
-    pushEnt(L, e);
-    return 1;
-}
-
-int SceneScript::lBody(lua_State* L) {
-    auto* self = sSelf(L);
-    Engine& w = self->w();
-    const entt::entity e = readEnt(L, 1);
-    if (!w.reg.try_get<Transform>(e))
-        return luaL_error(L, "physics.body: entity has no transform (add a mesh or set a pose first)");
-    const std::vector<ColliderSpec> colliders = readColliderList(w, L, 2, "physics.body");
-    bool isStatic = false;
-    if (lua_istable(L, 3)) {
-        lua_getfield(L, 3, "static");
-        isStatic = lua_toboolean(L, -1);
-        lua_pop(L, 1);
-    }
-    addRigidBody(w, e, colliders, isStatic);
-    pushEnt(L, e);
-    return 1;
-}
-
-int SceneScript::lKinematic(lua_State* L) {
-    auto* self = sSelf(L);
-    Engine& w = self->w();
-    const entt::entity e = readEnt(L, 1);
-    if (!w.reg.try_get<Transform>(e))
-        return luaL_error(L, "physics.kinematic: entity has no transform");
-    addKinematicBody(w, e, readColliderList(w, L, 2, "physics.kinematic"));
-    pushEnt(L, e);
-    return 1;
-}
-
-int SceneScript::lSoftBody(lua_State* L) {
-    auto* self = sSelf(L);
-    Engine& w = self->w();
-    const entt::entity e = readEnt(L, 1);
-    std::string err;
-    const Mesh m = readGeom(L, 2, err);
-    if (!err.empty())
-        return luaL_error(L, "soft.body: %s", err.c_str());
-    std::vector<sim::Constraint> cons = readCons(L, 3, m.vertexCount(), err);
-    if (!err.empty())
-        return luaL_error(L, "soft.body: %s", err.c_str());
-    const char* matName = luaL_checkstring(L, 4);
-    const float mass = (float)luaL_optnumber(L, 5, 0.0f); // 0 = keep the default
-    const entt::entity mat = findNamedEntity(w, matName);
-    if (mat == entt::null)
-        return luaL_error(L, "soft.body: unknown material '%s'", matName);
-    addSoftBody(w, e, m, cons, mat, mass);
-    pushEnt(L, e);
-    return 1;
 }
 
 int SceneScript::lSoftFloor(lua_State* L) {
@@ -996,16 +779,20 @@ int SceneScript::lSet(lua_State* L) {
 int SceneScript::lGet(lua_State* L) {
     auto* self = sSelf(L);
     const Engine& w = self->w();
-    float vals[3]{};
+    float vals[4]{};
     int n = 0;
     std::string err;
     const bool ok = lua_isnumber(L, 1)
-                        ? sceneGetEnt(w, readEnt(L, 1), luaL_checkstring(L, 2), vals, 3, n, err) // get(entity, field)
-                        : sceneGet(w, luaL_checkstring(L, 1), vals, 3, n, err);                  // get("name.field")
+                        ? sceneGetEnt(w, readEnt(L, 1), luaL_checkstring(L, 2), vals, 4, n, err) // get(entity, field)
+                        : sceneGet(w, luaL_checkstring(L, 1), vals, 4, n, err);                  // get("name.field")
     if (!ok)
         return luaL_error(L, "scene.get: %s", err.c_str());
     if (n == 1) {
         lua_pushnumber(L, vals[0]);
+        return 1;
+    }
+    if (n == 4) {
+        pushV4(L, {vals[0], vals[1], vals[2], vals[3]});
         return 1;
     }
     pushV3(L, {vals[0], vals[1], vals[2]});
@@ -1059,7 +846,7 @@ int SceneScript::lGetPose(lua_State* L) {
 int SceneScript::lSetMorph(lua_State* L) {
     auto* self = sSelf(L);
     Engine& w = self->w();
-    const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
+    const entt::entity skel = skelEntity(w, entityOrName(w, L, 1));
     if (skel == entt::null)
         return luaL_error(L, "scene.set_morph: not a skinned character");
     w.gpuSim.skin.setMorph(w.reg, skel, luaL_checkstring(L, 2), (float)luaL_checknumber(L, 3));
@@ -1070,7 +857,7 @@ int SceneScript::lSetMorph(lua_State* L) {
 int SceneScript::lGetMorph(lua_State* L) {
     auto* self = sSelf(L);
     Engine& w = self->w();
-    const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
+    const entt::entity skel = skelEntity(w, entityOrName(w, L, 1));
     if (skel == entt::null)
         return luaL_error(L, "scene.get_morph: not a skinned character");
     lua_pushnumber(L, w.gpuSim.skin.getMorph(w.reg, skel, luaL_checkstring(L, 2)));
@@ -1081,7 +868,7 @@ int SceneScript::lGetMorph(lua_State* L) {
 int SceneScript::lResetMorphs(lua_State* L) {
     auto* self = sSelf(L);
     Engine& w = self->w();
-    const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
+    const entt::entity skel = skelEntity(w, entityOrName(w, L, 1));
     if (skel == entt::null)
         return luaL_error(L, "scene.reset_morphs: not a skinned character");
     w.gpuSim.skin.resetMorphs(w.reg, skel);
@@ -1092,7 +879,7 @@ int SceneScript::lResetMorphs(lua_State* L) {
 int SceneScript::lJoints(lua_State* L) {
     auto* self = sSelf(L);
     const Engine& w = self->w();
-    const entt::entity skel = skelCharEntity(w, entityOrName(w, L, 1));
+    const entt::entity skel = skelEntity(w, entityOrName(w, L, 1));
     if (skel == entt::null)
         return luaL_error(L, "scene.joints: not a skinned character");
     const auto& js = w.reg.get<Skeleton>(skel).joints;
@@ -1102,19 +889,6 @@ int SceneScript::lJoints(lua_State* L) {
         lua_seti(L, -2, (int)i + 1);
     }
     return 1;
-}
-
-// visible(name | entity, bool): draw visibility, cascading to all descendants
-int SceneScript::lVisible(lua_State* L) {
-    auto* self = sSelf(L);
-    Engine& w = self->w();
-    const entt::entity e = entityOrName(w, L, 1);
-    if (e == entt::null)
-        return luaL_error(L, "scene.visible: no such entity");
-    if (lua_isnoneornil(L, 2))
-        return luaL_error(L, "scene.visible: missing boolean");
-    w.reg.emplace_or_replace<Visible>(e, Visible{lua_toboolean(L, 2) != 0});
-    return 0;
 }
 
 int SceneScript::lTime(lua_State* L) {
@@ -1182,6 +956,12 @@ int SceneScript::lDestroy(lua_State* L) {
             if (mat.tex == e || mat.texMR == e || mat.texNormal == e || mat.texEmissive == e)
                 return luaL_error(L, "scene.destroy: texture is referenced by a material");
     const auto subtree = subtreeEntities(w.reg, e);
+    // a geometry entity with live renderables outside the destroyed subtree (skinned prims are
+    // their own geometry, so a self-reference never blocks)
+    if (w.reg.try_get<Geometry>(e))
+        for (auto [r, rend] : w.reg.view<Renderable>().each())
+            if (rend.geom == e && std::ranges::find(subtree, r) == subtree.end())
+                return luaL_error(L, "scene.destroy: geometry is referenced by a renderable");
     for (const auto c : subtree)
         w.reg.destroy(c); // destroyed entities fall out of the renderer's ECS query; buffers freed at shutdown
     return 0;
@@ -1380,31 +1160,4 @@ int SceneScript::lRaycast(lua_State* L) {
     return 1;
 }
 
-int SceneScript::lCreateJoint(lua_State* L) {
-    auto* self = sSelf(L);
-    Engine& w = self->w();
-    const entt::entity eA = readEnt(L, 1);
-    const entt::entity eB = readEnt(L, 2);
-    const char* type = luaL_checkstring(L, 3);
-    if (!w.rigid.hasBody(eA) && !w.rigid.hasBody(eB))
-        return luaL_error(L, "scene.create_joint: entity has no rigid/kinematic body");
-    const V3 grabPos = readV3(L, 4); // world collision point the joint anchors
-    const int jid = w.rigid.createJoint(eA, eB, type, grabPos);
-    if (jid < 0)
-        return luaL_error(L, "scene.create_joint: unknown type '%s'", type);
-    lua_pushnumber(L, jid);
-    return 1;
-}
 
-int SceneScript::lDestroyJoint(lua_State* L) {
-    auto* self = sSelf(L);
-    self->w().rigid.destroyJoint((int)luaL_checknumber(L, 1));
-    return 0;
-}
-
-int SceneScript::lIsDynamic(lua_State* L) {
-    auto* self = sSelf(L);
-    const entt::entity e = readEnt(L, 1);
-    lua_pushboolean(L, self->w().rigid.isDynamic(e));
-    return 1;
-}

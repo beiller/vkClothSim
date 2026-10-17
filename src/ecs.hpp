@@ -1,5 +1,6 @@
 #pragma once
 #include "math.hpp"
+#include "mesh.hpp"
 #include "sim/params.hpp"
 #include "xr_frame.hpp"
 #include <entt/entt.hpp>
@@ -96,17 +97,33 @@ struct Collider {
 
 // a Jolt rigid body integrated by the CPU sim: its pose is written back to the entity's Transform
 // each step (the collider children's world poses then feed the GPU soft sim). The material
-// params apply at spawn; the Jolt body is not updated after creation
+// params apply at spawn; the Jolt body is not updated after creation. The body is built lazily
+// from the entity's collider children on the first sim step after this component appears
 struct RigidBody {
     float friction = 0.7f;
     float restitution = 0.05f;
     float damping = 0.05f;
+    bool isStatic = false; // static = world-anchored (no integration)
+};
+
+// a kinematic body constraint: a fixed-space point between bodyA and bodyB (a point constraint);
+// bodyB == null anchors bodyA to the world. type: 0 = point. The constraint is created lazily
+// once both endpoint bodies exist. A Joint entity is a standalone (usually parented under one
+// endpoint so it cascades on destroy); destroying it releases the constraint
+struct Joint {
+    entt::entity bodyA = entt::null;
+    entt::entity bodyB = entt::null; // entt::null = world anchor
+    int type = 0;
+    V3 grabPos{}; // world-space point the constraint is created through
 };
 
 struct SoftBodyData {
     int pinned = 0;
     SimParams params;
     int steps = kDefaultSteps;
+    // flat {a, b, rest, k} quads, 0-based vertex indices; the soft sim reads the vertex data
+    // from the Renderable's geometry and builds the body on its first sim step
+    std::vector<float> cons;
 };
 
 // camera: pose lives in the entity's Transform, projection params here; active = the current
@@ -153,36 +170,42 @@ struct KeyboardInput {
     bool keys[kMaxKeys] = {};
 };
 
+// draw visibility is per-mesh: an entity is drawn when visible (no ancestor walk). The geom
+// entity holds the vertex data (a Geometry component); many renderables may share one
 struct Renderable {
-    int geom = -1; // the renderer's mesh-table index (shared vertex data)
+    entt::entity geom = entt::null; // the geometry entity (shared vertex data)
     bool noShadow = false; // skip in the shadow pass (still drawn in the scene pass)
+    bool visible = true; // false = not drawn in any pass
+
+    Renderable() = default;
+    Renderable(entt::entity g, bool ns = false) : geom(g), noShadow(ns) {}
 };
 
-// draw visibility; an entity is drawn only when it and every ancestor are on. Absent = on.
-struct Visible {
-    bool on = true;
+// vertex data, owned by a geometry entity; renderables reference it. The renderer uploads it
+// to the GPU on first sight (shared across all referencing renderables)
+struct Geometry {
+    Mesh mesh;
 };
 
 // one per skinned character (a glTF skin): the ECS source of truth for a skeleton. The Skin
 // manager owns the GPU resources and discovers skeletons by viewing this component in step(), so
 // any number of skeletons (characters) are supported. joints are in the skin's joints[] order;
 // placement is the representative node whose WorldTransform carries the whole character rigidly
-// (excluded from the per-joint deformation matrix).
+// (excluded from the per-joint deformation matrix). meshes[] is the forward ownership list of
+// this skeleton's skinned prim entities (they alias the skeleton's group vertex buffers); the
+// skeleton is a child of the glTF root entity so destroying the root cascades to it (freezing
+// the meshes in their last pose)
 struct Skeleton {
     std::string name;
     std::vector<entt::entity> joints;
     std::vector<Mat4> invBinds;
     entt::entity placement = entt::null;
-};
-
-// on a skinned mesh's node + prim entities: the skeleton character entity this mesh belongs to
-// (all mesh nodes of one skin share the same skeleton)
-struct SkelCharData {
-    entt::entity skel = entt::null;
+    std::vector<entt::entity> meshes;
 };
 
 // shared texture entity: one per asset path; materials link by entity ref, so users share one
-// GPU copy. The renderer holds the entity -> texture mapping (the upload is eager, at creation)
+// GPU copy. The renderer uploads the file lazily on first sight (a file-backed path); glTF
+// embedded textures are uploaded eagerly at import (their bytes exist only then)
 struct Texture {
     std::string path;
 };

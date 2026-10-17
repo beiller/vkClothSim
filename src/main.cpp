@@ -110,6 +110,7 @@ int main(int argc, char** argv) {
         // the resources queued by the last frame's entity destroys
         w.renderer.flushFrees();
         w.gpuSim.soft.flushFrees();
+        w.gpuSim.skin.flushFrees();
         const auto tPoll = std::chrono::steady_clock::now();
         stepMouse(w);
         stepKeyboard(w);

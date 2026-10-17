@@ -1,5 +1,6 @@
 #include "vk/renderer.hpp"
 
+#include "assets.hpp"
 #include "ecs.hpp"
 #include "mesh_frag_spv.hpp"
 #include "mesh_vert_spv.hpp"
@@ -179,8 +180,8 @@ Renderer::GpuMeshRef Renderer::addMesh(const Mesh& mesh) {
     return {(int)m_geoms.size() - 1, MeshGpu{VertexStore{g.pos, g.posMem, n}, VertexStore{g.nrm, g.nrmMem, n}}};
 }
 
-Renderer::GpuMeshRef Renderer::addMeshShared(const Mesh& m, VkBuffer pos, VkDeviceMemory posMem, VkBuffer nrm,
-                                             VkDeviceMemory nrmMem, uint32_t n) {
+void Renderer::addSharedMesh(entt::entity geomEnt, const Mesh& m, VkBuffer pos, VkDeviceMemory posMem, VkBuffer nrm,
+                             VkDeviceMemory nrmMem, uint32_t n) {
     GpuMesh g;
     g.vtxCount = n;
     g.idxCount = (uint32_t)m.indices.size();
@@ -193,7 +194,50 @@ Renderer::GpuMeshRef Renderer::addMeshShared(const Mesh& m, VkBuffer pos, VkDevi
     vkMakeBufferDev(m_dev, m_pdev, g.ibuf, g.ibmem, (VkDeviceSize)g.idxCount * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                     m.indices.data());
     m_geoms.push_back(g);
-    return {(int)m_geoms.size() - 1, MeshGpu{VertexStore{pos, posMem, n}, VertexStore{nrm, nrmMem, n}}};
+    m_entGeom[geomEnt] = (int)m_geoms.size() - 1;
+}
+
+void Renderer::shareGeomSlot(entt::entity geomEnt, int slot) {
+    m_entGeom[geomEnt] = slot;
+}
+
+// geometry entity -> m_geoms index: an already-uploaded slot, or a first-sight upload of the
+// entity's Geometry component (skinned prims get their slot from addSharedMesh at import)
+int Renderer::geomFor(entt::entity g, const entt::registry& reg) {
+    if (g == entt::null)
+        return -1;
+    const auto it = m_entGeom.find(g);
+    if (it != m_entGeom.end())
+        return it->second;
+    const auto* gc = reg.try_get<Geometry>(g);
+    if (!gc) {
+        if (m_geomWarned.insert(g).second) {
+            const auto* n = reg.try_get<Name>(g);
+            std::fprintf(stderr, "3dsim: geometry entity '%s' has no Geometry component\n",
+                         n ? n->id.c_str() : "(unnamed)");
+        }
+        return -1;
+    }
+    Mesh m = gc->mesh;
+    const int nv = m.vertexCount();
+    if (nv <= 0) {
+        if (m_geomWarned.insert(g).second)
+            std::fprintf(stderr, "3dsim: geometry entity has no vertices\n");
+        return -1;
+    }
+    // normalize: empty nrm/uv pad to zero (the upload needs full-size buffers)
+    if (m.nrm.empty())
+        m.nrm.assign((size_t)nv * 3, 0.0f);
+    if (m.uv.empty())
+        m.uv.assign((size_t)nv * 2, 0.0f);
+    for (uint32_t i : m.indices)
+        if (i >= (uint32_t)nv) {
+            if (m_geomWarned.insert(g).second)
+                std::fprintf(stderr, "3dsim: geometry entity has an out-of-range index\n");
+            return -1;
+        }
+    m_entGeom[g] = addMesh(m).geom;
+    return m_entGeom[g];
 }
 
 int Renderer::allocInstance(int geom) {
@@ -248,7 +292,10 @@ void Renderer::addTexture(entt::entity e, const void* rgba, uint32_t w, uint32_t
     m_entTex[e] = (int)m_texs.size() - 1;
 }
 
-int Renderer::instFor(entt::entity e, int geom) {
+int Renderer::instFor(entt::entity e, entt::entity geomEnt, const entt::registry& reg) {
+    const int geom = geomFor(geomEnt, reg);
+    if (geom < 0)
+        return -1;
     auto it = m_entInst.find(e);
     if (it != m_entInst.end() && !m_insts[(size_t)it->second].dead && m_insts[(size_t)it->second].geom == geom)
         return it->second;
@@ -269,6 +316,30 @@ int Renderer::textureId(entt::entity e) const {
     return it != m_entTex.end() ? it->second : -1;
 }
 
+// the texture id for an entity: an already-uploaded slot, or a first-sight upload of its
+// Texture{path} file (glTF embedded textures are uploaded eagerly at import and hit the map)
+int Renderer::textureFor(entt::entity e, const entt::registry& reg) {
+    if (e == entt::null)
+        return -1;
+    const int id = textureId(e);
+    if (id >= 0)
+        return id;
+    const auto* t = reg.try_get<Texture>(e);
+    if (!t)
+        return -1;
+    TextureData td;
+    bool ok = loadTexture(exeDir() + "/../assets/" + t->path, td);
+    if (!ok)
+        ok = loadTexture("assets/" + t->path, td);
+    if (!ok || td.rgba.empty()) {
+        if (m_texWarned.insert(e).second)
+            std::fprintf(stderr, "3dsim: texture '%s' not found\n", t->path.c_str());
+        return -1;
+    }
+    addTexture(e, td.rgba.data(), (uint32_t)td.w, (uint32_t)td.h);
+    return textureId(e);
+}
+
 void Renderer::queueFreeInst(int inst) {
     m_insts[(size_t)inst].dead = true;
     m_freeInst.push_back(inst);
@@ -284,6 +355,8 @@ void Renderer::onRenderableDestroyed(entt::registry&, entt::entity e) {
         queueFreeInst(it->second);
         m_entInst.erase(it);
     }
+    // skinned prims are their own geometry entity (no Geometry component to watch)
+    m_entGeom.erase(e);
 }
 
 void Renderer::onTextureDestroyed(entt::registry&, entt::entity e) {
@@ -296,9 +369,16 @@ void Renderer::onTextureDestroyed(entt::registry&, entt::entity e) {
     }
 }
 
+// the geometry entity is gone: drop the mapping (the GpuMesh slot's buffers are never freed
+// today, matching the pre-existing mesh-table behavior)
+void Renderer::onGeometryDestroyed(entt::registry&, entt::entity e) {
+    m_entGeom.erase(e);
+}
+
 void Renderer::watch(entt::registry& reg) {
     reg.on_destroy<Renderable>().connect<&Renderer::onRenderableDestroyed>(this);
     reg.on_destroy<Texture>().connect<&Renderer::onTextureDestroyed>(this);
+    reg.on_destroy<Geometry>().connect<&Renderer::onGeometryDestroyed>(this);
 }
 
 void Renderer::flushFrees() {
@@ -346,21 +426,6 @@ void Renderer::setViewProj(const Mat4& vp, const V3& camPos) {
     m_camPos = camPos;
 }
 
-// hidden when this entity or any ancestor carries Visible{on = false} (absent = visible)
-bool Renderer::isHidden(const entt::registry& reg, entt::entity e) const {
-    int depth = 0; // guard against parent cycles
-    for (auto cur = e; cur != entt::null && depth++ < 64;) {
-        if (const auto* v = reg.try_get<Visible>(cur))
-            if (!v->on)
-                return true;
-        const auto* p = reg.try_get<Parent>(cur);
-        if (!p)
-            return false;
-        cur = p->e;
-    }
-    return false;
-}
-
 void Renderer::writeViewUbo(const Mat4& vp, const V3& cam, float envIntensity) {
     ViewUbo u{};
     std::memcpy(u.viewProj, vp.m, 64);
@@ -375,7 +440,9 @@ void Renderer::writeViewUbo(const Mat4& vp, const V3& cam, float envIntensity) {
 void Renderer::prepBuffers(const entt::registry& reg) {
     writeLights(reg);
     for (auto [e, rend] : reg.view<Renderable>().each()) {
-        const int inst = instFor(e, rend.geom); // first sight: allocate the slot
+        const int inst = instFor(e, rend.geom, reg); // first sight: upload the geometry + slot
+        if (inst < 0)
+            continue; // the geometry is missing (warned once at the upload)
         InstancedMesh& im = m_insts[(size_t)inst];
         V3 base{1.0f, 1.0f, 1.0f}, emissive{0.0f, 0.0f, 0.0f};
         float metallic = 0.0f, roughness = 0.5f, baseAlpha = 1.0f, alphaCutoff = 0.5f;
@@ -391,7 +458,7 @@ void Renderer::prepBuffers(const entt::registry& reg) {
                 alphaMode = mat->alphaMode;
                 const entt::entity slots[kTexChannels] = {mat->tex, mat->texMR, mat->texNormal, mat->texEmissive};
                 for (int c = 0; c < kTexChannels; ++c)
-                    setTexture(inst, c, textureId(slots[c])); // no-ops when the id is unchanged
+                    setTexture(inst, c, textureFor(slots[c], reg)); // no-ops when the id is unchanged
             }
         // soft bodies resolve no WorldTransform (geometry is world-space in the GPU buffer) -> identity
         Mat4 model = mat4Identity();
@@ -425,7 +492,7 @@ void Renderer::renderScenePass(VkCommandBuffer cmd, VkApp& app, const entt::regi
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipe);
     std::vector<int> blend;
     for (auto [e, rend] : reg.view<Renderable>().each()) {
-        if (isHidden(reg, e))
+        if (!rend.visible)
             continue;
         const int inst = instOf(e); // prepBuffers ran first this frame, so the slot exists
         if (inst < 0)

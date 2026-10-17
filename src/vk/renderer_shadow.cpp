@@ -134,7 +134,7 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd, const entt::registry& reg)
             vkCmdPushConstants(cmd, m_shadowPl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                sizeof(Pc), &pc);
             for (auto [e, rend] : reg.view<Renderable>().each()) {
-                if (isHidden(reg, e) || rend.noShadow)
+                if (!rend.visible || rend.noShadow)
                     continue;
                 const int inst = instOf(e);
                 if (inst >= 0 && m_insts[(size_t)inst].alphaMode != 2)

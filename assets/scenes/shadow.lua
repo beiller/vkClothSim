@@ -1,11 +1,22 @@
 -- shadow test: a lit ball on a ground plane (env, lights, camera and UI live in shadow.json)
 local M = {}
 
+-- stdlib geometry tables are the Geometry struct itself: stash one in a geometry entity
+local function geom(t)
+    local g = scene.entity()
+    scene.replace(g, "Geometry", t)
+    return g
+end
+
 function M._on_ready(self)
     local ground = scene.entity("ground")
-    render.mesh(ground, render.geometry(mesh.box({ 40, 1, 40 })), "white", { 0, -1, 0 })
+    scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
+    scene.replace(ground, "Renderable", { geom = geom(mesh.box({ 40, 1, 40 })) })
+    scene.replace(ground, "MaterialRef", { material = scene.find("white") })
     local ball = scene.entity("ball")
-    render.mesh(ball, render.geometry(mesh.sphere({ subdiv = 4, radius = 2 })), "plaid", { 0, 3, 0 })
+    scene.replace(ball, "Transform", { pos = { 0, 3, 0 } })
+    scene.replace(ball, "Renderable", { geom = geom(mesh.sphere({ subdiv = 4, radius = 2 })) })
+    scene.replace(ball, "MaterialRef", { material = scene.find("plaid") })
 end
 
 return M

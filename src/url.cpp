@@ -132,8 +132,22 @@ static bool applySet(const UrlRef& r, const float* vals, int n, std::string& err
         }
         *(bool*)r.base = vals[0] != 0.0f;
         return true;
+    case FieldKind::Quat:
+        if (n != 4) {
+            err = "field expects 4 values";
+            return false;
+        }
+        std::memcpy(r.base, vals, 16);
+        return true;
     case FieldKind::Ref:
-        err = "field is read-only";
+        err = "field is an entity reference (set it with scene.replace)";
+        return false;
+    case FieldKind::Str:
+        err = "field is a string (set it with scene.replace)";
+        return false;
+    case FieldKind::FloatArr:
+    case FieldKind::UIntArr:
+        err = "field is an array (set it with scene.replace)";
         return false;
     }
     return false;
@@ -166,8 +180,21 @@ static bool applyGet(const UrlRef& r, float* vals, int maxN, int& n, std::string
         vals[0] = *(bool*)r.base ? 1.0f : 0.0f;
         n = 1;
         return true;
+    case FieldKind::Quat:
+        if (maxN < 4) {
+            err = "field expects 4 values";
+            return false;
+        }
+        std::memcpy(vals, r.base, 16);
+        n = 4;
+        return true;
     case FieldKind::Ref:
-        err = "field is an entity reference";
+        err = "field is an entity reference (read it with scene.component)";
+        return false;
+    case FieldKind::Str:
+    case FieldKind::FloatArr:
+    case FieldKind::UIntArr:
+        err = "field is not a number (read it with scene.component)";
         return false;
     }
     return false;

@@ -413,6 +413,7 @@ struct GltfCtx {
     std::string fileBase; // file name without extension (name prefix)
     std::string fileId;   // resolved path (embedded-image dedupe key)
     std::string baseDir;
+    entt::entity root; // the load entity: skeleton entities parent under it (destroy cascades)
     std::vector<entt::entity> materials; // per glTF material index (null = not created)
     std::vector<entt::entity> textures;  // per glTF image index
     // skinned meshes: the node entities (filled in buildNode), the per-skin character id
@@ -550,7 +551,7 @@ std::vector<std::string> targetNames(const tg3_mesh& gm) {
 // phase B for skinned meshes (run after all buildNode calls, so every joint entity exists).
 // Pending prims are grouped by (skin, POSITION accessor): a group shares its rest data,
 // joints/weights and morph deltas - never per primitive, that's the 4.1 GB trap. One
-// character per skin, one group per distinct POSITION accessor.
+// skeleton per skin (parented under the load root), one group per distinct POSITION accessor.
 void finishSkinned(GltfCtx& c) {
     if (c.pending.empty())
         return;
@@ -606,9 +607,10 @@ void finishSkinned(GltfCtx& c) {
             skelComp.invBinds = std::move(invBinds);
             skelComp.placement = c.nodeEntities[prims[0].nodeIdx];
             const entt::entity skelEnt = c.w.reg.create();
-            c.w.gpuSim.skin.addCharacter(skelEnt, (int)sk.joints_count);
+            c.w.gpuSim.skin.addSkeleton(skelEnt, (int)sk.joints_count);
             c.w.reg.emplace<Name>(skelEnt, skelName);
             c.w.reg.emplace<Skeleton>(skelEnt, std::move(skelComp));
+            c.w.reg.emplace<Parent>(skelEnt, c.root); // destroy of the glTF root cascades (freeze)
             c.skinChars[skin] = skelEnt;
         }
         const entt::entity skelEnt = c.skinChars[skin];
@@ -739,14 +741,14 @@ void finishSkinned(GltfCtx& c) {
             const std::string mName = s(gm.name);
             const std::string cname = mName.empty() ? "prim" : (gm.primitives_count > 1 ? mName + "_" + std::to_string(pp.primIdx) : mName);
             c.w.reg.emplace<Name>(child, cname);
-            const int geom =
-                c.w.renderer.addMeshShared(pm, rw.pos.buffer, rw.pos.memory, rw.nrm.buffer, rw.nrm.memory, (uint32_t)nV).geom;
-            addMesh(c.w, child, geom, materialFor(c, p.material), c.nodeEntities[pp.nodeIdx]);
-            c.w.reg.emplace<SkelCharData>(child, skelEnt);
+            // a skinned prim IS its geometry: the renderer aliases the group's pos/nrm buffers
+            // into this prim's slot (its own uv/index buffers), and the mesh entity doubles as
+            // the geometry key
+            c.w.renderer.addSharedMesh(child, pm, rw.pos.buffer, rw.pos.memory, rw.nrm.buffer, rw.nrm.memory, (uint32_t)nV);
+            addMesh(c.w, child, child, materialFor(c, p.material), c.nodeEntities[pp.nodeIdx]);
+            c.w.gpuSim.skin.linkMesh(child, gid);
+            c.w.reg.get<Skeleton>(skelEnt).meshes.push_back(child); // the skeleton's ownership list
         }
-        for (const auto& pp : prims)
-            if (c.nodeEntities[pp.nodeIdx] != entt::null)
-                c.w.reg.get_or_emplace<SkelCharData>(c.nodeEntities[pp.nodeIdx], skelEnt); // addressable from the mesh node too
     }
 }
 
@@ -791,7 +793,11 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
             const entt::entity child = c.w.reg.create();
             const std::string cname = mName.empty() ? "prim" : (gm.primitives_count > 1 ? mName + "_" + std::to_string(i) : mName);
             c.w.reg.emplace<Name>(child, cname);
-            addMesh(c.w, child, c.w.renderer.addMesh(pm).geom, materialFor(c, p.material), e);
+            // the vertex data lives in a geometry entity (the renderer uploads it lazily on
+            // first sight); the prim references it
+            entt::entity geomEnt = c.w.reg.create();
+            c.w.reg.emplace<Geometry>(geomEnt, Geometry{pm});
+            addMesh(c.w, child, geomEnt, materialFor(c, p.material), e);
         }
     }
     for (uint32_t i = 0; i < n.children_count; ++i)
@@ -856,7 +862,7 @@ entt::entity loadGltf(Engine& w, entt::entity e, const std::string& path, std::s
     }
     if (!w.reg.try_get<Transform>(e))
         w.reg.emplace<Transform>(e);
-    GltfCtx c{w, &model, fileBase, file, baseDir, {}, {}};
+    GltfCtx c{w, &model, fileBase, file, baseDir, e, {}, {}};
     // note: value-initialized entt::entity is 0, not entt::null (all bits set in EnTT 4)
     c.materials.assign(model.materials_count, entt::null);
     c.textures.assign(model.images_count, entt::null);

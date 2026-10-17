@@ -2,8 +2,12 @@
 local M = {}
 
 function M._on_ready(self)
+    local g = scene.entity()
+    scene.replace(g, "Geometry", mesh.sphere({ subdiv = 4, radius = 2 }))
     local e = scene.entity("sphere")
-    render.mesh(e, render.geometry(mesh.sphere({ subdiv = 4, radius = 2 })), "mat_sphere")
+    scene.replace(e, "Transform", {})
+    scene.replace(e, "Renderable", { geom = g })
+    scene.replace(e, "MaterialRef", { material = scene.find("mat_sphere") })
 end
 
 return M

@@ -50,6 +50,32 @@ void spawnFieldWidget(Engine& w, entt::entity parent, const char* label, const F
                                       }});
         break;
     }
+    case FieldKind::Str: {
+        // read-only text
+        const std::string* sp = (const std::string*)p;
+        spawnWidget(w, parent, UIText{label, [sp] { return *sp; }});
+        break;
+    }
+    case FieldKind::FloatArr: {
+        const std::vector<float>* ap = (const std::vector<float>*)p;
+        spawnWidget(w, parent, UIText{label, [ap] {
+                                          char buf[32];
+                                          std::snprintf(buf, sizeof(buf), "%zu elems", ap->size());
+                                          return std::string(buf);
+                                      }});
+        break;
+    }
+    case FieldKind::UIntArr: {
+        const std::vector<uint32_t>* ap = (const std::vector<uint32_t>*)p;
+        spawnWidget(w, parent, UIText{label, [ap] {
+                                          char buf[32];
+                                          std::snprintf(buf, sizeof(buf), "%zu elems", ap->size());
+                                          return std::string(buf);
+                                      }});
+        break;
+    }
+    case FieldKind::Quat:
+        break; // no widget; the editor edits the quaternion via the qx..qw sliders
     }
 }
 

@@ -7,83 +7,13 @@
 #include <cstdlib>
 #include <unordered_map>
 
-void addMesh(Engine& w, entt::entity e, int geom, entt::entity mat, entt::entity parent, bool noShadow) {
+void addMesh(Engine& w, entt::entity e, entt::entity geom, entt::entity mat, entt::entity parent, bool noShadow) {
     if (!w.reg.try_get<Transform>(e))
         w.reg.emplace<Transform>(e); // identity: a mesh with no explicit pose sits at the origin
     w.reg.emplace<Renderable>(e, geom, noShadow);
     w.reg.emplace<MaterialRef>(e, mat);
     if (parent != entt::null)
         w.reg.emplace<Parent>(e, parent);
-}
-
-// one collider child entity: local Transform + Collider(shape) + Parent -> the body
-entt::entity addCollider(Engine& w, entt::entity body, entt::entity shape, const Transform& local) {
-    entt::entity e = w.reg.create();
-    w.reg.emplace<Transform>(e, local);
-    w.reg.emplace<Collider>(e, shape);
-    w.reg.emplace<Parent>(e, body);
-    return e;
-}
-
-static std::vector<ColliderDesc> shapeDescs(Engine& w, const std::vector<ColliderSpec>& specs) {
-    std::vector<ColliderDesc> out;
-    out.reserve(specs.size());
-    for (const ColliderSpec& s : specs)
-        out.push_back({w.rigid.shape(w.reg, s.shape), s.local}); // the rigid sim's lazy projection
-    return out;
-}
-
-static void spawnColliders(Engine& w, entt::entity body, const std::vector<ColliderSpec>& specs) {
-    for (const ColliderSpec& s : specs)
-        addCollider(w, body, s.shape, s.local);
-}
-
-void addRigidBody(Engine& w, entt::entity e, const std::vector<ColliderSpec>& colliders, bool isStatic) {
-    if (colliders.empty())
-        return;
-    const Transform& t = w.reg.get<Transform>(e);
-    const RigidBody body{}; // default material params
-    w.rigid.addRigidBody(e, body, shapeDescs(w, colliders), t.pos, t.quat, t.scale, isStatic);
-    w.reg.emplace<RigidBody>(e, body);
-    spawnColliders(w, e, colliders);
-}
-
-void addKinematicBody(Engine& w, entt::entity e, const std::vector<ColliderSpec>& colliders) {
-    if (colliders.empty())
-        return;
-    const Transform& t = w.reg.get<Transform>(e);
-    w.rigid.addKinematicBody(e, shapeDescs(w, colliders), t.pos, t.quat, t.scale);
-    w.reg.emplace<KinematicBody>(e);
-    spawnColliders(w, e, colliders);
-}
-
-void addSoftBody(Engine& w, entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, entt::entity mat,
-                 float mass) {
-    // the entity's Transform is the pinned (spawn) pose: lift the local geometry into world space
-    // once here; the sim owns the vertices (world space) from then on
-    Mesh m = mesh;
-    Transform t{};
-    if (w.reg.try_get<Transform>(e))
-        t = worldTransform(w.reg, e);
-    for (int i = 0; i < m.vertexCount(); ++i) {
-        const V3 v = vAdd(quatRotate(t.quat, V3{m.pos[3 * i], m.pos[3 * i + 1], m.pos[3 * i + 2]}), t.pos);
-        m.pos[3 * i] = v.x;
-        m.pos[3 * i + 1] = v.y;
-        m.pos[3 * i + 2] = v.z;
-        if (m.nrm.size() == m.pos.size()) {
-            const V3 n = quatRotate(t.quat, V3{m.nrm[3 * i], m.nrm[3 * i + 1], m.nrm[3 * i + 2]});
-            m.nrm[3 * i] = n.x;
-            m.nrm[3 * i + 1] = n.y;
-            m.nrm[3 * i + 2] = n.z;
-        }
-    }
-    const Renderer::GpuMeshRef ref = w.renderer.addMesh(m);
-    w.gpuSim.soft.addSoftBody(e, m, cons, ref.rw);
-    w.reg.emplace<SoftBodyData>(e);
-    if (mass > 0.0f)
-        w.reg.get<SoftBodyData>(e).params.mass = mass;
-    w.reg.emplace<Renderable>(e, ref.geom);
-    w.reg.emplace<MaterialRef>(e, mat);
 }
 
 entt::entity spawnMaterial(Engine& w, const V3& baseColor, float metallic, float roughness, const V3& emissive,
@@ -102,30 +32,6 @@ entt::entity findNamedEntity(const Engine& w, const std::string& name) {
             out = e;
     });
     return out;
-}
-
-bool textureFor(Engine& w, entt::entity e, const std::string& path) {
-    TextureData td;
-    if (!loadTexture(exeDir() + "/../assets/" + path, td))
-        loadTexture("assets/" + path, td);
-    if (td.rgba.empty())
-        return false;
-    w.renderer.addTexture(e, td.rgba.data(), (uint32_t)td.w, (uint32_t)td.h);
-    w.reg.emplace<Texture>(e, path);
-    return true;
-}
-
-entt::entity textureEntity(Engine& w, const std::string& path) {
-    for (auto [e, tx] : w.reg.view<Texture>().each())
-        if (tx.path == path)
-            return e;
-    entt::entity e = w.reg.create();
-    if (!textureFor(w, e, path)) {
-        w.reg.destroy(e);
-        return entt::null;
-    }
-    w.reg.emplace<Name>(e, path);
-    return e;
 }
 
 entt::entity textureBytes(Engine& w, const std::string& id, const uint8_t* rgba, int wpx, int hpx) {
@@ -244,10 +150,11 @@ void spawnControllers(Engine& w) {
     // frame, so world = walkPos + grip (head-independent -> no drift).
     // grip visual from the std geometry library (the engine has no mesh generators of its own).
     // the engine gives hands no physics body: a scene script may add one (grab anchor, soft-sim
-    // collision) with physics.kinematic and drive its Transform - the rigid step pulls it
+    // collision) with a KinematicBody component + collider child and drive its Transform - the
+    // rigid step pulls it
     std::string err;
-    const int geom = w.script.callMeshGen("capsule", {{"halfLen", 0.06}, {"radius", 0.03}}, err);
-    if (geom < 0) {
+    const entt::entity geom = w.script.callMeshGen("capsule", {{"halfLen", 0.06}, {"radius", 0.03}}, err);
+    if (geom == entt::null) {
         std::fprintf(stderr, "3dsim: controller grip geometry: %s\n", err.c_str());
         std::exit(1);
     }
@@ -339,6 +246,9 @@ void stepKeyboard(Engine& w) {
 }
 
 void stepRigid(Engine& w) {
+    // new body/joint components project first, so a script that created them this step sees them
+    // bound before the step integrates
+    w.rigid.project(w.reg);
     // kinematic bodies are driven from the ECS (the XR step or a scene script writes the owning
     // entity's Transform); pull each one's world pose into Jolt before the step so this step
     // integrates against the pose that was just written
@@ -419,16 +329,27 @@ void resolveWorldTransforms(Engine& w) {
 void syncColliders(Engine& w) {
     CapsuleGPU* caps = w.gpuSim.soft.caps();
     int n = 0;
-    for (auto [e, col, wt] : w.reg.view<Collider, WorldTransform>().each()) {
+    for (auto [e, col] : w.reg.view<Collider>().each()) {
         auto* cs = w.reg.try_get<CapsuleShape>(col.shape); // box shapes are CPU-sim only
         if (!cs || n >= Soft::kMaxCapsules)
             continue;
-        fillCapsule(caps[n++], wt.pos, wt.quat, cs->halfLen, cs->radius);
+        // world pose: its own (a local offset), or, with no Transform, the parent body's origin
+        const WorldTransform* wt = w.reg.try_get<WorldTransform>(e);
+        if (!wt) {
+            if (const auto* p = w.reg.try_get<Parent>(e))
+                wt = w.reg.try_get<WorldTransform>(p->e);
+            if (!wt)
+                continue;
+        }
+        fillCapsule(caps[n++], wt->pos, wt->quat, cs->halfLen, cs->radius);
     }
     w.gpuSim.soft.uploadCapsules(n);
 }
 
 void stepSoft(Engine& w, VkCommandBuffer cmd) {
+    // new SoftBodyData components project first (geometry upload + sim buffers), so a body
+    // created this step simulates on this step
+    w.gpuSim.soft.project(w);
     for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
         w.gpuSim.soft.setPinned(entity, sb.pinned);
         w.gpuSim.soft.setParams(entity, sb.params, sb.steps);

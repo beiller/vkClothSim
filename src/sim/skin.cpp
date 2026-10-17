@@ -78,23 +78,27 @@ void Skin::init(VkDevice dev, VkPhysicalDevice pdev) {
     m_pdev = pdev;
 }
 
-void Skin::addCharacter(entt::entity e, int nJoints) {
-    Character c;
+void Skin::addSkeleton(entt::entity e, int nJoints) {
+    Skel c;
     c.dqStaging.resize((size_t)nJoints);
     const auto bytes = (VkDeviceSize)nJoints * sizeof(DualQuat);
     vkMakeBuffer(m_dev, m_pdev, c.jointDQ.b, c.jointDQ.m, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     c.jointDQ.sz = bytes;
-    m_chars.push_back(std::move(c));
-    m_ent[e] = (int)m_chars.size() - 1;
+    m_skels.push_back(std::move(c));
+    m_ent[e] = (int)m_skels.size() - 1;
+}
+
+void Skin::linkMesh(entt::entity mesh, int groupId) {
+    m_meshGroup[mesh] = groupId;
 }
 
 int Skin::addGroup(entt::entity e, const SkelGroupDesc& d) {
     const auto ce = m_ent.find(e);
     if (ce == m_ent.end())
         return -1;
-    const int charGpu = ce->second;
+    const int skelGpu = ce->second;
     Group g;
-    g.charGpu = charGpu;
+    g.skelGpu = skelGpu;
     g.nV = d.nV;
     const int nT = d.nV > 0 ? (int)(d.deltas.size() / ((size_t)d.nV * 3)) : 0;
     // no baking: pos0 stays pure rest; the file's static (frame-0) weights are evaluated by the
@@ -128,7 +132,7 @@ int Skin::addGroup(entt::entity e, const SkelGroupDesc& d) {
     mkDev(g.posOut, 12 * vn, d.pos0.data());
     mkDev(g.nrmOut, 12 * vn, d.nrm0.data());
     m_groups.push_back(std::move(g));
-    m_chars[(size_t)charGpu].groups.push_back((int)m_groups.size() - 1);
+    m_skels[(size_t)skelGpu].groups.push_back((int)m_groups.size() - 1);
     // groups added after build() create their own descriptor set (build() did the load-time ones)
     if (!m_pools.empty()) {
         ensurePoolSlot();
@@ -183,7 +187,7 @@ void Skin::ensurePoolSlot() {
 }
 
 void Skin::makeGroupSet(Group& g) {
-    const Character& c = m_chars[(size_t)g.charGpu];
+    const Skel& c = m_skels[(size_t)g.skelGpu];
     std::vector<VkDescriptorBufferInfo> bi = {
         {g.pos0.b, 0, g.pos0.sz},
         {g.nrm0.b, 0, g.nrm0.sz},
@@ -198,7 +202,7 @@ void Skin::makeGroupSet(Group& g) {
     vkMakeSet(m_dev, m_pools.back(), m_dsl, skelBinds(), g.set, bi);
 }
 
-void Skin::stepCharacter(const entt::registry& reg, const Skeleton& s, Character& c) {
+void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
     auto worldOf = [&](entt::entity e) {
         if (e != entt::null)
             if (const auto* wt = reg.try_get<WorldTransform>(e))
@@ -241,11 +245,11 @@ void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
         return;
     for (const auto e : reg.view<Skeleton>()) {
         const auto ce = m_ent.find(e);
-        if (ce == m_ent.end() || m_chars[(size_t)ce->second].dead)
+        if (ce == m_ent.end() || m_skels[(size_t)ce->second].dead)
             continue;
         const Skeleton& s = reg.get<Skeleton>(e);
-        Character& c = m_chars[(size_t)ce->second];
-        stepCharacter(reg, s, c);
+        Skel& c = m_skels[(size_t)ce->second];
+        stepSkeleton(reg, s, c);
         for (int gid : c.groups)
             if ((size_t)gid < m_groups.size() && !m_groups[gid].dead)
                 packMorphs(m_groups[gid]);
@@ -273,20 +277,20 @@ void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
     }
 }
 
-std::unordered_map<entt::entity, int>::const_iterator Skin::charFor(const entt::registry& reg, entt::entity skel) const {
+std::unordered_map<entt::entity, int>::const_iterator Skin::skelFor(const entt::registry& reg, entt::entity skel) const {
     if (!reg.valid(skel) || !reg.all_of<Skeleton>(skel))
         return m_ent.end();
     const auto ce = m_ent.find(skel);
-    if (ce == m_ent.end() || m_chars[(size_t)ce->second].dead)
+    if (ce == m_ent.end() || m_skels[(size_t)ce->second].dead)
         return m_ent.end();
     return ce;
 }
 
 void Skin::setMorph(const entt::registry& reg, entt::entity skel, const std::string& name, float weight) {
-    const auto ce = charFor(reg, skel);
+    const auto ce = skelFor(reg, skel);
     if (ce == m_ent.end())
         return;
-    for (int gid : m_chars[(size_t)ce->second].groups) {
+    for (int gid : m_skels[(size_t)ce->second].groups) {
         auto it = m_groups[gid].nameToTarget.find(name);
         if (it != m_groups[gid].nameToTarget.end())
             m_groups[gid].morphW[(size_t)it->second] = weight;
@@ -294,10 +298,10 @@ void Skin::setMorph(const entt::registry& reg, entt::entity skel, const std::str
 }
 
 float Skin::getMorph(const entt::registry& reg, entt::entity skel, const std::string& name) {
-    const auto ce = charFor(reg, skel);
+    const auto ce = skelFor(reg, skel);
     if (ce == m_ent.end())
         return 0.0f;
-    for (int gid : m_chars[(size_t)ce->second].groups) {
+    for (int gid : m_skels[(size_t)ce->second].groups) {
         auto it = m_groups[gid].nameToTarget.find(name);
         if (it != m_groups[gid].nameToTarget.end())
             return m_groups[gid].morphW[(size_t)it->second];
@@ -306,48 +310,103 @@ float Skin::getMorph(const entt::registry& reg, entt::entity skel, const std::st
 }
 
 void Skin::resetMorphs(const entt::registry& reg, entt::entity skel) {
-    const auto ce = charFor(reg, skel);
+    const auto ce = skelFor(reg, skel);
     if (ce == m_ent.end())
         return;
-    for (int gid : m_chars[(size_t)ce->second].groups)
+    for (int gid : m_skels[(size_t)ce->second].groups)
         m_groups[gid].morphW = m_groups[gid].morphW0; // back to the file's frame-0 shape
 }
 
-void Skin::destroyCharacter(entt::entity e) {
+int Skin::meshRefs(int groupId) const {
+    int refs = 0;
+    for (const auto& [m, g] : m_meshGroup)
+        if (g == groupId)
+            ++refs;
+    return refs;
+}
+
+// free the group's buffers (queued for the next frame start) once it is frozen and no live
+// mesh aliases its outputs anymore
+void Skin::maybeFreeGroup(int groupId) {
+    Group& g = m_groups[(size_t)groupId];
+    if (g.freed || !g.dead)
+        return;
+    if (!m_skels[(size_t)g.skelGpu].dead)
+        return; // the skeleton is alive: keep the frozen buffers (a mesh may still alias them)
+    g.freed = true;
+    m_freeGroups.push_back(groupId);
+}
+
+void Skin::destroySkeleton(entt::entity e) {
     const auto ce = m_ent.find(e);
     if (ce == m_ent.end())
         return;
-    const int charGpu = ce->second;
+    const int skelGpu = ce->second;
     m_ent.erase(ce);
-    if (m_chars[(size_t)charGpu].dead)
+    if (m_skels[(size_t)skelGpu].dead)
         return;
-    // mark dead first: the groups' descriptor sets stay allocated (pool freed at shutdown) but
-    // are never recorded again
-    m_chars[(size_t)charGpu].dead = true;
-    for (auto& g : m_groups)
-        if (g.charGpu == charGpu)
-            g.dead = true;
+    // freeze: the groups stop dispatching (the meshes keep drawing the last pose); free any
+    // group whose meshes are already all gone
+    m_skels[(size_t)skelGpu].dead = true;
+    for (int gid : m_skels[(size_t)skelGpu].groups) {
+        m_groups[(size_t)gid].dead = true;
+        maybeFreeGroup(gid);
+    }
 }
 
-// the ECS is the source of truth for which skeletons exist: a Skeleton destroy retires the
-// character (buffers stay allocated until shutdown; the renderer aliases the group outputs)
+// the ECS is the source of truth for which skeletons exist: a Skeleton destroy freezes the
+// skeleton (the renderer still draws the aliasing meshes at their last pose)
 void Skin::onSkeletonDestroyed(entt::registry&, entt::entity e) {
-    destroyCharacter(e);
+    destroySkeleton(e);
+}
+
+// a mesh (Renderable) teardown unlinks it from its group; the last aliasing mesh of a frozen
+// skeleton releases the group's buffers
+void Skin::onMeshDestroyed(entt::registry&, entt::entity e) {
+    const auto it = m_meshGroup.find(e);
+    if (it == m_meshGroup.end())
+        return;
+    const int gid = it->second;
+    m_meshGroup.erase(it);
+    if (meshRefs(gid) == 0) {
+        m_groups[(size_t)gid].dead = true;
+        maybeFreeGroup(gid);
+    }
+}
+
+void Skin::releaseGroupBufs(Group& g) {
+    Buf* bufs[8] = {&g.pos0, &g.nrm0, &g.joints, &g.weights, &g.deltas, &g.activeMorphs, &g.posOut, &g.nrmOut};
+    for (Buf* bp : bufs) {
+        if (bp->b == VK_NULL_HANDLE)
+            continue; // already released (idempotent, so shutdown can run over freed groups)
+        vkFreeBuffer(m_dev, bp->b, bp->m);
+        bp->b = VK_NULL_HANDLE;
+        bp->m = VK_NULL_HANDLE;
+    }
+}
+
+void Skin::flushFrees() {
+    if (m_dev == VK_NULL_HANDLE)
+        return;
+    for (const int gid : m_freeGroups)
+        releaseGroupBufs(m_groups[(size_t)gid]);
+    m_freeGroups.clear();
 }
 
 void Skin::watch(entt::registry& reg) {
     reg.on_destroy<Skeleton>().connect<&Skin::onSkeletonDestroyed>(this);
+    reg.on_destroy<Renderable>().connect<&Skin::onMeshDestroyed>(this);
 }
 
 void Skin::shutdown() {
     if (m_dev == VK_NULL_HANDLE)
         return;
     m_ent.clear();
-    for (auto& c : m_chars)
+    m_meshGroup.clear();
+    for (auto& c : m_skels)
         vkFreeBuffer(m_dev, c.jointDQ.b, c.jointDQ.m);
     for (auto& g : m_groups)
-        for (auto& b : {g.pos0, g.nrm0, g.joints, g.weights, g.deltas, g.activeMorphs, g.posOut, g.nrmOut})
-            vkFreeBuffer(m_dev, b.b, b.m);
+        releaseGroupBufs(g); // idempotent: queued-freed and live groups alike
     for (auto& p : m_pools)
         if (p)
             vkDestroyDescriptorPool(m_dev, p, nullptr);

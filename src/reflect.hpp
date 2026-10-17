@@ -9,7 +9,9 @@
 #include <utility>
 #include <vector>
 
-enum class FieldKind { SliderF, SliderI, Checkbox, Color, DragV3, Ref }; // Ref = entity reference, read-only text
+// Ref = entity reference, Str = a string, Quat/FloatArr/UIntArr have no UI widget (vocabulary
+// + text only); the editor draws the kinds it has widgets for and skips the rest
+enum class FieldKind { SliderF, SliderI, Checkbox, Color, DragV3, Ref, Str, Quat, FloatArr, UIntArr };
 
 struct FieldDesc {
     const char* name;
@@ -31,6 +33,7 @@ namespace refl {
 static const FieldDesc kTransform[] = {
     {"pos", OFF(Transform, pos), FieldKind::DragV3},
     {"scale", OFF(Transform, scale), FieldKind::DragV3},
+    {"quat", OFF(Transform, quat), FieldKind::Quat}, // 4-value array (the editor uses qx..qw)
     {"qx", OFF(Transform, quat), FieldKind::SliderF, -1.0f, 1.0f},
     {"qy", OFF(Transform, quat) + 4, FieldKind::SliderF, -1.0f, 1.0f},
     {"qz", OFF(Transform, quat) + 8, FieldKind::SliderF, -1.0f, 1.0f},
@@ -41,10 +44,13 @@ static const FieldDesc kMaterial[] = {
     {"metallic", OFF(Material, metallic), FieldKind::SliderF, 0.0f, 1.0f},
     {"roughness", OFF(Material, roughness), FieldKind::SliderF, 0.0f, 1.0f},
     {"emissive", OFF(Material, emissive), FieldKind::Color},
-    {"tex", 0, FieldKind::Ref},
-    {"texMR", 0, FieldKind::Ref},
-    {"texNormal", 0, FieldKind::Ref},
-    {"texEmissive", 0, FieldKind::Ref},
+    {"tex", OFF(Material, tex), FieldKind::Ref},
+    {"texMR", OFF(Material, texMR), FieldKind::Ref},
+    {"texNormal", OFF(Material, texNormal), FieldKind::Ref},
+    {"texEmissive", OFF(Material, texEmissive), FieldKind::Ref},
+    {"alphaMode", OFF(Material, alphaMode), FieldKind::SliderI, 0.0f, 2.0f},
+    {"alphaCutoff", OFF(Material, alphaCutoff), FieldKind::SliderF, 0.0f, 1.0f},
+    {"alpha", OFF(Material, alpha), FieldKind::SliderF, 0.0f, 1.0f},
 };
 // offset unused for Ref fields
 static const FieldDesc kMaterialRef[] = {
@@ -78,23 +84,34 @@ static const FieldDesc kSoftBodyData[] = {
     {"params.stiffness", OFF2(SoftBodyData, params, stiffness), FieldKind::SliderF, 0.0f, 1.0f},
     {"params.tension", OFF2(SoftBodyData, params, tension), FieldKind::SliderF, 0.5f, 1.5f},
     {"params.friction", OFF2(SoftBodyData, params, friction), FieldKind::SliderF, 0.0f, 50.0f},
+    {"cons", OFF(SoftBodyData, cons), FieldKind::FloatArr}, // flat {a, b, rest, k} quads
 };
 static const FieldDesc kRigidBody[] = {
     {"friction", OFF(RigidBody, friction), FieldKind::SliderF, 0.0f, 1.0f},
     {"restitution", OFF(RigidBody, restitution), FieldKind::SliderF, 0.0f, 1.0f},
     {"damping", OFF(RigidBody, damping), FieldKind::SliderF, 0.0f, 1.0f},
+    {"isStatic", OFF(RigidBody, isStatic), FieldKind::Checkbox},
 };
+// KinematicBody is a marker (no fields); in the table so the vocabulary can create it
+static const std::span<const FieldDesc> kKinematicBody = {};
 static const FieldDesc kCapsuleShape[] = {
     {"halfLen", OFF(CapsuleShape, halfLen), FieldKind::SliderF, 0.0f, 10.0f},
     {"radius", OFF(CapsuleShape, radius), FieldKind::SliderF, 0.0f, 5.0f},
 };
 static const FieldDesc kBoxShape[] = {
+    {"half", OFF(BoxShape, half), FieldKind::DragV3}, // 3-value array (the editor uses hx..hz)
     {"hx", OFF(BoxShape, half), FieldKind::SliderF, 0.0f, 100.0f},
     {"hy", OFF(BoxShape, half) + 4, FieldKind::SliderF, 0.0f, 100.0f},
     {"hz", OFF(BoxShape, half) + 8, FieldKind::SliderF, 0.0f, 100.0f},
 };
 static const FieldDesc kCollider[] = {
     {"shape", OFF(Collider, shape), FieldKind::Ref},
+};
+static const FieldDesc kJoint[] = {
+    {"bodyA", OFF(Joint, bodyA), FieldKind::Ref},
+    {"bodyB", OFF(Joint, bodyB), FieldKind::Ref},
+    {"type", OFF(Joint, type), FieldKind::SliderI, 0.0f, 1.0f},
+    {"grabPos", OFF(Joint, grabPos), FieldKind::DragV3},
 };
 static const FieldDesc kControllerInput[] = {
     {"trigger_0", OFF(ControllerInput, triggers), FieldKind::SliderF, 0.0f, 1.0f},
@@ -119,7 +136,19 @@ static const FieldDesc kMouseInput[] = {
     {"button_3", OFF(MouseInput, buttons) + 3, FieldKind::Checkbox},
 };
 static const FieldDesc kRenderable[] = {
+    {"geom", 0, FieldKind::Ref},
     {"noShadow", OFF(Renderable, noShadow), FieldKind::Checkbox},
+    {"visible", OFF(Renderable, visible), FieldKind::Checkbox},
+};
+static const FieldDesc kTexture[] = {
+    {"path", OFF(Texture, path), FieldKind::Str},
+};
+// offsets into the Mesh vectors (Geometry is standard-layout; the vectors are contiguous)
+static const FieldDesc kGeometry[] = {
+    {"pos", OFF(Geometry, mesh.pos), FieldKind::FloatArr},
+    {"nrm", OFF(Geometry, mesh.nrm), FieldKind::FloatArr},
+    {"uv", OFF(Geometry, mesh.uv), FieldKind::FloatArr},
+    {"idx", OFF(Geometry, mesh.indices), FieldKind::UIntArr},
 };
 static const FieldDesc kRenderSettings[] = {
     {"bgColor", OFF(RenderSettings, bgColor), FieldKind::Color},
@@ -139,12 +168,16 @@ static const TypeDesc kTypes[] = {
     {"PointLight", kPointLight},
     {"SoftBodyData", kSoftBodyData},
     {"RigidBody", kRigidBody},
+    {"KinematicBody", kKinematicBody},
     {"CapsuleShape", kCapsuleShape},
     {"BoxShape", kBoxShape},
     {"Collider", kCollider},
+    {"Joint", kJoint},
     {"ControllerInput", kControllerInput},
     {"MouseInput", kMouseInput},
     {"Renderable", kRenderable},
+    {"Texture", kTexture},
+    {"Geometry", kGeometry},
     {"RenderSettings", kRenderSettings},
     {"RigidScene", kRigidScene},
 };
@@ -179,10 +212,14 @@ inline std::vector<std::pair<const TypeDesc*, const void*>> entityFields(const e
         out.push_back({findType("BoxShape"), (const void*)p});
     if (auto* p = reg.try_get<Collider>(e))
         out.push_back({findType("Collider"), (const void*)p});
+    if (auto* p = reg.try_get<Joint>(e))
+        out.push_back({findType("Joint"), (const void*)p});
     if (auto* p = reg.try_get<ControllerInput>(e))
         out.push_back({findType("ControllerInput"), (const void*)p});
     if (auto* p = reg.try_get<Renderable>(e))
         out.push_back({findType("Renderable"), (const void*)p});
+    if (auto* p = reg.try_get<Texture>(e))
+        out.push_back({findType("Texture"), (const void*)p});
     if (auto* p = reg.try_get<MouseInput>(e))
         out.push_back({findType("MouseInput"), (const void*)p});
     return out;

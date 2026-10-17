@@ -19,9 +19,19 @@ local function sway(name, q)
     scene.set_pose(name, b[1], scene.qmul(b[2], q))
 end
 
+local function geom(t)
+    local g = scene.entity()
+    scene.replace(g, "Geometry", t)
+    return g
+end
+
 function M._on_ready(self)
-    render.material("ground", {0.35, 0.35, 0.38}, 0, 0.95)
-    render.mesh(scene.entity("ground"), render.geometry(mesh.box({ 20, 1, 20 })), "ground", { 0, -1, 0 })
+    local mat = scene.entity("mat_ground")
+    scene.replace(mat, "Material", { baseColor = {0.35, 0.35, 0.38}, metallic = 0, roughness = 0.95 })
+    local ground = scene.entity("ground")
+    scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
+    scene.replace(ground, "Renderable", { geom = geom(mesh.box({ 20, 1, 20 })) })
+    scene.replace(ground, "MaterialRef", { material = mat })
 
     local ch = scene.entity("char")
     scene.replace(ch, "Transform", { pos = { 0, 0, 0 } })

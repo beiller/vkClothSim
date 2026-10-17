@@ -30,10 +30,10 @@ public:
     // load the geometry stdlib ("scenes/mesh") as the global `mesh` and the geometry module
     // used by callMeshGen (declarative meshes + VR controller grips); false on error
     bool loadMeshStdlib(std::string& err);
-    // call geometry-module generator gen(params) and upload the geometry table it returns;
-    // renderer geom id, or -1 on error
-    int callMeshGen(const std::string& gen, const std::vector<std::pair<std::string, double>>& params,
-                    std::string& err);
+    // call geometry-module generator gen(params) and store the geometry table it returns as a
+    // Geometry component on a new entity; that entity, or entt::null on error
+    entt::entity callMeshGen(const std::string& gen, const std::vector<std::pair<std::string, double>>& params,
+                             std::string& err);
     bool hasButton(const std::string& name) const;
     void button(const std::string& name);
     void shutdown();
@@ -72,28 +72,16 @@ private:
     static SceneScript* sSelf(lua_State* L);
     // geometry table at idx: {pos, nrm?, uv?, idx} -> Mesh; sets err on failure
     static Mesh readGeom(lua_State* L, int idx, std::string& err);
-    // geometry table at stack slot 1; errors via luaL_error
-    static Mesh checkGeom(lua_State* L, const char* what);
-    // flat constraint array at idx: {a, b, rest, k, ...} with 1-based vertices; sets err
-    static std::vector<sim::Constraint> readCons(lua_State* L, int idx, int nVerts, std::string& err);
 
-    // {field = number | boolean | {n, ...}} at idx -> CompFields (struct-form vocabulary); sets err
+    // {field = number | boolean | string | {numbers}} at idx -> CompFields (struct-form
+    // vocabulary); sets err
     static bool readCompFields(lua_State* L, int idx, CompFields& out, std::string& err);
     static int lEntity(lua_State* L);
-    static int lMaterial(lua_State* L);
-    static int lTexture(lua_State* L);
-    static int lGeometry(lua_State* L);
-    static int lMesh(lua_State* L);
     static int lGltf(lua_State* L);
     static int lCompEmplace(lua_State* L);
     static int lCompReplace(lua_State* L);
     static int lComponent(lua_State* L);
     static int lCompRemove(lua_State* L);
-    static int lCapsuleShape(lua_State* L);
-    static int lBoxShape(lua_State* L);
-    static int lBody(lua_State* L);
-    static int lKinematic(lua_State* L);
-    static int lSoftBody(lua_State* L);
     static int lSoftFloor(lua_State* L);
     static int lSet(lua_State* L);
     static int lGet(lua_State* L);
@@ -103,7 +91,6 @@ private:
     static int lGetMorph(lua_State* L);
     static int lResetMorphs(lua_State* L);
     static int lJoints(lua_State* L);
-    static int lVisible(lua_State* L);
     static int lTime(lua_State* L);
     static int lButton(lua_State* L);
     static int lAttachScript(lua_State* L);
@@ -128,9 +115,6 @@ private:
     static int lIsVr(lua_State* L);
     static int lKeyDown(lua_State* L);
     static int lRaycast(lua_State* L);
-    static int lCreateJoint(lua_State* L);
-    static int lDestroyJoint(lua_State* L);
-    static int lIsDynamic(lua_State* L);
 
     Engine* m_w = nullptr;
     lua_State* L = nullptr;
