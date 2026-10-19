@@ -53,6 +53,9 @@ public:
     // resources for the next frame-start flush (the previous frame may still be reading them)
     void watch(entt::registry& reg);
     void flushFrees();
+    // clear the per-scene content (instance/geometry/texture slots, the env maps, the entity
+    // maps) between loads; the fixed state (pipelines, passes, pools, xr target) persists
+    void reset();
     void setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h);
     void setViewProj(const Mat4& vp, const V3& camPos);
     void shutdown();
@@ -113,6 +116,7 @@ private:
     void onTextureDestroyed(entt::registry&, entt::entity e);
     void onGeometryDestroyed(entt::registry&, entt::entity e);
     void rebuildTonemapSet(VkApp& app);
+    void releaseEnv(); // the IBL env maps + passes (m_envReady-guarded, idempotent)
     void writeViewUbo(const Mat4& vp, const V3& cam, float envIntensity);
     void writeLights(const entt::registry& reg);
     void prepBuffers(const entt::registry& reg);

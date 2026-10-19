@@ -52,6 +52,9 @@ public:
     // morph weights live per group; a name applies to every group of the skeleton that has it
     void setMorph(const entt::registry& reg, entt::entity skel, const std::string& name, float weight);
     void destroySkeleton(entt::entity e);
+    // clear the scene state between loads (skeletons, groups, the pools); the device handles
+    // persist (init is one-time)
+    void reset();
     // register the destroy observers: a Skeleton teardown freezes the skeleton (its meshes keep
     // drawing the last pose); a mesh (Renderable) teardown unlinks it and may free the group
     void watch(entt::registry& reg);

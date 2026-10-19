@@ -36,6 +36,9 @@ public:
     // the sim's own GPU buffers (pos/nrm stay the renderer's mesh); keyed by the body entity
     void addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw);
     void build();
+    // clear the scene state between loads (bodies, the pools, the capsule buffer, the floor);
+    // the device handles persist (init is one-time)
+    void reset();
     void shutdown();
     void setPinned(entt::entity e, int pinned);
     void setParams(entt::entity e, const SimParams& params, int steps);

@@ -2,10 +2,13 @@
 
 #include "assets.hpp"
 #include "gltf.hpp"
+#include "json.hpp"
+#include "ui.hpp"
 #include "url.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <lua.hpp>
@@ -19,6 +22,47 @@ int scenePanic(lua_State* L) {
     std::fprintf(stderr, "3dsim: lua panic:\n%s\n", lua_tostring(L, -1));
     std::abort();
     return 0;
+}
+
+// json -> lua (arrays -> 1-based tables, objects -> hash tables, scalars -> lua values)
+void pushJson(lua_State* L, const nlohmann::json& j) {
+    if (j.is_object()) {
+        lua_newtable(L);
+        for (const auto& [k, v] : j.items()) {
+            pushJson(L, v);
+            lua_setfield(L, -2, k.c_str());
+        }
+    } else if (j.is_array()) {
+        lua_newtable(L);
+        int i = 0;
+        for (const auto& e : j) {
+            pushJson(L, e);
+            lua_rawseti(L, -2, ++i);
+        }
+    } else if (j.is_string())
+        lua_pushstring(L, j.get<std::string>().c_str());
+    else if (j.is_boolean())
+        lua_pushboolean(L, j.get<bool>());
+    else if (j.is_number())
+        lua_pushnumber(L, j.get<double>());
+    else
+        lua_pushnil(L);
+}
+
+// a bound field for value widgets; an unresolvable bind is a load failure (the buildUi pcall)
+const UrlRef bindRef(Engine& w, lua_State* L, int idx) {
+    const char* bind = luaL_checkstring(L, idx);
+    UrlRef r;
+    std::string err;
+    if (!resolveUrl(w, bind, r, err))
+        luaL_error(L, "bind '%s': %s", bind, err.c_str());
+    return r;
+}
+
+// pcall error handler: turn the raw error into a full traceback for the log
+int uiTraceback(lua_State* L) {
+    luaL_traceback(L, L, lua_tostring(L, -1), 0);
+    return 1;
 }
 
 // relPath must be relative and stay under the assets root (no leading '/', no '..' component)
@@ -222,6 +266,21 @@ void SceneScript::init(Engine& w) {
     reg("joints", lJoints);              // joints(name | entity) -> {joint, ...} (skeleton joints)
     reg("time", lTime);                  // time() -> seconds since scene start
     reg("button", lButton);              // button(name, fn())
+    reg("scenes", lScenes);             // scenes() -> { {label, path}, ... } every assets/scenes/*.json
+    reg("request_scene", lRequestScene); // request_scene(path) - deferred (applied at the next frame start)
+    reg("last_error", lLastError);      // last_error() -> the last scene load failure
+    reg("ui_window", lUiWindow);        // ui_window(title, x, y, w, h, collapse?) -> window entity
+    reg("ui_tab", lUiTab);             // ui_tab(parent, label) -> tab entity
+    reg("ui_editor", lUiEditor);        // ui_editor(tab) -> builds the inspector widgets into the tab
+    reg("ui_button", lUiButton);        // ui_button(parent, label, fn) -> button entity (fn on click)
+    reg("ui_text", lUiText);            // ui_text(parent, label) -> text entity
+    reg("ui_section", lUiSection);      // ui_section(parent, label, collapsible?) -> section entity
+    reg("ui_slider_f", lUiSliderF);     // ui_slider_f(parent, label, bind, lo?, hi?, fmt?) -> entity
+    reg("ui_slider_i", lUiSliderI);     // ui_slider_i(parent, label, bind, lo?, hi?) -> entity
+    reg("ui_checkbox", lUiCheckbox);    // ui_checkbox(parent, label, bind) -> entity
+    reg("ui_color", lUiColor);          // ui_color(parent, label, bind) -> entity
+    reg("ui_drag_v3", lUiDragV3);       // ui_drag_v3(parent, label, bind, speed?) -> entity
+    reg("fire_button", lFireButton);    // fire_button(name) - run a named button handler
     reg("attach_script", lAttachScript); // attach_script(entity, file, params?)
     reg("destroy", lDestroy);            // destroy(entity)
     reg("add_child", lAddChild);         // add_child(parent, child)
@@ -252,8 +311,11 @@ void SceneScript::init(Engine& w) {
     lua_newtable(L); // soft: the sim's floor plane (bodies are SoftBodyData components)
     reg("floor", lSoftFloor); // floor(y) - the sim's floor plane height
     lua_setglobal(L, "soft");
-    // unref a script entity's Lua refs when it is destroyed
-    w.reg.on_destroy<LuaScript>().connect<&SceneScript::onScriptDestroy>(this);
+    m_time = 0.0f;
+}
+
+void SceneScript::watch(entt::registry& reg) {
+    reg.on_destroy<LuaScript>().connect<&SceneScript::onScriptDestroy>(this);
 }
 
 int SceneScript::includeModule(const std::string& rel, std::string& err) {
@@ -335,6 +397,25 @@ entt::entity SceneScript::callMeshGen(const std::string& gen, const std::vector<
     return ge;
 }
 
+void SceneScript::buildUi(const nlohmann::json& spec) {
+    std::string err;
+    const int ref = includeModule("scenes/ui", err);
+    if (ref < 0)
+        throw SceneError(err);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    lua_getfield(L, -1, "main");
+    lua_remove(L, -2); // [main]
+    pushJson(L, spec);
+    lua_pushcclosure(L, uiTraceback, 0); // [main, spec, tb]
+    lua_insert(L, 1);                   // [tb, main, spec]
+    if (lua_pcall(L, 1, 0, 1) != LUA_OK) {
+        const char* msg = lua_tostring(L, -1);
+        std::fprintf(stderr, "3dsim: buildUi error:\n%s\n", msg ? msg : "?");
+        throw SceneError(msg ? msg : "unknown error");
+    }
+    lua_pop(L, 1);
+}
+
 Mesh SceneScript::readGeom(lua_State* L, int idx, std::string& err) {
     if (!lua_istable(L, idx)) {
         err = "expected a geometry table";
@@ -363,11 +444,8 @@ Mesh SceneScript::readGeom(lua_State* L, int idx, std::string& err) {
     return m;
 }
 
-bool SceneScript::hasButton(const std::string& name) const {
-    return L != nullptr && m_buttons.contains(name);
-}
-
 void SceneScript::button(const std::string& name) {
+    if (name == "demo-window") { w().showDemo = true; return; } // the one engine-level action
     if (!L)
         return;
     const auto it = m_buttons.find(name);
@@ -381,6 +459,144 @@ void SceneScript::button(const std::string& name) {
         dropRef(it->second);
         m_buttons.erase(it);
     }
+}
+
+// one entry per assets/scenes/*.json; label = the JSON "name" field (fallback: file stem)
+int SceneScript::lScenes(lua_State* L) {
+    const std::string dir = std::filesystem::exists("assets/scenes") ? "assets/scenes"
+                                                                    : exeDir() + "/../assets/scenes";
+    lua_newtable(L);
+    int i = 0;
+    if (std::filesystem::exists(dir))
+        for (const auto& e : std::filesystem::directory_iterator(dir)) {
+            const auto f = e.path().filename().string();
+            if (f.size() < 5 || f.substr(f.size() - 5) != ".json")
+                continue;
+            std::string label = e.path().stem().string();
+            try {
+                std::ifstream in(e.path().string());
+                nlohmann::json j;
+                if (in && in >> j)
+                    label = j.value("name", label);
+            } catch (const std::exception&) {
+            }
+            lua_newtable(L);
+            lua_pushstring(L, label.c_str());
+            lua_setfield(L, -2, "label");
+            lua_pushstring(L, ("assets/scenes/" + f).c_str());
+            lua_setfield(L, -2, "path");
+            lua_rawseti(L, -2, ++i);
+        }
+    return 1;
+}
+
+int SceneScript::lRequestScene(lua_State* L) {
+    sSelf(L)->w().pendingScene = luaL_checkstring(L, 1);
+    return 0;
+}
+
+int SceneScript::lLastError(lua_State* L) {
+    lua_pushstring(L, sSelf(L)->w().loadError.c_str());
+    return 1;
+}
+
+int SceneScript::lUiWindow(lua_State* L) {
+    auto* self = sSelf(L);
+    const float x = (float)luaL_optnumber(L, 2, 20.0), y = (float)luaL_optnumber(L, 3, 20.0);
+    const float w = (float)luaL_optnumber(L, 4, 0.0), h = (float)luaL_optnumber(L, 5, 0.0);
+    const bool collapse = lua_isboolean(L, 6) && lua_toboolean(L, 6);
+    pushEnt(L, spawnUiWindow(self->w(), UIWindow{luaL_checkstring(L, 1), [x, y] { return V2{x, y}; }, V2{w, h}, 0, collapse}));
+    return 1;
+}
+
+int SceneScript::lUiTab(lua_State* L) {
+    auto* self = sSelf(L);
+    pushEnt(L, spawnWidget(self->w(), readEnt(L, 1), UITab{luaL_checkstring(L, 2)}));
+    return 1;
+}
+
+int SceneScript::lUiEditor(lua_State* L) {
+    auto* self = sSelf(L);
+    spawnEditorUi(self->w(), readEnt(L, 1));
+    return 0;
+}
+
+// reuses the named-button machinery (a fresh "uiN" action), so button()'s first-error
+// unref + disable applies (a recycled registry slot can never fire the wrong function)
+int SceneScript::lUiButton(lua_State* L) {
+    auto* self = sSelf(L);
+    const entt::entity parent = readEnt(L, 1);
+    const std::string label = luaL_checkstring(L, 2);
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    const int ref = self->newRef(L, 3);
+    const std::string action = "ui" + std::to_string(self->m_refs.size());
+    self->m_buttons[action] = ref;
+    pushEnt(L, spawnWidget(self->w(), parent, UIButton{label, [self, action] { self->button(action); }}));
+    return 1;
+}
+
+int SceneScript::lUiText(lua_State* L) {
+    auto* self = sSelf(L);
+    pushEnt(L, spawnWidget(self->w(), readEnt(L, 1), UIText{luaL_checkstring(L, 2)}));
+    return 1;
+}
+
+int SceneScript::lUiSection(lua_State* L) {
+    auto* self = sSelf(L);
+    const bool collapsible = lua_isnoneornil(L, 3) ? true : lua_toboolean(L, 3);
+    pushEnt(L, spawnWidget(self->w(), readEnt(L, 1), UISection{luaL_checkstring(L, 2), collapsible}));
+    return 1;
+}
+
+int SceneScript::lUiSliderF(lua_State* L) {
+    auto* self = sSelf(L);
+    const auto r = bindRef(self->w(), L, 3);
+    auto* p = (float*)r.base;
+    pushEnt(L, spawnWidget(self->w(), readEnt(L, 1),
+                           UISliderF{luaL_checkstring(L, 2), (float)luaL_optnumber(L, 4, r.field->lo),
+                                    (float)luaL_optnumber(L, 5, r.field->hi),
+                                    luaL_optstring(L, 6, "%.2f"), [p] { return p; }}));
+    return 1;
+}
+
+int SceneScript::lUiSliderI(lua_State* L) {
+    auto* self = sSelf(L);
+    const auto r = bindRef(self->w(), L, 3);
+    auto* p = (int*)r.base;
+    pushEnt(L, spawnWidget(self->w(), readEnt(L, 1),
+                           UISliderI{luaL_checkstring(L, 2), (int)luaL_optnumber(L, 4, r.field->lo),
+                                    (int)luaL_optnumber(L, 5, r.field->hi), [p] { return p; }}));
+    return 1;
+}
+
+int SceneScript::lUiCheckbox(lua_State* L) {
+    auto* self = sSelf(L);
+    const auto r = bindRef(self->w(), L, 3);
+    auto* p = (bool*)r.base;
+    pushEnt(L, spawnWidget(self->w(), readEnt(L, 1), UICheckbox{luaL_checkstring(L, 2), [p] { return p; }}));
+    return 1;
+}
+
+int SceneScript::lUiColor(lua_State* L) {
+    auto* self = sSelf(L);
+    const auto r = bindRef(self->w(), L, 3);
+    auto* p = (float*)r.base;
+    pushEnt(L, spawnWidget(self->w(), readEnt(L, 1), UIColorEdit{luaL_checkstring(L, 2), [p] { return p; }}));
+    return 1;
+}
+
+int SceneScript::lUiDragV3(lua_State* L) {
+    auto* self = sSelf(L);
+    const auto r = bindRef(self->w(), L, 3);
+    auto* p = (float*)r.base;
+    pushEnt(L, spawnWidget(self->w(), readEnt(L, 1),
+                           UIDragV3{luaL_checkstring(L, 2), (float)luaL_optnumber(L, 4, 0.1f), [p] { return p; }}));
+    return 1;
+}
+
+int SceneScript::lFireButton(lua_State* L) {
+    sSelf(L)->button(luaL_checkstring(L, 1));
+    return 0;
 }
 
 bool SceneScript::callOnReady(int fnRef, int instRef) {
@@ -552,6 +768,8 @@ void SceneScript::shutdown() {
     m_refs.clear();
     m_buttons.clear();
     m_errored.clear();
+    m_modules.clear(); // their refs are in m_refs; the map would alias the next state's
+    m_geomModule = -1;
     lua_close(L);
     L = nullptr;
     m_w = nullptr;

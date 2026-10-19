@@ -60,12 +60,11 @@ int main(int argc, char** argv) {
             engine.xr.reset();
     }
     app.initDevice(engine.xr ? engine.xr->device() : app.makeDevice());
-    if (scenePath.empty())
-        scenePath = "assets/scenes/demo.json";
-    createScene(engine, scenePath);
+    initEngine(engine);
     spawnFpsHud(engine);
     if (engine.xr) {
-        if (engine.xr->init(app)) {
+        engine.xrSession = engine.xr->init(app);
+        if (engine.xrSession) {
             std::vector<std::vector<VkImage>> imgs(engine.xr->eyeCount());
             VkExtent2D exts[2];
             for (int i = 0; i < 2; ++i) {
@@ -84,8 +83,16 @@ int main(int argc, char** argv) {
 
     initImGui(app);
 
-    std::printf("3dsim: vulkan+imgui | GPU soft-body sim | scenes in assets/scenes (json + lua) | "
-                "VR auto-detected, --no-vr for plain window | --scene file.json | esc/close to quit\n");
+    std::printf("3dsim: vulkan+imgui | GPU soft-body sim | startup scene select (or --scene file.json) | "
+                "VR auto-detected, --no-vr for plain window | esc/close to quit\n");
+
+    // the menu is a scene (assets/scenes/menu.json); --scene bypasses it; a boot load fail is a hard CLI fail
+    const std::string kMenuPath = "assets/scenes/menu.json";
+    int rc = 0;
+    if (!loadScene(engine, scenePath.empty() ? kMenuPath : scenePath)) {
+        std::fprintf(stderr, "3dsim: %s\n", engine.loadError.c_str());
+        rc = 1;
+    }
 
     auto lastFrame = std::chrono::steady_clock::now();
     float fpsAccum = 0.0f;
@@ -94,7 +101,7 @@ int main(int argc, char** argv) {
     float simAccum = 0.0f;
     PhaseWatch phaseMs;
     PaceWatch pace;
-    while (!app.windowShouldClose()) {
+    while (rc == 0 && !app.windowShouldClose()) {
         const auto nowFrame = std::chrono::steady_clock::now();
         const float dt = std::chrono::duration<float>(nowFrame - lastFrame).count();
         lastFrame = nowFrame;
@@ -125,12 +132,20 @@ int main(int argc, char** argv) {
         engine.renderer.flushFrees();
         engine.gpuSim.soft.flushFrees();
         engine.gpuSim.skin.flushFrees();
+        // a requested scene switch (scene.request_scene): applied once the click callback has
+        // returned (the load resets the script host); a failure falls back to the menu
+        if (!engine.pendingScene.empty()) {
+            std::string p;
+            std::swap(p, engine.pendingScene);
+            if (!loadScene(engine, p) && engine.scenePath != kMenuPath)
+                loadScene(engine, kMenuPath);
+        }
         const auto tPoll = std::chrono::steady_clock::now();
         stepMouse(engine);
         stepKeyboard(engine);
         // activate scripts to fixpoint, then _animate: walk locomotion moves the VR root
-        // BEFORE stepXr bakes walkPos into the camera views, so camera and scene share one root
-        // pose this frame (a lagged walk step would jitter the perceived hand position)
+        // BEFORE stepXr bakes walkPos into the camera views, so camera and scene share one
+        // root pose this frame (a lagged walk step would jitter the perceived hand position)
         engine.script.activateScripts();
         engine.script.animateAll(dt);
         if (engine.xr) {
@@ -207,5 +222,5 @@ int main(int argc, char** argv) {
     if (engine.xr)
         engine.xr->shutdown();
     app.shutdown();
-    return 0;
+    return rc;
 }

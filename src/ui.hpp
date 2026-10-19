@@ -9,6 +9,8 @@ class VkApp;
 void drawUi(Engine& w);
 // spawn a UI window entity; order auto-assigned from Engine::uiSeq
 entt::entity spawnUiWindow(Engine& w, const UIWindow& cfg);
+// spawn the editor tab's inspector (one named-field widget per entity, sorted by entity)
+void spawnEditorUi(Engine& w, entt::entity tab);
 // spawn a widget entity parented to win/section; order auto-assigned
 template <typename C> entt::entity spawnWidget(Engine& w, entt::entity parent, C c) {
     entt::entity e = w.reg.create();

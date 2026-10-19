@@ -15,29 +15,15 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <stdexcept>
 #include <vector>
 
 namespace {
 
 using nlohmann::json;
 
-void fail(const std::string& path, const std::string& msg) {
-    std::printf("scene %s: %s\n", path.c_str(), msg.c_str());
-    std::exit(1);
-}
-
-V2 v2(const json& a, const char* what) {
-    if (!a.is_array() || a.size() != 2)
-        fail(what, "expected [x, y]");
-    return {a[0].get<float>(), a[1].get<float>()};
-}
-
-UrlRef urlBind(Engine& w, const std::string& url, const std::string& path) {
-    UrlRef r;
-    std::string err;
-    if (!resolveUrl(w, url, r, err))
-        fail(path, "bind '" + url + "': " + err);
-    return r;
+[[noreturn]] void fail(const std::string& path, const std::string& msg) {
+    throw SceneError("scene " + path + ": " + msg);
 }
 
 // path in the cwd, or relative to the exe (running from the build dir)
@@ -45,103 +31,7 @@ std::string resolveFile(const std::string& p) {
     return std::filesystem::exists(p) ? p : exeDir() + "/../" + p;
 }
 
-// ---- editor tab: auto-generated from reflect.hpp tables x ECS contents
-
-void spawnEditorUi(Engine& w, entt::entity tab) {
-    std::vector<std::pair<entt::entity, std::string>> named;
-    for (auto [e, n] : w.reg.view<Name>().each())
-        named.emplace_back(e, n.id);
-    std::ranges::sort(named, [](auto& a, auto& b) { return a.first < b.first; });
-    for (auto& [e, name] : named) {
-        auto comps = refl::entityFields(w.reg, e);
-        if (comps.empty())
-            continue;
-        entt::entity sec = spawnWidget(w, tab, UISection{name, true});
-        for (auto& [t, b] : comps)
-            for (const auto& f : t->fields) {
-                char label[128];
-                if (comps.size() > 1)
-                    std::snprintf(label, sizeof label, "%s.%s", t->name, f.name);
-                else
-                    std::snprintf(label, sizeof label, "%s", f.name);
-                spawnFieldWidget(w, sec, label, &f, (void*)b);
-            }
-    }
-    for (const auto& r : refl::roots(w)) {
-        entt::entity sec = spawnWidget(w, tab, UISection{r.type->name, true});
-        for (const auto& f : r.type->fields)
-            spawnFieldWidget(w, sec, f.name, &f, r.base);
-    }
-}
-
 // ---- scene tab: explicit widgets from JSON, bound by URL
-
-void spawnJsonWidgets(Engine& w, entt::entity parent, const json& arr, const std::string& path,
-                      std::vector<std::string>& scriptButtons) {
-    for (const auto& W : arr) {
-        const auto type = W.at("type").get<std::string>();
-        const auto label = W.value("label", std::string(""));
-        if (type == "section") {
-            entt::entity sec = spawnWidget(w, parent, UISection{label, W.value("collapsible", true)});
-            if (W.contains("children"))
-                spawnJsonWidgets(w, sec, W["children"], path, scriptButtons);
-        } else if (type == "slider-f") {
-            auto r = urlBind(w, W.at("bind").get<std::string>(), path);
-            auto* p = (float*)r.base;
-            spawnWidget(w, parent,
-                        UISliderF{label, W.value("lo", r.field->lo), W.value("hi", r.field->hi),
-                                  W.value("fmt", std::string("%.2f")), [p] { return p; }});
-        } else if (type == "slider-i") {
-            auto r = urlBind(w, W.at("bind").get<std::string>(), path);
-            auto* p = (int*)r.base;
-            spawnWidget(w, parent,
-                        UISliderI{label, (int)W.value("lo", (int)r.field->lo), (int)W.value("hi", (int)r.field->hi),
-                                  [p] { return p; }});
-        } else if (type == "checkbox") {
-            auto r = urlBind(w, W.at("bind").get<std::string>(), path);
-            auto* p = (bool*)r.base;
-            spawnWidget(w, parent, UICheckbox{label, [p] { return p; }});
-        } else if (type == "color") {
-            auto r = urlBind(w, W.at("bind").get<std::string>(), path);
-            auto* p = (float*)r.base;
-            spawnWidget(w, parent, UIColorEdit{label, [p] { return p; }});
-        } else if (type == "drag-v3") {
-            auto r = urlBind(w, W.at("bind").get<std::string>(), path);
-            auto* p = (float*)r.base;
-            spawnWidget(w, parent, UIDragV3{label, W.value("speed", 0.1f), [p] { return p; }});
-        } else if (type == "text") {
-            spawnWidget(w, parent, UIText{label});
-        } else if (type == "button") {
-            const auto action = W.at("action").get<std::string>();
-            if (action == "demo-window") { // the one engine-level action (Engine::showDemo)
-                spawnWidget(w, parent, UIButton{label, [&w] { w.showDemo = true; }});
-            } else {
-                // behavior: the scene script must register a handler under this name
-                spawnWidget(w, parent, UIButton{label, [&w, action] { w.script.button(action); }});
-                scriptButtons.push_back(action);
-            }
-        } else {
-            fail(path, "unknown widget type '" + type + "'");
-        }
-    }
-}
-
-void buildUi(Engine& w, const json& j, const std::string& path) {
-    const json& ui = j.value("ui", json::object());
-    const auto title = ui.value("title", j.value("name", std::string("scene")));
-    const V2 size = ui.contains("size") ? v2(ui["size"], (path + " ui.size").c_str()) : V2{320.0f, 720.0f};
-    entt::entity win = spawnUiWindow(w, UIWindow{title, [] { return V2{20.0f, 20.0f}; }, size, 0, true});
-    std::vector<std::string> scriptButtons;
-    if (ui.contains("widgets")) {
-        entt::entity tab = spawnWidget(w, win, UITab{"scene"});
-        spawnJsonWidgets(w, tab, ui["widgets"], path, scriptButtons);
-    }
-    for (const auto& a : scriptButtons)
-        if (!w.script.hasButton(a))
-            fail(path, "button action '" + a + "': no handler in scene script");
-    entt::entity tab = spawnWidget(w, win, UITab{"editor"});
-    spawnEditorUi(w, tab);
-}
 
 // ---- scene objects
 
@@ -220,89 +110,177 @@ void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh)
 
 } // namespace
 
-void createScene(Engine& w, const std::string& path) {
-    const std::string p = resolveFile(path);
-    std::ifstream in(p);
-    if (!in)
-        fail(p, "cannot open file");
-    json j;
-    try {
-        in >> j;
-    } catch (const std::exception& e) {
-        fail(p, e.what());
+// ---- editor tab: auto-generated from reflect.hpp tables x ECS contents
+
+void spawnEditorUi(Engine& w, entt::entity tab) {
+    std::vector<std::pair<entt::entity, std::string>> named;
+    for (auto [e, n] : w.reg.view<Name>().each())
+        named.emplace_back(e, n.id);
+    std::ranges::sort(named, [](auto& a, auto& b) { return a.first < b.first; });
+    for (auto& [e, name] : named) {
+        auto comps = refl::entityFields(w.reg, e);
+        if (comps.empty())
+            continue;
+        entt::entity sec = spawnWidget(w, tab, UISection{name, true});
+        for (auto& [t, b] : comps)
+            for (const auto& f : t->fields) {
+                char label[128];
+                if (comps.size() > 1)
+                    std::snprintf(label, sizeof label, "%s.%s", t->name, f.name);
+                else
+                    std::snprintf(label, sizeof label, "%s", f.name);
+                spawnFieldWidget(w, sec, label, &f, (void*)b);
+            }
     }
+    for (const auto& r : refl::roots(w)) {
+        entt::entity sec = spawnWidget(w, tab, UISection{r.type->name, true});
+        for (const auto& f : r.type->fields)
+            spawnFieldWidget(w, sec, f.name, &f, r.base);
+    }
+}
 
-    w.render.envIntensity = j.value("envIntensity", 1.0f);
-    const json& objects = j.value("objects", json::array());
-
-    // the scene's camera: exactly one object with a Camera component. It is built first so the
-    // renderer can start from its pose (VR later spawns its own "vr cam")
-    const json* camObj = nullptr;
-    for (const auto& o : objects)
-        if (o.contains("components") && o["components"].contains("Camera")) {
-            if (camObj)
-                fail(p, "scene must declare exactly one camera object (an object with a 'Camera' component)");
-            camObj = &o;
-        }
-    if (!camObj)
-        fail(p, "scene must declare exactly one camera object (an object with a 'Camera' component)");
-    buildObject(w, *camObj, p, false);
-    for (auto e : w.reg.view<Camera>())
-        w.cam = e;
-
-    const VkExtent2D ext = w.app->extent();
+void initEngine(Engine& w) {
     w.rigid.init();
     w.gpuSim.init(w.app->device(), w.app->pdev());
-    w.renderer.init(*w.app, (int)objects.size() + 2, cameraViewProj(w, w.cam, (float)ext.width / (float)ext.height));
-
+    // mat4Identity: a scene (menu or --scene) always sets the camera view before the first frame
+    w.renderer.init(*w.app, 256, mat4Identity());
+    w.script.init(w);
     // geometry stdlib: the engine always loads "scenes/mesh" as the global `mesh` (declarative
     // meshes + VR grips); scene scripts use it to generate their own geometry
-    w.script.init(w);
     std::string err;
-    if (!w.script.loadMeshStdlib(err))
-        fail(p, "geometry stdlib: " + err);
-
+    if (!w.script.loadMeshStdlib(err)) {
+        std::fprintf(stderr, "3dsim: geometry stdlib: %s\n", err.c_str());
+        std::exit(1);
+    }
     // destroy observers: the subsystems hold entity -> id handles and reclaim them on component
-    // destroy (GPU frees defer one frame); registered before any script runs (a _on_ready may
-    // destroy entities)
+    // destroy (GPU frees defer one frame); registered once at boot (a per-scene re-registration
+    // would stack sinks), before any script runs (a _on_ready may destroy entities)
+    w.script.watch(w.reg);
     w.renderer.watch(w.reg);
     w.rigid.watch(w.reg);
     w.gpuSim.soft.watch(w.reg);
     w.gpuSim.skin.watch(w.reg);
+}
 
-    for (const auto& o : objects)
-        if (&o != camObj)
-            buildObject(w, o, p, true);
+void resetScene(Engine& w) {
+    // the last frame's GPU work is done (sync present / xr waitFrame): release the deferred
+    // frees, then drop every entity. clear() does not fire the on_destroy observers, so the
+    // subsystem resets below must (and do) free all the resources they hold, not just the rest
+    w.renderer.flushFrees();
+    w.gpuSim.soft.flushFrees();
+    w.gpuSim.skin.flushFrees();
+    w.reg.clear();
+    // the maps the observers leave behind (entity ids recycle, so they must not survive)
+    w.rigid.reset();
+    w.renderer.reset();
+    w.gpuSim.soft.reset();
+    w.gpuSim.skin.reset();
+    w.script.shutdown();
+    w.script.init(w);
+    std::string err;
+    if (!w.script.loadMeshStdlib(err))
+        std::fprintf(stderr, "3dsim: geometry stdlib: %s\n", err.c_str());
+    w.cam = w.vrCam = w.vrRoot = entt::null;
+    w.uiSeq = 0;
+    w.showDemo = false;
+    w.render = {};
+    spawnFpsHud(w);
+    spawnInputEntities(w);
+    if (w.xr && w.xrSession) {
+        spawnVrRoot(w);
+        spawnControllers(w);
+    }
+}
 
-    // activate every script entity to fixpoint (a _on_ready may spawn more); runs before
-    // sim.build() and the UI so URLs and the editor tab see their spawned entities
-    w.script.activateScripts();
+bool createScene(Engine& w, const std::string& path, std::string& err) {
+    const std::string p = resolveFile(path);
+    std::ifstream in(p);
+    if (!in) {
+        err = "cannot open file";
+        return false;
+    }
+    json j;
+    try {
+        in >> j;
+    } catch (const std::exception& e) {
+        err = e.what();
+        return false;
+    }
 
-    // set block after the script: URLs may point at script-spawned entities
-    if (j.contains("set")) {
-        for (const auto& [k, v] : j["set"].items()) {
-            float vals[4];
-            int n = v.is_array() ? (int)v.size() : 1;
-            if (n > 4)
-                fail(p, "set '" + k + "': too many values");
-            if (v.is_array())
-                for (int i = 0; i < n; ++i)
-                    vals[i] = v[(size_t)i].get<float>();
-            else
-                vals[0] = v.get<float>();
-            std::string err;
-            if (!sceneSet(w, k, vals, n, err))
-                fail(p, "set '" + k + "': " + err);
+    try {
+        w.render.envIntensity = j.value("envIntensity", 1.0f);
+        const json& objects = j.value("objects", json::array());
+
+        // the scene's camera: exactly one object with a Camera component. It is built first so
+        // the renderer can start from its pose (VR later spawns its own "vr cam")
+        const json* camObj = nullptr;
+        for (const auto& o : objects)
+            if (o.contains("components") && o["components"].contains("Camera")) {
+                if (camObj)
+                    fail(p, "scene must declare exactly one camera object (an object with a 'Camera' component)");
+                camObj = &o;
+            }
+        if (!camObj)
+            fail(p, "scene must declare exactly one camera object (an object with a 'Camera' component)");
+        buildObject(w, *camObj, p, false);
+        for (auto e : w.reg.view<Camera>())
+            w.cam = e;
+
+        const VkExtent2D ext = w.app->extent();
+        w.renderer.setViewProj(cameraViewProj(w, w.cam, (float)ext.width / (float)ext.height),
+                              worldTransform(w.reg, w.cam).pos);
+
+        for (const auto& o : objects)
+            if (&o != camObj)
+                buildObject(w, o, p, true);
+
+        // activate every script entity to fixpoint (a _on_ready may spawn more); runs before
+        // sim.build() and the UI so URLs and the editor tab see their spawned entities
+        w.script.activateScripts();
+
+        // set block after the script: URLs may point at script-spawned entities
+        if (j.contains("set")) {
+            for (const auto& [k, v] : j["set"].items()) {
+                float vals[4];
+                int n = v.is_array() ? (int)v.size() : 1;
+                if (n > 4)
+                    fail(p, "set '" + k + "': too many values");
+                if (v.is_array())
+                    for (int i = 0; i < n; ++i)
+                        vals[i] = v[(size_t)i].get<float>();
+                else
+                    vals[0] = v.get<float>();
+                std::string err;
+                if (!sceneSet(w, k, vals, n, err))
+                    fail(p, "set '" + k + "': " + err);
+            }
         }
-    }
 
-    w.gpuSim.build();
-    if (j.contains("env")) {
-        const auto env = j["env"].get<std::string>();
-        HdrData hdr;
-        if (!loadHdr(resolveFile("assets/" + env), hdr))
-            fail(p, "cannot load env '" + env + "'");
-        w.renderer.setEnvironment(*w.app, hdr.rgb.data(), (uint32_t)hdr.w, (uint32_t)hdr.h);
+        w.gpuSim.build();
+        if (j.contains("env")) {
+            const auto env = j["env"].get<std::string>();
+            HdrData hdr;
+            if (!loadHdr(resolveFile("assets/" + env), hdr))
+                fail(p, "cannot load env '" + env + "'");
+            w.renderer.setEnvironment(*w.app, hdr.rgb.data(), (uint32_t)hdr.w, (uint32_t)hdr.h);
+        }
+        w.script.buildUi(j); // the scene's ui module decides whether the window appears
+        return true;
+    } catch (const SceneError& e) {
+        err = e.what();
+        return false;
     }
-    buildUi(w, j, p);
+}
+
+bool loadScene(Engine& w, const std::string& path) {
+    resetScene(w);
+    std::string err;
+    if (!createScene(w, path, err)) {
+        w.loadError = err;
+        return false;
+    }
+    w.loadError = "";
+    w.scenePath = path;
+    std::printf("3dsim: scene %s\n", path.c_str());
+    return true;
 }

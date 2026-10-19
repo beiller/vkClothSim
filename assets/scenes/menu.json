@@ -1,0 +1,13 @@
+{
+    "name": "menu",
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 1.5, 4] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/menu"
+        }
+    ]
+}

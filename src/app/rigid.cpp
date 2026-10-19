@@ -58,6 +58,19 @@ void RigidScene::init() {
     m_phys->Init(1024, 0, 1024, 2048, *m_bpl, *m_ovb, *m_pair);
 }
 
+void RigidScene::reset() {
+    if (!m_phys)
+        return;
+    for (const auto& [e, id] : m_body)
+        m_phys->GetBodyInterface().RemoveBody(id);
+    m_body.clear();
+    m_shape.clear(); // the ShapeRefC destructors release the refs
+    for (int i = (int)m_joints.size() - 1; i >= 0; --i)
+        releaseJoint(i);
+    m_joints.clear();
+    m_jointIdx.clear();
+}
+
 // one identity-local collider -> the shared shape directly; otherwise a compound of the sub-shapes
 JPH::ShapeRefC RigidScene::buildShape(const std::vector<ColliderDesc>& colliders, const V3& scale) {
     const auto isIdentity = [](const Transform& t) {

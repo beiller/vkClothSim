@@ -32,6 +32,9 @@ struct ColliderDesc {
 class RigidScene {
 public:
     void init();
+    // clear the scene state between loads (a belt-and-braces: the mass destroy's observers
+    // already removed the bodies); the world + job system persist
+    void reset();
     void removeBody(entt::entity e); // the Jolt body + the joints that attach to it
     bool hasBody(entt::entity e) const;
     void setKinematicPose(entt::entity e, const V3& pos, const V4& quat);

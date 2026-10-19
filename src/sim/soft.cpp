@@ -386,21 +386,40 @@ void Soft::uploadCapsules(int n) {
     vkWriteBuffer(m_dev, m_capsInstancesMem, m_caps.data(), 48 * (VkDeviceSize)n);
 }
 
-void Soft::shutdown() {
+void Soft::reset() {
     if (m_dev == VK_NULL_HANDLE)
         return;
+    flushFrees();
     for (auto& b : m_body)
         freeBody(b); // no-op for the ones flushFrees already released
+    m_body.clear();
     m_ent.clear();
+    m_warned.clear();
     m_free.clear();
     for (auto& p : m_softPools)
         if (p)
             vkDestroyDescriptorPool(m_dev, p, nullptr);
+    m_softPools.clear();
+    m_softPoolCap = 0;
+    m_softPoolUsed = 0;
     if (m_softDsl)
         vkDestroyDescriptorSetLayout(m_dev, m_softDsl, nullptr);
+    m_softDsl = VK_NULL_HANDLE;
     if (m_softPl)
         vkDestroyPipelineLayout(m_dev, m_softPl, nullptr);
+    m_softPl = VK_NULL_HANDLE;
     if (m_softPipe)
         vkDestroyPipeline(m_dev, m_softPipe, nullptr);
+    m_softPipe = VK_NULL_HANDLE;
     vkFreeBuffer(m_dev, m_capsInstances, m_capsInstancesMem);
+    m_capsInstances = VK_NULL_HANDLE;
+    m_capsInstancesMem = VK_NULL_HANDLE;
+    m_caps.clear();
+    m_nCaps = 0;
+    m_floorY = -std::numeric_limits<float>::infinity();
+}
+
+void Soft::shutdown() {
+    reset();
+    m_dev = VK_NULL_HANDLE;
 }

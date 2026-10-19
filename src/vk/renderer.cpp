@@ -420,6 +420,38 @@ void Renderer::setTexture(int inst, int channel, int texId) {
     vkUpdateDescriptorSets(m_dev, 1, &w, 0, nullptr);
 }
 
+void Renderer::reset() {
+    if (m_dev == VK_NULL_HANDLE)
+        return;
+    flushFrees(); // already-flushed slots hold null handles (a no-op free)
+    for (auto& inst : m_insts)
+        vkFreeBuffer(m_dev, inst.modelUbuf, inst.modelMem);
+    m_insts.clear();
+    m_freeInst.clear();
+    m_entInst.clear();
+    for (auto& t : m_texs)
+        vkFreeImage2D(m_dev, t.img, t.mem, t.view);
+    m_texs.clear();
+    m_freeTex.clear();
+    m_entTex.clear();
+    for (auto& g : m_geoms) {
+        if (!g.externalPosNrm) {
+            vkFreeBuffer(m_dev, g.pos, g.posMem);
+            vkFreeBuffer(m_dev, g.nrm, g.nrmMem);
+        }
+        vkFreeBuffer(m_dev, g.uv, g.uvMem);
+        vkFreeBuffer(m_dev, g.ibuf, g.ibmem);
+    }
+    m_geoms.clear();
+    m_entGeom.clear();
+    m_geomWarned.clear();
+    m_texWarned.clear();
+    // the pools persist (their stale sets are never drawn); the next alloc grows a fresh pool
+    m_poolCap = 0;
+    m_poolUsed = 0;
+    releaseEnv();
+}
+
 void Renderer::setViewProj(const Mat4& vp, const V3& camPos) {
     m_viewProj = vp;
     m_camPos = camPos;
@@ -814,6 +846,33 @@ void Renderer::drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgI
     vkCmdEndRenderPass(cmd);
 }
 
+void Renderer::releaseEnv() {
+    if (!m_envReady)
+        return;
+    for (const auto& p : {m_pcCube, m_pcPref, m_pcIrr}) {
+        if (p.pool)
+            vkDestroyDescriptorPool(m_dev, p.pool, nullptr);
+        if (p.dsl)
+            vkDestroyDescriptorSetLayout(m_dev, p.dsl, nullptr);
+        if (p.pl)
+            vkDestroyPipelineLayout(m_dev, p.pl, nullptr);
+        if (p.pipe)
+            vkDestroyPipeline(m_dev, p.pipe, nullptr);
+    }
+    vkFreeImage2D(m_dev, m_envEq.img, m_envEq.mem, m_envEq.view);
+    vkFreeImage2D(m_dev, m_envPre.img, m_envPre.mem, m_envPre.view);
+    vkFreeImage2D(m_dev, m_envIrr.img, m_envIrr.mem, m_envIrr.view);
+    for (VkImageView v : m_envPreMips)
+        vkDestroyImageView(m_dev, v, nullptr);
+    if (m_envIrrArr)
+        vkDestroyImageView(m_dev, m_envIrrArr, nullptr);
+    if (m_eqSampler)
+        vkDestroySampler(m_dev, m_eqSampler, nullptr);
+    if (m_cubeSampler)
+        vkDestroySampler(m_dev, m_cubeSampler, nullptr);
+    m_envReady = false;
+}
+
 void Renderer::shutdown() {
     if (m_dev == VK_NULL_HANDLE)
         return;
@@ -836,29 +895,7 @@ void Renderer::shutdown() {
     vkFreeImage2D(m_dev, m_white.img, m_white.mem, m_white.view);
     if (m_texSampler)
         vkDestroySampler(m_dev, m_texSampler, nullptr);
-    if (m_envReady) {
-        for (const auto& p : {m_pcCube, m_pcPref, m_pcIrr}) {
-            if (p.pool)
-                vkDestroyDescriptorPool(m_dev, p.pool, nullptr);
-            if (p.dsl)
-                vkDestroyDescriptorSetLayout(m_dev, p.dsl, nullptr);
-            if (p.pl)
-                vkDestroyPipelineLayout(m_dev, p.pl, nullptr);
-            if (p.pipe)
-                vkDestroyPipeline(m_dev, p.pipe, nullptr);
-        }
-        vkFreeImage2D(m_dev, m_envEq.img, m_envEq.mem, m_envEq.view);
-        vkFreeImage2D(m_dev, m_envPre.img, m_envPre.mem, m_envPre.view);
-        vkFreeImage2D(m_dev, m_envIrr.img, m_envIrr.mem, m_envIrr.view);
-        for (VkImageView v : m_envPreMips)
-            vkDestroyImageView(m_dev, v, nullptr);
-        if (m_envIrrArr)
-            vkDestroyImageView(m_dev, m_envIrrArr, nullptr);
-        if (m_eqSampler)
-            vkDestroySampler(m_dev, m_eqSampler, nullptr);
-        if (m_cubeSampler)
-            vkDestroySampler(m_dev, m_cubeSampler, nullptr);
-    }
+    releaseEnv();
     for (VkDescriptorPool p : m_meshPools)
         vkDestroyDescriptorPool(m_dev, p, nullptr);
     m_meshPools.clear();

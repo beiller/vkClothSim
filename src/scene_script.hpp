@@ -1,7 +1,9 @@
 #pragma once
 #include "components.hpp"
+#include "json.hpp"
 #include "math.hpp"
 #include "mesh.hpp"
+#include "scene.hpp"
 #include "sim/sim.hpp"
 #include <entt/entt.hpp>
 #include <map>
@@ -33,8 +35,13 @@ public:
     // Geometry component on a new entity; that entity, or entt::null on error
     entt::entity callMeshGen(const std::string& gen, const std::vector<std::pair<std::string, double>>& params,
                              std::string& err);
-    bool hasButton(const std::string& name) const;
+    // run the shared ui module (scenes/ui) build(parent, spec) for a scene json ui.widgets spec;
+    // a module or spec error throws SceneError (a scene load failure)
+    void buildUi(const nlohmann::json& spec);
     void button(const std::string& name);
+    // register the on_destroy<LuaScript> hook (once, at boot: entt sinks stack, and a
+    // re-connection would double-unref against the then-current state)
+    void watch(entt::registry& reg);
     void shutdown();
 
     // ---- per-entity behavior scripts (LuaScript component) ----
@@ -90,6 +97,21 @@ private:
     static int lJoints(lua_State* L);
     static int lTime(lua_State* L);
     static int lButton(lua_State* L);
+    static int lScenes(lua_State* L);
+    static int lRequestScene(lua_State* L);
+    static int lLastError(lua_State* L);
+    static int lUiWindow(lua_State* L);
+    static int lUiTab(lua_State* L);
+    static int lUiEditor(lua_State* L);
+    static int lUiButton(lua_State* L);
+    static int lUiText(lua_State* L);
+    static int lUiSection(lua_State* L);
+    static int lUiSliderF(lua_State* L);
+    static int lUiSliderI(lua_State* L);
+    static int lUiCheckbox(lua_State* L);
+    static int lUiColor(lua_State* L);
+    static int lUiDragV3(lua_State* L);
+    static int lFireButton(lua_State* L);
     static int lAttachScript(lua_State* L);
     static int lDestroy(lua_State* L);
     static int lAddChild(lua_State* L);

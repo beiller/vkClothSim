@@ -378,22 +378,36 @@ void Skin::watch(entt::registry& reg) {
     reg.on_destroy<Renderable>().connect<&Skin::onMeshDestroyed>(this);
 }
 
-void Skin::shutdown() {
+void Skin::reset() {
     if (m_dev == VK_NULL_HANDLE)
         return;
+    flushFrees();
     m_ent.clear();
     m_meshGroup.clear();
     for (auto& c : m_skels)
         vkFreeBuffer(m_dev, c.jointDQ.b, c.jointDQ.m);
+    m_skels.clear();
     for (auto& g : m_groups)
         releaseGroupBufs(g); // idempotent: queued-freed and live groups alike
+    m_groups.clear();
     for (auto& p : m_pools)
         if (p)
             vkDestroyDescriptorPool(m_dev, p, nullptr);
+    m_pools.clear();
+    m_poolCap = 0;
+    m_poolUsed = 0;
     if (m_dsl)
         vkDestroyDescriptorSetLayout(m_dev, m_dsl, nullptr);
+    m_dsl = VK_NULL_HANDLE;
     if (m_pl)
         vkDestroyPipelineLayout(m_dev, m_pl, nullptr);
+    m_pl = VK_NULL_HANDLE;
     if (m_pipe)
         vkDestroyPipeline(m_dev, m_pipe, nullptr);
+    m_pipe = VK_NULL_HANDLE;
+}
+
+void Skin::shutdown() {
+    reset();
+    m_dev = VK_NULL_HANDLE;
 }

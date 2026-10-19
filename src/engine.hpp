@@ -34,4 +34,8 @@ struct Engine {
     PhaseMs phase; // per-section frame time, shown in the fps HUD
     bool showDemo = false;
     int uiSeq = 0; // auto-assigned draw order for UI windows/widgets
+    bool xrSession = false; // a live OpenXR session (the vr root + grips exist only then)
+    std::string pendingScene; // a requested scene switch (scene.request_scene); applied at the top of the next frame
+    std::string scenePath;    // the last successfully loaded scene (for the menu fallback)
+    std::string loadError;    // the last scene load failure, shown in the menu
 };
