@@ -11,5 +11,12 @@ function M._on_ready(self)
     local ch = scene.entity("char")
     scene.replace(ch, "Transform", { pos = { 0, 0, 0 } })
     render.gltf(ch, "local/basegen8.glb")
+    scene.set_pose("cam", { 0, 1.7, 0.4 }, { 0, 0, 0, 1 })
+    scene.set("basegen8/Cornea.refraction", 1.0)
+    scene.set("basegen8/Cornea.ior", 1.0)
+    scene.set("basegen8/Cornea.roughness", 0.0)
+    scene.set("basegen8/EyeMoisture.refraction", 1.0)
+    scene.set("basegen8/EyeMoisture.ior", 1.0)
+    scene.set("basegen8/EyeMoisture.roughness", 0.0)
 end
 return M

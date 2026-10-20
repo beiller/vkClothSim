@@ -28,6 +28,19 @@
         "widgets": [
             {
                 "type": "section",
+                "label": "Mats",
+                "children": [
+                    { "type": "slider-f", "label": "basegen8/Cornea.refraction", "bind": "basegen8/Cornea.refraction" },
+                    { "type": "slider-f", "label": "basegen8/Cornea.ior", "bind": "basegen8/Cornea.ior" },
+                    { "type": "slider-f", "label": "basegen8/Cornea.roughness", "bind": "basegen8/Cornea.roughness" },
+                    { "type": "slider-f", "label": "basegen8/EyeMoisture.refraction", "bind": "basegen8/EyeMoisture.refraction" },
+                    { "type": "slider-f", "label": "basegen8/EyeMoisture.ior", "bind": "basegen8/EyeMoisture.ior" },
+                    { "type": "slider-f", "label": "basegen8/EyeMoisture.roughness", "bind": "basegen8/EyeMoisture.roughness" },
+                    { "type": "slider-f", "label": "basegen8/Face.ssssWeight", "bind": "basegen8/Face.ssssWeight" }
+                ]
+            },
+            {
+                "type": "section",
                 "label": "tone",
                 "children": [
                     { "type": "slider-f", "label": "exposure", "bind": "render.exposure" },

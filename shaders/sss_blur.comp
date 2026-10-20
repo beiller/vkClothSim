@@ -49,10 +49,10 @@ void main() {
     vec4 base = texture(src, uv);
     const float strength = abs(base.a);
     if (strength > 0.0) {
-        // the engine's 0..1 depth (near = 0, far = 1, cleared to 1) -> linear view distance
+        // the engine's GL-convention depth (near = -1, far = 1, cleared to 1) -> linear view distance
         float z = texture(depthTex, uv).r;
-        if (z < 1.0) {
-            float d = (params.zNear * params.zFar) / ((1.0 - z) * params.zFar + z * params.zNear);
+        if (z > -1.0) {
+            float d = (2.0 * params.zNear * params.zFar) / ((1.0 - z) * params.zFar + (1.0 + z) * params.zNear);
             const float depthScale = params.unitSize / d;
             const float scale = mix(params.scale, depthScale, params.depthScale);
             vec2 dir = params.vertical ? vec2(0.0, 1.0) : vec2(1.0, 0.0);

@@ -34,6 +34,7 @@
                 "label": "glass",
                 "children": [
                     { "type": "slider-f", "label": "refraction", "bind": "sphere.refraction" },
+                    { "type": "slider-f", "label": "ior", "bind": "sphere.ior" },
                     { "type": "slider-f", "label": "roughness", "bind": "sphere.roughness" },
                     { "type": "slider-f", "label": "ssss", "bind": "sphere.ssssWeight" }
                 ]

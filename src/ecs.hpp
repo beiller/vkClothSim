@@ -125,7 +125,7 @@ struct SoftBodyData {
 // 0 = single (from Transform + fov), 2 = stereo eye views (pose + lens tangents, filled per frame)
 struct Camera {
     float fovDeg = 50.0f;
-    float nearP = 0.1f;
+    float nearP = 0.01f;
     float farP = 300.0f;
     bool active = false;
     int nViews = 0; // 0 = single view (the entity's Transform), 2 = stereo eyes
@@ -217,6 +217,7 @@ struct Material {
     // SSS + glass (appended at the end: spawnMaterial uses a partial aggregate emplace)
     float ssssWeight = 0.0f; // 0 = off; the SSS strength scalar (Godot subsurface_scattering_strength)
     float refraction = 0.0f; // 0 = off; the refraction scale (Godot refraction, 0..1)
+    float ior = 1.5f; // the index of refraction (the Snell ray + the dielectric Fresnel); 1.5 = glass
 };
 
 // mesh -> shared material entity

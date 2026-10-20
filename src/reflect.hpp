@@ -65,6 +65,7 @@ static const FieldDesc kMaterial[] = {
     {"alpha", OFF(Material, alpha), FieldKind::SliderF, 0.0f, 1.0f},
     {"ssssWeight", OFF(Material, ssssWeight), FieldKind::SliderF, 0.0f, 1.0f},
     {"refraction", OFF(Material, refraction), FieldKind::SliderF, -1.0f, 1.0f},
+    {"ior", OFF(Material, ior), FieldKind::SliderF, 1.0f, 1.8f},
 };
 // offset unused for Ref fields
 static const FieldDesc kMaterialRef[] = {

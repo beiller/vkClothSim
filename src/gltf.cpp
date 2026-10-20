@@ -7,6 +7,7 @@
 #include "tiny_gltf_v3.h"
 
 #include "stb_image.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -75,13 +76,27 @@ std::vector<uint8_t> b64Decode(const std::string& in) {
     return out;
 }
 
-// resolve + decode a glTF image to RGBA8 (bufferView bytes, data URI, or external file)
+// glTF color data is sRGB-encoded but lighting math runs in linear space: decode sRGB -> linear
+// (the spec's sRGB transfer function). Data textures (normal, metallicRoughness, occlusion) are
+// already linear and must not be decoded.
+static float srgbToLinear(float s) {
+    return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+}
+static void decodeSrgb(std::vector<uint8_t>& rgba) {
+    for (size_t i = 0; i < rgba.size(); i += 4)
+        for (int c = 0; c < 3; ++c)
+            rgba[i + c] = (uint8_t)(srgbToLinear(rgba[i + c] / 255.0f) * 255.0f + 0.5f);
+}
+
+// resolve + decode a glTF image to RGBA8 (bufferView bytes, data URI, or external file); color
+// images are decoded sRGB -> linear, data images are kept as-is
 bool decodeImage(const tg3_model& m, int32_t imgIdx, const std::string& baseDir, std::vector<uint8_t>& out, int& outW,
-                 int& outH) {
+                 int& outH, bool srgb) {
     if (imgIdx < 0 || (uint32_t)imgIdx >= m.images_count)
         return false;
     const tg3_image& img = m.images[imgIdx];
     std::vector<uint8_t> file;
+    bool embedded = false;
     if (img.buffer_view >= 0 && (uint32_t)img.buffer_view < m.buffer_views_count) {
         const tg3_buffer_view& bv = m.buffer_views[img.buffer_view];
         if ((uint32_t)bv.buffer >= m.buffers_count)
@@ -90,12 +105,14 @@ bool decodeImage(const tg3_model& m, int32_t imgIdx, const std::string& baseDir,
         if (bv.byte_offset + bv.byte_length > buf.data.count)
             return false;
         file.assign(buf.data.data + bv.byte_offset, buf.data.data + bv.byte_offset + bv.byte_length);
+        embedded = true;
     } else if (img.uri.data && strncmp(img.uri.data, "data:", 5) == 0) {
         const std::string uri = s(img.uri);
         const size_t comma = uri.find(',');
         if (comma == std::string::npos || uri.find("base64") == std::string::npos)
             return false;
         file = b64Decode(uri.substr(comma + 1));
+        embedded = true;
     } else if (img.uri.data) {
         // external file: unflipped (glTF uv convention: v0 = top of image)
         TextureData td;
@@ -104,19 +121,22 @@ bool decodeImage(const tg3_model& m, int32_t imgIdx, const std::string& baseDir,
         out = std::move(td.rgba);
         outW = td.w;
         outH = td.h;
-        return true;
     } else
         return false;
-    // glTF uv convention: (0,0) = top-left, matching Vulkan's default origin, so no row flip
-    stbi_set_flip_vertically_on_load(0);
-    int w = 0, h = 0, ch = 0;
-    unsigned char* px = stbi_load_from_memory(file.data(), (int)file.size(), &w, &h, &ch, 4);
-    if (!px)
-        return false;
-    out.assign(px, px + (size_t)w * h * 4);
-    stbi_image_free(px);
-    outW = w;
-    outH = h;
+    if (embedded) {
+        // glTF uv convention: (0,0) = top-left, matching Vulkan's default origin, so no row flip
+        stbi_set_flip_vertically_on_load(0);
+        int w = 0, h = 0, ch = 0;
+        unsigned char* px = stbi_load_from_memory(file.data(), (int)file.size(), &w, &h, &ch, 4);
+        if (!px)
+            return false;
+        out.assign(px, px + (size_t)w * h * 4);
+        stbi_image_free(px);
+        outW = w;
+        outH = h;
+    }
+    if (srgb)
+        decodeSrgb(out);
     return true;
 }
 
@@ -415,7 +435,7 @@ struct GltfCtx {
     std::string baseDir;
     entt::entity root; // the load entity: skeleton entities parent under it (destroy cascades)
     std::vector<entt::entity> materials; // per glTF material index (null = not created)
-    std::vector<entt::entity> textures;  // per glTF image index
+    std::map<std::pair<int32_t, bool>, entt::entity> textures; // per (glTF image index, srgb)
     // skinned meshes: the node entities (filled in buildNode), the per-skin character id
     // (created in finishSkinned), and the prims deferred to finishSkinned
     struct PendingPrim {
@@ -424,6 +444,7 @@ struct GltfCtx {
     std::vector<entt::entity> nodeEntities; // per glTF node index (null = not built)
     std::vector<entt::entity> skinChars;    // per skin index: the skeleton character entity (null = not created)
     std::vector<PendingPrim> pending;
+    std::vector<std::string> usedNames; // dedupe key for the created entity names
 };
 
 void warn(GltfCtx& c, const std::string& msg) {
@@ -438,26 +459,28 @@ std::string imageId(const GltfCtx& c, int32_t imgIdx) {
     return c.fileId + "#img" + std::to_string(imgIdx);
 }
 
-// shared texture entity for a glTF image (deduped globally by identity)
-entt::entity textureForImage(GltfCtx& c, int32_t imgIdx) {
+// shared texture entity for a glTF image (deduped globally by (identity, color-space))
+entt::entity textureForImage(GltfCtx& c, int32_t imgIdx, bool srgb) {
     if (imgIdx < 0 || (uint32_t)imgIdx >= c.m->images_count)
         return entt::null;
-    if (c.textures[imgIdx] != entt::null)
-        return c.textures[imgIdx];
+    const auto key = std::make_pair(imgIdx, srgb);
+    const auto it = c.textures.find(key);
+    if (it != c.textures.end() && it->second != entt::null)
+        return it->second;
     std::vector<uint8_t> px;
     int wpx = 0, hpx = 0;
-    if (!decodeImage(*c.m, imgIdx, c.baseDir, px, wpx, hpx)) {
+    if (!decodeImage(*c.m, imgIdx, c.baseDir, px, wpx, hpx, srgb)) {
         warn(c, "cannot decode image " + std::to_string(imgIdx));
         return entt::null;
     }
-    return c.textures[imgIdx] = textureBytes(c.w, imageId(c, imgIdx), px.data(), wpx, hpx);
+    return c.textures[key] = textureBytes(c.w, imageId(c, imgIdx), px.data(), wpx, hpx);
 }
 
 // a glTF texture -> its image (several textures may share one image)
-entt::entity textureForTexture(GltfCtx& c, int32_t texIdx) {
+entt::entity textureForTexture(GltfCtx& c, int32_t texIdx, bool srgb) {
     if (texIdx < 0 || (uint32_t)texIdx >= c.m->textures_count)
         return entt::null;
-    return textureForImage(c, c.m->textures[texIdx].source);
+    return textureForImage(c, c.m->textures[texIdx].source, srgb);
 }
 
 // shared material entity for a glTF material (created once per index within this load); a
@@ -470,25 +493,34 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     const tg3_material& gm = c.m->materials[matIdx];
     const auto& pbr = gm.pbr_metallic_roughness;
     const std::string name = gm.name.data ? s(gm.name) : "mat_" + std::to_string(matIdx);
+    // a glTF file may repeat a material name (e.g. per-eye); keep the entity names unique
+    std::string full = c.fileBase + "/" + name;
+    for (int n = 1; std::find(c.usedNames.begin(), c.usedNames.end(), full) != c.usedNames.end(); ++n)
+        full = c.fileBase + "/" + name + "." + std::to_string(n);
+    c.usedNames.push_back(full);
+    // the glTF color factors (base color, emissive) are sRGB-encoded -> linear
+    const V3 baseColor = {srgbToLinear((float)pbr.base_color_factor[0]), srgbToLinear((float)pbr.base_color_factor[1]),
+                         srgbToLinear((float)pbr.base_color_factor[2])};
+    const V3 emissive = {srgbToLinear((float)gm.emissive_factor[0]), srgbToLinear((float)gm.emissive_factor[1]),
+                        srgbToLinear((float)gm.emissive_factor[2])};
     const entt::entity e =
-        spawnMaterial(c.w, {(float)pbr.base_color_factor[0], (float)pbr.base_color_factor[1], (float)pbr.base_color_factor[2]},
-                      (float)pbr.metallic_factor, (float)pbr.roughness_factor,
-                      {(float)gm.emissive_factor[0], (float)gm.emissive_factor[1], (float)gm.emissive_factor[2]},
-                      (c.fileBase + "/" + name).c_str());
+        spawnMaterial(c.w, baseColor, (float)pbr.metallic_factor, (float)pbr.roughness_factor, emissive, full.c_str());
     auto& mat = c.w.reg.get<Material>(e);
-    const auto slot = [&](int32_t texIdx, int32_t coord, const char* what, entt::entity* field) {
+    const auto slot = [&](int32_t texIdx, int32_t coord, const char* what, entt::entity* field, bool srgb) {
         if (texIdx < 0)
             return;
         if (coord != 0) {
             warn(c, std::string(what) + " uses uv channel " + std::to_string(coord) + " (only uv0 is packed); map skipped");
             return;
         }
-        *field = textureForTexture(c, texIdx);
+        *field = textureForTexture(c, texIdx, srgb);
     };
-    slot(pbr.base_color_texture.index, pbr.base_color_texture.tex_coord, "baseColor", &mat.tex);
-    slot(pbr.metallic_roughness_texture.index, pbr.metallic_roughness_texture.tex_coord, "metallicRoughness", &mat.texMR);
-    slot(gm.normal_texture.index, gm.normal_texture.tex_coord, "normal", &mat.texNormal);
-    slot(gm.emissive_texture.index, gm.emissive_texture.tex_coord, "emissive", &mat.texEmissive);
+    // the color textures (baseColor, emissive) are sRGB; the data textures (metallicRoughness,
+    // normal) are already linear
+    slot(pbr.base_color_texture.index, pbr.base_color_texture.tex_coord, "baseColor", &mat.tex, true);
+    slot(pbr.metallic_roughness_texture.index, pbr.metallic_roughness_texture.tex_coord, "metallicRoughness", &mat.texMR, false);
+    slot(gm.normal_texture.index, gm.normal_texture.tex_coord, "normal", &mat.texNormal, false);
+    slot(gm.emissive_texture.index, gm.emissive_texture.tex_coord, "emissive", &mat.texEmissive, true);
     mat.alpha = (float)pbr.base_color_factor[3];
     mat.alphaCutoff = (float)gm.alpha_cutoff;
     const std::string am = s(gm.alpha_mode);
@@ -509,6 +541,22 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
         }
         if (tf > 0.0)
             mat.refraction = (float)tf; // 1:1: transmissionFactor drives the refraction amount (0..1)
+        break;
+    }
+    // KHR_materials_ior (index of refraction, e.g. cornea) -> the ior field; the spec default is 1.5
+    for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
+        if (s(gm.ext.extensions[i].name) != "KHR_materials_ior")
+            continue;
+        const tg3_value& ext = gm.ext.extensions[i].value;
+        double io = 1.5;
+        for (uint32_t j = 0; j < ext.object_count; ++j) {
+            const auto& od = ext.object_data[j];
+            if (s(od.key) == "ior" && od.value.type == TG3_VALUE_REAL)
+                io = od.value.real_val;
+            if (s(od.key) == "iorTexture" && od.value.type == TG3_VALUE_INT && od.value.int_val >= 0)
+                warn(c, "iorTexture is not supported (ignored; use ior)");
+        }
+        mat.ior = (float)io;
         break;
     }
     return c.materials[matIdx] = e;
@@ -865,7 +913,6 @@ entt::entity loadGltf(Engine& w, entt::entity e, const std::string& path, std::s
     GltfCtx c{w, &model, fileBase, file, baseDir, e, {}, {}};
     // note: value-initialized entt::entity is 0, not entt::null (all bits set in EnTT 4)
     c.materials.assign(model.materials_count, entt::null);
-    c.textures.assign(model.images_count, entt::null);
     c.nodeEntities.assign(model.nodes_count, entt::null);
     c.skinChars.assign(model.skins_count, entt::null);
     for (uint32_t i = 0; i < scene.nodes_count; ++i)

@@ -26,7 +26,8 @@ struct ModelUbo {
     float emissive[3];  // 96
     float ssssWeight;   // 108
     float refraction;   // 112
-    float pad[3];       // 116
+    float ior;          // 116
+    float pad[2];       // 120
 };
 static_assert(sizeof(ModelUbo) == 128, "ModelUbo must match the shader std140 layout");
 
@@ -90,7 +91,7 @@ struct LightsUbo {
 static_assert(sizeof(LightsUbo) == 16 + Renderer::kMaxLights * 64, "LightsUbo must match the shader std430 layout");
 
 ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float roughness, const V3& emissive,
-                   float baseAlpha, float alphaCutoff, float alphaMode, float ssssWeight, float refraction) {
+                   float baseAlpha, float alphaCutoff, float alphaMode, float ssssWeight, float refraction, float ior) {
     ModelUbo mb{};
     std::memcpy(mb.model, model.m, 64);
     mb.baseColor[0] = baseColor.x;
@@ -106,6 +107,7 @@ ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float
     mb.emissive[2] = emissive.z;
     mb.ssssWeight = ssssWeight;
     mb.refraction = refraction;
+    mb.ior = ior;
     return mb;
 }
 
@@ -287,7 +289,7 @@ int Renderer::allocInstance(int geom) {
     inst.geom = geom;
     // prepBuffers rewrites this from the ECS every frame; identity + defaults just keep it valid
     const ModelUbo modelInit = packModel(mat4Identity(), V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, V3{0.0f, 0.0f, 0.0f}, 1.0f,
-                                        0.5f, 0.0f, 0.0f, 0.0f);
+                                        0.5f, 0.0f, 0.0f, 0.0f, 1.5f);
     vkMakeBuffer(m_dev, m_pdev, inst.modelUbuf, inst.modelMem, sizeof(ModelUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                  &modelInit);
     const VkDeviceSize attrSize = (VkDeviceSize)12 * g.vtxCount;
@@ -535,7 +537,7 @@ void Renderer::prepBuffers(const entt::registry& reg) {
         InstancedMesh& im = m_insts[(size_t)inst];
         V3 base{1.0f, 1.0f, 1.0f}, emissive{0.0f, 0.0f, 0.0f};
         float metallic = 0.0f, roughness = 0.5f, baseAlpha = 1.0f, alphaCutoff = 0.5f;
-        float ssssWeight = 0.0f, refraction = 0.0f;
+        float ssssWeight = 0.0f, refraction = 0.0f, ior = 1.5f;
         int alphaMode = 0;
         if (const auto* ref = reg.try_get<MaterialRef>(e))
             if (const auto* mat = reg.try_get<Material>(ref->mat)) {
@@ -548,6 +550,7 @@ void Renderer::prepBuffers(const entt::registry& reg) {
                 alphaMode = mat->alphaMode;
                 ssssWeight = mat->ssssWeight;
                 refraction = mat->refraction;
+                ior = mat->ior;
                 const entt::entity slots[kTexChannels] = {mat->tex, mat->texMR, mat->texNormal, mat->texEmissive};
                 for (int c = 0; c < kTexChannels; ++c)
                     setTexture(inst, c, textureFor(slots[c], reg)); // no-ops when the id is unchanged
@@ -568,7 +571,7 @@ void Renderer::prepBuffers(const entt::registry& reg) {
         if (alphaMode == 2 || refraction > 0.0f)
             m_hasTrans = true;
         const ModelUbo mb = packModel(model, base, metallic, roughness, emissive, baseAlpha, alphaCutoff, alphaMode,
-                                      ssssWeight, refraction);
+                                      ssssWeight, refraction, ior);
         vkWriteBuffer(m_dev, im.modelMem, &mb, sizeof(ModelUbo));
     }
 }

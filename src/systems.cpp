@@ -118,7 +118,7 @@ entt::entity spawnVrRoot(Engine& w) {
     w.reg.emplace<Name>(root, "vr root");
     entt::entity head = w.reg.create();
     w.reg.emplace<Transform>(head, V3{0, 0, 0}, V4{0, 0, 0, 1});
-    w.reg.emplace<Camera>(head, Camera{90.0f, 0.1f, 300.0f, false});
+    w.reg.emplace<Camera>(head, Camera{90.0f, 0.01f, 300.0f, false});
     w.reg.emplace<Parent>(head, root);
     w.reg.emplace<Name>(head, "vr cam");
     w.vrCam = head;

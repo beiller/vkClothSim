@@ -20,7 +20,7 @@ layout(binding = 3) uniform UBO {
     vec2 screenSize;
     vec4 pad2;
 } ubo;
-layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; float ssssWeight; float refraction; vec2 pad; }
+layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; float ssssWeight; float refraction; float ior; vec2 pad; }
     modelU;
 layout(binding = 6) uniform sampler2D albedoTex;
 layout(binding = 7) uniform sampler2D mrTex; // glTF metallicRoughness: G = roughness, B = metallic
@@ -130,10 +130,10 @@ float pcssShadow(vec3 N, vec3 L, float NoL, float dist, Light li, int idx) {
     return pcfShadow(N, L, dist, bias, radius, idx);
 }
 
-// the depth copy is 0..1 (near = 0, far = 1); linearize to a view distance (positive in
-// front). the background (db = 1) gives zFar; the near plane (db = 0) gives zNear
+// the depth copy uses the engine's GL-convention depth (the perspective matrix maps
+// [zNear, zFar] -> [-1, 1]); invert to a view distance (positive in front)
 float depthToDist(float db) {
-    return (ubo.zNear * ubo.zFar) / ((1.0 - db) * ubo.zFar + db * ubo.zNear);
+    return (2.0 * ubo.zNear * ubo.zFar) / ((1.0 - db) * ubo.zFar + (1.0 + db) * ubo.zNear);
 }
 
 // clip (-1..1 after the viewport flip) + distance -> view space (z = -dist); the signed
@@ -188,7 +188,7 @@ void main() {
     vec3 R = reflect(-V, N);
     vec3 irr = texture(envIrradiance, N).rgb;
     vec3 prefilt = textureLod(envPrefilter, R, rough * 4.0).rgb;
-    vec3 specF = fSchlick(F0, 1.0 - NoV);
+    vec3 specF = fSchlick(F0, NoV);
     vec3 indirectDiffuse = irr * albedo * (1.0 - metal) * ubo.envIntensity / PI;
     vec3 indirectSpecular = prefilt * specF * ubo.envIntensity;
 
@@ -221,35 +221,67 @@ void main() {
         specSum += radiance * NoL * spec * shadow;
     }
 
-    // glass (screen-space refraction): the refraction field (0..1) drives both the
-    // transmission energy (linear) and the screen-uv offset (max 0.1 uv at 1.0); an
-    // off-screen ray falls back to the environment in the refracted direction
+    // glass: a refracted ray (manual Snell, ior from the material, deviation scaled by
+    // refStrength to compensate the flat-screen approximation on a curved refractor) projected to
+    // a screen uv (y-sign corrected), weighted by the dielectric ior fresnel; the hard occlusion
+    // test (with a tolerance for the thin shell + content gap) keeps the transmission only when
+    // the hit is not clearly in front of the fragment; the refraction field (0..1) scales the
+    // transmission energy; an off-screen or backwards ray falls back to the environment
     vec3 trans = vec3(0.0);
+    vec3 diffRaw = diffSum; // the SSS pass blurs this (the full diffuse, before the refraction
+                           // scaling) so a translucent surface scatters light and refracts at once
     float refAmount = modelU.refraction;
     if (refAmount > 0.0) {
         float refEnergy = refAmount;
         diffSum *= 1.0 - refEnergy;
-        vec3 refN = normalize((ubo.view * vec4(N, 0.0)).xyz);
-        vec2 screenUv = gl_FragCoord.xy / ubo.screenSize;
-        vec2 refOfs = screenUv - refN.xy * (refAmount * 0.1);
-        if (refOfs.x >= 0.0 && refOfs.x <= 1.0 && refOfs.y >= 0.0 && refOfs.y <= 1.0) {
-            // the depth is read at the offset uv, the position reconstructed at the current uv
-            // (Godot's approximation); the fade hides the refraction when the refracted point
-            // is behind this fragment
-            vec3 pV = (ubo.view * vec4(vWorldPos, 1.0)).xyz;
-            float d = depthToDist(textureLod(sceneDepth, refOfs, 0.0).r);
-            vec2 clip = vec2(screenUv.x * 2.0 - 1.0, 1.0 - screenUv.y * 2.0);
-            vec3 refViewPos = clipToView(clip, d);
-            float see = smoothstep(0.0, 1.0, pV.z - refViewPos.z);
-            vec3 refCol = textureLod(sceneColor, refOfs, rough * 8.0).rgb;
-            trans += (1.0 - specF) * see * (1.0 - metal) * refEnergy * refCol;
-        } else { // off-screen ray: the environment, sampled in the refracted direction
-            vec2 refNdc = vec2(refOfs.x * 2.0 - 1.0, refOfs.y * 2.0 - 1.0);
-            float tanH = 0.5 * (ubo.frustum.y - ubo.frustum.x);
-            float tanV = 0.5 * (ubo.frustum.z - ubo.frustum.w);
-            vec3 refDir = normalize(vec3(refNdc.x * tanH, refNdc.y * tanV, -1.0));
+        vec3 pV = (ubo.view * vec4(vWorldPos, 1.0)).xyz;
+        vec3 viewN = normalize((ubo.view * vec4(N, 0.0)).xyz);
+        // manual Snell (cosI = -dot(IV, N)): the true identity at ior = 1.0 and the correct
+        // bend otherwise. The built-in refract() is not the identity at eta = 1 under the
+        // "normal faces the ray" convention (dot < 0), so it is avoided here.
+        float eta = 1.0 / modelU.ior;
+        vec3 straight = normalize(pV);
+        float cI = -dot(viewN, straight);
+        float cosT2 = 1.0 - eta * eta * (1.0 - cI * cI);
+        // refraction bias: the screen-space approach (sample a flat screen at the refracted uv)
+        // overestimates the apparent displacement for a curved refractor at close range, so the
+        // deviation from the straight ray is scaled down by this factor (1.0 = full physical
+        // Snell; 0.025 shrinks the pixel shift ~40x to match the perceived result)
+        const float refStrength = 0.025;
+        vec3 refDir;
+        if (cosT2 > 0.0) {
+            vec3 refFull = eta * straight + (eta * cI - sqrt(cosT2)) * viewN;
+            refDir = straight + refStrength * (refFull - straight);
+        } else {
+            refDir = vec3(0.0); // total internal reflection
+        }
+        if (dot(refDir, refDir) < 1e-8)
+            refDir = straight; // degenerate (TIR or back face): straight through
+        float iorF = (modelU.ior - 1.0) / (modelU.ior + 1.0);
+        iorF *= iorF;
+        vec3 refF = fSchlick(vec3(iorF), NoV);
+        float tanH = 0.5 * (ubo.frustum.y - ubo.frustum.x);
+        float tanV = 0.5 * (ubo.frustum.z - ubo.frustum.w);
+        vec2 refUv = vec2(0.5 + 0.5 * (refDir.x / -refDir.z / tanH -
+                                     (ubo.frustum.x + ubo.frustum.y) / (ubo.frustum.y - ubo.frustum.x)),
+                         0.5 - 0.5 * ((refDir.y / -refDir.z - 0.5 * (ubo.frustum.z + ubo.frustum.w)) / tanV));
+        if (refDir.z < 0.0 && refUv.x >= 0.0 && refUv.x <= 1.0 && refUv.y >= 0.0 && refUv.y <= 1.0) {
+            // the depth is the view-space z of the surface the refUv pixel ray hits; reconstruct
+            // its true view-space position (that pixel's frustum tan — refDir and the pixel ray
+            // only coincide near the screen centre) and test the true signed distance from the
+            // fragment to it along the refraction direction. A 1 cm tolerance absorbs the gap
+            // between the scaled refraction ray and the pixel ray it is projected to (which
+            // widens with ior) without masking the cm-scale cornea-to-content gap.
+            float d = depthToDist(textureLod(sceneDepth, refUv, 0.0).r);
+            vec3 hit = vec3(mix(ubo.frustum.x, ubo.frustum.y, refUv.x),
+                           mix(ubo.frustum.z, ubo.frustum.w, refUv.y),
+                           -1.0) * d;
+            float see = step(-0.01, dot(hit - pV, refDir));
+            vec3 refCol = textureLod(sceneColor, refUv, rough * 8.0).rgb;
+            trans += (1.0 - refF) * see * (1.0 - metal) * refEnergy * refCol;
+        } else { // off-screen or backwards ray: the environment, sampled in the refracted direction
             vec3 refCol = textureLod(envPrefilter, refDir, rough * 4.0).rgb * ubo.envIntensity;
-            trans += (1.0 - specF) * (1.0 - metal) * refEnergy * refCol;
+            trans += (1.0 - refF) * (1.0 - metal) * refEnergy * refCol;
         }
     }
 
@@ -258,5 +290,5 @@ void main() {
     // opaque pass: the alpha is the ssssWeight side channel (the background clears to 0); the
     // transparent pass: the alpha is the blend factor (the glass self-composites over the scene)
     outColor = vec4(color, passU.passId < 0.5 ? modelU.ssssWeight : alpha);
-    outDiff = passU.passId < 0.5 ? vec4(diffSum, modelU.ssssWeight) : vec4(0.0);
+    outDiff = passU.passId < 0.5 ? vec4(diffRaw, modelU.ssssWeight) : vec4(0.0);
 }
