@@ -392,6 +392,11 @@ bool validateGeometry(entt::registry& reg, entt::entity e, std::string& err) {
             return false;
         }
     }
+    for (const auto& sh : g.shapes)
+        if (!sh.pos.empty() && sh.pos.size() != (size_t)3 * nv) {
+            err = "Geometry: shape pos must have 3 values per vertex";
+            return false;
+        }
     return true;
 }
 

@@ -127,6 +127,62 @@ bool readGeomField(lua_State* L, int tidx, const char* name, size_t per, std::ve
     return true;
 }
 
+// Reads an optional 'shapes' key (a list of {name, weight, pos, nrm}) from the table at idx.
+// Leaves out untouched when the key is absent; otherwise out is the full list.
+static bool readShapesTable(lua_State* L, int idx, int nVerts, std::vector<SubMesh>& out, std::string& err) {
+    lua_getfield(L, idx, "shapes");
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return true;
+    }
+    std::vector<SubMesh> list;
+    for (int i = 1;; ++i) {
+        lua_geti(L, -1, i);
+        if (lua_isnoneornil(L, -1)) {
+            lua_pop(L, 1);
+            break;
+        }
+        if (!lua_istable(L, -1)) {
+            err = "geometry: shapes entry must be a table";
+            lua_pop(L, 2);
+            return false;
+        }
+        SubMesh sh;
+        lua_getfield(L, -1, "name");
+        const bool hasName = lua_isstring(L, -1);
+        if (hasName)
+            sh.name = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        if (!hasName) {
+            err = "geometry: shape needs a string 'name'";
+            lua_pop(L, 2);
+            return false;
+        }
+        lua_getfield(L, -1, "weight");
+        if (lua_isnumber(L, -1))
+            sh.weight = (float)lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        if (!readGeomField(L, -1, "pos", 3, sh.pos, false, err)) {
+            lua_pop(L, 2);
+            return false;
+        }
+        if (!readGeomField(L, -1, "nrm", 3, sh.nrm, false, err)) {
+            lua_pop(L, 2);
+            return false;
+        }
+        if (!sh.pos.empty() && sh.pos.size() != (size_t)3 * nVerts) {
+            err = "geometry: shape 'pos' must have 3 * vertexCount entries";
+            lua_pop(L, 2);
+            return false;
+        }
+        list.push_back(std::move(sh));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    out = std::move(list);
+    return true;
+}
+
 entt::entity readEnt(lua_State* L, int idx) {
     return static_cast<entt::entity>((uint32_t)luaL_checkinteger(L, idx));
 }
@@ -236,6 +292,8 @@ void SceneScript::init(Engine& w) {
     reg("set_pose", lSetPose);
     reg("get_pose", lGetPose);
     reg("set_morph", lSetMorph);
+    reg("shapes", lShapes);
+    reg("link_mesh", lLinkMesh);
     reg("joints", lJoints);
     reg("skeleton", lSkeleton);
     reg("time", lTime);
@@ -425,6 +483,8 @@ Mesh SceneScript::readGeom(lua_State* L, int idx, std::string& err) {
             m.joints.push_back((uint32_t)v);
         m.weights = std::move(wf);
     }
+    if (!readShapesTable(L, idx, n, m.shapes, err))
+        return {};
     return m;
 }
 
@@ -781,10 +841,14 @@ int SceneScript::lGltf(lua_State* L) {
     return 1;
 }
 
-bool SceneScript::readCompFields(lua_State* L, int idx, CompFields& out, std::string& err) {
+bool SceneScript::readCompFields(lua_State* L, int idx, CompFields& out, std::string& err, const char* skipField) {
     lua_pushnil(L);
     while (lua_next(L, idx) != 0) {
         const char* name = luaL_checkstring(L, -2);
+        if (skipField && std::strcmp(name, skipField) == 0) {
+            lua_pop(L, 1);
+            continue;
+        }
         CompField f;
         f.name = name;
         if (lua_isboolean(L, -1)) {
@@ -846,16 +910,36 @@ int SceneScript::lEntity(lua_State* L) {
     return 1;
 }
 
+static bool applyGeomShapes(Engine& w, entt::entity e, lua_State* L, std::string& err) {
+    lua_getfield(L, 3, "shapes");
+    const bool present = lua_istable(L, -1);
+    if (!present) {
+        lua_pop(L, 1);
+        return true;
+    }
+    std::vector<SubMesh> shapes;
+    if (!readShapesTable(L, 3, w.reg.get<Geometry>(e).mesh.vertexCount(), shapes, err)) {
+        lua_pop(L, 1);
+        return false;
+    }
+    lua_pop(L, 1);
+    w.reg.get<Geometry>(e).mesh.shapes = std::move(shapes);
+    return true;
+}
+
 int SceneScript::lCompEmplace(lua_State* L) {
     auto* self = sSelf(L);
     Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     const std::string type = luaL_checkstring(L, 2);
+    const bool geom = type == "Geometry";
     CompFields fields;
     std::string err;
-    if (lua_istable(L, 3) && !readCompFields(L, 3, fields, err))
+    if (lua_istable(L, 3) && !readCompFields(L, 3, fields, err, geom ? "shapes" : nullptr))
         return luaL_error(L, "scene.emplace %s: %s", type.c_str(), err.c_str());
     if (!compEmplace(w.reg, e, type, fields, err))
+        return luaL_error(L, "scene.emplace %s: %s", type.c_str(), err.c_str());
+    if (geom && !applyGeomShapes(w, e, L, err))
         return luaL_error(L, "scene.emplace %s: %s", type.c_str(), err.c_str());
     return 0;
 }
@@ -865,11 +949,14 @@ int SceneScript::lCompReplace(lua_State* L) {
     Engine& w = self->w();
     const entt::entity e = readEnt(L, 1);
     const std::string type = luaL_checkstring(L, 2);
+    const bool geom = type == "Geometry";
     CompFields fields;
     std::string err;
-    if (lua_istable(L, 3) && !readCompFields(L, 3, fields, err))
+    if (lua_istable(L, 3) && !readCompFields(L, 3, fields, err, geom ? "shapes" : nullptr))
         return luaL_error(L, "scene.replace %s: %s", type.c_str(), err.c_str());
     if (!compReplace(w.reg, e, type, fields, err))
+        return luaL_error(L, "scene.replace %s: %s", type.c_str(), err.c_str());
+    if (geom && !applyGeomShapes(w, e, L, err))
         return luaL_error(L, "scene.replace %s: %s", type.c_str(), err.c_str());
     return 0;
 }
@@ -1022,13 +1109,60 @@ int SceneScript::lGetPose(lua_State* L) {
     return 1;
 }
 
+static void setShapeWeight(entt::registry& reg, entt::entity e, const std::string& name, float weight) {
+    if (auto* gc = reg.try_get<Geometry>(e))
+        for (auto& sh : gc->mesh.shapes)
+            if (sh.name == name)
+                sh.weight = weight;
+}
+
 int SceneScript::lSetMorph(lua_State* L) {
     auto* self = sSelf(L);
     Engine& w = self->w();
-    const entt::entity skel = skelEntity(w, entityOrName(w, L, 1));
+    const entt::entity e = entityOrName(w, L, 1);
+    const std::string name = luaL_checkstring(L, 2);
+    const float weight = (float)luaL_checknumber(L, 3);
+    if (e != entt::null && w.reg.try_get<Geometry>(e)) {
+        setShapeWeight(w.reg, e, name, weight);
+        return 0;
+    }
+    const entt::entity skel = skelEntity(w, e);
     if (skel == entt::null)
         return luaL_error(L, "scene.set_morph: not a skinned character");
-    w.gpuSim.skin.setMorph(w.reg, skel, luaL_checkstring(L, 2), (float)luaL_checknumber(L, 3));
+    for (const entt::entity m : w.reg.get<Skeleton>(skel).meshes)
+        setShapeWeight(w.reg, m, name, weight);
+    return 0;
+}
+
+int SceneScript::lShapes(lua_State* L) {
+    auto* self = sSelf(L);
+    const Engine& w = self->w();
+    const entt::entity e = entityOrName(w, L, 1);
+    if (e == entt::null || !w.reg.try_get<Geometry>(e))
+        return luaL_error(L, "scene.shapes: not a mesh");
+    const auto& shapes = w.reg.get<Geometry>(e).mesh.shapes;
+    lua_createtable(L, (int)shapes.size(), 0);
+    for (size_t i = 0; i < shapes.size(); ++i) {
+        lua_createtable(L, 0, 2);
+        lua_pushstring(L, shapes[i].name.c_str());
+        lua_setfield(L, -2, "name");
+        lua_pushnumber(L, shapes[i].weight);
+        lua_setfield(L, -2, "weight");
+        lua_seti(L, -2, (int)i + 1);
+    }
+    return 1;
+}
+
+int SceneScript::lLinkMesh(lua_State* L) {
+    auto* self = sSelf(L);
+    Engine& w = self->w();
+    const entt::entity skel = entityOrName(w, L, 1);
+    const entt::entity mesh = entityOrName(w, L, 2);
+    if (skel == entt::null || !w.reg.try_get<Skeleton>(skel))
+        return luaL_error(L, "scene.link_mesh: first arg is not a skeleton");
+    if (mesh == entt::null)
+        return luaL_error(L, "scene.link_mesh: second arg is not an entity");
+    w.reg.get<Skeleton>(skel).meshes.push_back(mesh);
     return 0;
 }
 

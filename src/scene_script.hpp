@@ -53,7 +53,7 @@ private:
     static SceneScript* sSelf(lua_State* L);
     static Mesh readGeom(lua_State* L, int idx, std::string& err);
 
-    static bool readCompFields(lua_State* L, int idx, CompFields& out, std::string& err);
+    static bool readCompFields(lua_State* L, int idx, CompFields& out, std::string& err, const char* skipField = nullptr);
     static int lEntity(lua_State* L);
     static int lGltf(lua_State* L);
     static int lCompEmplace(lua_State* L);
@@ -66,6 +66,8 @@ private:
     static int lSetPose(lua_State* L);
     static int lGetPose(lua_State* L);
     static int lSetMorph(lua_State* L);
+    static int lShapes(lua_State* L);
+    static int lLinkMesh(lua_State* L);
     static int lJoints(lua_State* L);
     static int lSkeleton(lua_State* L);
     static int lTime(lua_State* L);

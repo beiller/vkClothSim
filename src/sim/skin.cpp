@@ -91,7 +91,7 @@ void Skin::linkMesh(entt::entity mesh, int groupId) {
     m_meshGroup[mesh] = groupId;
 }
 
-int Skin::addGroup(entt::entity e, const SkelGroupDesc& d) {
+int Skin::addGroup(entt::entity e, entt::entity firstMesh, const SkelGroupDesc& d) {
     const auto ce = m_ent.find(e);
     if (ce == m_ent.end())
         return -1;
@@ -99,12 +99,8 @@ int Skin::addGroup(entt::entity e, const SkelGroupDesc& d) {
     Group g;
     g.skelGpu = skelGpu;
     g.nV = d.nV;
+    g.firstMesh = firstMesh;
     const int nT = d.nV > 0 ? (int)(d.deltas.size() / ((size_t)d.nV * 3)) : 0;
-    g.morphW0 = d.initWeights;
-    g.morphW0.resize((size_t)nT, 0.0f);
-    g.morphW = g.morphW0;
-    for (size_t i = 0; i < d.morphNames.size() && i < (size_t)nT; ++i)
-        g.nameToTarget[d.morphNames[i]] = (int)i;
     const auto vn = (VkDeviceSize)d.nV;
     auto mkDev = [this](Buf& b, VkDeviceSize bytes, const void* data) {
         vkMakeBufferDev(m_dev, m_pdev, b.b, b.m, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, data);
@@ -215,19 +211,21 @@ void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
     vkWriteBuffer(m_dev, c.jointDQ.m, c.dqStaging.data(), c.jointDQ.sz);
 }
 
-void Skin::packMorphs(Group& g) {
+void Skin::packMorphs(const entt::registry& reg, Group& g) {
     uint32_t pack[kMaxActiveMorphs * 2] = {};
     int k = 0;
-    for (size_t t = 0; t < g.morphW.size() && k < kMaxActiveMorphs; ++t) {
-        const float wgt = g.morphW[t];
-        if (std::fabs(wgt) < 1e-4f)
-            continue;
-        uint32_t bits;
-        std::memcpy(&bits, &wgt, 4);
-        pack[k * 2] = (uint32_t)t;
-        pack[k * 2 + 1] = bits;
-        ++k;
-    }
+    const auto* gc = g.firstMesh != entt::null ? reg.try_get<Geometry>(g.firstMesh) : nullptr;
+    if (gc)
+        for (size_t t = 0; t < gc->mesh.shapes.size() && k < kMaxActiveMorphs; ++t) {
+            const float wgt = gc->mesh.shapes[t].weight;
+            if (std::fabs(wgt) < 1e-4f)
+                continue;
+            uint32_t bits;
+            std::memcpy(&bits, &wgt, 4);
+            pack[k * 2] = (uint32_t)t;
+            pack[k * 2 + 1] = bits;
+            ++k;
+        }
     g.activeCount = k;
     vkWriteBuffer(m_dev, g.activeMorphs.m, pack, g.activeMorphs.sz);
 }
@@ -244,7 +242,7 @@ void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
         stepSkeleton(reg, s, c);
         for (int gid : c.groups)
             if ((size_t)gid < m_groups.size() && !m_groups[gid].dead)
-                packMorphs(m_groups[gid]);
+                packMorphs(reg, m_groups[gid]);
         for (int gid : c.groups) {
             Group& g = m_groups[gid];
             if (g.dead || g.nV <= 0)
@@ -274,17 +272,6 @@ std::unordered_map<entt::entity, int>::const_iterator Skin::skelFor(const entt::
     if (ce == m_ent.end() || m_skels[(size_t)ce->second].dead)
         return m_ent.end();
     return ce;
-}
-
-void Skin::setMorph(const entt::registry& reg, entt::entity skel, const std::string& name, float weight) {
-    const auto ce = skelFor(reg, skel);
-    if (ce == m_ent.end())
-        return;
-    for (int gid : m_skels[(size_t)ce->second].groups) {
-        auto it = m_groups[gid].nameToTarget.find(name);
-        if (it != m_groups[gid].nameToTarget.end())
-            m_groups[gid].morphW[(size_t)it->second] = weight;
-    }
 }
 
 int Skin::meshRefs(int groupId) const {

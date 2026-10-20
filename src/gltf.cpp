@@ -667,39 +667,37 @@ void finishSkinned(GltfCtx& c) {
         }
         if (badJoint)
             warn(c, "skinned group: joint index out of range (clamped)");
-        const int nT = (int)p0.targets_count;
-        g.deltas.assign((size_t)nT * nV * 3, 0.0f);
-        std::vector<float> d;
-        for (int t = 0; t < nT; ++t) {
-            int32_t acc = -1;
-            bool hasNrm = false;
-            for (uint32_t i = 0; i < p0.target_attribute_counts[t]; ++i) {
-                const std::string k = s(p0.targets[t][i].key);
-                if (k == "POSITION")
-                    acc = p0.targets[t][i].value;
-                else if (k == "NORMAL")
-                    hasNrm = true;
+        auto readShapes = [&](const tg3_mesh& gm, const tg3_primitive& p, Mesh& pm, const std::string& prefix) {
+            const std::vector<std::string> names = targetNames(gm);
+            for (int t = 0; t < (int)p.targets_count; ++t) {
+                SubMesh sh;
+                sh.name = t < (int)names.size() && !names[t].empty() ? names[t] : "target" + std::to_string(t);
+                if (t < (int)gm.weights_count)
+                    sh.weight = (float)gm.weights[t];
+                int32_t acc = -1;
+                bool hasNrm = false;
+                for (uint32_t i = 0; i < p.target_attribute_counts[t]; ++i) {
+                    const std::string k = s(p.targets[t][i].key);
+                    if (k == "POSITION")
+                        acc = p.targets[t][i].value;
+                    else if (k == "NORMAL")
+                        hasNrm = true;
+                }
+                if (acc >= 0) {
+                    std::vector<float> d;
+                    if (readAccessor(*c.m, acc, 3, d) && d.size() == (size_t)nV * 3)
+                        sh.pos = std::move(d);
+                    else
+                        warn(c, prefix + "target " + std::to_string(t) + " POSITION delta mismatch (slot zeroed)");
+                } else if (hasNrm)
+                    warn(c, prefix + "target " + std::to_string(t) + " has no POSITION delta (slot zeroed)");
+                pm.shapes.push_back(std::move(sh));
             }
-            if (acc < 0) {
-                if (hasNrm)
-                    warn(c, "skinned group: target " + std::to_string(t) + " has no POSITION delta (slot zeroed)");
-                continue;
-            }
-            d.clear();
-            if (readAccessor(*c.m, acc, 3, d) && d.size() == (size_t)nV * 3)
-                std::memcpy(g.deltas.data() + (size_t)t * nV * 3, d.data(), (size_t)nV * 12);
-            else
-                warn(c, "skinned group: target " + std::to_string(t) + " POSITION delta mismatch (slot zeroed)");
-        }
-        g.morphNames = targetNames(gm0);
-        g.initWeights.assign((size_t)nT, 0.0f);
-        for (int t = 0; t < nT && t < (int)gm0.weights_count; ++t)
-            g.initWeights[t] = (float)gm0.weights[t];
-        const int gid = c.w.gpuSim.skin.addGroup(skelEnt, g);
-        if (gid < 0)
-            continue;
-        const MeshGpu rw = c.w.gpuSim.skin.groupOut(gid);
-        for (const auto& pp : prims) {
+        };
+        std::vector<entt::entity> children(prims.size(), entt::null);
+        entt::entity firstChild = entt::null;
+        for (size_t i = 0; i < prims.size(); ++i) {
+            const auto& pp = prims[i];
             const tg3_mesh& gm = c.m->meshes[pp.meshIdx];
             const tg3_primitive& p = gm.primitives[pp.primIdx];
             if (p.mode != -1 && p.mode != 4) {
@@ -729,14 +727,40 @@ void finishSkinned(GltfCtx& c) {
                 warn(c, "skinned prim: index out of range");
                 continue;
             }
-            const entt::entity child = c.w.reg.create();
             const std::string mName = s(gm.name);
             const std::string cname = mName.empty() ? "prim" : (gm.primitives_count > 1 ? mName + "_" + std::to_string(pp.primIdx) : mName);
+            readShapes(gm, p, pm, "skinned prim " + cname + ": ");
+            const entt::entity child = c.w.reg.create();
             c.w.reg.emplace<Name>(child, cname);
-            c.w.renderer.addSharedMesh(child, pm, rw.pos.buffer, rw.pos.memory, rw.nrm.buffer, rw.nrm.memory, (uint32_t)nV);
-            addMesh(c.w, child, child, materialFor(c, p.material), c.nodeEntities[pp.nodeIdx]);
-            c.w.gpuSim.skin.linkMesh(child, gid);
-            c.w.reg.get<Skeleton>(skelEnt).meshes.push_back(child);
+            c.w.reg.emplace<Geometry>(child, Geometry{std::move(pm)});
+            children[i] = child;
+            if (firstChild == entt::null)
+                firstChild = child;
+        }
+        if (firstChild == entt::null) {
+            warn(c, "skinned group: no valid primitive");
+            continue;
+        }
+        const Mesh& firstMesh = c.w.reg.get<Geometry>(firstChild).mesh;
+        const int nT = (int)firstMesh.shapes.size();
+        g.deltas.assign((size_t)nT * nV * 3, 0.0f);
+        for (int t = 0; t < nT; ++t)
+            if (!firstMesh.shapes[t].pos.empty())
+                std::memcpy(g.deltas.data() + (size_t)t * nV * 3, firstMesh.shapes[t].pos.data(), (size_t)nV * 12);
+        const int gid = c.w.gpuSim.skin.addGroup(skelEnt, firstChild, g);
+        if (gid < 0)
+            continue;
+        const MeshGpu rw = c.w.gpuSim.skin.groupOut(gid);
+        for (size_t i = 0; i < prims.size(); ++i) {
+            if (children[i] == entt::null)
+                continue;
+            const auto& pp = prims[i];
+            const tg3_primitive& p = c.m->meshes[pp.meshIdx].primitives[pp.primIdx];
+            const Mesh& pm = c.w.reg.get<Geometry>(children[i]).mesh;
+            c.w.renderer.addSharedMesh(children[i], pm, rw.pos.buffer, rw.pos.memory, rw.nrm.buffer, rw.nrm.memory, (uint32_t)nV);
+            addMesh(c.w, children[i], children[i], materialFor(c, p.material), c.nodeEntities[pp.nodeIdx]);
+            c.w.gpuSim.skin.linkMesh(children[i], gid);
+            c.w.reg.get<Skeleton>(skelEnt).meshes.push_back(children[i]);
         }
     }
 }

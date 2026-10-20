@@ -6,7 +6,6 @@
 #include "math.hpp"
 #include "sim/dualquat.hpp"
 #include <entt/entt.hpp>
-#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -17,9 +16,7 @@ struct SkelGroupDesc {
     std::vector<float> nrm0;
     std::vector<uint32_t> joints;
     std::vector<float> weights;
-    std::vector<float> deltas;
-    std::vector<std::string> morphNames;
-    std::vector<float> initWeights;
+    std::vector<float> deltas; // load-time staging for the GPU buffer, sourced from Mesh.shapes
 };
 
 class Skin {
@@ -29,12 +26,11 @@ public:
 
     void init(VkDevice dev, VkPhysicalDevice pdev);
     void addSkeleton(entt::entity e, int nJoints);
-    int addGroup(entt::entity e, const SkelGroupDesc& d);
+    int addGroup(entt::entity e, entt::entity firstMesh, const SkelGroupDesc& d);
     void linkMesh(entt::entity mesh, int groupId);
     MeshGpu groupOut(int groupId) const;
     void build();
     void step(const entt::registry& reg, VkCommandBuffer cmd);
-    void setMorph(const entt::registry& reg, entt::entity skel, const std::string& name, float weight);
     void destroySkeleton(entt::entity e);
     void reset();
     void watch(entt::registry& reg);
@@ -56,9 +52,7 @@ private:
         std::vector<float> cpuPos;      // rest positions, 3 * nV
         std::vector<uint32_t> cpuJoints; // 4 * nV
         std::vector<float> cpuWeights;   // 4 * nV
-        std::vector<float> morphW;
-        std::vector<float> morphW0;
-        std::map<std::string, int> nameToTarget;
+        entt::entity firstMesh = entt::null; // shape source; shape weights are read from its Mesh
         Buf pos0, nrm0, joints, weights, deltas, activeMorphs, posOut, nrmOut;
         VkDescriptorSet set = VK_NULL_HANDLE;
     };
@@ -72,7 +66,7 @@ private:
     void makeGroupSet(Group& g);
     void ensurePoolSlot();
     void stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c);
-    void packMorphs(Group& g);
+    void packMorphs(const entt::registry& reg, Group& g);
     int meshRefs(int groupId) const;
     void maybeFreeGroup(int groupId);
     void releaseGroupBufs(Group& g);
