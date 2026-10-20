@@ -237,6 +237,7 @@ void SceneScript::init(Engine& w) {
     reg("get_pose", lGetPose);
     reg("set_morph", lSetMorph);
     reg("joints", lJoints);
+    reg("skeleton", lSkeleton);
     reg("time", lTime);
     reg("button", lButton);
     reg("scenes", lScenes);
@@ -400,6 +401,11 @@ Mesh SceneScript::readGeom(lua_State* L, int idx, std::string& err) {
         return m;
     if (!readGeomField(L, idx, "idx", 1, m.indices, true, err))
         return m;
+    std::vector<float> jf, wf;
+    if (!readGeomField(L, idx, "joints", 4, jf, false, err))
+        return m;
+    if (!readGeomField(L, idx, "weights", 4, wf, false, err))
+        return m;
     const int n = m.vertexCount();
     if (m.nrm.empty())
         m.nrm.assign((size_t)3 * n, 0.0f);
@@ -410,6 +416,15 @@ Mesh SceneScript::readGeom(lua_State* L, int idx, std::string& err) {
             err = "geometry: index out of range";
             return {};
         }
+    if (!jf.empty() || !wf.empty()) {
+        if (jf.size() != (size_t)4 * n || wf.size() != (size_t)4 * n) {
+            err = "geometry: 'joints' and 'weights' must each have 4 * vertexCount entries";
+            return {};
+        }
+        for (float v : jf)
+            m.joints.push_back((uint32_t)v);
+        m.weights = std::move(wf);
+    }
     return m;
 }
 
@@ -1029,6 +1044,35 @@ int SceneScript::lJoints(lua_State* L) {
         pushEnt(L, js[i]);
         lua_seti(L, -2, (int)i + 1);
     }
+    return 1;
+}
+
+int SceneScript::lSkeleton(lua_State* L) {
+    auto* self = sSelf(L);
+    Engine& w = self->w();
+    const std::string name = luaL_checkstring(L, 1);
+    if (!lua_istable(L, 2))
+        return luaL_error(L, "scene.skeleton: second arg must be a table of bone names");
+    Skeleton skel;
+    skel.name = name;
+    for (int i = 1;; ++i) {
+        lua_geti(L, 2, i);
+        if (lua_isnoneornil(L, -1)) {
+            lua_pop(L, 1);
+            break;
+        }
+        if (!lua_isstring(L, -1)) {
+            lua_pop(L, 1);
+            return luaL_error(L, "scene.skeleton: bone names must be strings");
+        }
+        skel.boneNames.push_back(lua_tostring(L, -1));
+        skel.invBinds.push_back(mat4Identity());
+        lua_pop(L, 1);
+    }
+    const entt::entity e = w.reg.create();
+    w.reg.emplace<Name>(e, name);
+    w.reg.emplace<Skeleton>(e, std::move(skel));
+    pushEnt(L, e);
     return 1;
 }
 

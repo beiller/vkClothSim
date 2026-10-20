@@ -67,6 +67,7 @@ private:
     static int lGetPose(lua_State* L);
     static int lSetMorph(lua_State* L);
     static int lJoints(lua_State* L);
+    static int lSkeleton(lua_State* L);
     static int lTime(lua_State* L);
     static int lButton(lua_State* L);
     static int lScenes(lua_State* L);

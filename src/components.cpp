@@ -386,6 +386,12 @@ bool validateGeometry(entt::registry& reg, entt::entity e, std::string& err) {
             err = "Geometry: index out of range";
             return false;
         }
+    if (!g.joints.empty() || !g.weights.empty()) {
+        if (g.joints.size() != (size_t)4 * nv || g.weights.size() != (size_t)4 * nv) {
+            err = "Geometry: joints and weights must each have 4 values per vertex";
+            return false;
+        }
+    }
     return true;
 }
 

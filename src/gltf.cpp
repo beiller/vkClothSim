@@ -598,6 +598,8 @@ void finishSkinned(GltfCtx& c) {
             }
             Skeleton skelComp;
             skelComp.name = skelName;
+            for (uint32_t i = 0; i < sk.joints_count; ++i)
+                skelComp.boneNames.push_back((uint32_t)sk.joints[i] < c.m->nodes_count ? s(c.m->nodes[sk.joints[i]].name) : "");
             skelComp.joints = std::move(jointEntities);
             skelComp.invBinds = std::move(invBinds);
             skelComp.placement = c.nodeEntities[prims[0].nodeIdx];

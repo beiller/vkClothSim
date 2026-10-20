@@ -114,6 +114,9 @@ int Skin::addGroup(entt::entity e, const SkelGroupDesc& d) {
     mkDev(g.nrm0, 12 * vn, d.nrm0.data());
     mkDev(g.joints, 16 * vn, d.joints.data());
     mkDev(g.weights, 16 * vn, d.weights.data());
+    g.cpuPos = d.pos0;
+    g.cpuJoints = d.joints;
+    g.cpuWeights = d.weights;
     if (nT > 0)
         mkDev(g.deltas, 12 * vn * (VkDeviceSize)nT, d.deltas.data());
     else

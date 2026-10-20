@@ -160,6 +160,8 @@ static const FieldDesc kGeometry[] = {
     {"nrm", OFF(Geometry, mesh.nrm), FieldKind::FloatArr},
     {"uv", OFF(Geometry, mesh.uv), FieldKind::FloatArr},
     {"idx", OFF(Geometry, mesh.indices), FieldKind::UIntArr},
+    {"joints", OFF(Geometry, mesh.joints), FieldKind::UIntArr},
+    {"weights", OFF(Geometry, mesh.weights), FieldKind::FloatArr},
 };
 static const FieldDesc kRenderSettings[] = {
     {"bgColor", OFF(RenderSettings, bgColor), FieldKind::Color},

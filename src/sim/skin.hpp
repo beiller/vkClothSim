@@ -53,6 +53,9 @@ private:
         int activeCount = 0;
         bool dead = false;
         bool freed = false;
+        std::vector<float> cpuPos;      // rest positions, 3 * nV
+        std::vector<uint32_t> cpuJoints; // 4 * nV
+        std::vector<float> cpuWeights;   // 4 * nV
         std::vector<float> morphW;
         std::vector<float> morphW0;
         std::map<std::string, int> nameToTarget;

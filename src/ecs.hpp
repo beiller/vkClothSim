@@ -153,6 +153,7 @@ struct Geometry {
 struct Skeleton {
     std::string name;
     std::vector<entt::entity> joints;
+    std::vector<std::string> boneNames; // joint-index order
     std::vector<Mat4> invBinds;
     entt::entity placement = entt::null;
     std::vector<entt::entity> meshes;
