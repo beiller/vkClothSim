@@ -6,8 +6,6 @@
 #include <vector>
 
 namespace {
-// Vendored loader (built from Khronos OpenXR-SDK release-1.1.63), resolved relative to
-// the executable so no system OpenXR install is required.
 std::vector<std::string> vendoredPaths() {
     std::vector<std::string> p;
     const std::string exe = exeDir();
@@ -16,7 +14,7 @@ std::vector<std::string> vendoredPaths() {
     p.push_back("lib/openxr/lib/libopenxr.so.1");
     return p;
 }
-} // namespace
+}
 
 bool XrLoader::load() {
     for (const std::string& p : vendoredPaths()) {

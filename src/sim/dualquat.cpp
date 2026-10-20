@@ -6,8 +6,6 @@
 namespace dq {
 namespace {
 
-// ---- linear-algebra helpers: same math as Blender's BLI math, column-major m[col][row] ----
-
 float square_f(float x) { return x * x; }
 float len_v3(const float v[3]) { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
 float len_squared_v3(const float v[3]) { return v[0] * v[0] + v[1] * v[1] + v[2] * v[2]; }
@@ -44,7 +42,6 @@ void normalize_v3(float v[3]) {
     }
 }
 
-// forward decls: the quaternion helpers are defined lower but used by mat3_normalized_to_quat_fast
 float dot_qtqt(const float a[4], const float b[4]);
 void mul_qt_fl(float q[4], float f);
 void copy_qt_qt(float d[4], const float s[4]);
@@ -141,7 +138,6 @@ float determinant_m4(const float m[4][4]) {
     const float a2 = m[1][0], b2 = m[1][1], c2 = m[1][2], d2 = m[1][3];
     const float a3 = m[2][0], b3 = m[2][1], c3 = m[2][2], d3 = m[2][3];
     const float a4 = m[3][0], b4 = m[3][1], c4 = m[3][2], d4 = m[3][3];
-    // args arrive as (col0[0..2], col1[0..2], col2[0..2]); expand along row 0
     auto m3 = [](float a0, float a1, float a2, float a3, float a4, float a5, float a6, float a7, float a8) {
         return a0 * (a4 * a8 - a5 * a7) - a3 * (a1 * a8 - a5 * a0) + a6 * (a1 * a7 - a4 * a0);
     };
@@ -166,7 +162,6 @@ void unit_m3(float m[3][3]) {
             m[c][r] = (c == r) ? 1.0f : 0.0f;
 }
 
-// Gram-Schmidt orthogonalize the 3 rotation columns around `axis`, preserving per-axis scale.
 void orthogonalize_m4(float R[4][4], int axis) {
     float size[3];
     mat4_to_size(size, R);
@@ -228,12 +223,10 @@ void orthogonalize_m4(float R[4][4], int axis) {
 }
 
 void invert_m4_m4(float inv[4][4], const float M[4][4]) {
-    // M is always affine here (bone/world transforms, last row 0,0,0,1): a 3x3 linear part L
-    // plus a translation t. The inverse is L^-1 with translation -L^-1 * t (last row 0,0,0,1).
     for (int c = 0; c < 4; ++c)
         for (int rrow = 0; rrow < 4; ++rrow)
             inv[c][rrow] = 0.0f;
-    float r[3][3]; // row-major: r[i][j] = M[col=j][row=i]
+    float r[3][3];
     for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 3; ++j)
             r[i][j] = M[j][i];
@@ -245,7 +238,7 @@ void invert_m4_m4(float inv[4][4], const float M[4][4]) {
         det = 1.0f; // degenerate: avoid divide-by-zero
     const float idet = 1.0f / det;
 
-    float invr[3][3]; // row-major inverse of L
+    float invr[3][3];
     invr[0][0] = (e * k - f * h) * idet;
     invr[0][1] = (c * h - b * k) * idet;
     invr[0][2] = (b * f - c * e) * idet;
@@ -270,7 +263,6 @@ void invert_m4_m4(float inv[4][4], const float M[4][4]) {
     inv[3][3] = 1.0f;
 }
 
-// Mike Day quaternion extraction (Blender mat3_normalized_to_quat_fast), W kept non-negative.
 void mat3_normalized_to_quat_fast(float q[4], const float mat[3][3]) {
     if (mat[2][2] < 0.0f) {
         if (mat[0][0] > mat[1][1]) {
@@ -389,9 +381,7 @@ void normalize_qt(float q[4]) {
         mul_qt_fl(q, 1.0f / l);
 }
 
-} // namespace (end of file-local helpers)
-
-// ---- the six ported DQ functions (verbatim algorithm) ----
+}
 
 void mat4ToDquat(DualQuat* dq, const float basemat[4][4], const float mat[4][4]) {
     float dscale[3], scale[3], basequat[4], mat3[3][3];
@@ -482,7 +472,7 @@ void addWeightedDqDq(DualQuat* dq_sum, const DualQuat* dq, float weight) {
     if (dq->scale_weight) {
         float wmat[4][4];
         if (flipped)
-            weight = -weight; // no negative weights for scaling
+            weight = -weight;
         copy_m4_m4(wmat, dq->scale);
         mul_m4_fl(wmat, weight);
         add_m4_m4m4(dq_sum->scale, dq_sum->scale, wmat);
@@ -497,7 +487,7 @@ void addWeightedDqDqPivot(DualQuat* dq_sum, const DualQuat* dq, const float pivo
 
         float dst[3];
         mul_v3_m4v3(dst, mdq.scale, pivot);
-        sub_v3_v3(dst, pivot); // dst = (S - I) * pivot
+        sub_v3_v3(dst, pivot);
 
         mdq.trans[0] -= .5f * (mdq.quat[1] * dst[0] + mdq.quat[2] * dst[1] + mdq.quat[3] * dst[2]);
         mdq.trans[1] += .5f * (mdq.quat[0] * dst[0] + mdq.quat[2] * dst[2] - mdq.quat[3] * dst[1]);
@@ -576,4 +566,4 @@ void mulV3m3Dq(float r[3], float R[3][3], DualQuat* dq) {
     }
 }
 
-} // namespace dq
+}

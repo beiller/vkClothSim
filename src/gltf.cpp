@@ -23,9 +23,6 @@ std::string s(tg3_str v) {
     return v.data ? std::string(v.data, v.len) : std::string();
 }
 
-// ---- filesystem callbacks for external refs (.gltf + separate .bin / .png); the parser
-// already resolves base_dir + uri, so the path arrives ready to use
-
 int32_t fsExists(const char* p, uint32_t len, void*) {
     return std::filesystem::exists(std::string(p, len)) ? 1 : 0;
 }
@@ -46,7 +43,6 @@ void fsFree(uint8_t* d, uint64_t, void*) {
     std::free(d);
 }
 
-// base64 decode (data:image/...;base64,... image URIs in .gltf files)
 std::vector<uint8_t> b64Decode(const std::string& in) {
     auto val = [](char c) -> int {
         if (c >= 'A' && c <= 'Z')
@@ -76,9 +72,7 @@ std::vector<uint8_t> b64Decode(const std::string& in) {
     return out;
 }
 
-// glTF color data is sRGB-encoded but lighting math runs in linear space: decode sRGB -> linear
-// (the spec's sRGB transfer function). Data textures (normal, metallicRoughness, occlusion) are
-// already linear and must not be decoded.
+// glTF color data is sRGB-encoded, lighting math is linear: decode sRGB -> linear. Data textures (normal, metallicRoughness, occlusion) are already linear, must not be decoded
 static float srgbToLinear(float s) {
     return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
 }
@@ -88,8 +82,6 @@ static void decodeSrgb(std::vector<uint8_t>& rgba) {
             rgba[i + c] = (uint8_t)(srgbToLinear(rgba[i + c] / 255.0f) * 255.0f + 0.5f);
 }
 
-// resolve + decode a glTF image to RGBA8 (bufferView bytes, data URI, or external file); color
-// images are decoded sRGB -> linear, data images are kept as-is
 bool decodeImage(const tg3_model& m, int32_t imgIdx, const std::string& baseDir, std::vector<uint8_t>& out, int& outW,
                  int& outH, bool srgb) {
     if (imgIdx < 0 || (uint32_t)imgIdx >= m.images_count)
@@ -114,7 +106,6 @@ bool decodeImage(const tg3_model& m, int32_t imgIdx, const std::string& baseDir,
         file = b64Decode(uri.substr(comma + 1));
         embedded = true;
     } else if (img.uri.data) {
-        // external file: unflipped (glTF uv convention: v0 = top of image)
         TextureData td;
         if (!loadTexture(baseDir + "/" + s(img.uri), td, false))
             return false;
@@ -124,7 +115,6 @@ bool decodeImage(const tg3_model& m, int32_t imgIdx, const std::string& baseDir,
     } else
         return false;
     if (embedded) {
-        // glTF uv convention: (0,0) = top-left, matching Vulkan's default origin, so no row flip
         stbi_set_flip_vertically_on_load(0);
         int w = 0, h = 0, ch = 0;
         unsigned char* px = stbi_load_from_memory(file.data(), (int)file.size(), &w, &h, &ch, 4);
@@ -139,8 +129,6 @@ bool decodeImage(const tg3_model& m, int32_t imgIdx, const std::string& baseDir,
         decodeSrgb(out);
     return true;
 }
-
-// ---- accessors
 
 int compSize(int ct) {
     switch (ct) {
@@ -180,7 +168,6 @@ int typeComps(int t) {
     return 0;
 }
 
-// one component (raw value, not normalized) as float
 float rawComp(const uint8_t* p, int ct) {
     switch (ct) {
     case TG3_COMPONENT_TYPE_BYTE:
@@ -229,8 +216,6 @@ float normInt(const uint8_t* p, int ct) {
     return 0.0f;
 }
 
-// read accessor elements as floats (out sized count*comps); handles byteStride, normalized ints,
-// float64; false if the accessor is missing/foreign to the wanted layout
 bool readAccessor(const tg3_model& m, int32_t accIdx, int wantComps, std::vector<float>& out) {
     if (accIdx < 0 || (uint32_t)accIdx >= m.accessors_count)
         return false;
@@ -239,7 +224,7 @@ bool readAccessor(const tg3_model& m, int32_t accIdx, int wantComps, std::vector
     if (comps != wantComps || a.sparse.is_sparse)
         return false;
     if (a.buffer_view < 0) {
-        out.assign((size_t)a.count * comps, 0.0f); // sparse-only accessor: zeros
+        out.assign((size_t)a.count * comps, 0.0f);
         return true;
     }
     if ((uint32_t)a.buffer_view >= m.buffer_views_count || (uint32_t)m.buffer_views[a.buffer_view].buffer >= m.buffers_count)
@@ -267,7 +252,6 @@ bool readAccessor(const tg3_model& m, int32_t accIdx, int wantComps, std::vector
     return true;
 }
 
-// accessor index of a primitive attribute ("POSITION", "NORMAL", "TEXCOORD_0", ...); -1 if absent
 int32_t attrAccessor(const tg3_primitive& p, const char* name) {
     for (uint32_t i = 0; i < p.attributes_count; ++i)
         if (s(p.attributes[i].key) == name)
@@ -275,9 +259,6 @@ int32_t attrAccessor(const tg3_primitive& p, const char* name) {
     return -1;
 }
 
-// ---- geometry
-
-// area-weighted vertex normals from triangle indices
 void computeNormals(const std::vector<float>& pos, const std::vector<uint32_t>& idx, std::vector<float>& nrm) {
     nrm.assign(pos.size(), 0.0f);
     for (size_t i = 0; i + 2 < idx.size(); i += 3) {
@@ -304,8 +285,6 @@ void computeNormals(const std::vector<float>& pos, const std::vector<uint32_t>& 
     }
 }
 
-// pack one glTF primitive into the engine's Mesh (pos/nrm/uv0 + u32 indices); NORMAL computed
-// if absent or morphs were baked, UVs zero if absent
 bool packPrimitive(const tg3_model& m, const tg3_mesh& gm, const tg3_primitive& p, Mesh& out, std::string& warn) {
     if (p.mode != -1 && p.mode != 4) {
         warn = "primitive mode is not triangles";
@@ -333,8 +312,6 @@ bool packPrimitive(const tg3_model& m, const tg3_mesh& gm, const tg3_primitive& 
     } else
         for (uint64_t i = 0; i < n; ++i)
             idxf.push_back((float)i);
-    // bake morph targets: pos += sum(weight_t * target_t.POSITION); weights are the static
-    // frame-0 strengths from the mesh (absent -> zero)
     bool baked = false, skipped = false;
     for (uint32_t t = 0; t < p.targets_count; ++t) {
         const float w = t < gm.weights_count ? (float)gm.weights[t] : 0.0f;
@@ -367,9 +344,6 @@ bool packPrimitive(const tg3_model& m, const tg3_mesh& gm, const tg3_primitive& 
     return true;
 }
 
-// ---- node transforms
-
-// rows of R (local->world rotation, the quatRotate convention) -> unit quaternion
 V4 mat3ToQuat(const V3& r0, const V3& r1, const V3& r2) {
     const float m00 = r0.x, m01 = r0.y, m02 = r0.z;
     const float m10 = r1.x, m11 = r1.y, m12 = r1.z;
@@ -393,7 +367,6 @@ V4 mat3ToQuat(const V3& r0, const V3& r1, const V3& r2) {
     return {q.x / l, q.y / l, q.z / l, q.w / l};
 }
 
-// a node's TRS (or decomposed matrix) into a pose; near-zero scale is rejected
 bool nodePose(const tg3_node& n, Transform& out) {
     if (!n.has_matrix) {
         out = {{(float)n.translation[0], (float)n.translation[1], (float)n.translation[2]},
@@ -414,44 +387,38 @@ bool nodePose(const tg3_node& n, Transform& out) {
     c0 = vScale(c0, 1.0f / out.scale.x);
     c1 = vScale(c1, 1.0f / out.scale.y);
     c2 = vScale(c2, 1.0f / out.scale.z);
-    if (vDot(vCross(c0, c1), c2) < 0.0f) { // reflection (e.g. a single negative scale)
+    if (vDot(vCross(c0, c1), c2) < 0.0f) {
         c2 = vScale(c2, -1.0f);
         out.scale.z = -out.scale.z;
     }
-    // kill shear (Gram-Schmidt, last axis first)
     c2 = vNorm(vSub(c2, vScale(c1, vDot(c2, c1))));
     c1 = vNorm(vSub(c1, vScale(c0, vDot(c1, c0))));
     out.quat = mat3ToQuat({c0.x, c1.x, c2.x}, {c0.y, c1.y, c2.y}, {c0.z, c1.z, c2.z});
     return true;
 }
 
-// ---- load context: per-file caches of the created shared entities
-
 struct GltfCtx {
     Engine& w;
     const tg3_model* m;
-    std::string fileBase; // file name without extension (name prefix)
-    std::string fileId;   // resolved path (embedded-image dedupe key)
+    std::string fileBase;
+    std::string fileId;
     std::string baseDir;
-    entt::entity root; // the load entity: skeleton entities parent under it (destroy cascades)
-    std::vector<entt::entity> materials; // per glTF material index (null = not created)
-    std::map<std::pair<int32_t, bool>, entt::entity> textures; // per (glTF image index, srgb)
-    // skinned meshes: the node entities (filled in buildNode), the per-skin character id
-    // (created in finishSkinned), and the prims deferred to finishSkinned
+    entt::entity root;
+    std::vector<entt::entity> materials;
+    std::map<std::pair<int32_t, bool>, entt::entity> textures;
     struct PendingPrim {
         int32_t nodeIdx, meshIdx, primIdx;
     };
-    std::vector<entt::entity> nodeEntities; // per glTF node index (null = not built)
-    std::vector<entt::entity> skinChars;    // per skin index: the skeleton character entity (null = not created)
+    std::vector<entt::entity> nodeEntities;
+    std::vector<entt::entity> skinChars;
     std::vector<PendingPrim> pending;
-    std::vector<std::string> usedNames; // dedupe key for the created entity names
+    std::vector<std::string> usedNames;
 };
 
 void warn(GltfCtx& c, const std::string& msg) {
     std::fprintf(stderr, "3dsim: gltf %s: %s\n", c.fileBase.c_str(), msg.c_str());
 }
 
-// identity of a glTF image: resolved path for external files, "file#imgN" for embedded
 std::string imageId(const GltfCtx& c, int32_t imgIdx) {
     const tg3_image& img = c.m->images[imgIdx];
     if (img.uri.data && img.buffer_view < 0 && strncmp(img.uri.data, "data:", 5) != 0)
@@ -459,7 +426,6 @@ std::string imageId(const GltfCtx& c, int32_t imgIdx) {
     return c.fileId + "#img" + std::to_string(imgIdx);
 }
 
-// shared texture entity for a glTF image (deduped globally by (identity, color-space))
 entt::entity textureForImage(GltfCtx& c, int32_t imgIdx, bool srgb) {
     if (imgIdx < 0 || (uint32_t)imgIdx >= c.m->images_count)
         return entt::null;
@@ -476,15 +442,12 @@ entt::entity textureForImage(GltfCtx& c, int32_t imgIdx, bool srgb) {
     return c.textures[key] = textureBytes(c.w, imageId(c, imgIdx), px.data(), wpx, hpx);
 }
 
-// a glTF texture -> its image (several textures may share one image)
 entt::entity textureForTexture(GltfCtx& c, int32_t texIdx, bool srgb) {
     if (texIdx < 0 || (uint32_t)texIdx >= c.m->textures_count)
         return entt::null;
     return textureForImage(c, c.m->textures[texIdx].source, srgb);
 }
 
-// shared material entity for a glTF material (created once per index within this load); a
-// missing index yields the glTF default material (white, fully rough)
 entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     if (matIdx >= 0 && (uint32_t)matIdx < c.materials.size() && c.materials[matIdx] != entt::null)
         return c.materials[matIdx];
@@ -493,12 +456,10 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     const tg3_material& gm = c.m->materials[matIdx];
     const auto& pbr = gm.pbr_metallic_roughness;
     const std::string name = gm.name.data ? s(gm.name) : "mat_" + std::to_string(matIdx);
-    // a glTF file may repeat a material name (e.g. per-eye); keep the entity names unique
     std::string full = c.fileBase + "/" + name;
     for (int n = 1; std::find(c.usedNames.begin(), c.usedNames.end(), full) != c.usedNames.end(); ++n)
         full = c.fileBase + "/" + name + "." + std::to_string(n);
     c.usedNames.push_back(full);
-    // the glTF color factors (base color, emissive) are sRGB-encoded -> linear
     const V3 baseColor = {srgbToLinear((float)pbr.base_color_factor[0]), srgbToLinear((float)pbr.base_color_factor[1]),
                          srgbToLinear((float)pbr.base_color_factor[2])};
     const V3 emissive = {srgbToLinear((float)gm.emissive_factor[0]), srgbToLinear((float)gm.emissive_factor[1]),
@@ -515,8 +476,6 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
         }
         *field = textureForTexture(c, texIdx, srgb);
     };
-    // the color textures (baseColor, emissive) are sRGB; the data textures (metallicRoughness,
-    // normal) are already linear
     slot(pbr.base_color_texture.index, pbr.base_color_texture.tex_coord, "baseColor", &mat.tex, true);
     slot(pbr.metallic_roughness_texture.index, pbr.metallic_roughness_texture.tex_coord, "metallicRoughness", &mat.texMR, false);
     slot(gm.normal_texture.index, gm.normal_texture.tex_coord, "normal", &mat.texNormal, false);
@@ -525,8 +484,6 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     mat.alphaCutoff = (float)gm.alpha_cutoff;
     const std::string am = s(gm.alpha_mode);
     mat.alphaMode = am == "BLEND" ? 2 : (am == "MASK" ? 1 : 0);
-    // KHR_materials_transmission (glass, e.g. cornea) -> the refraction field (0..1); the
-    // spec default for a missing factor is 1.0
     for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
         if (s(gm.ext.extensions[i].name) != "KHR_materials_transmission")
             continue;
@@ -543,7 +500,6 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
             mat.refraction = (float)tf; // 1:1: transmissionFactor drives the refraction amount (0..1)
         break;
     }
-    // KHR_materials_ior (index of refraction, e.g. cornea) -> the ior field; the spec default is 1.5
     for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
         if (s(gm.ext.extensions[i].name) != "KHR_materials_ior")
             continue;
@@ -562,9 +518,6 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     return c.materials[matIdx] = e;
 }
 
-// ---- skinned meshes (dual-quaternion skin + shape keys, see sim/skin.hpp)
-
-// the skin a node's meshes use: its explicit skin, else the file's only skin, else -1
 int32_t skinOf(const GltfCtx& c, int32_t nodeIdx) {
     const int32_t s = c.m->nodes[nodeIdx].skin;
     if (s >= 0)
@@ -572,13 +525,11 @@ int32_t skinOf(const GltfCtx& c, int32_t nodeIdx) {
     return c.m->skins_count == 1 ? 0 : -1;
 }
 
-// the joints accessor: JOINTS_0 (2.0) or JOINT_0 (1.0); -1 if absent
 int32_t jointAcc(const tg3_primitive& p) {
     const int32_t a = attrAccessor(p, "JOINTS_0");
     return a >= 0 ? a : attrAccessor(p, "JOINT_0");
 }
 
-// mesh-level extras.targetNames (Daz convention): the morph target names
 std::vector<std::string> targetNames(const tg3_mesh& gm) {
     std::vector<std::string> out;
     if (!gm.ext.extras || gm.ext.extras->type != TG3_VALUE_OBJECT)
@@ -598,9 +549,7 @@ std::vector<std::string> targetNames(const tg3_mesh& gm) {
     return out;
 }
 
-// phase B for skinned meshes (run after all buildNode calls). Pending prims are grouped by
-// (skin, POSITION accessor): the group shares rest data, joints/weights and morph deltas -
-// never per primitive (that's the 4.1 GB trap). One skeleton per skin under the load root
+// group pending skinned prims by (skin, POSITION accessor): the group shares rest data + joints/weights + morph deltas, never per primitive (memory trap)
 void finishSkinned(GltfCtx& c) {
     if (c.pending.empty())
         return;
@@ -615,9 +564,6 @@ void finishSkinned(GltfCtx& c) {
         const tg3_mesh& gm0 = c.m->meshes[prims[0].meshIdx];
         const tg3_primitive& p0 = gm0.primitives[prims[0].primIdx];
 
-        // character (once per skin): joint entities + inverse bind matrices + one
-        // representative node as placement; the `Skeleton` component (on the character entity)
-        // is the source of truth the Skin compute filters on
         if (c.skinChars[skin] == entt::null) {
             const tg3_skin& sk = c.m->skins[skin];
             const std::string skelName = s(sk.name);
@@ -659,14 +605,13 @@ void finishSkinned(GltfCtx& c) {
             c.w.gpuSim.skin.addSkeleton(skelEnt, (int)sk.joints_count);
             c.w.reg.emplace<Name>(skelEnt, skelName);
             c.w.reg.emplace<Skeleton>(skelEnt, std::move(skelComp));
-            c.w.reg.emplace<Parent>(skelEnt, c.root); // destroy of the glTF root cascades (freeze)
+            c.w.reg.emplace<Parent>(skelEnt, c.root);
             c.skinChars[skin] = skelEnt;
         }
         const entt::entity skelEnt = c.skinChars[skin];
         if (skelEnt == entt::null)
             continue;
 
-        // group (once per (skin, POSITION accessor))
         std::vector<float> pos0;
         if (!readAccessor(*c.m, key.second, 3, pos0) || pos0.empty()) {
             warn(c, "skinned group: bad POSITION accessor");
@@ -714,14 +659,12 @@ void finishSkinned(GltfCtx& c) {
                 g.weights[4 * v + i] = wgt;
                 sum += wgt;
             }
-            if (sum > 1e-6f) // DQS expects a convex blend
+            if (sum > 1e-6f)
                 for (int i = 0; i < 4; ++i)
                     g.weights[4 * v + i] /= sum;
         }
         if (badJoint)
             warn(c, "skinned group: joint index out of range (clamped)");
-        // morph deltas: target-major; a target without a POSITION delta gets a zero slot so
-        // target indices stay dense
         const int nT = (int)p0.targets_count;
         g.deltas.assign((size_t)nT * nV * 3, 0.0f);
         std::vector<float> d;
@@ -747,8 +690,6 @@ void finishSkinned(GltfCtx& c) {
                 warn(c, "skinned group: target " + std::to_string(t) + " POSITION delta mismatch (slot zeroed)");
         }
         g.morphNames = targetNames(gm0);
-        // the file's static (frame-0) morph strengths: the character's real shape. Applied as
-        // live GPU weights each step (no baking into pos0), and the reset state.
         g.initWeights.assign((size_t)nT, 0.0f);
         for (int t = 0; t < nT && t < (int)gm0.weights_count; ++t)
             g.initWeights[t] = (float)gm0.weights[t];
@@ -763,7 +704,7 @@ void finishSkinned(GltfCtx& c) {
                 warn(c, "skinned prim: primitive mode is not triangles");
                 continue;
             }
-            Mesh pm; // pos/nrm come from the group's shared buffers (below)
+            Mesh pm;
             std::vector<float> uv, idxf;
             if (!readAccessor(*c.m, attrAccessor(p, "TEXCOORD_0"), 2, uv) || uv.size() != (size_t)nV * 2)
                 uv.assign((size_t)nV * 2, 0.0f);
@@ -790,18 +731,14 @@ void finishSkinned(GltfCtx& c) {
             const std::string mName = s(gm.name);
             const std::string cname = mName.empty() ? "prim" : (gm.primitives_count > 1 ? mName + "_" + std::to_string(pp.primIdx) : mName);
             c.w.reg.emplace<Name>(child, cname);
-            // a skinned prim IS its geometry: the renderer aliases the group's pos/nrm buffers
-            // into this slot (its own uv/index buffers); the mesh entity doubles as the geometry key
             c.w.renderer.addSharedMesh(child, pm, rw.pos.buffer, rw.pos.memory, rw.nrm.buffer, rw.nrm.memory, (uint32_t)nV);
             addMesh(c.w, child, child, materialFor(c, p.material), c.nodeEntities[pp.nodeIdx]);
             c.w.gpuSim.skin.linkMesh(child, gid);
-            c.w.reg.get<Skeleton>(skelEnt).meshes.push_back(child); // the skeleton's ownership list
+            c.w.reg.get<Skeleton>(skelEnt).meshes.push_back(child);
         }
     }
 }
 
-// a node -> entity with local Transform + Parent; mesh primitives -> child mesh entities.
-// the node scale lives in the Transform (composed by the world-transform resolve)
 entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
     if (nodeIdx < 0 || (uint32_t)nodeIdx >= c.m->nodes_count)
         return entt::null;
@@ -825,7 +762,6 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
         for (uint32_t i = 0; i < gm.primitives_count; ++i) {
             const tg3_primitive& p = gm.primitives[i];
             if (skin >= 0 && jointAcc(p) >= 0) {
-                // skinned: deferred to finishSkinned (phase B, once all joint entities exist)
                 c.pending.push_back({nodeIdx, n.mesh, (int32_t)i});
                 continue;
             }
@@ -841,8 +777,6 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
             const entt::entity child = c.w.reg.create();
             const std::string cname = mName.empty() ? "prim" : (gm.primitives_count > 1 ? mName + "_" + std::to_string(i) : mName);
             c.w.reg.emplace<Name>(child, cname);
-            // the vertex data lives in a geometry entity (the renderer uploads it lazily on
-            // first sight); the prim references it
             entt::entity geomEnt = c.w.reg.create();
             c.w.reg.emplace<Geometry>(geomEnt, Geometry{pm});
             addMesh(c.w, child, geomEnt, materialFor(c, p.material), e);
@@ -853,7 +787,7 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
     return e;
 }
 
-} // namespace
+}
 
 entt::entity loadGltf(Engine& w, entt::entity e, const std::string& path, std::string& err) {
     std::string file;
@@ -917,7 +851,7 @@ entt::entity loadGltf(Engine& w, entt::entity e, const std::string& path, std::s
     c.skinChars.assign(model.skins_count, entt::null);
     for (uint32_t i = 0; i < scene.nodes_count; ++i)
         buildNode(c, scene.nodes[i], e);
-    finishSkinned(c); // skinned meshes: characters + groups + shared-buffer prims
+    finishSkinned(c);
     tg3_model_free(&model);
     return e;
 }

@@ -18,7 +18,7 @@ void checkResult(VkResult r, const char* what) {
     std::abort();
 }
 
-} // namespace
+}
 
 bool VkApp::initInstance(int width, int height, const char* title) {
     if (!glfwInit()) {
@@ -56,7 +56,7 @@ bool VkApp::initInstance(int width, int height, const char* title) {
         vkEnumerateInstanceLayerProperties(&nl, lprops.data());
         for (const auto& p : lprops)
             if (std::string_view(p.layerName) == "VK_LAYER_KHRONOS_validation")
-                layers.push_back("VK_LAYER_KHRONOS_validation"); // static literal; lprops is freed after this block
+                layers.push_back("VK_LAYER_KHRONOS_validation");
     }
     VkApplicationInfo app{};
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -64,7 +64,7 @@ bool VkApp::initInstance(int width, int height, const char* title) {
     app.apiVersion = VK_API_VERSION_1_1;
     VkInstanceCreateInfo ic{};
     ic.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    ic.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR; // needed to see MoltenVK (macOS) portability driver
+    ic.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
     ic.pApplicationInfo = &app;
     ic.enabledExtensionCount = (uint32_t)exts.size();
     ic.ppEnabledExtensionNames = exts.data();
@@ -110,13 +110,11 @@ bool VkApp::initInstance(int width, int height, const char* title) {
                     pp.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "discrete" : "integrated");
     }
 
-    // queue + extensions
     m_qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     m_qci.queueFamilyIndex = m_qf;
     m_qci.queueCount = 1;
     m_qci.pQueuePriorities = &m_qprio;
 
-    // only enable device extensions the driver actually supports (*_fd is Linux-only)
     uint32_t nde = 0;
     vkEnumerateDeviceExtensionProperties(m_pdev, nullptr, &nde, nullptr);
     std::vector<VkExtensionProperties> deexts(nde);
@@ -138,10 +136,9 @@ bool VkApp::initInstance(int width, int height, const char* title) {
 
 VkDevice VkApp::makeDevice() {
     VkPhysicalDeviceFeatures feat{};
-    feat.imageCubeArray = VK_TRUE; // the shadow cubes are sampled as a cube array
+    feat.imageCubeArray = VK_TRUE;
     feat.samplerAnisotropy = VK_TRUE;
-    feat.vertexPipelineStoresAndAtomics = VK_TRUE; // mesh/shadow vertex shaders bind ssbos
-    // the depth -> depth-copy image copy converts D32 to R32 (mismatched aspect masks)
+    feat.vertexPipelineStoresAndAtomics = VK_TRUE;
     VkPhysicalDeviceMaintenance8FeaturesKHR m8{};
     m8.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_8_FEATURES_KHR;
     m8.maintenance8 = VK_TRUE;
@@ -159,8 +156,7 @@ bool VkApp::initDevice(VkDevice dev) {
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_pdev, m_surface, &nf, nullptr);
     std::vector<VkSurfaceFormatKHR> fmts(nf);
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_pdev, m_surface, &nf, fmts.data());
-    // the list order is driver-specific (nvidia lists UNORM first, radv lists SRGB first); the
-    // tonemap shader encodes sRGB itself, so an sRGB swapchain would double-encode (double gamma)
+    // format list order is driver-specific (nvidia UNORM first, radv SRGB first); the tonemap encodes sRGB itself, an sRGB swapchain would double-encode
     m_fmt = fmts[0];
     for (const auto& f : fmts)
         if (f.format == VK_FORMAT_B8G8R8A8_UNORM)
@@ -184,8 +180,6 @@ bool VkApp::initDevice(VkDevice dev) {
     satt[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     satt[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     satt[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    // the diffuse term, separated for the SSS blur (specular stays sharp: the SSS pass composites
-    // sceneColor = (scene - diffuse) + blurredDiffuse)
     satt[2].format = m_hdrFmt;
     satt[2].samples = VK_SAMPLE_COUNT_1_BIT;
     satt[2].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -194,7 +188,6 @@ bool VkApp::initDevice(VkDevice dev) {
     satt[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     satt[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     satt[2].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    // color refs must be contiguous: color (0) + diffuse (2); depth (1) is separate
     VkAttachmentReference scolor[2] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                                       {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
     const VkAttachmentReference sdepth = {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
@@ -210,8 +203,6 @@ bool VkApp::initDevice(VkDevice dev) {
     srpc.pSubpasses = &ssp;
     VK(vkCreateRenderPass(m_dev, &srpc, nullptr, &m_rpScene));
 
-    // transparent (glass/blend) pass over the blitted scene: HDR + depth both LOAD; the depth
-    // starts in the opaque pass's final layout, so no barrier is needed
     VkAttachmentDescription natt[3]{};
     natt[0].format = m_hdrFmt;
     natt[0].samples = VK_SAMPLE_COUNT_1_BIT;
@@ -219,7 +210,7 @@ bool VkApp::initDevice(VkDevice dev) {
     natt[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     natt[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     natt[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    natt[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // the blitted scene (LOAD)
+    natt[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     natt[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     natt[1].format = VK_FORMAT_D32_SFLOAT;
     natt[1].samples = VK_SAMPLE_COUNT_1_BIT;
@@ -229,7 +220,6 @@ bool VkApp::initDevice(VkDevice dev) {
     natt[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     natt[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     natt[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    // the diffuse is consumed by the SSS pass before this one; the blend shader writes a dummy
     natt[2].format = m_hdrFmt;
     natt[2].samples = VK_SAMPLE_COUNT_1_BIT;
     natt[2].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -342,8 +332,6 @@ void VkApp::pollEvents() {
         m_pendingExtent = {(uint32_t)w, (uint32_t)h};
 }
 
-// rebuild the swapchain (and its buffers) when the window size changed; called each frame,
-// before the acquire, so the rest of the frame renders to the new size
 void VkApp::resizeBuffers() {
     if (m_pendingExtent.width != m_extent.width || m_pendingExtent.height != m_extent.height)
         recreateSwapchain();
@@ -355,9 +343,7 @@ uint32_t VkApp::acquireNextImage() {
         // finite timeout: a stuck acquire (e.g. mid-resize) must not block forever
         const VkResult r = vkAcquireNextImageKHR(m_dev, m_sc, 1000000000ull, VK_NULL_HANDLE, m_acqFence, &idx);
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_TIMEOUT) {
-            // swapchain is unusable (window resized, or no image in 1s): rebuild and retry.
-            // Must happen before the fence wait below, which would otherwise read a fence the
-            // failed acquire never signaled.
+            // rebuild before the fence wait: a failed acquire never signaled that fence
             recreateSwapchain();
             continue;
         }
@@ -395,7 +381,7 @@ void VkApp::present(uint32_t idx, bool wait) {
     pi.pSwapchains = &m_sc;
     pi.pImageIndices = &idx;
     checkResult(vkQueuePresentKHR(m_queue, &pi), "present");
-    if (wait) // vsync pacing lands here, not in the next frame's sim fence wait
+    if (wait)
         VK(vkQueueWaitIdle(m_queue));
 }
 
@@ -431,7 +417,6 @@ void VkApp::recreateSwapchain() {
     scc.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     scc.preTransform = caps.currentTransform;
     scc.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    // FIFO = vsync; NO_VSYNC picks the fastest uncapped mode the surface supports
     VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
     if (std::getenv("NO_VSYNC")) {
         uint32_t nModes = 0;
@@ -462,15 +447,12 @@ void VkApp::recreateSwapchain() {
     createAttachment(m_extent, VK_FORMAT_D32_SFLOAT,
                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                      VK_IMAGE_ASPECT_DEPTH_BIT, m_depth, m_depthMem, m_depthView);
-    // the sampled depth copy: the glass refraction reads the depth while it is also the
-    // transparent pass's depth-stencil attachment (layouts are exclusive, so a copy)
     createAttachment(m_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_depthCopy, m_depthCopyMem, m_depthCopyView);
     createAttachment(m_extent, m_hdrFmt,
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sceneColor, m_sceneColorMem, m_sceneColorView, mips);
-    // the framebuffers need a single-mip view (the view above spans all mips)
     VkImageViewCreateInfo savci{};
     savci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     savci.image = m_sceneColor;
@@ -480,7 +462,6 @@ void VkApp::recreateSwapchain() {
     VK(vkCreateImageView(m_dev, &savci, nullptr, &m_sceneColorAttView));
     createAttachment(m_extent, m_hdrFmt, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sceneColorTemp, m_sceneColorTempMem, m_sceneColorTempView);
-    // the diffuse term (A = ssssWeight): the SSS pass blurs only this, keeping specular sharp
     createAttachment(m_extent, m_hdrFmt,
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sssDiffuse, m_sssDiffuseMem, m_sssDiffuseView);
@@ -488,7 +469,6 @@ void VkApp::recreateSwapchain() {
                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_hdr, m_hdrMem, m_hdrView);
 
-    // framebuffer views are indexed by reference index: 0 = color, 1 = depth, 2 = diffuse
     VkImageView satts[3] = {m_sceneColorAttView, m_depthView, m_sssDiffuseView};
     VkFramebufferCreateInfo sfci{};
     sfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -510,29 +490,6 @@ void VkApp::recreateSwapchain() {
     nfci.height = m_extent.height;
     nfci.layers = 1;
     VK(vkCreateFramebuffer(m_dev, &nfci, nullptr, &m_sceneFbNoClear));
-
-    // DBG: noClear rp (depth LOAD) on the sceneColor image
-    VkImageView ncs[3] = {m_sceneColorAttView, m_depthView, m_sssDiffuseView};
-    VkFramebufferCreateInfo ncfci{};
-    ncfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    ncfci.renderPass = m_rpSceneNoClear;
-    ncfci.attachmentCount = 3;
-    ncfci.pAttachments = ncs;
-    ncfci.width = m_extent.width;
-    ncfci.height = m_extent.height;
-    ncfci.layers = 1;
-    VK(vkCreateFramebuffer(m_dev, &ncfci, nullptr, &m_sceneFbNoClearOnScene));
-    // DBG: scene rp (depth CLEAR) on the hdr image
-    VkImageView soh[3] = {m_hdrView, m_depthView, m_sssDiffuseView};
-    VkFramebufferCreateInfo sofci{};
-    sofci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    sofci.renderPass = m_rpScene;
-    sofci.attachmentCount = 3;
-    sofci.pAttachments = soh;
-    sofci.width = m_extent.width;
-    sofci.height = m_extent.height;
-    sofci.layers = 1;
-    VK(vkCreateFramebuffer(m_dev, &sofci, nullptr, &m_sceneFbSceneOnHdr));
 
     m_views.resize(icnt);
     m_fbs.resize(icnt);
@@ -568,10 +525,6 @@ void VkApp::destroySwapchainResources() {
         vkDestroySwapchainKHR(m_dev, m_sc, nullptr);
     if (m_sceneFbNoClear)
         vkDestroyFramebuffer(m_dev, m_sceneFbNoClear, nullptr);
-    if (m_sceneFbNoClearOnScene)
-        vkDestroyFramebuffer(m_dev, m_sceneFbNoClearOnScene, nullptr);
-    if (m_sceneFbSceneOnHdr)
-        vkDestroyFramebuffer(m_dev, m_sceneFbSceneOnHdr, nullptr);
     vkDestroyImageView(m_dev, m_depthView, nullptr);
     vkDestroyImage(m_dev, m_depth, nullptr);
     vkFreeMemory(m_dev, m_depthMem, nullptr);

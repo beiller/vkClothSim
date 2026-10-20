@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <vector>
 
 #define VK(x)                                                                                                          \
@@ -23,6 +24,63 @@ inline uint32_t vkFindMemoryType(VkPhysicalDevice pdev, const VkMemoryRequiremen
         if ((mr.memoryTypeBits & (1u << i)) && (mpp.memoryTypes[i].propertyFlags & need) == need)
             return i;
     return 0;
+}
+
+inline void vkSubmitAndWait(VkDevice dev, VkPhysicalDevice pdev, const std::function<void(VkCommandBuffer)>& upload) {
+    uint32_t fam = 0, famCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(pdev, &famCount, nullptr);
+    std::vector<VkQueueFamilyProperties> fams(famCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(pdev, &famCount, fams.data());
+    for (uint32_t i = 0; i < famCount; ++i)
+        if (fams[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) {
+            fam = i;
+            break;
+        }
+    VkQueue q;
+    vkGetDeviceQueue(dev, fam, 0, &q);
+    VkCommandPool pool;
+    VkCommandPoolCreateInfo cpci{};
+    cpci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    cpci.queueFamilyIndex = fam;
+    VK(vkCreateCommandPool(dev, &cpci, nullptr, &pool));
+    VkCommandBuffer cb;
+    VkCommandBufferAllocateInfo cba{};
+    cba.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cba.commandPool = pool;
+    cba.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cba.commandBufferCount = 1;
+    VK(vkAllocateCommandBuffers(dev, &cba, &cb));
+    VkCommandBufferBeginInfo cbi{};
+    cbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    VK(vkBeginCommandBuffer(cb, &cbi));
+    upload(cb);
+    VK(vkEndCommandBuffer(cb));
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cb;
+    VK(vkQueueSubmit(q, 1, &si, VK_NULL_HANDLE));
+    VK(vkQueueWaitIdle(q));
+    vkFreeCommandBuffers(dev, pool, 1, &cb);
+    vkDestroyCommandPool(dev, pool, nullptr);
+}
+
+inline void vkImgBarrier(VkCommandBuffer cmd, VkImage img, VkImageAspectFlagBits aspect, VkImageLayout oldL,
+                        VkImageLayout newL, VkAccessFlags srcAcc, VkAccessFlags dstAcc, uint32_t mips,
+                        VkPipelineStageFlagBits srcStage = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
+                        VkPipelineStageFlagBits dstStage = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
+                        uint32_t baseLevel = 0, uint32_t layers = 1) {
+    VkImageMemoryBarrier b{};
+    b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.image = img;
+    b.subresourceRange = {aspect, baseLevel, mips, 0, layers};
+    b.oldLayout = oldL;
+    b.newLayout = newL;
+    b.srcAccessMask = srcAcc;
+    b.dstAccessMask = dstAcc;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &b);
 }
 
 inline void vkMakeBuffer(VkDevice dev, VkPhysicalDevice pdev, VkBuffer& buf, VkDeviceMemory& mem, VkDeviceSize size,
@@ -49,7 +107,6 @@ inline void vkMakeBuffer(VkDevice dev, VkPhysicalDevice pdev, VkBuffer& buf, VkD
     }
 }
 
-// device-local buffer (VRAM) with a one-shot upload through a transient host staging buffer
 inline void vkMakeBufferDev(VkDevice dev, VkPhysicalDevice pdev, VkBuffer& buf, VkDeviceMemory& mem, VkDeviceSize size,
                             VkBufferUsageFlags usage, const void* data) {
     VkBufferCreateInfo bci{};
@@ -86,43 +143,8 @@ inline void vkMakeBufferDev(VkDevice dev, VkPhysicalDevice pdev, VkBuffer& buf, 
     VK(vkMapMemory(dev, stageMem, 0, size, 0, &p));
     std::memcpy(p, data, size);
     vkUnmapMemory(dev, stageMem);
-    uint32_t fam = 0, famCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(pdev, &famCount, nullptr);
-    std::vector<VkQueueFamilyProperties> fams(famCount);
-    vkGetPhysicalDeviceQueueFamilyProperties(pdev, &famCount, fams.data());
-    for (uint32_t i = 0; i < famCount; ++i)
-        if (fams[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) {
-            fam = i;
-            break;
-        }
-    VkQueue q;
-    vkGetDeviceQueue(dev, fam, 0, &q);
-    VkCommandPool pool;
-    VkCommandPoolCreateInfo cpci{};
-    cpci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    cpci.queueFamilyIndex = fam;
-    VK(vkCreateCommandPool(dev, &cpci, nullptr, &pool));
-    VkCommandBuffer cb;
-    VkCommandBufferAllocateInfo cba{};
-    cba.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cba.commandPool = pool;
-    cba.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cba.commandBufferCount = 1;
-    VK(vkAllocateCommandBuffers(dev, &cba, &cb));
-    VkCommandBufferBeginInfo cbi{};
-    cbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    VK(vkBeginCommandBuffer(cb, &cbi));
-    VkBufferCopy r{0, 0, size};
-    vkCmdCopyBuffer(cb, stage, buf, 1, &r);
-    VK(vkEndCommandBuffer(cb));
-    VkSubmitInfo si{};
-    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.commandBufferCount = 1;
-    si.pCommandBuffers = &cb;
-    VK(vkQueueSubmit(q, 1, &si, VK_NULL_HANDLE));
-    VK(vkQueueWaitIdle(q));
-    vkFreeCommandBuffers(dev, pool, 1, &cb);
-    vkDestroyCommandPool(dev, pool, nullptr);
+    const VkBufferCopy r{0, 0, size};
+    vkSubmitAndWait(dev, pdev, [&](VkCommandBuffer cb) { vkCmdCopyBuffer(cb, stage, buf, 1, &r); });
     vkDestroyBuffer(dev, stage, nullptr);
     vkFreeMemory(dev, stageMem, nullptr);
 }
@@ -141,6 +163,7 @@ inline void vkFreeBuffer(VkDevice dev, VkBuffer buf, VkDeviceMemory mem) {
     }
 }
 
+// run one upload command on a transient queue and wait for it
 inline VkShaderModule vkMakeModule(VkDevice dev, const void* code, uint32_t nwords) {
     VkShaderModuleCreateInfo smc{};
     smc.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -180,52 +203,11 @@ inline void vkMakeImage2D(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint3
         std::memcpy(p, rgba8, (size_t)w * h * 4);
         vkUnmapMemory(dev, mem);
     }
-    // the upload is a host copy: a one-shot transition to the sampled layout
-    VkCommandPool pool;
-    VkCommandPoolCreateInfo cpci{};
-    cpci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    VK(vkCreateCommandPool(dev, &cpci, nullptr, &pool));
-    VkCommandBuffer cb;
-    VkCommandBufferAllocateInfo cba{};
-    cba.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cba.commandPool = pool;
-    cba.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cba.commandBufferCount = 1;
-    VK(vkAllocateCommandBuffers(dev, &cba, &cb));
-    VkCommandBufferBeginInfo cbi{};
-    cbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    VK(vkBeginCommandBuffer(cb, &cbi));
-    VkImageMemoryBarrier tb{};
-    tb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    tb.image = img;
-    tb.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    tb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    tb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    tb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    tb.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    tb.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
-                        nullptr, 1, &tb);
-    VK(vkEndCommandBuffer(cb));
-    uint32_t fam = 0, famCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(pdev, &famCount, nullptr);
-    std::vector<VkQueueFamilyProperties> fams(famCount);
-    vkGetPhysicalDeviceQueueFamilyProperties(pdev, &famCount, fams.data());
-    for (uint32_t i = 0; i < famCount; ++i)
-        if (fams[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) {
-            fam = i;
-            break;
-        }
-    VkQueue q;
-    vkGetDeviceQueue(dev, fam, 0, &q);
-    VkSubmitInfo si{};
-    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.commandBufferCount = 1;
-    si.pCommandBuffers = &cb;
-    VK(vkQueueSubmit(q, 1, &si, VK_NULL_HANDLE));
-    VK(vkQueueWaitIdle(q));
-    vkFreeCommandBuffers(dev, pool, 1, &cb);
-    vkDestroyCommandPool(dev, pool, nullptr);
+    vkSubmitAndWait(dev, pdev, [&](VkCommandBuffer cb) {
+        vkImgBarrier(cb, img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
+                     VK_ACCESS_SHADER_READ_BIT, 1, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    });
     VkImageViewCreateInfo vci{};
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = img;
@@ -421,6 +403,46 @@ inline void vkMakeDslPool(VkDevice dev, const std::vector<VkDescriptorSetLayoutB
     pool = vkMakePool(dev, binds, maxSets);
 }
 
+struct WriteDescs {
+    struct Slot {
+        VkDescriptorSet set;
+        uint32_t binding;
+        VkDescriptorType type;
+        int imgIdx = -1;
+        int bufIdx = -1;
+    };
+    std::vector<Slot> slots;
+    std::vector<VkDescriptorImageInfo> img;
+    std::vector<VkDescriptorBufferInfo> buf;
+    void image(VkDescriptorSet set, uint32_t binding, const VkDescriptorImageInfo& ii,
+               VkDescriptorType t = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+        img.push_back(ii);
+        slots.push_back({set, binding, t, (int)img.size() - 1, -1});
+    }
+    void buffer(VkDescriptorSet set, uint32_t binding, const VkDescriptorBufferInfo& bi,
+                VkDescriptorType t = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+        buf.push_back(bi);
+        slots.push_back({set, binding, t, -1, (int)buf.size() - 1});
+    }
+    void update(VkDevice dev) {
+        if (slots.empty())
+            return;
+        std::vector<VkWriteDescriptorSet> w(slots.size());
+        for (size_t i = 0; i < slots.size(); ++i) {
+            w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            w[i].dstSet = slots[i].set;
+            w[i].dstBinding = slots[i].binding;
+            w[i].descriptorCount = 1;
+            w[i].descriptorType = slots[i].type;
+            if (slots[i].imgIdx >= 0)
+                w[i].pImageInfo = &img[(size_t)slots[i].imgIdx];
+            else
+                w[i].pBufferInfo = &buf[(size_t)slots[i].bufIdx];
+        }
+        vkUpdateDescriptorSets(dev, (uint32_t)w.size(), w.data(), 0, nullptr);
+    }
+};
+
 inline void vkMakeSet(VkDevice dev, VkDescriptorPool pool, VkDescriptorSetLayout dsl,
                       const std::vector<VkDescriptorSetLayoutBinding>& binds, VkDescriptorSet& set,
                       const std::vector<VkDescriptorBufferInfo>& bufs) {
@@ -430,16 +452,10 @@ inline void vkMakeSet(VkDevice dev, VkDescriptorPool pool, VkDescriptorSetLayout
     sa.descriptorSetCount = 1;
     sa.pSetLayouts = &dsl;
     VK(vkAllocateDescriptorSets(dev, &sa, &set));
-    std::vector<VkWriteDescriptorSet> w(bufs.size());
-    for (size_t i = 0; i < bufs.size(); ++i) {
-        w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        w[i].dstSet = set;
-        w[i].dstBinding = binds[i].binding;
-        w[i].descriptorCount = 1;
-        w[i].descriptorType = binds[i].descriptorType;
-        w[i].pBufferInfo = &bufs[i];
-    }
-    vkUpdateDescriptorSets(dev, (uint32_t)w.size(), w.data(), 0, nullptr);
+    WriteDescs wd;
+    for (size_t i = 0; i < bufs.size(); ++i)
+        wd.buffer(set, binds[i].binding, bufs[i], binds[i].descriptorType);
+    wd.update(dev);
 }
 
 inline VkPipelineLayout vkMakePipelineLayout(VkDevice dev, VkDescriptorSetLayout dsl) {
@@ -466,7 +482,6 @@ inline VkPipelineLayout vkMakePipelineLayoutPC(VkDevice dev, VkDescriptorSetLayo
     return pl;
 }
 
-// shared graphics pipeline builder (mesh/tonemap/shadow/vr all use the same fixed setup)
 inline VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void* vsSpv, uint32_t vsLen,
                                        const void* fsSpv, uint32_t fsLen, VkPipelineLayout layout, bool depth,
                                        bool cullBack = false, bool blend = false, uint32_t nColorAttach = 1) {
@@ -515,7 +530,7 @@ inline VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void
     ds.maxDepthBounds = 1.0f;
     ds.depthBoundsTestEnable = VK_FALSE;
     ds.stencilTestEnable = VK_FALSE;
-    VkPipelineColorBlendAttachmentState ca[2]{}; // the scene RPs carry a second color attachment (the SSS diffuse)
+    VkPipelineColorBlendAttachmentState ca[2]{};
     for (uint32_t i = 0; i < nColorAttach; ++i) {
         auto& c = ca[i];
         c.colorWriteMask =

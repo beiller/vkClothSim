@@ -23,8 +23,6 @@ JPH::Quat jQuat(V4 q) {
     return {q.x, q.y, q.z, q.w};
 }
 
-// Jolt scales shapes, not bodies: wrap the shape in the body's scale. Boxes take any scale
-// exactly; capsules only uniform (Jolt degrades the rest); zero scale is rejected
 JPH::ShapeRefC applyBodyScale(JPH::ShapeRefC shape, const V3& s) {
     if (s.x == 1.0f && s.y == 1.0f && s.z == 1.0f)
         return shape;
@@ -34,7 +32,7 @@ JPH::ShapeRefC applyBodyScale(JPH::ShapeRefC shape, const V3& s) {
     return r.Get() ? r.Get() : shape;
 }
 
-} // namespace
+}
 
 void RigidScene::init() {
     JPH::RegisterDefaultAllocator();
@@ -64,14 +62,13 @@ void RigidScene::reset() {
     for (const auto& [e, id] : m_body)
         m_phys->GetBodyInterface().RemoveBody(id);
     m_body.clear();
-    m_shape.clear(); // the ShapeRefC destructors release the refs
+    m_shape.clear();
     for (int i = (int)m_joints.size() - 1; i >= 0; --i)
         releaseJoint(i);
     m_joints.clear();
     m_jointIdx.clear();
 }
 
-// one identity-local collider -> the shared shape directly; otherwise a compound of the sub-shapes
 JPH::ShapeRefC RigidScene::buildShape(const std::vector<ColliderDesc>& colliders, const V3& scale) {
     const auto isIdentity = [](const Transform& t) {
         return t.pos.x == 0.0f && t.pos.y == 0.0f && t.pos.z == 0.0f && t.quat.x == 0.0f && t.quat.y == 0.0f &&
@@ -85,8 +82,6 @@ JPH::ShapeRefC RigidScene::buildShape(const std::vector<ColliderDesc>& colliders
     return applyBodyScale(compound.Create().Get(), scale);
 }
 
-// the body's referenced colliders: a shared shape entity ref + the local Transform in the
-// body's frame
 std::vector<ColliderDesc> RigidScene::colliderDescs(const entt::registry& reg,
                                                     const std::vector<entt::entity>& cols) {
     std::vector<ColliderDesc> out;
@@ -97,7 +92,6 @@ std::vector<ColliderDesc> RigidScene::colliderDescs(const entt::registry& reg,
         const JPH::Shape* s = shape(reg, col->shape);
         if (!s)
             continue;
-        // no Transform = at the body's origin, unrotated
         const Transform t = reg.try_get<Transform>(c) ? reg.get<Transform>(c) : Transform{};
         out.push_back({s, t});
     }
@@ -107,7 +101,7 @@ std::vector<ColliderDesc> RigidScene::colliderDescs(const entt::registry& reg,
 void RigidScene::buildBody(entt::entity e, const std::vector<ColliderDesc>& colliders, const RigidBody& body,
                            const Transform& t) {
     if (colliders.empty())
-        return; // nothing to collide with yet; retried each step until colliders appear
+        return;
     auto& bi = m_phys->GetBodyInterface();
     JPH::ShapeRefC shape = buildShape(colliders, t.scale);
     const bool isStatic = body.isStatic;
@@ -129,7 +123,7 @@ void RigidScene::buildBody(entt::entity e, const std::vector<ColliderDesc>& coll
 
 void RigidScene::buildKinematic(entt::entity e, const std::vector<ColliderDesc>& colliders, const Transform& t) {
     if (colliders.empty())
-        return; // retried each step until colliders appear
+        return;
     auto& bi = m_phys->GetBodyInterface();
     JPH::BodyCreationSettings cs(buildShape(colliders, t.scale), JPH::RVec3(t.pos.x, t.pos.y, t.pos.z), jQuat(t.quat),
                                  JPH::EMotionType::Kinematic, 1);
@@ -142,9 +136,7 @@ void RigidScene::removeBody(entt::entity e) {
         return;
     const JPH::BodyID id = it->second;
     m_body.erase(it);
-    m_phys->GetBodyInterface().RemoveBody(id); // also detaches its constraints from the world
-    // drop our owning refs of the detached constraints (releasing frees them); the Joint
-    // component (if still in the ECS) re-projects when the body comes back
+    m_phys->GetBodyInterface().RemoveBody(id);
     for (size_t i = 0; i < m_joints.size(); ++i) {
         if (!m_joints[i].alive)
             continue;
@@ -183,14 +175,11 @@ const JPH::Shape* RigidScene::shape(const entt::registry& reg, entt::entity e) {
     return ptr;
 }
 
-// the ECS is the source of truth for which bodies exist: a component destroy (or a mass
-// destroy) pushes the removal back. CPU-only, so no deferral needed
 void RigidScene::onBodyDestroyed(entt::registry&, entt::entity e) {
     removeBody(e);
 }
 
 void RigidScene::onShapeDestroyed(entt::registry&, entt::entity e) {
-    // releasing the cached ref is safe: any live body holds its own ref to the shape
     m_shape.erase(e);
 }
 
@@ -206,13 +195,10 @@ void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const V4& quat)
     const auto it = m_body.find(e);
     if (it == m_body.end())
         return;
-    // kinematic body: Jolt derives its velocity from the position change (used by the solver/broadphase)
     auto& bi = m_phys->GetBodyInterface();
     bi.SetPositionAndRotation(it->second, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat), JPH::EActivation::Activate);
 }
 
-// the constraint from a Joint component; bodyB == null anchors bodyA to the world (Jolt's
-// fixed-to-world body)
 bool RigidScene::makeJoint(entt::entity e, const Joint& j) {
     if (j.type != 0) {
         std::fprintf(stderr, "3dsim: joint type %d not supported (0 = point)\n", j.type);
@@ -223,15 +209,12 @@ bool RigidScene::makeJoint(entt::entity e, const Joint& j) {
         return false;
     if (j.bodyB != entt::null && m_body.find(j.bodyB) == m_body.end())
         return false;
-    // no body locking: single-threaded between Update() calls, so the references stay valid
     JPH::Body* bodyA = m_phys->GetBodyLockInterface().TryGetBody(ia->second);
     JPH::Body* bodyB = j.bodyB == entt::null ? &JPH::Body::sFixedToWorld
                                              : m_phys->GetBodyLockInterface().TryGetBody(m_body[j.bodyB]);
     if (!bodyA || !bodyB)
         return false;
     JPH::PointConstraintSettings cs;
-    // LocalToBodyCOM: express the grab (collision) point in each body's COM-local space so the
-    // grabbed point on the target follows the hand's grip, not the two centers of mass.
     const JPH::RVec3 grab(j.grabPos.x, j.grabPos.y, j.grabPos.z);
     cs.mSpace = JPH::EConstraintSpace::LocalToBodyCOM;
     cs.mPoint1 = bodyA->GetRotation().InverseRotate(grab - bodyA->GetPosition());
@@ -245,20 +228,16 @@ bool RigidScene::makeJoint(entt::entity e, const Joint& j) {
 void RigidScene::releaseJoint(int idx) {
     if (idx < 0 || idx >= (int)m_joints.size() || !m_joints[idx].alive)
         return;
-    // RemoveConstraint drops the manager's ref; releasing ours frees the constraint (never delete by hand)
     m_phys->RemoveConstraint(m_joints[idx].constraint);
     m_joints[idx].constraint = nullptr;
     m_joints[idx].alive = false;
 }
 
-// the ECS is the source of truth: new components project to Jolt bodies/constraints. A
-// Joint whose endpoints are not (yet) bodies is retried the next step, so a script may create
-// body + joint in the same hook
 void RigidScene::project(const entt::registry& reg) {
     for (auto [e, rb] : reg.view<RigidBody>().each()) {
         if (m_body.count(e))
             continue;
-        const auto* t = reg.try_get<Transform>(e); // a body needs a pose; retry once it appears
+        const auto* t = reg.try_get<Transform>(e);
         if (!t)
             continue;
         buildBody(e, colliderDescs(reg, rb.colliders), rb, *t);
@@ -275,7 +254,7 @@ void RigidScene::project(const entt::registry& reg) {
         if (m_jointIdx.count(e))
             continue;
         if (!makeJoint(e, j))
-            continue; // endpoints not ready (or an unsupported type); retried next step
+            continue;
         m_jointIdx[e] = (int)m_joints.size() - 1;
     }
 }
@@ -300,7 +279,6 @@ Transform RigidScene::pose(entt::entity e) const {
 RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist,
                            const std::vector<entt::entity>& excludes) const {
     RayHit out{};
-    // direction encodes the endpoint (length included): anything beyond maxDist is not reported
     JPH::RRayCast ray(JPH::RVec3(origin.x, origin.y, origin.z), JPH::Vec3(dir.x, dir.y, dir.z) * maxDist);
     JPH::RayCastResult hit;
     JPH::IgnoreMultipleBodiesFilter filter; // a ray from inside a convex body hits it at 0; skip ours

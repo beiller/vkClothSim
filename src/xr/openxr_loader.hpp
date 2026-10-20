@@ -1,13 +1,6 @@
 #pragma once
 #include "openxr.h"
 
-// dlopen/dlsym wrapper over the vendored OpenXR loader (lib/openxr/lib/libopenxr.so.1,
-// resolved relative to the executable). Loaded lazily so plain window mode works with no
-// HMD present; when the loader/runtime is absent load() fails and startup falls back to
-// window mode.
-
-// Every entry point we resolve, in one list, shared by the declarations below and
-// the dlsym loop in openxr_loader.cpp.
 #define XR_FUNCS(X)                                                                                                    \
     X(xrCreateInstance)                                                                                                \
     X(xrDestroyInstance)                                                                                               \
@@ -56,7 +49,6 @@
 struct XrLoader {
     bool load();
     bool ready() const { return m_handle != nullptr; }
-    void* handle() const { return m_handle; }
 
 #define XR_PFN(name) PFN_##name name = nullptr;
     XR_FUNCS(XR_PFN)

@@ -9,7 +9,7 @@
 
 void addMesh(Engine& w, entt::entity e, entt::entity geom, entt::entity mat, entt::entity parent, bool noShadow) {
     if (!w.reg.try_get<Transform>(e))
-        w.reg.emplace<Transform>(e); // identity: a mesh with no explicit pose sits at the origin
+        w.reg.emplace<Transform>(e);
     w.reg.emplace<Renderable>(e, geom, noShadow);
     w.reg.emplace<MaterialRef>(e, mat);
     if (parent != entt::null)
@@ -24,7 +24,6 @@ entt::entity spawnMaterial(Engine& w, const V3& baseColor, float metallic, float
         w.reg.emplace<Name>(e, name);
     return e;
 }
-
 
 entt::entity textureBytes(Engine& w, const std::string& id, const uint8_t* rgba, int wpx, int hpx) {
     for (auto [e, tx] : w.reg.view<Texture>().each())
@@ -46,7 +45,6 @@ entt::entity findActiveCamera(const Engine& w) {
     return cam;
 }
 
-// the VR root's world translation (stick locomotion); {0,0,0} when there is no VR root
 static V3 walkPos(const Engine& w) {
     return w.vrRoot != entt::null ? w.reg.get<Transform>(w.vrRoot).pos : V3{0, 0, 0};
 }
@@ -63,7 +61,6 @@ CameraView cameraView(Engine& w, entt::entity cam, float aspect) {
 
 void stepXr(Engine& w, const XrFrame& fr) {
     const bool havePose = fr.havePose && fr.nEyes > 0;
-    // current camera: the VR head camera while presenting, the scene's fly camera otherwise
     if (w.vrCam != entt::null)
         w.reg.get<Camera>(w.vrCam).active = havePose;
     if (w.cam != entt::null)
@@ -73,9 +70,6 @@ void stepXr(Engine& w, const XrFrame& fr) {
         return;
     Camera& c = w.reg.get<Camera>(cam);
     if (havePose) {
-        // the VR head camera tracks the XR pose: a child of the VR root, so its LOCAL Transform is
-        // the head pose and its world = walkPos + head; the per-eye views (camera data, not
-        // entities) get walkPos added directly
         const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
         Transform& t = w.reg.get<Transform>(cam);
         t.pos = mid;
@@ -87,7 +81,6 @@ void stepXr(Engine& w, const XrFrame& fr) {
             c.views[i].pos = vAdd(c.views[i].pos, walk);
         }
     } else {
-        // no session: virtual head = the fly camera's world pose, with Quest 3 lens tangents
         const Transform wt = worldTransform(w.reg, cam);
         const V3 head = wt.pos;
         const V4 q = wt.quat;
@@ -103,16 +96,11 @@ void stepXr(Engine& w, const XrFrame& fr) {
     }
 }
 
-// natural resting spot (head-local: -Z forward, +Y up) so the grip is always visible even
-// before/without a controller pose; a real pose overrides this
 static V3 restPose(int hand) {
     return hand == 0 ? V3{-0.30f, -0.40f, 0.40f} : V3{0.30f, -0.40f, 0.40f};
 }
 
 entt::entity spawnVrRoot(Engine& w) {
-    // head-independent locomotion anchor: its world Transform is walkPos, a translation driven
-    // only by stick locomotion, so head/grip world = walkPos + pose (head motion can't leak into
-    // the grips); the vr cam is C++-driven (XR pose) instead of script-driven
     entt::entity root = w.reg.create();
     w.reg.emplace<Transform>(root, V3{0, 0, 0}, V4{0, 0, 0, 1});
     w.reg.emplace<Name>(root, "vr root");
@@ -127,9 +115,6 @@ entt::entity spawnVrRoot(Engine& w) {
 }
 
 void spawnControllers(Engine& w) {
-    // grips are children of the VR root (LOCAL = the raw OpenXR grip pose, set each frame, so
-    // world = walkPos + grip). Grip visual from the std geometry library; the engine gives hands
-    // no physics body - a scene script may add one (a KinematicBody + colliders)
     std::string err;
     const entt::entity geom = w.script.callMeshGen("capsule", {{"halfLen", 0.06}, {"radius", 0.03}}, err);
     if (geom == entt::null) {
@@ -139,7 +124,7 @@ void spawnControllers(Engine& w) {
     const entt::entity gripMat = spawnMaterial(w, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f, V3{0.0f, 0.0f, 0.0f});
     for (int h = 0; h < 2; ++h) {
         entt::entity e = w.reg.create();
-        w.reg.emplace<Transform>(e, V3{0, 0, 0}, V4{0, 0, 0, 1}); // local rel. to vr root; per frame
+        w.reg.emplace<Transform>(e, V3{0, 0, 0}, V4{0, 0, 0, 1});
         if (w.vrRoot != entt::null)
             w.reg.emplace<Parent>(e, w.vrRoot);
         w.reg.emplace<ControllerInput>(e, ControllerInput{h});
@@ -151,12 +136,11 @@ void spawnControllers(Engine& w) {
 
 void stepControllers(Engine& w, const XrFrame& fr) {
     const entt::entity cam = findActiveCamera(w);
-    Transform headLocal{}; // head pose in the vr root's frame (the grips' parent)
+    Transform headLocal{};
     if (cam != entt::null) {
         if (fr.havePose && fr.nEyes > 0)
-            headLocal = w.reg.get<Transform>(cam); // vr cam: the XR head pose, already local
+            headLocal = w.reg.get<Transform>(cam);
         else {
-            // virtual head: the fly camera's world pose, re-expressed under the (rooted) vr root
             const Transform wt = worldTransform(w.reg, cam);
             headLocal = Transform{vSub(wt.pos, walkPos(w)), wt.quat};
         }
@@ -224,18 +208,13 @@ void stepKeyboard(Engine& w) {
 }
 
 void stepRigid(Engine& w) {
-    // new body/joint components project first, so a script that created them this step sees them
-    // bound before the step integrates
     w.rigid.project(w.reg);
-    // kinematic bodies are driven from the ECS: pull each one's world pose into Jolt before the
-    // step so this step integrates against the pose that was just written
     for (const auto e : w.reg.view<KinematicBody>()) {
         const Transform wt = worldTransform(w.reg, e);
         w.rigid.setKinematicPose(e, wt.pos, wt.quat);
     }
     w.rigid.step();
     w.reg.view<RigidBody, Transform>().each([&](entt::entity e, auto&, Transform& t) {
-        // Jolt poses are rigid: preserve the entity's scale
         const Transform p = w.rigid.pose(e);
         t.pos = p.pos;
         t.quat = p.quat;
@@ -252,7 +231,7 @@ void resolveWorldTransforms(Engine& w) {
     std::vector<Node> nodes;
     for (auto [e, t] : reg.view<Transform>().each()) {
         if (reg.try_get<SoftBodyData>(e))
-            continue; // soft-body geometry is world-space (pinned pose lifted at spawn)
+            continue;
         entt::entity parent = entt::null;
         if (const auto* p = reg.try_get<Parent>(e))
             parent = p->e;
@@ -304,9 +283,7 @@ void resolveWorldTransforms(Engine& w) {
 }
 
 void stepSoft(Engine& w, VkCommandBuffer cmd) {
-    w.gpuSim.soft.syncCapsules(w); // the capsule list tracks the bodies' world poses this step
-    // new SoftBodyData components project first (geometry upload + sim buffers), so a body
-    // created this step simulates on this step
+    w.gpuSim.soft.syncCapsules(w);
     w.gpuSim.soft.project(w);
     for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
         w.gpuSim.soft.setPinned(entity, sb.pinned);

@@ -38,7 +38,7 @@ void stageBarrier(VkCommandBuffer cmd, VkPipelineStageFlags src, VkPipelineStage
     vkCmdPipelineBarrier(cmd, src, dst, 0, 0, nullptr, n, bmbs, 0, nullptr);
 }
 
-} // namespace
+}
 
 void Soft::init(VkDevice dev, VkPhysicalDevice pdev) {
     m_dev = dev;
@@ -58,10 +58,9 @@ void Soft::syncCapsules(Engine& w) {
             return;
         for (entt::entity c : cols) {
             const auto* col = w.reg.try_get<Collider>(c);
-            auto* cs = col ? w.reg.try_get<CapsuleShape>(col->shape) : nullptr; // boxes are CPU-sim only
+            auto* cs = col ? w.reg.try_get<CapsuleShape>(col->shape) : nullptr;
             if (!cs || n >= kMaxCapsules)
                 continue;
-            // no collider Transform = at the body's origin
             Transform t = *wt;
             if (const auto* lt = w.reg.try_get<Transform>(c))
                 t = transformCompose(t, *lt);
@@ -75,9 +74,6 @@ void Soft::syncCapsules(Engine& w) {
     uploadCapsules(n);
 }
 
-// first sight: a SoftBodyData component without a GPU body. The vertex data comes from the
-// Renderable's geometry entity; it is lifted to world space at the entity's pose (the sim owns
-// the world-space copy from then on) and uploaded through the renderer
 void Soft::project(Engine& w) {
     for (auto [e, sb] : w.reg.view<SoftBodyData>().each()) {
         if (m_ent.count(e))
@@ -130,7 +126,7 @@ void Soft::project(Engine& w) {
             }
         }
         const Renderer::GpuMeshRef ref = w.renderer.addMesh(m);
-        w.renderer.shareGeomSlot(rend->geom, ref.geom); // draw the sim's RW buffer, not a static copy
+        w.renderer.shareGeomSlot(rend->geom, ref.geom);
         addSoftBody(e, m, cons, ref.rw);
     }
 }
@@ -156,11 +152,9 @@ void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::
     mk(b.tris, b.trisMem, 4 * mesh.indices.size(), mesh.indices.data());
     mk(b.triStart, b.triStartMem, 4 * (vn + 1), b.soft.triStart.data());
     mk(b.triList, b.triListMem, 4 * b.soft.triList.size(), b.soft.triList.data());
-    // params stay host-visible: the CPU rewrites them every sim step
     vkMakeBuffer(m_dev, m_pdev, b.paramsBuf, b.paramsMem, 40, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     m_body.push_back(std::move(b));
     m_ent[e] = (int)m_body.size() - 1;
-    // bodies added after build() create their own descriptor set (build() did the load-time ones)
     if (!m_softPools.empty()) {
         ensurePoolSlot();
         makeBodySet(m_body.back());
@@ -298,8 +292,6 @@ void Soft::setParams(entt::entity e, const SimParams& params, int steps) {
     m_body[(size_t)it->second].steps = steps;
 }
 
-// retired bodies stop being recorded the moment their entity dies; their buffers go to the
-// flush queue and are released at the next frame start (one in-flight frame still reads them)
 void Soft::onBodyDestroyed(entt::registry&, entt::entity e) {
     const auto it = m_ent.find(e);
     if (it == m_ent.end())
@@ -391,7 +383,7 @@ void Soft::reset() {
         return;
     flushFrees();
     for (auto& b : m_body)
-        freeBody(b); // no-op for the ones flushFrees already released
+        freeBody(b);
     m_body.clear();
     m_ent.clear();
     m_warned.clear();

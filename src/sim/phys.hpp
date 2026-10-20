@@ -3,7 +3,7 @@
 struct PhysParams {
     int nCaps;
     float dt, damping, gravity, friction, skin, tension, stiff, maxStep;
-    float floorY; // soft-body floor plane (top of the scene ground); -inf = no floor
+    float floorY;
 };
 static_assert(sizeof(PhysParams) == 40);
 

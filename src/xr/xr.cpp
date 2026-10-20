@@ -19,7 +19,6 @@ bool xrok(XrResult r, const char* what) {
     return false;
 }
 
-// mirrored to a file so it stays readable when the app is launched via Steam (console hidden)
 constexpr const char* kXrDiagPath = "/tmp/3dsim_xr_diag.log";
 
 void diagReset() {
@@ -27,7 +26,6 @@ void diagReset() {
         std::fclose(f);
 }
 
-// append one line to both stdout and the diagnostic file
 void diagAppend(const char* fmt, ...) {
     char buf[256];
     va_list args;
@@ -46,7 +44,6 @@ void xrafail(XrResult r, const char* what) {
         std::abort();
 }
 
-// prefer plain UNORM (the tonemap pass writes sRGB-encoded values)
 VkFormat pickFormat(int64_t* fmts, uint32_t n) {
     const int64_t want[] = {VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8_UNORM,
                             VK_FORMAT_R8G8B8_UNORM, VK_FORMAT_R16G16B16A16_SFLOAT};
@@ -57,7 +54,7 @@ VkFormat pickFormat(int64_t* fmts, uint32_t n) {
     return n > 0 ? (VkFormat)fmts[0] : VK_FORMAT_UNDEFINED;
 }
 
-} // namespace
+}
 
 bool Xr::createDevice(VkApp& app) {
     if (!m_loader.load()) {
@@ -77,7 +74,6 @@ bool Xr::createInstance() {
     ai.applicationVersion = 1;
     std::snprintf(ai.engineName, sizeof(ai.engineName), "3dsim");
     ai.engineVersion = 1;
-    // SteamVR's OpenXR runtime (2.18.x) rejects apiVersion 1.1; request 1.0
     ai.apiVersion = XR_API_VERSION_1_0;
     static const char* kExts[] = {"XR_KHR_vulkan_enable2"};
     XrInstanceCreateInfo ici{};
@@ -103,9 +99,7 @@ bool Xr::createInstance() {
 }
 
 void Xr::createShadowInstance() {
-    // SteamVR refuses xrCreateSession unless the vulkan-enable2 device queries ran first; the
-    // device query needs our proc-addr, which the runtime only gets from an instance created
-    // via xrCreateVulkanInstanceKHR, so make a shadow instance
+    // SteamVR refuses xrCreateSession unless the vulkan-enable2 device queries ran first; they need a shadow instance via xrCreateVulkanInstanceKHR
     PFN_xrCreateVulkanInstanceKHR createVkJ = nullptr;
     m_loader.xrGetInstanceProcAddr(m_inst, "xrCreateVulkanInstanceKHR", (PFN_xrVoidFunction*)&createVkJ);
     if (createVkJ) {
@@ -158,8 +152,7 @@ void Xr::queryRuntimeVulkan(VkApp& app) {
 }
 
 bool Xr::createVulkanDevice(VkApp& app) {
-    // create the device through the runtime so the compositor registers the pfn+device and
-    // resolves 1.1 core fns via instance-proc (device-proc returns NULL for the KHR alias)
+    // create the device through the runtime so the compositor registers pfn+device (device-proc returns NULL for the KHR alias)
     PFN_xrCreateVulkanDeviceKHR createDevJ = nullptr;
     m_loader.xrGetInstanceProcAddr(m_inst, "xrCreateVulkanDeviceKHR", (PFN_xrVoidFunction*)&createDevJ);
     if (!createDevJ) {
@@ -253,7 +246,6 @@ bool Xr::init(VkApp& app) {
             return false;
         uint32_t ni = 0;
         xrafail(m_loader.xrEnumerateSwapchainImages(s.sc, 0, &ni, nullptr), "enumerateImages");
-        // the runtime writes the full Vulkan image struct (24B), not the 16B base header
         std::vector<XrSwapchainImageVulkanKHR> imgs(ni);
         for (auto& v : imgs)
             v.type = XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR;
@@ -268,8 +260,6 @@ bool Xr::init(VkApp& app) {
 
     XrReferenceSpaceCreateInfo rs{};
     rs.type = XR_TYPE_REFERENCE_SPACE_CREATE_INFO;
-    // STAGE: origin at the floor, centered on the SteamVR play space (a configured room-scale
-    // play area is required). Gives a floor + room origin so the user stands on the floor.
     rs.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
     rs.poseInReferenceSpace.position = {0.0f, 0.0f, 0.0f};
     rs.poseInReferenceSpace.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -324,9 +314,6 @@ void Xr::initActions() {
         std::printf("xr: createAction failed\n");
         return;
     }
-    // bindings per interaction profile; each list must only contain paths valid for that
-    // profile (one unsupported path rejects the whole suggestion). Must run before attaching
-    // the action set, or the runtime rejects it (ACTIONSETS_ALREADY_ATTACHED)
     struct Bind {
         XrAction action;
         const char* leaf;
@@ -362,9 +349,7 @@ void Xr::initActions() {
         else
             diagAppend("xr: bound %s (%zu inputs)\n", profile, sb.size());
     };
-    // ONE suggestion call per profile: a second call for the same profile replaced the first on
-    // this runtime (only the stick got bound, grip/aim lost their sources). Stick paths below are
-    // the ones this runtime accepted (throttle is NOT supported on simple, so simple stays grip/aim).
+    // ONE suggestion call per profile: a second call for the same profile replaces the first on this runtime (the stick paths below are the ones this runtime accepted; no throttle on simple)
     const char* grip = "/input/grip/pose";
     const char* aim = "/input/aim/pose";
     const char* trig = "/input/trigger/value";
@@ -407,7 +392,6 @@ void Xr::initActions() {
                                                                        {m_buttonA, btnA},
                                                                        {m_buttonB, btnB}});
 
-    // attach after the suggestions so the runtime can bind the suggested sources to our actions
     XrSessionActionSetsAttachInfo att{};
     att.type = XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO;
     att.countActionSets = 1;
@@ -460,7 +444,6 @@ void Xr::pollEvents() {
 }
 
 void Xr::waitFrame() {
-    // session state events (READY -> begin session) must be visible before the wait
     pollEvents();
     if (!m_running)
         return;
@@ -510,7 +493,6 @@ XrFrame Xr::poll() {
 void Xr::pollControllers(XrFrame& fr) {
     if (m_actionSet == XR_NULL_HANDLE)
         return;
-    // sync once for the active set across both hands
     XrActionSet set = m_actionSet;
     XrActiveActionSet active[2] = {{set, m_hand[0]}, {set, m_hand[1]}};
     XrActionsSyncInfo si{};
@@ -518,7 +500,7 @@ void Xr::pollControllers(XrFrame& fr) {
     si.countActiveActionSets = 2;
     si.activeActionSets = active;
     m_loader.xrSyncActions(m_session, &si);
-    ++m_diagFrame; // throttles the pose failure logs below
+    ++m_diagFrame;
 
     for (int h = 0; h < 2; ++h) {
         XrController& c = fr.controller[h];
@@ -550,7 +532,6 @@ void Xr::pollControllers(XrFrame& fr) {
         gi.action = m_buttonB;
         if (XR_SUCCEEDED(m_loader.xrGetActionStateBoolean(m_session, &gi, &bf)) && bf.isActive)
             c.buttons[1] = bf.currentState;
-        // pose via a lazily-created action space, located against the reference space
         auto poseOf = [&](XrAction action, XrSpace* space, const char* name, V3& outP, V4& outQ) -> bool {
             if (*space == XR_NULL_HANDLE) {
                 XrActionSpaceCreateInfo asi{};
@@ -664,7 +645,6 @@ void Xr::destroyActions() {
 }
 
 void Xr::shutdown() {
-    // idempotent: ~Xr calls this after main's explicit shutdown()
     if (m_session != XR_NULL_HANDLE) {
         if (m_running) {
             xrafail(m_loader.xrEndSession(m_session), "endSession");

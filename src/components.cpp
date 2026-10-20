@@ -5,8 +5,6 @@
 
 namespace {
 
-// the writable types: name <-> component construction. Field knowledge (names/kinds/offsets)
-// comes from the reflect table; this is only the construction registry
 enum class Cmp {
     Transform,
     Material,
@@ -77,9 +75,6 @@ Cmp cmpFor(const std::string& name) {
     return Cmp::None;
 }
 
-// pointer to the component's storage; null for absent components. The
-// registry may be const (the storage is only const behind the reference, so the result is
-// writable through a non-const view of the same registry).
 void* base(const entt::registry& reg, entt::entity e, Cmp c) {
     switch (c) {
     case Cmp::Transform:
@@ -242,7 +237,6 @@ const FieldDesc* findField(const TypeDesc* t, const std::string& name) {
     return nullptr;
 }
 
-// the value's array length and source (arrays of <=4 live in v, longer in arr)
 bool fieldValue(const CompField& f, const float*& src, int& len) {
     if (f.isArr) {
         if (f.arr.empty()) {
@@ -269,7 +263,6 @@ bool checkShape(const CompField& f, const std::string& want, std::string& err) {
     return true;
 }
 
-// write one named field against the reflect table entry
 bool writeField(const TypeDesc* t, void* b, const CompField& f, std::string& err) {
     const FieldDesc* d = findField(t, f.name);
     if (!d) {
@@ -369,8 +362,6 @@ bool writeField(const TypeDesc* t, void* b, const CompField& f, std::string& err
     return true;
 }
 
-// Geometry cross-field validation + normalization (empty nrm/uv are padded to zero, indices
-// must be in range); run after the fields are applied
 bool validateGeometry(entt::registry& reg, entt::entity e, std::string& err) {
     auto& g = reg.get<Geometry>(e).mesh;
     const int nv = g.vertexCount();
@@ -416,7 +407,6 @@ bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typ
         emplaceDefault(reg, e, c);
     void* b = base(reg, e, c);
     for (auto f : fields) {
-        // a string on a Ref field = an earlier-defined entity's name (define before use)
         if (f.isStr)
             if (const FieldDesc* d = findField(t, f.name))
                 if (d->kind == FieldKind::Ref) {
@@ -437,7 +427,7 @@ bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typ
     return true;
 }
 
-} // namespace
+}
 
 bool compEmplace(entt::registry& reg, entt::entity e, const std::string& type, const CompFields& fields,
                  std::string& err) {

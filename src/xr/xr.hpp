@@ -8,8 +8,7 @@
 
 class VkApp;
 
-// this copy of openxr.h ships the KHR_vulkan_enable type enums but not the structs,
-// so define the two we need (layout matches the runtime's expectation)
+// this openxr.h ships the KHR_vulkan_enable type enums but not the structs; the two defined here match the runtime's layout
 struct XrGraphicsBindingVulkanKHR {
     XrStructureType type;
     const void* next;
@@ -65,22 +64,14 @@ using PFN_xrCreateVulkanDeviceKHR = XrResult (*)(XrInstance, const XrVulkanDevic
 class Xr : public IXrBackend {
 public:
     ~Xr() override { shutdown(); } // idempotent, so an explicit shutdown() first is safe
-    // phase 1: load loader, create OpenXR instance + Vulkan device (via xrCreateVulkanDeviceKHR)
-    // so the compositor holds our pfn+device; must run before anything allocates on the device
     bool createDevice(VkApp& app) override;
-    // phase 2: create session/swapchains (assumes createDevice succeeded)
     bool init(VkApp& app) override;
     void shutdown() override;
 
-    // compositor pacing wait (the VR counterpart of the window's sync present wait):
-    // xrWaitFrame + beginFrame
     void waitFrame() override;
-    // per-frame: events + locate views + controller actions (after waitFrame)
     XrFrame poll() override;
-    // must run once per poll() while the session is running
     void endFrame(bool render) override;
 
-    // swapchain image lifecycle for direct headset rendering
     void acquireImage(int eye) override;
     void releaseImage(int eye) override;
     int imageIndex(int eye) const override { return m_swaps[eye].cur; }
@@ -101,9 +92,7 @@ private:
     };
 
     void pollEvents();
-    // controller actions: create the "main" set + actions, attach, and suggest per-profile bindings
     void initActions();
-    // read per-hand controller pose + trigger into fr (called once per poll, after locateViews)
     void pollControllers(XrFrame& fr);
     void destroyActions();
 
@@ -121,7 +110,6 @@ private:
     XrSessionState m_state = XR_SESSION_STATE_UNKNOWN;
     XrFrameState m_fs{};
     XrView m_views[2]{};
-    // controller actions (hands in OpenXR order: left, right)
     XrActionSet m_actionSet = XR_NULL_HANDLE;
     XrPath m_hand[2] = {XR_NULL_PATH, XR_NULL_PATH};
     XrAction m_gripPose = XR_NULL_HANDLE, m_aimPose = XR_NULL_HANDLE, m_trigger = XR_NULL_HANDLE,
@@ -129,11 +117,8 @@ private:
              m_buttonB = XR_NULL_HANDLE;
     XrSpace m_gripSpace[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE}, m_aimSpace[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
     int m_diagFrame = 0;
-    // createDevice phases
     bool createInstance();
-    // non-fatal: SteamVR pre-session requirement, falls back to app.instance()
     void createShadowInstance();
-    // informational: what the runtime wants before xrCreateSession
     void queryRuntimeVulkan(VkApp& app);
     bool createVulkanDevice(VkApp& app);
     XrCompositionLayerProjectionView m_proj[2]{};

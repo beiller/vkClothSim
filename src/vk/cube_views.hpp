@@ -2,9 +2,6 @@
 #include "math.hpp"
 #include <array>
 
-// the six view-proj matrices of a cube sitting at `pos` (Vulkan cubemap face order:
-// +X -X +Y -Y +Z -Z), each face looking outward through a fixed 90 degree fov. Used by the
-// point-light shadow cube and any future display cube (e.g. reflection probes).
 inline std::array<Mat4, 6> cubeViewProj(V3 pos, float nearP, float farP) {
     struct Face {
         V3 right, up, back;

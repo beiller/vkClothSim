@@ -1,9 +1,8 @@
 #pragma once
 #include "math.hpp"
 
-// one soft-body collision capsule, 48 bytes, packed for the compute shader
 struct CapsuleGPU {
-    float centerRadius[4]; // xyz = center, w = radius
+    float centerRadius[4];
     float quat[4];
     float halfLen[4];
 };

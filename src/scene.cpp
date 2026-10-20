@@ -26,18 +26,10 @@ using nlohmann::json;
     throw SceneError("scene " + path + ": " + msg);
 }
 
-// path in the cwd, or relative to the exe (running from the build dir)
 std::string resolveFile(const std::string& p) {
     return std::filesystem::exists(p) ? p : exeDir() + "/../" + p;
 }
 
-// ---- scene tab: explicit widgets from JSON, bound by URL
-
-// ---- scene objects
-
-// a "components" block: emplace each named component (the same struct-shape vocabulary as Lua
-// scene.replace; omitted fields keep the C++ defaults). Values: numbers, booleans, strings,
-// arrays of numbers
 void addComponents(entt::registry& reg, entt::entity e, const json& cj, const std::string& p, const std::string& what) {
     for (const auto& [tn, fj] : cj.items()) {
         CompFields fields;
@@ -80,8 +72,6 @@ void addComponents(entt::registry& reg, entt::entity e, const json& cj, const st
     }
 }
 
-// one scene object: Name + "components" + "gltf" + "script". Textures are ordinary objects; a
-// string on a Ref-kind field names an earlier-defined object (define before use)
 void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh) {
     const auto name = o.at("name").get<std::string>();
     const std::string what = "object '" + name + "'";
@@ -104,13 +94,11 @@ void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh)
         auto& ls = w.reg.emplace<LuaScript>(e);
         ls.file = o["script"].get<std::string>();
     } else if (!o.contains("gltf") && !w.reg.try_get<Transform>(e)) {
-        w.reg.emplace<Transform>(e); // identity; lets a plain container parent children
+        w.reg.emplace<Transform>(e);
     }
 }
 
-} // namespace
-
-// ---- editor tab: auto-generated from reflect.hpp tables x ECS contents
+}
 
 void spawnEditorUi(Engine& w, entt::entity tab) {
     std::vector<std::pair<entt::entity, std::string>> named;
@@ -142,19 +130,13 @@ void spawnEditorUi(Engine& w, entt::entity tab) {
 void initEngine(Engine& w) {
     w.rigid.init();
     w.gpuSim.init(w.app->device(), w.app->pdev());
-    // mat4Identity: a scene (menu or --scene) always sets the camera view before the first frame
     w.renderer.init(*w.app, 256, mat4Identity());
     w.script.init(w);
-    // geometry stdlib: the engine always loads "scenes/mesh" as the global `mesh` (declarative
-    // meshes + VR grips); scene scripts use it to generate their own geometry
     std::string err;
     if (!w.script.loadMeshStdlib(err)) {
         std::fprintf(stderr, "3dsim: geometry stdlib: %s\n", err.c_str());
         std::exit(1);
     }
-    // destroy observers: the subsystems hold entity -> id handles and reclaim them on component
-    // destroy (GPU frees defer one frame); registered once at boot (a per-scene re-registration
-    // would stack sinks), before any script runs (a _on_ready may destroy entities)
     w.script.watch(w.reg);
     w.renderer.watch(w.reg);
     w.rigid.watch(w.reg);
@@ -163,14 +145,10 @@ void initEngine(Engine& w) {
 }
 
 void resetScene(Engine& w) {
-    // the last frame's GPU work is done (sync present / xr waitFrame): release the deferred
-    // frees, then drop every entity. clear() does not fire the on_destroy observers, so the
-    // subsystem resets below must (and do) free all the resources they hold, not just the rest
     w.renderer.flushFrees();
     w.gpuSim.soft.flushFrees();
     w.gpuSim.skin.flushFrees();
     w.reg.clear();
-    // the maps the observers leave behind (entity ids recycle, so they must not survive)
     w.rigid.reset();
     w.renderer.reset();
     w.gpuSim.soft.reset();
@@ -211,8 +189,6 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
         w.render.envIntensity = j.value("envIntensity", 1.0f);
         const json& objects = j.value("objects", json::array());
 
-        // the scene's camera: exactly one object with a Camera component. It is built first so
-        // the renderer can start from its pose (VR later spawns its own "vr cam")
         const json* camObj = nullptr;
         for (const auto& o : objects)
             if (o.contains("components") && o["components"].contains("Camera")) {
@@ -233,11 +209,8 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
             if (&o != camObj)
                 buildObject(w, o, p, true);
 
-        // activate every script entity to fixpoint (a _on_ready may spawn more); runs before
-        // sim.build() and the UI so URLs and the editor tab see their spawned entities
         w.script.activateScripts();
 
-        // set block after the script: URLs may point at script-spawned entities
         if (j.contains("set")) {
             for (const auto& [k, v] : j["set"].items()) {
                 float vals[4];
@@ -263,7 +236,7 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
                 fail(p, "cannot load env '" + env + "'");
             w.renderer.setEnvironment(*w.app, hdr.rgb.data(), (uint32_t)hdr.w, (uint32_t)hdr.h);
         }
-        w.script.buildUi(j); // the scene's ui module decides whether the window appears
+        w.script.buildUi(j);
         return true;
     } catch (const SceneError& e) {
         err = e.what();

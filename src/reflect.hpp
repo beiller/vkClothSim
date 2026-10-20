@@ -1,6 +1,4 @@
 #pragma once
-// hand-written reflection tables: the field knowledge the UI editor and URL resolver both use.
-// add a component here to make it inspectable/bindable; omission = not exposed (curation).
 #include "engine.hpp"
 #include <cstddef>
 #include <cstring>
@@ -9,8 +7,6 @@
 #include <utility>
 #include <vector>
 
-// Ref = entity reference, Str = a string, Quat/FloatArr/UIntArr/EntArr have no UI widget
-// (vocabulary + text only); the editor draws the kinds it has widgets for and skips the rest
 enum class FieldKind {
     SliderF,
     SliderI,
@@ -22,7 +18,7 @@ enum class FieldKind {
     Quat,
     FloatArr,
     UIntArr,
-    EntArr // an array of entity references
+    EntArr
 };
 
 struct FieldDesc {
@@ -67,7 +63,6 @@ static const FieldDesc kMaterial[] = {
     {"refraction", OFF(Material, refraction), FieldKind::SliderF, -1.0f, 1.0f},
     {"ior", OFF(Material, ior), FieldKind::SliderF, 1.0f, 1.8f},
 };
-// offset unused for Ref fields
 static const FieldDesc kMaterialRef[] = {
     {"material", 0, FieldKind::Ref},
 };
@@ -99,7 +94,7 @@ static const FieldDesc kSoftBodyData[] = {
     {"params.stiffness", OFF2(SoftBodyData, params, stiffness), FieldKind::SliderF, 0.0f, 1.0f},
     {"params.tension", OFF2(SoftBodyData, params, tension), FieldKind::SliderF, 0.5f, 1.5f},
     {"params.friction", OFF2(SoftBodyData, params, friction), FieldKind::SliderF, 0.0f, 50.0f},
-    {"cons", OFF(SoftBodyData, cons), FieldKind::FloatArr}, // flat {a, b, rest, k} quads
+    {"cons", OFF(SoftBodyData, cons), FieldKind::FloatArr},
 };
 static const FieldDesc kRigidBody[] = {
     {"friction", OFF(RigidBody, friction), FieldKind::SliderF, 0.0f, 1.0f},
@@ -160,7 +155,6 @@ static const FieldDesc kRenderable[] = {
 static const FieldDesc kTexture[] = {
     {"path", OFF(Texture, path), FieldKind::Str},
 };
-// offsets into the Mesh vectors (Geometry is standard-layout; the vectors are contiguous)
 static const FieldDesc kGeometry[] = {
     {"pos", OFF(Geometry, mesh.pos), FieldKind::FloatArr},
     {"nrm", OFF(Geometry, mesh.nrm), FieldKind::FloatArr},
@@ -173,7 +167,6 @@ static const FieldDesc kRenderSettings[] = {
     {"envIntensity", OFF(RenderSettings, envIntensity), FieldKind::SliderF, 0.0f, 3.0f},
 };
 static const FieldDesc kRigidScene[] = {
-    // RigidScene is not standard-layout (Jolt members); velocitySteps is its first member
     {"velocitySteps", 0, FieldKind::SliderI, 1.0f, 64.0f},
 };
 
@@ -206,14 +199,13 @@ inline const TypeDesc* findType(const char* name) {
     return nullptr;
 }
 
-// reflected components present on an entity: (type, base pointer)
 inline std::vector<std::pair<const TypeDesc*, const void*>> entityFields(const entt::registry& reg, entt::entity e) {
     std::vector<std::pair<const TypeDesc*, const void*>> out;
     if (auto* p = reg.try_get<Transform>(e))
         out.push_back({findType("Transform"), (const void*)p});
-    if (auto* p = reg.try_get<Material>(e)) // on material entities
+    if (auto* p = reg.try_get<Material>(e))
         out.push_back({findType("Material"), (const void*)p});
-    if (auto* p = reg.try_get<MaterialRef>(e)) // on mesh entities
+    if (auto* p = reg.try_get<MaterialRef>(e))
         out.push_back({findType("MaterialRef"), (const void*)p});
     if (auto* p = reg.try_get<Camera>(e))
         out.push_back({findType("Camera"), (const void*)p});
@@ -242,7 +234,6 @@ inline std::vector<std::pair<const TypeDesc*, const void*>> entityFields(const e
     return out;
 }
 
-// Engine-level (non-entity) state exposed under reserved URL roots
 struct RootRef {
     const TypeDesc* type;
     void* base;
@@ -252,4 +243,4 @@ inline std::vector<RootRef> roots(Engine& w) {
     return {{findType("RenderSettings"), &w.render}, {findType("RigidScene"), &w.rigid}};
 }
 
-} // namespace refl
+}

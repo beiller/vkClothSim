@@ -31,18 +31,10 @@ void Renderer::makeComputePass(const void* spv, uint32_t len, const std::vector<
 }
 
 void Renderer::writeEnvSet(VkDescriptorSet set) {
-    VkWriteDescriptorSet w[2]{};
-    for (auto& entry : w) {
-        entry.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        entry.dstSet = set;
-        entry.descriptorCount = 1;
-        entry.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    }
-    w[0].dstBinding = 9;
-    w[0].pImageInfo = &m_envSpecInfo;
-    w[1].dstBinding = 10;
-    w[1].pImageInfo = &m_envIrrInfo;
-    vkUpdateDescriptorSets(m_dev, 2, w, 0, nullptr);
+    WriteDescs w;
+    w.image(set, 9, m_envSpecInfo);
+    w.image(set, 10, m_envIrrInfo);
+    w.update(m_dev);
 }
 
 void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h) {
@@ -53,9 +45,7 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     const uint32_t cubeSize = 256;
     const uint32_t mips = 5;
 
-    // equirect HDR: upload via staging buffer. Metal rejects linear tiling for 16/32-bit float
-    // and does not support R32G32B32_SFLOAT at all, so repack RGB->RGBA and use
-    // R32G32B32A32_SFLOAT in a device-local (optimal) image copied in on the GPU.
+    // repack RGB->RGBA in a device-local image: Metal rejects linear tiling for 16/32-bit float and lacks R32G32B32_SFLOAT
     const VkFormat eqFmt = VK_FORMAT_R32G32B32A32_SFLOAT;
     const size_t eqPixels = (size_t)w * h;
     std::vector<float> eqRgba(eqPixels * 4);
@@ -117,8 +107,7 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     m_envIrrInfo = {m_cubeSampler, m_envIrr.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo eqInfo{m_eqSampler, m_envEq.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo preSam{m_cubeSampler, m_envPre.view, VK_IMAGE_LAYOUT_GENERAL};
-    // store through CUBE views (the same views the glass samples): on this driver the 2D_ARRAY
-    // view's layer mapping differs from the CUBE view's, and mixing the two scrambles the faces
+    // store through CUBE views (the same views the glass samples): on this driver the 2D_ARRAY view's layer mapping differs from the CUBE view's, mixing scrambles the faces
     VkImageView prefMipView[5] = {};
     for (uint32_t m = 0; m < mips; ++m)
         vkMakeCubeMipView(m_dev, m_envPre.img, m, prefMipView[m]);
@@ -133,20 +122,11 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     makeComputePass(env_prefilter_spv, env_prefilter_spv_len / 4, cubeBinds, 8, m_pcPref, 5);
     makeComputePass(env_irradiance_spv, env_irradiance_spv_len / 4, cubeBinds, 4, m_pcIrr);
 
-    auto writeImg = [&](VkDescriptorSet set, uint32_t binding, VkDescriptorType type, const VkDescriptorImageInfo& ii) {
-        VkWriteDescriptorSet wr{};
-        wr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        wr.dstSet = set;
-        wr.dstBinding = binding;
-        wr.descriptorCount = 1;
-        wr.descriptorType = type;
-        wr.pImageInfo = &ii;
-        vkUpdateDescriptorSets(m_dev, 1, &wr, 0, nullptr);
-    };
-    writeImg(m_pcCube.set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, eqInfo);
-    writeImg(m_pcCube.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, preImg);
-    writeImg(m_pcPref.set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, preSam);
-    writeImg(m_pcPref.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, preImg);
+    WriteDescs wd;
+    wd.image(m_pcCube.set, 0, eqInfo);
+    wd.image(m_pcCube.set, 1, preImg, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+    wd.image(m_pcPref.set, 0, preSam);
+    wd.image(m_pcPref.set, 1, preImg, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
     // one descriptor set per prefilter mip: a set must not be re-updated between dispatches
     VkDescriptorSet prefSet[5];
     prefSet[0] = m_pcPref.set;
@@ -160,26 +140,17 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
         VK(vkAllocateDescriptorSets(m_dev, &sa, prefSet + 1));
     }
     for (uint32_t m = 1; m < mips; ++m) {
-        writeImg(prefSet[m], 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, preSam);
-        const VkDescriptorImageInfo mi{VK_NULL_HANDLE, prefMipView[m], VK_IMAGE_LAYOUT_GENERAL};
-        writeImg(prefSet[m], 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, mi);
+        wd.image(prefSet[m], 0, preSam);
+        wd.image(prefSet[m], 1, {VK_NULL_HANDLE, prefMipView[m], VK_IMAGE_LAYOUT_GENERAL}, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
     }
-    writeImg(m_pcIrr.set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, preSam);
-    writeImg(m_pcIrr.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, irrImg);
+    wd.image(m_pcIrr.set, 0, preSam);
+    wd.image(m_pcIrr.set, 1, irrImg, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+    wd.update(m_dev);
 
     VkCommandBuffer cmd = app.beginCommands();
 
-    VkImageMemoryBarrier eqFirst{}; // created UNDEFINED: transition before the first use
-    eqFirst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    eqFirst.image = m_envEq.img;
-    eqFirst.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    eqFirst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    eqFirst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    eqFirst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    eqFirst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    eqFirst.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
-                        nullptr, 1, &eqFirst);
+    vkImgBarrier(cmd, m_envEq.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
+                 VK_ACCESS_TRANSFER_WRITE_BIT, 1, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
     VkBufferImageCopy bic{};
     bic.bufferOffset = 0;
     bic.bufferRowLength = w;
@@ -188,46 +159,14 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     bic.imageOffset = {0, 0, 0};
     bic.imageExtent = {w, h, 1};
     vkCmdCopyBufferToImage(cmd, eqStg, m_envEq.img, VK_IMAGE_LAYOUT_GENERAL, 1, &bic);
-    VkImageMemoryBarrier eqBar{};
-    eqBar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    eqBar.image = m_envEq.img;
-    eqBar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    eqBar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    eqBar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    eqBar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    eqBar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    eqBar.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    eqBar.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
-                         nullptr, 1, &eqBar);
-    VkImageMemoryBarrier cubeFirst[2]{}; // created UNDEFINED: transition before the first use
-    for (int i = 0; i < 2; ++i) {
-        cubeFirst[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        cubeFirst[i].image = (i == 0) ? m_envPre.img : m_envIrr.img;
-        cubeFirst[i].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, (uint32_t)(i == 0 ? mips : 1), 0, 6};
-        cubeFirst[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        cubeFirst[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        cubeFirst[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        cubeFirst[i].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        cubeFirst[i].newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    }
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
-                         nullptr, 2, cubeFirst);
+    vkImgBarrier(cmd, m_envEq.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+                 VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, 1, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+    for (int i = 0; i < 2; ++i)
+        vkImgBarrier(cmd, (i == 0) ? m_envPre.img : m_envIrr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                     (i == 0) ? mips : 1, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 6);
 
-    auto imgBar = [&](VkImage img, uint32_t lvl) {
-        VkImageMemoryBarrier b{};
-        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b.image = img;
-        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, lvl, 0, 6};
-        b.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
-                             nullptr, 0, nullptr, 1, &b);
-    };
     const uint32_t groups = (cubeSize + 7) / 8;
     const int pcSize = (int)cubeSize;
 
@@ -235,7 +174,9 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcCube.pl, 0, 1, &m_pcCube.set, 0, nullptr);
     vkCmdPushConstants(cmd, m_pcCube.pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &pcSize);
     vkCmdDispatch(cmd, groups, groups, 6);
-    imgBar(m_envPre.img, mips);
+    vkImgBarrier(cmd, m_envPre.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+                 VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, mips,
+                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 6);
 
     for (uint32_t mip = 1; mip < mips; ++mip) {
         const uint32_t size = cubeSize >> mip;
@@ -244,14 +185,18 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
         const int pcPref[2] = {(int)mip, (int)size};
         vkCmdPushConstants(cmd, m_pcPref.pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, 8, pcPref);
         vkCmdDispatch(cmd, (size + 7) / 8, (size + 7) / 8, 6);
-        imgBar(m_envPre.img, mips);
+        vkImgBarrier(cmd, m_envPre.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+                     VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, mips,
+                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 6);
     }
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcIrr.pipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcIrr.pl, 0, 1, &m_pcIrr.set, 0, nullptr);
     vkCmdPushConstants(cmd, m_pcIrr.pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &pcSize);
     vkCmdDispatch(cmd, groups, groups, 6);
-    imgBar(m_envIrr.img, 1);
+    vkImgBarrier(cmd, m_envIrr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+                 VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, 1,
+                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 6);
     app.submit(cmd);
     vkFreeBuffer(m_dev, eqStg, eqStgMem);
 

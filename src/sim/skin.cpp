@@ -13,10 +13,9 @@ const float kIdentity4[4][4] = {{1, 0, 0, 0},
                                 {0, 0, 1, 0},
                                 {0, 0, 0, 1}};
 
-// affine inverse of a Mat4 (last row 0,0,0,1): invert the 3x3 linear part, translation -L^-1*t
 Mat4 invertAffine(const Mat4& M) {
-    const float* m = M.m; // m[col*4+row]
-    float r[9];           // row-major: r[i*3+j] = m[col j][row i]
+    const float* m = M.m;
+    float r[9];
     for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 3; ++j)
             r[i * 3 + j] = m[j * 4 + i];
@@ -25,7 +24,7 @@ Mat4 invertAffine(const Mat4& M) {
     if (det == 0.0f)
         det = 1.0f; // degenerate: avoid divide-by-zero
     const float idet = 1.0f / det;
-    float invr[9]; // row-major inverse of the linear part
+    float invr[9];
     invr[0] = (e * k - f * h) * idet;
     invr[1] = (c * h - b * k) * idet;
     invr[2] = (b * f - c * e) * idet;
@@ -39,7 +38,7 @@ Mat4 invertAffine(const Mat4& M) {
     const float tx = m[12], ty = m[13], tz = m[14];
     for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 3; ++j)
-            inv.m[j * 4 + i] = invr[i * 3 + j]; // column-major again
+            inv.m[j * 4 + i] = invr[i * 3 + j];
     inv.m[12] = -(invr[0] * tx + invr[1] * ty + invr[2] * tz);
     inv.m[13] = -(invr[3] * tx + invr[4] * ty + invr[5] * tz);
     inv.m[14] = -(invr[6] * tx + invr[7] * ty + invr[8] * tz);
@@ -71,7 +70,7 @@ VkBufferMemoryBarrier bufBarrier(VkBuffer buf) {
     return b;
 }
 
-} // namespace
+}
 
 void Skin::init(VkDevice dev, VkPhysicalDevice pdev) {
     m_dev = dev;
@@ -101,8 +100,6 @@ int Skin::addGroup(entt::entity e, const SkelGroupDesc& d) {
     g.skelGpu = skelGpu;
     g.nV = d.nV;
     const int nT = d.nV > 0 ? (int)(d.deltas.size() / ((size_t)d.nV * 3)) : 0;
-    // no baking: pos0 stays pure rest; the file's static (frame-0) weights are evaluated by the
-    // GPU kernel each step, starting at the character's real shape
     g.morphW0 = d.initWeights;
     g.morphW0.resize((size_t)nT, 0.0f);
     g.morphW = g.morphW0;
@@ -117,23 +114,17 @@ int Skin::addGroup(entt::entity e, const SkelGroupDesc& d) {
     mkDev(g.nrm0, 12 * vn, d.nrm0.data());
     mkDev(g.joints, 16 * vn, d.joints.data());
     mkDev(g.weights, 16 * vn, d.weights.data());
-    // Vulkan rejects zero-size buffers: a group with no morph targets still needs a valid
-    // binding (never read - the kernel loops over activeCount, which is 0)
     if (nT > 0)
         mkDev(g.deltas, 12 * vn * (VkDeviceSize)nT, d.deltas.data());
     else
         mkDev(g.deltas, 4, nullptr);
-    // host-visible: the CPU rewrites the active list every step
     vkMakeBuffer(m_dev, m_pdev, g.activeMorphs.b, g.activeMorphs.m, 8 * kMaxActiveMorphs,
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     g.activeMorphs.sz = 8 * kMaxActiveMorphs;
-    // outputs start at the rest data: the first frame renders the bind pose before the first
-    // sim step runs
     mkDev(g.posOut, 12 * vn, d.pos0.data());
     mkDev(g.nrmOut, 12 * vn, d.nrm0.data());
     m_groups.push_back(std::move(g));
     m_skels[(size_t)skelGpu].groups.push_back((int)m_groups.size() - 1);
-    // groups added after build() create their own descriptor set (build() did the load-time ones)
     if (!m_pools.empty()) {
         ensurePoolSlot();
         makeGroupSet(m_groups.back());
@@ -209,8 +200,6 @@ void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
                 return wt->toMat4();
         return mat4Identity();
     };
-    // M[k] = inv(placement) x WorldTransform[joint_k] x invBinds[k]: the placement prefix
-    // appears in both factors and cancels, leaving the model-space deformation
     const Mat4 invPlace = invertAffine(worldOf(s.placement));
     for (size_t k = 0; k < s.joints.size(); ++k) {
         const Mat4 M = mul4(mul4(invPlace, worldOf(s.joints[k])), s.invBinds[k]);
@@ -268,8 +257,6 @@ void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pl, 0, 1, &g.set, 0, nullptr);
             vkCmdPushConstants(cmd, m_pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, (uint32_t)sizeof(pc), pc);
             vkCmdDispatch(cmd, (g.nV + 63) / 64, 1, 1);
-            // the render submit starts only after this one's fence; the barrier matches the soft
-            // sim's tail idiom
             VkBufferMemoryBarrier post[2] = {bufBarrier(g.posOut.b), bufBarrier(g.nrmOut.b)};
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, 0, 0,
                                  nullptr, 2, post, 0, nullptr);
@@ -305,14 +292,12 @@ int Skin::meshRefs(int groupId) const {
     return refs;
 }
 
-// free the group's buffers (queued for the next frame start) once it is frozen and no live
-// mesh aliases its outputs anymore
 void Skin::maybeFreeGroup(int groupId) {
     Group& g = m_groups[(size_t)groupId];
     if (g.freed || !g.dead)
         return;
     if (!m_skels[(size_t)g.skelGpu].dead)
-        return; // the skeleton is alive: keep the frozen buffers (a mesh may still alias them)
+        return;
     g.freed = true;
     m_freeGroups.push_back(groupId);
 }
@@ -325,8 +310,6 @@ void Skin::destroySkeleton(entt::entity e) {
     m_ent.erase(ce);
     if (m_skels[(size_t)skelGpu].dead)
         return;
-    // freeze: the groups stop dispatching (the meshes keep drawing the last pose); free any
-    // group whose meshes are already all gone
     m_skels[(size_t)skelGpu].dead = true;
     for (int gid : m_skels[(size_t)skelGpu].groups) {
         m_groups[(size_t)gid].dead = true;
@@ -334,14 +317,10 @@ void Skin::destroySkeleton(entt::entity e) {
     }
 }
 
-// the ECS is the source of truth for which skeletons exist: a Skeleton destroy freezes the
-// skeleton (the renderer still draws the aliasing meshes at their last pose)
 void Skin::onSkeletonDestroyed(entt::registry&, entt::entity e) {
     destroySkeleton(e);
 }
 
-// a mesh (Renderable) teardown unlinks it from its group; the last aliasing mesh of a frozen
-// skeleton releases the group's buffers
 void Skin::onMeshDestroyed(entt::registry&, entt::entity e) {
     const auto it = m_meshGroup.find(e);
     if (it == m_meshGroup.end())
@@ -358,7 +337,7 @@ void Skin::releaseGroupBufs(Group& g) {
     Buf* bufs[8] = {&g.pos0, &g.nrm0, &g.joints, &g.weights, &g.deltas, &g.activeMorphs, &g.posOut, &g.nrmOut};
     for (Buf* bp : bufs) {
         if (bp->b == VK_NULL_HANDLE)
-            continue; // already released (idempotent, so shutdown can run over freed groups)
+            continue;
         vkFreeBuffer(m_dev, bp->b, bp->m);
         bp->b = VK_NULL_HANDLE;
         bp->m = VK_NULL_HANDLE;
@@ -388,7 +367,7 @@ void Skin::reset() {
         vkFreeBuffer(m_dev, c.jointDQ.b, c.jointDQ.m);
     m_skels.clear();
     for (auto& g : m_groups)
-        releaseGroupBufs(g); // idempotent: queued-freed and live groups alike
+        releaseGroupBufs(g);
     m_groups.clear();
     for (auto& p : m_pools)
         if (p)

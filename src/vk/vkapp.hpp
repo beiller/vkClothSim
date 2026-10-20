@@ -8,19 +8,15 @@
 
 class VkApp {
 public:
-    // phase 1: window + instance + surface + physical device (no VkDevice yet)
     bool initInstance(int width, int height, const char* title);
-    // phase 2: device-dependent resources (swapchain, render passes, pool, fence)
     bool initDevice(VkDevice dev);
-    // create the VkDevice with our queue + extensions (used when no OpenXR device)
     VkDevice makeDevice();
-    // queue + extensions for a VkDeviceCreateInfo; OpenXR uses this for xrCreateVulkanDeviceKHR
     const VkDeviceCreateInfo& deviceCreateInfo() const { return m_dci; }
     void shutdown();
 
     bool windowShouldClose() const;
     void pollEvents();
-    void resizeBuffers(); // rebuild the swapchain if the framebuffer size changed (called each frame, before the acquire)
+    void resizeBuffers(); // rebuild the swapchain if the framebuffer size changed, before the acquire
 
     GLFWwindow* glfwWindow() const { return m_win; }
     VkInstance instance() const { return m_inst; }
@@ -35,8 +31,6 @@ public:
     VkImageView view(uint32_t i) const { return m_views[i]; }
     VkFramebuffer sceneFramebuffer() const { return m_sceneFb; }
     VkFramebuffer sceneNoClearFramebuffer() const { return m_sceneFbNoClear; }
-    VkFramebuffer sceneNoClearOnSceneFramebuffer() const { return m_sceneFbNoClearOnScene; }
-    VkFramebuffer sceneOnHdrFramebuffer() const { return m_sceneFbSceneOnHdr; }
     VkImageView depthView() const { return m_depthView; }
     VkImageView sceneColorView() const { return m_sceneColorView; }
     VkImageView sceneColorTempView() const { return m_sceneColorTempView; }
@@ -86,9 +80,6 @@ private:
     VkFramebuffer m_sceneFb = VK_NULL_HANDLE;
     VkRenderPass m_rpSceneNoClear = VK_NULL_HANDLE;
     VkFramebuffer m_sceneFbNoClear = VK_NULL_HANDLE;
-    // DBG: isolation framebuffers (noClear rp on sceneColor; scene rp on hdr)
-    VkFramebuffer m_sceneFbNoClearOnScene = VK_NULL_HANDLE;
-    VkFramebuffer m_sceneFbSceneOnHdr = VK_NULL_HANDLE;
     VkImage m_depth = VK_NULL_HANDLE;
     VkDeviceMemory m_depthMem = VK_NULL_HANDLE;
     VkImageView m_depthView = VK_NULL_HANDLE;

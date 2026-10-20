@@ -62,11 +62,9 @@ inline V4 quatMul(V4 a, V4 b) {
     return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
             a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
 }
-// inverse of a unit quaternion
 inline V4 quatInv(V4 q) {
     return {-q.x, -q.y, -q.z, q.w};
 }
-// shortest-arc unit quaternion rotating `from` onto `to` (both should be normalized)
 inline V4 quatFromTo(const V3& from, const V3& to) {
     const V3 c = vCross(from, to);
     const float d = vDot(from, to);
@@ -112,7 +110,6 @@ inline Mat4 perspective(float fovyDeg, float aspect, float nearP, float farP) {
     return r;
 }
 
-// R^T (world-to-pose): rows are the pose's right/up/back axes in the parent frame (view-matrix form)
 inline void quatToMat3(const float q[4], float m[9]) {
     float x = q[0], y = q[1], z = q[2], w = q[3];
     m[0] = 1.0f - 2.0f * (y * y + z * z);
@@ -126,7 +123,6 @@ inline void quatToMat3(const float q[4], float m[9]) {
     m[8] = 1.0f - 2.0f * (x * x + y * y);
 }
 
-// true pose-to-world rotation: quatToMat3 returns R^T, so apply its transpose (R) to v
 inline V3 quatRotate(const V4& q, V3 v) {
     const float qq[4] = {q.x, q.y, q.z, q.w};
     float m[9];
@@ -159,8 +155,6 @@ inline Mat4 viewFromPose(const V3& pos, const V4& q) {
     return r;
 }
 
-// signed tangents (OpenXR convention: angleLeft/angleDown negative)
-// matches Godot OpenXRUtil::XrMatrix4x4f_CreateProjection with GRAPHICS_OPENGL
 inline Mat4 projFov(float tl, float tr, float tu, float td, float nearP, float farP) {
     const float w = tr - tl;
     const float h = tu - td;

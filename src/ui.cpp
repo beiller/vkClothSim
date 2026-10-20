@@ -42,7 +42,6 @@ void spawnFieldWidget(Engine& w, entt::entity parent, const char* label, const F
         spawnWidget(w, parent, UIDragV3{label, 0.1f, [p] { return (float*)p; }});
         break;
     case FieldKind::Ref: {
-        // read-only: show the referenced entity's name (re-read each frame)
         const entt::entity target = *(const entt::entity*)p;
         spawnWidget(w, parent, UIText{label, [&w, target] {
                                           const auto* n = w.reg.try_get<Name>(target);
@@ -51,7 +50,6 @@ void spawnFieldWidget(Engine& w, entt::entity parent, const char* label, const F
         break;
     }
     case FieldKind::Str: {
-        // read-only text
         const std::string* sp = (const std::string*)p;
         spawnWidget(w, parent, UIText{label, [sp] { return *sp; }});
         break;
@@ -84,12 +82,11 @@ void spawnFieldWidget(Engine& w, entt::entity parent, const char* label, const F
         break;
     }
     case FieldKind::Quat:
-        break; // no widget; the editor edits the quaternion via the qx..qw sliders
+        break;
     }
 }
 
 void spawnFpsHud(Engine& w) {
-    // app-level fps HUD, also a UI window entity
     const entt::entity fpsWin =
         spawnUiWindow(w, UIWindow{"##fps",
                                   [&w] {
@@ -170,7 +167,6 @@ void drawUi(Engine& w) {
     std::function<void(entt::entity)> drawWidget;
     std::function<void(entt::entity)> drawKids;
     drawWidget = [&](entt::entity e) {
-        // scope the widget's ID to its entity; sibling sections reuse labels ("metallic", "on", ...)
         ImGui::PushID((int)e);
         if (const auto* s = reg.try_get<UISliderF>(e))
             ImGui::SliderFloat(s->label.c_str(), s->value(), s->lo, s->hi, s->fmt.c_str());
@@ -203,14 +199,9 @@ void drawUi(Engine& w) {
     };
     drawKids = [&](entt::entity parent) {
         const auto v = orderKids(parent);
-        // content pass: every non-tab widget of this level
         for (entt::entity e : v)
             if (!reg.try_get<UITab>(e))
                 drawWidget(e);
-        // tab pass: tab children form this level's tab bar (convention), drawn after the content.
-        // BeginTabBar/BeginTabItem manage their own ID pushes, so tabs are not PushID-scoped
-        // (wrapping them would make the tab ID depend on selection); EndTabItem must be called
-        // only for opened items.
         bool barOpen = false;
         for (entt::entity e : v) {
             const auto* tab = reg.try_get<UITab>(e);
@@ -234,8 +225,6 @@ void drawUi(Engine& w) {
               [&](entt::entity a, entt::entity b) { return reg.get<UIWindow>(a).order < reg.get<UIWindow>(b).order; });
     for (entt::entity win : wins) {
         const UIWindow& cfg = reg.get<UIWindow>(win);
-        // NoMove windows (like the fps HUD) track their pos every frame; others are placed once and
-        // can be moved/resized freely (state persists in imgui.ini)
         const bool pin = cfg.flags & ImGuiWindowFlags_NoMove;
         ImGui::SetNextWindowPos(ImVec2(cfg.pos().x, cfg.pos().y), pin ? ImGuiCond_Always : ImGuiCond_Appearing);
         if (cfg.size.x > 0.0f && cfg.size.y > 0.0f)
@@ -247,4 +236,3 @@ void drawUi(Engine& w) {
         ImGui::End();
     }
 }
-

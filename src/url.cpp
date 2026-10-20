@@ -11,8 +11,6 @@ static const FieldDesc* findField(const TypeDesc* t, const std::string& name) {
     return nullptr;
 }
 
-// resolve a field on a specific entity (no name lookup): optional Component qualifier
-// ("Component.field"), then a MaterialRef fallthrough. label is for error messages.
 bool resolveEntityField(const Engine& w, entt::entity ent, const std::string& field, const std::string& label,
                         UrlRef& out, std::string& err) {
     auto comps = refl::entityFields(w.reg, ent);
@@ -21,7 +19,6 @@ bool resolveEntityField(const Engine& w, entt::entity ent, const std::string& fi
         return false;
     }
 
-    // optional qualifier: Component.field (strip it; the lookup is on the bare field name)
     const TypeDesc* qual = nullptr;
     size_t dot = field.find('.');
     if (dot != std::string::npos)
@@ -42,9 +39,6 @@ bool resolveEntityField(const Engine& w, entt::entity ent, const std::string& fi
             ++matches;
         }
     }
-    // field not on the entity: follow its MaterialRef to the shared material (indirection), so
-    // "ball.roughness" addresses the material many meshes may share (an explicit qualifier does
-    // not fall through)
     if (matches == 0 && !qual)
         if (const auto* ref = w.reg.try_get<MaterialRef>(ent))
             for (auto& [t, b] : refl::entityFields(w.reg, ref->mat)) {
@@ -107,7 +101,6 @@ bool resolveUrl(const Engine& w, const std::string& url, UrlRef& out, std::strin
     return resolveEntityField(w, ent, rest, head, out, err);
 }
 
-// write vals into a resolved field; false on a kind/count mismatch
 static bool applySet(const UrlRef& r, const float* vals, int n, std::string& err) {
     switch (r.field->kind) {
     case FieldKind::SliderF:
@@ -157,7 +150,6 @@ static bool applySet(const UrlRef& r, const float* vals, int n, std::string& err
     return false;
 }
 
-// read a resolved field into vals (maxN floats); out n = 1 for scalars, 3 for Color/DragV3
 static bool applyGet(const UrlRef& r, float* vals, int maxN, int& n, std::string& err) {
     switch (r.field->kind) {
     case FieldKind::SliderF:
@@ -219,7 +211,6 @@ bool sceneGet(const Engine& w, const std::string& url, float* vals, int maxN, in
     return applyGet(r, vals, maxN, n, err);
 }
 
-// handle form: address a field on a specific entity (arg-1 = handle, not a name URL)
 bool sceneSetEnt(Engine& w, entt::entity ent, const std::string& field, const float* vals, int n, std::string& err) {
     UrlRef r;
     if (!resolveEntityField(w, ent, field, "entity", r, err))

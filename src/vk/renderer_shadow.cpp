@@ -75,17 +75,9 @@ void Renderer::initShadow(VkApp& app) {
 
     VkCommandBuffer cmd = app.beginCommands();
     VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, nLayers};
-    VkImageMemoryBarrier sb{}; // created UNDEFINED: transition before the first use
-    sb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    sb.image = m_shadowCube;
-    sb.subresourceRange = range;
-    sb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    sb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    sb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    sb.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    sb.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
-                        1, &sb);
+    vkImgBarrier(cmd, m_shadowCube, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
+                 VK_ACCESS_TRANSFER_WRITE_BIT, 1, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                 nLayers);
     const float farD = m_shadowRange + 1.0f;
     VkClearColorValue clear{{farD, farD, farD, 1.0f}};
     vkCmdClearColorImage(cmd, m_shadowCube, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
@@ -155,16 +147,8 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd, const entt::registry& reg)
         }
     }
 
-    VkImageMemoryBarrier imb{};
-    imb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    imb.image = m_shadowCube;
-    imb.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, (uint32_t)(n * 6)};
-    imb.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    imb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    imb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    imb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    imb.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    imb.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
-                         0, nullptr, 0, nullptr, 1, &imb);
+    vkImgBarrier(cmd, m_shadowCube, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+                 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, 1,
+                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                 (uint32_t)(n * 6));
 }
