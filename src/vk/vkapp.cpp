@@ -55,7 +55,7 @@ bool VkApp::initInstance(int width, int height, const char* title) {
         vkEnumerateInstanceLayerProperties(&nl, lprops.data());
         for (const auto& p : lprops)
             if (std::string_view(p.layerName) == "VK_LAYER_KHRONOS_validation")
-                layers.push_back(p.layerName);
+                layers.push_back("VK_LAYER_KHRONOS_validation"); // static literal; lprops is freed after this block
     }
     VkApplicationInfo app{};
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -383,13 +383,6 @@ void VkApp::present(uint32_t idx, bool wait) {
 
 void VkApp::recreateSwapchain() {
     VK(vkDeviceWaitIdle(m_dev));
-    uint32_t nImg = (uint32_t)m_images.size();
-    uint32_t drain;
-    for (uint32_t i = 0; i < nImg; ++i) {
-        vkAcquireNextImageKHR(m_dev, m_sc, 1000000000ull, VK_NULL_HANDLE, m_acqFence, &drain);
-        VK(vkWaitForFences(m_dev, 1, &m_acqFence, VK_TRUE, 30000000000ull));
-        VK(vkResetFences(m_dev, 1, &m_acqFence));
-    }
     destroySwapchainResources();
 
     VkSurfaceCapabilitiesKHR caps;
