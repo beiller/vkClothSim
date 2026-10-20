@@ -20,7 +20,8 @@
         },
         { "name": "ground" },
         { "name": "char" },
-        { "name": "probe", "script": "scenes/base_test" }
+        { "name": "probe", "script": "scenes/base_test" },
+        { "name": "vr", "script": "scenes/vr_controller" }
     ],
     "ui": {
         "title": "glass",
