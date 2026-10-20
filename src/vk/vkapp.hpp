@@ -3,6 +3,7 @@
 
 #include <GLFW/glfw3.h>
 
+#include <chrono>
 #include <vector>
 
 class VkApp {
@@ -19,6 +20,7 @@ public:
 
     bool windowShouldClose() const;
     void pollEvents();
+    void resizeBuffers(); // rebuild the swapchain if the framebuffer size changed (called each frame, before the acquire)
 
     GLFWwindow* glfwWindow() const { return m_win; }
     VkInstance instance() const { return m_inst; }
@@ -112,6 +114,7 @@ private:
     VkFormat m_scfmt = VK_FORMAT_UNDEFINED;
     VkSurfaceFormatKHR m_fmt{};
     VkExtent2D m_extent{};
+    VkExtent2D m_pendingExtent{}; // last observed framebuffer size (tracked by pollEvents; resized in the frame loop)
     VkCommandPool m_pool = VK_NULL_HANDLE;
     VkCommandBuffer m_cmd = VK_NULL_HANDLE;
     VkFence m_fence = VK_NULL_HANDLE;

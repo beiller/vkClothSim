@@ -2,6 +2,7 @@
 
 #include "vk/vkutil.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -337,17 +338,34 @@ void VkApp::pollEvents() {
     glfwPollEvents();
     int w, h;
     glfwGetFramebufferSize(m_win, &w, &h);
-    if (w > 0 && h > 0 && ((uint32_t)w != m_extent.width || (uint32_t)h != m_extent.height))
+    if (w > 0 && h > 0)
+        m_pendingExtent = {(uint32_t)w, (uint32_t)h};
+}
+
+// rebuild the swapchain (and its buffers) when the window size changed; called each frame,
+// before the acquire, so the rest of the frame renders to the new size
+void VkApp::resizeBuffers() {
+    if (m_pendingExtent.width != m_extent.width || m_pendingExtent.height != m_extent.height)
         recreateSwapchain();
 }
 
 uint32_t VkApp::acquireNextImage() {
-    uint32_t idx = 0;
-    const VkResult r = vkAcquireNextImageKHR(m_dev, m_sc, UINT64_MAX, VK_NULL_HANDLE, m_acqFence, &idx);
-    checkResult(r, "acquire");
-    VK(vkWaitForFences(m_dev, 1, &m_acqFence, VK_TRUE, 30000000000ull));
-    VK(vkResetFences(m_dev, 1, &m_acqFence));
-    return idx;
+    for (;;) {
+        uint32_t idx = 0;
+        // finite timeout: a stuck acquire (e.g. mid-resize) must not block forever
+        const VkResult r = vkAcquireNextImageKHR(m_dev, m_sc, 1000000000ull, VK_NULL_HANDLE, m_acqFence, &idx);
+        if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_TIMEOUT) {
+            // swapchain is unusable (window resized, or no image in 1s): rebuild and retry.
+            // Must happen before the fence wait below, which would otherwise read a fence the
+            // failed acquire never signaled.
+            recreateSwapchain();
+            continue;
+        }
+        checkResult(r, "acquire");
+        VK(vkWaitForFences(m_dev, 1, &m_acqFence, VK_TRUE, 30000000000ull));
+        VK(vkResetFences(m_dev, 1, &m_acqFence));
+        return idx;
+    }
 }
 
 VkCommandBuffer VkApp::beginCommands() {

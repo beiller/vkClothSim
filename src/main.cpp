@@ -120,6 +120,7 @@ int main(int argc, char** argv) {
 
         float wait = 0.0f; // HMD pacing wait (0 in window mode)
         app.pollEvents();
+        app.resizeBuffers(); // window resized? rebuild the swapchain before the acquire
         XrFrame fr; // this frame's headset state (head, eyes, controllers); frame-local, not world state
         if (engine.xr) {
             const auto tWait = std::chrono::steady_clock::now();
