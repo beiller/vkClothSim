@@ -159,13 +159,13 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     // the fragment writes the SSS side-channel alpha only in the opaque pass
     m_pl = vkMakePipelineLayoutPC(m_dev, m_dsl, VK_SHADER_STAGE_FRAGMENT_BIT, 4);
     m_pipe = makeGraphicsPipeline(m_dev, app.sceneRenderPass(), mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
-                                  mesh_frag_spv_len / 4, m_pl, true);
+                                  mesh_frag_spv_len / 4, m_pl, true, false, false, 2);
     // glass/blend pipeline: alpha blending, depth test without write (the sorted pass over HDR)
     m_pipeBlend = makeGraphicsPipeline(m_dev, app.sceneNoClearRenderPass(), mesh_vert_spv, mesh_vert_spv_len / 4,
-                                       mesh_frag_spv, mesh_frag_spv_len / 4, m_pl, true, false, true);
+                                       mesh_frag_spv, mesh_frag_spv_len / 4, m_pl, true, false, true, 2);
     // glass: back faces culled - with no depth write the two-sided blend order is undefined
     m_pipeBlendCull = makeGraphicsPipeline(m_dev, app.sceneNoClearRenderPass(), mesh_vert_spv, mesh_vert_spv_len / 4,
-                                          mesh_frag_spv, mesh_frag_spv_len / 4, m_pl, true, true, true);
+                                          mesh_frag_spv, mesh_frag_spv_len / 4, m_pl, true, true, true, 2);
     initSss(app);
 
     const uint8_t white[4] = {255, 255, 255, 255};
@@ -620,15 +620,16 @@ void Renderer::renderOpaquePass(VkCommandBuffer cmd, VkApp& app, const float bg[
     const VkExtent2D ext = app.extent();
     VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
     VkRect2D sc{0, 0, ext.width, ext.height};
-    VkClearValue scv[2]{};
+    VkClearValue scv[3]{};
     scv[0].color = {bg[0], bg[1], bg[2], 0.0f};
     scv[1].depthStencil = {1.0f, 0};
+    scv[2].color = {0.0f, 0.0f, 0.0f, 0.0f}; // the diffuse attachment
     VkRenderPassBeginInfo spb{};
     spb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     spb.renderPass = app.sceneRenderPass();
     spb.framebuffer = app.sceneFramebuffer();
     spb.renderArea = {{0, 0}, ext};
-    spb.clearValueCount = 2;
+    spb.clearValueCount = 3;
     spb.pClearValues = scv;
     vkCmdBeginRenderPass(cmd, &spb, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdSetViewport(cmd, 0, 1, &vpt);
@@ -689,7 +690,7 @@ void Renderer::renderTransparentPass(VkCommandBuffer cmd, VkApp& app, const V3& 
 // is also the transparent pass's depth-stencil attachment, and the layouts are exclusive)
 void Renderer::renderSssBlur(VkCommandBuffer cmd, VkApp& app, const CameraView& cv) {
     const VkExtent2D ext = app.extent();
-    if (m_hasGlass) {
+    if (m_hasGlass || m_hasSss) {
         // the glass (and the sss depth read) sample the R32 copy while the D32 depth is the
         // transparent pass's depth-stencil attachment (exclusive layouts): a direct
         // format-converting copy (a depth sampler would only yield the 0/1 compare result)
@@ -701,10 +702,12 @@ void Renderer::renderSssBlur(VkCommandBuffer cmd, VkApp& app, const CameraView& 
         ic.extent = {(uint32_t)ext.width, (uint32_t)ext.height, 1};
         vkCmdCopyImage(cmd, app.depthImage(), VK_IMAGE_LAYOUT_GENERAL, app.depthCopyImage(),
                        VK_IMAGE_LAYOUT_GENERAL, 1, &ic);
-        // the sss pass samples the copy right after the transfer wrote it
+        // the sss pass samples the copy right after the transfer wrote it (the descriptor's
+        // layout is SHADER_READ_ONLY, so the copy must leave the GENERAL layout)
         if (m_hasSss)
             imgBarrier(cmd, app.depthCopyImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL,
-                      VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, 1);
+                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                      VK_ACCESS_SHADER_READ_BIT, 1);
     }
     if (!m_hasSss)
         return;
@@ -722,13 +725,9 @@ void Renderer::renderSssBlur(VkCommandBuffer cmd, VkApp& app, const CameraView& 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_sss.pl, 0, 1, &m_sssSet[pass], 0, nullptr);
         vkCmdPushConstants(cmd, m_sss.pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SssPc), &pc);
         vkCmdDispatch(cmd, (ext.width + 7) / 8, (ext.height + 7) / 8, 1);
-        if (pass == 0) {
-            imgBarrier(cmd, app.sceneColorImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                      VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-                      app.sceneColorMips());
+        if (pass == 0)
             imgBarrier(cmd, app.sceneColorTempImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL,
                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, 1);
-        }
     }
 }
 
@@ -741,18 +740,32 @@ void Renderer::renderSceneBuffers(VkCommandBuffer cmd, VkApp& app, const float b
     const bool needRead = m_hasSss || m_hasGlass; // the depth + sceneColor get sampled this frame
     if (needRead) {
         // only mip 0 came out of the opaque pass (COLOR_ATTACHMENT_OPTIMAL); the other mips
-        // are still UNDEFINED and must not be claimed from an attachment layout
+        // are still UNDEFINED and must not be claimed from an attachment layout. the sss pass
+        // treats sceneColor as a storage image (GENERAL); the glass samples it (SHADER_READ)
+        const VkImageLayout scNew = m_hasSss ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        const VkAccessFlags scDst = m_hasSss ? (VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT)
+                                            : VK_ACCESS_SHADER_READ_BIT;
         imgBarrier(cmd, app.sceneColorImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                   VK_ACCESS_SHADER_READ_BIT, 1);
+                   scNew, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, scDst, 1);
         imgBarrier(cmd, app.depthImage(), VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                    VK_IMAGE_LAYOUT_GENERAL,
                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                    VK_ACCESS_SHADER_READ_BIT, 1);
-        if (m_hasSss)
+        if (m_hasSss) {
             imgBarrier(cmd, app.sceneColorTempImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                       VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_WRITE_BIT, 1);
-        if (m_hasGlass)
+            // the sss storage descriptors (sceneColor, diffuse) identify the full mip chain; mips
+            // 1..N-1 must be in the written layout (GENERAL) even when the glass pass (the only
+            // one that regenerates them) does not run
+            if (mips > 1)
+                imgBarrier(cmd, app.sceneColorImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                          VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_READ_BIT, mips - 1, 1);
+            // the diffuse is sampled (pass 0) and imageLoad'd (pass 1); never written
+            imgBarrier(cmd, app.sssDiffuseImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                      VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_READ_BIT, 1);
+        }
+        // the sss pass (and the glass pass) sample the depth copy
+        if (needRead)
             imgBarrier(cmd, app.depthCopyImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                       VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT, 1);
     }
@@ -767,7 +780,9 @@ void Renderer::renderSceneBuffers(VkCommandBuffer cmd, VkApp& app, const float b
     imgBarrier(cmd, app.sceneColorImage(), VK_IMAGE_ASPECT_COLOR_BIT, sceneOld, VK_IMAGE_LAYOUT_GENERAL, sceneSrc,
                VK_ACCESS_TRANSFER_READ_BIT | (m_hasGlass ? VK_ACCESS_TRANSFER_WRITE_BIT : 0), 1);
     if (m_hasGlass && mips > 1)
-        imgBarrier(cmd, app.sceneColorImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+        // when sss ran, needRead already moved the mips to GENERAL
+        imgBarrier(cmd, app.sceneColorImage(), VK_IMAGE_ASPECT_COLOR_BIT,
+                   m_hasSss ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED,
                    VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, mips - 1,
                    1);
     if (m_hasGlass)
@@ -813,9 +828,13 @@ void Renderer::renderSceneBuffers(VkCommandBuffer cmd, VkApp& app, const float b
                    VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT, 1);
     if (m_hasGlass) {
-        imgBarrier(cmd, app.depthCopyImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL,
+        // the sss pass already left the copy in SHADER_READ_ONLY (layout + access); the glass
+        // pass (which runs after it) needs no further transition in that case
+        imgBarrier(cmd, app.depthCopyImage(), VK_IMAGE_ASPECT_COLOR_BIT,
+                   m_hasSss ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL,
                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                   VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, 1);
+                   m_hasSss ? VK_ACCESS_SHADER_READ_BIT : VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
+                   VK_ACCESS_SHADER_READ_BIT, 1);
         // sceneColor is in GENERAL after the mip / HDR blits; the glass pass samples it as
         // SHADER_READ_ONLY, so transition it back before the transparent pass
         imgBarrier(cmd, app.sceneColorImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL,
@@ -830,6 +849,7 @@ void Renderer::renderSceneBuffers(VkCommandBuffer cmd, VkApp& app, const float b
 void Renderer::ensureSceneSamplers(VkApp& app) {
     if (app.sceneColorView() != m_sssSceneView || app.sceneColorTempView() != m_sssTempView ||
         app.depthView() != m_sssDepthView || app.depthCopyView() != m_sssDepthCopyView ||
+        app.sssDiffuseView() != m_sssDiffuseView ||
         m_samplersDirty) {
         updateSceneSamplers(app);
         m_samplersDirty = false;
@@ -841,15 +861,21 @@ void Renderer::updateSceneSamplers(VkApp& app) {
     m_sssTempView = app.sceneColorTempView();
     m_sssDepthView = app.depthView();
     m_sssDepthCopyView = app.depthCopyView();
+    m_sssDiffuseView = app.sssDiffuseView();
     const VkDescriptorImageInfo sceneSam{m_sceneColorSampler, app.sceneColorView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo sceneStore{VK_NULL_HANDLE, app.sceneColorView(), VK_IMAGE_LAYOUT_GENERAL};
+    // the sss passes only touch these in GENERAL (pass 1 loads + stores sceneColor)
+    const VkDescriptorImageInfo sceneRw{VK_NULL_HANDLE, app.sceneColorView(), VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo diffSam{m_sceneColorSampler, app.sssDiffuseView(), VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo diffRw{VK_NULL_HANDLE, app.sssDiffuseView(), VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo tempSam{m_sceneColorSampler, app.sceneColorTempView(),
                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo tempStore{VK_NULL_HANDLE, app.sceneColorTempView(), VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo dcopySam{m_depthCopySampler, app.depthCopyView(),
                                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    // SSS set 0: sceneColor (sampler) -> temp (store) + depth copy; set 1: temp (sampler) -> sceneColor (store)
-    VkWriteDescriptorSet w[6]{};
+    // SSS set 0: diffuse (sampler) -> temp (store) + depth copy; set 1: temp (sampler) -> sceneColor (store)
+    // set 0/1 both carry sceneColor + diffuse as read/write storage (the vertical pass composites)
+    VkWriteDescriptorSet w[10]{};
     for (auto& entry : w) {
         entry.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         entry.descriptorCount = 1;
@@ -857,7 +883,7 @@ void Renderer::updateSceneSamplers(VkApp& app) {
     w[0].dstSet = m_sssSet[0];
     w[0].dstBinding = 0;
     w[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    w[0].pImageInfo = &sceneSam;
+    w[0].pImageInfo = &diffSam;
     w[1].dstSet = m_sssSet[0];
     w[1].dstBinding = 1;
     w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -878,7 +904,23 @@ void Renderer::updateSceneSamplers(VkApp& app) {
     w[5].dstBinding = 2;
     w[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     w[5].pImageInfo = &dcopySam;
-    vkUpdateDescriptorSets(m_dev, 6, w, 0, nullptr);
+    w[6].dstSet = m_sssSet[0];
+    w[6].dstBinding = 3;
+    w[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    w[6].pImageInfo = &sceneRw;
+    w[7].dstSet = m_sssSet[0];
+    w[7].dstBinding = 4;
+    w[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    w[7].pImageInfo = &diffRw;
+    w[8].dstSet = m_sssSet[1];
+    w[8].dstBinding = 3;
+    w[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    w[8].pImageInfo = &sceneRw;
+    w[9].dstSet = m_sssSet[1];
+    w[9].dstBinding = 4;
+    w[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    w[9].pImageInfo = &diffRw;
+    vkUpdateDescriptorSets(m_dev, 10, w, 0, nullptr);
     // opaque set: 2/15 hold a neutral (sceneColor is the opaque pass's own attachment);
     // trans set: the real scene samplers (the glass refraction)
     const VkDescriptorImageInfo neutral{m_texSampler, m_white.view, VK_IMAGE_LAYOUT_GENERAL};
@@ -911,6 +953,8 @@ void Renderer::initSss(VkApp& app) {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
     };
     vkMakeDslPool(m_dev, sssBinds, 2, m_sss.dsl, m_sss.pool);
     m_sss.pl = vkMakePipelineLayoutPC(m_dev, m_sss.dsl, VK_SHADER_STAGE_COMPUTE_BIT, sizeof(SssPc));

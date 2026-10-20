@@ -166,7 +166,7 @@ bool VkApp::initDevice(VkDevice dev) {
             m_fmt = f;
     m_scfmt = m_fmt.format;
 
-    VkAttachmentDescription satt[2]{};
+    VkAttachmentDescription satt[3]{};
     satt[0].format = m_hdrFmt;
     satt[0].samples = VK_SAMPLE_COUNT_1_BIT;
     satt[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -183,15 +183,27 @@ bool VkApp::initDevice(VkDevice dev) {
     satt[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     satt[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     satt[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    VkAttachmentReference scr[2] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                    {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}};
+    // the diffuse term, separated for the SSS blur (specular stays sharp: the SSS pass composites
+    // sceneColor = (scene - diffuse) + blurredDiffuse)
+    satt[2].format = m_hdrFmt;
+    satt[2].samples = VK_SAMPLE_COUNT_1_BIT;
+    satt[2].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    satt[2].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    satt[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    satt[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    satt[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    satt[2].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    // color refs must be contiguous: color (0) + diffuse (2); depth (1) is separate
+    VkAttachmentReference scolor[2] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                                      {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+    const VkAttachmentReference sdepth = {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
     VkSubpassDescription ssp{};
-    ssp.colorAttachmentCount = 1;
-    ssp.pColorAttachments = &scr[0];
-    ssp.pDepthStencilAttachment = &scr[1];
+    ssp.colorAttachmentCount = 2;
+    ssp.pColorAttachments = scolor;
+    ssp.pDepthStencilAttachment = &sdepth;
     VkRenderPassCreateInfo srpc{};
     srpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    srpc.attachmentCount = 2;
+    srpc.attachmentCount = 3;
     srpc.pAttachments = satt;
     srpc.subpassCount = 1;
     srpc.pSubpasses = &ssp;
@@ -199,7 +211,7 @@ bool VkApp::initDevice(VkDevice dev) {
 
     // transparent (glass/blend) pass over the blitted scene: HDR + depth both LOAD; the depth
     // starts in the opaque pass's final layout, so no barrier is needed
-    VkAttachmentDescription natt[2]{};
+    VkAttachmentDescription natt[3]{};
     natt[0].format = m_hdrFmt;
     natt[0].samples = VK_SAMPLE_COUNT_1_BIT;
     natt[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -216,15 +228,25 @@ bool VkApp::initDevice(VkDevice dev) {
     natt[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     natt[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     natt[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    VkAttachmentReference ntr[2] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                   {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}};
+    // the diffuse is consumed by the SSS pass before this one; the blend shader writes a dummy
+    natt[2].format = m_hdrFmt;
+    natt[2].samples = VK_SAMPLE_COUNT_1_BIT;
+    natt[2].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    natt[2].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    natt[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    natt[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    natt[2].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    natt[2].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    VkAttachmentReference ncolor[2] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                                      {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+    const VkAttachmentReference ndepth = {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
     VkSubpassDescription nss{};
-    nss.colorAttachmentCount = 1;
-    nss.pColorAttachments = &ntr[0];
-    nss.pDepthStencilAttachment = &ntr[1];
+    nss.colorAttachmentCount = 2;
+    nss.pColorAttachments = ncolor;
+    nss.pDepthStencilAttachment = &ndepth;
     VkRenderPassCreateInfo nrpc{};
     nrpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    nrpc.attachmentCount = 2;
+    nrpc.attachmentCount = 3;
     nrpc.pAttachments = natt;
     nrpc.subpassCount = 1;
     nrpc.pSubpasses = &nss;
@@ -447,26 +469,31 @@ void VkApp::recreateSwapchain() {
     VK(vkCreateImageView(m_dev, &savci, nullptr, &m_sceneColorAttView));
     createAttachment(m_extent, m_hdrFmt, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sceneColorTemp, m_sceneColorTempMem, m_sceneColorTempView);
+    // the diffuse term (A = ssssWeight): the SSS pass blurs only this, keeping specular sharp
+    createAttachment(m_extent, m_hdrFmt,
+                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     VK_IMAGE_ASPECT_COLOR_BIT, m_sssDiffuse, m_sssDiffuseMem, m_sssDiffuseView);
     createAttachment(m_extent, m_hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_hdr, m_hdrMem, m_hdrView);
 
-    VkImageView satts[2] = {m_sceneColorAttView, m_depthView};
+    // framebuffer views are indexed by reference index: 0 = color, 1 = depth, 2 = diffuse
+    VkImageView satts[3] = {m_sceneColorAttView, m_depthView, m_sssDiffuseView};
     VkFramebufferCreateInfo sfci{};
     sfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     sfci.renderPass = m_rpScene;
-    sfci.attachmentCount = 2;
+    sfci.attachmentCount = 3;
     sfci.pAttachments = satts;
     sfci.width = m_extent.width;
     sfci.height = m_extent.height;
     sfci.layers = 1;
     VK(vkCreateFramebuffer(m_dev, &sfci, nullptr, &m_sceneFb));
 
-    VkImageView natts[2] = {m_hdrView, m_depthView};
+    VkImageView natts[3] = {m_hdrView, m_depthView, m_sssDiffuseView};
     VkFramebufferCreateInfo nfci{};
     nfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     nfci.renderPass = m_rpSceneNoClear;
-    nfci.attachmentCount = 2;
+    nfci.attachmentCount = 3;
     nfci.pAttachments = natts;
     nfci.width = m_extent.width;
     nfci.height = m_extent.height;
@@ -474,22 +501,22 @@ void VkApp::recreateSwapchain() {
     VK(vkCreateFramebuffer(m_dev, &nfci, nullptr, &m_sceneFbNoClear));
 
     // DBG: noClear rp (depth LOAD) on the sceneColor image
-    VkImageView ncs[2] = {m_sceneColorAttView, m_depthView};
+    VkImageView ncs[3] = {m_sceneColorAttView, m_depthView, m_sssDiffuseView};
     VkFramebufferCreateInfo ncfci{};
     ncfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     ncfci.renderPass = m_rpSceneNoClear;
-    ncfci.attachmentCount = 2;
+    ncfci.attachmentCount = 3;
     ncfci.pAttachments = ncs;
     ncfci.width = m_extent.width;
     ncfci.height = m_extent.height;
     ncfci.layers = 1;
     VK(vkCreateFramebuffer(m_dev, &ncfci, nullptr, &m_sceneFbNoClearOnScene));
     // DBG: scene rp (depth CLEAR) on the hdr image
-    VkImageView soh[2] = {m_hdrView, m_depthView};
+    VkImageView soh[3] = {m_hdrView, m_depthView, m_sssDiffuseView};
     VkFramebufferCreateInfo sofci{};
     sofci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     sofci.renderPass = m_rpScene;
-    sofci.attachmentCount = 2;
+    sofci.attachmentCount = 3;
     sofci.pAttachments = soh;
     sofci.width = m_extent.width;
     sofci.height = m_extent.height;
@@ -547,6 +574,9 @@ void VkApp::destroySwapchainResources() {
     vkDestroyImageView(m_dev, m_sceneColorTempView, nullptr);
     vkDestroyImage(m_dev, m_sceneColorTemp, nullptr);
     vkFreeMemory(m_dev, m_sceneColorTempMem, nullptr);
+    vkDestroyImageView(m_dev, m_sssDiffuseView, nullptr);
+    vkDestroyImage(m_dev, m_sssDiffuse, nullptr);
+    vkFreeMemory(m_dev, m_sssDiffuseMem, nullptr);
     vkDestroyImageView(m_dev, m_hdrView, nullptr);
     vkDestroyImage(m_dev, m_hdr, nullptr);
     vkFreeMemory(m_dev, m_hdrMem, nullptr);
@@ -568,6 +598,9 @@ void VkApp::destroySwapchainResources() {
     m_sceneColorTemp = VK_NULL_HANDLE;
     m_sceneColorTempMem = VK_NULL_HANDLE;
     m_sceneColorTempView = VK_NULL_HANDLE;
+    m_sssDiffuse = VK_NULL_HANDLE;
+    m_sssDiffuseMem = VK_NULL_HANDLE;
+    m_sssDiffuseView = VK_NULL_HANDLE;
     m_hdr = VK_NULL_HANDLE;
     m_hdrMem = VK_NULL_HANDLE;
     m_hdrView = VK_NULL_HANDLE;

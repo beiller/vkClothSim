@@ -1,0 +1,49 @@
+{
+    "name": "sss",
+    "env": "fly-studio-03_1K.exr",
+    "envIntensity": 1.0,
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 0, 6], "quat": [0, 0, 0, 1] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/camera"
+        },
+        {
+            "name": "light",
+            "components": {
+                "Transform": { "pos": [1.5, 1.5, 3] },
+                "PointLight": { "color": [1, 1, 1], "intensity": 40, "radius": 0.15 }
+            }
+        },
+        {
+            "name": "mat_sss",
+            "components": { "Material": { "baseColor": [0.95, 0.45, 0.35], "metallic": 0, "roughness": 0.35, "ssssWeight": 1.0 } }
+        },
+        { "name": "sss", "script": "scenes/sss" },
+        { "name": "vr", "script": "scenes/vr_controller" }
+    ],
+    "ui": {
+        "title": "sss",
+        "size": [320, 300],
+        "widgets": [
+            {
+                "type": "section",
+                "label": "sss",
+                "children": [
+                    { "type": "slider-f", "label": "ssss weight", "bind": "sphere.ssssWeight" }
+                ]
+            },
+            {
+                "type": "section",
+                "label": "tone",
+                "children": [
+                    { "type": "slider-f", "label": "exposure", "bind": "render.exposure" },
+                    { "type": "slider-f", "label": "hdri intensity", "bind": "render.envIntensity" }
+                ]
+            }
+        ]
+    }
+}

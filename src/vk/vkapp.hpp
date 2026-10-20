@@ -38,6 +38,8 @@ public:
     VkImageView depthView() const { return m_depthView; }
     VkImageView sceneColorView() const { return m_sceneColorView; }
     VkImageView sceneColorTempView() const { return m_sceneColorTempView; }
+    VkImage sssDiffuseImage() const { return m_sssDiffuse; }
+    VkImageView sssDiffuseView() const { return m_sssDiffuseView; }
     uint32_t sceneColorMips() const { return m_sceneColorMips; }
     VkImageView depthCopyView() const { return m_depthCopyView; }
     VkImage depthImage() const { return m_depth; }
@@ -98,6 +100,9 @@ private:
     VkImage m_sceneColorTemp = VK_NULL_HANDLE; // SSS-blurred scene color (ping-pong dest, mips for glass)
     VkDeviceMemory m_sceneColorTempMem = VK_NULL_HANDLE;
     VkImageView m_sceneColorTempView = VK_NULL_HANDLE;
+    VkImage m_sssDiffuse = VK_NULL_HANDLE; // the diffuse term (A = ssssWeight), SSS-blurred separately
+    VkDeviceMemory m_sssDiffuseMem = VK_NULL_HANDLE;
+    VkImageView m_sssDiffuseView = VK_NULL_HANDLE;
     uint32_t m_sceneColorMips = 1;
     VkImage m_hdr = VK_NULL_HANDLE;
     VkDeviceMemory m_hdrMem = VK_NULL_HANDLE;

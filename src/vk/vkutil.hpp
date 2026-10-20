@@ -469,7 +469,7 @@ inline VkPipelineLayout vkMakePipelineLayoutPC(VkDevice dev, VkDescriptorSetLayo
 // shared graphics pipeline builder (mesh/tonemap/shadow/vr all use the same fixed setup)
 inline VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void* vsSpv, uint32_t vsLen,
                                        const void* fsSpv, uint32_t fsLen, VkPipelineLayout layout, bool depth,
-                                       bool cullBack = false, bool blend = false) {
+                                       bool cullBack = false, bool blend = false, uint32_t nColorAttach = 1) {
     VkShaderModule vs = vkMakeModule(dev, vsSpv, vsLen);
     VkShaderModule fs = vkMakeModule(dev, fsSpv, fsLen);
     VkPipelineShaderStageCreateInfo stages[2]{};
@@ -515,22 +515,25 @@ inline VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void
     ds.maxDepthBounds = 1.0f;
     ds.depthBoundsTestEnable = VK_FALSE;
     ds.stencilTestEnable = VK_FALSE;
-    VkPipelineColorBlendAttachmentState ca{};
-    ca.colorWriteMask =
-        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    ca.blendEnable = blend ? VK_TRUE : VK_FALSE;
-    if (blend) {
-        ca.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        ca.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        ca.colorBlendOp = VK_BLEND_OP_ADD;
-        ca.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        ca.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        ca.alphaBlendOp = VK_BLEND_OP_ADD;
+    VkPipelineColorBlendAttachmentState ca[2]{}; // the scene RPs carry a second color attachment (the SSS diffuse)
+    for (uint32_t i = 0; i < nColorAttach; ++i) {
+        auto& c = ca[i];
+        c.colorWriteMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        c.blendEnable = blend ? VK_TRUE : VK_FALSE;
+        if (blend) {
+            c.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            c.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            c.colorBlendOp = VK_BLEND_OP_ADD;
+            c.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            c.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            c.alphaBlendOp = VK_BLEND_OP_ADD;
+        }
     }
     VkPipelineColorBlendStateCreateInfo cb{};
     cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    cb.attachmentCount = 1;
-    cb.pAttachments = &ca;
+    cb.attachmentCount = nColorAttach;
+    cb.pAttachments = ca;
     VkGraphicsPipelineCreateInfo gpc{};
     gpc.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     gpc.stageCount = 2;

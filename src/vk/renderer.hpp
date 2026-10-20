@@ -227,6 +227,7 @@ private:
     VkImageView m_sssTempView = VK_NULL_HANDLE;
     VkImageView m_sssDepthView = VK_NULL_HANDLE;
     VkImageView m_sssDepthCopyView = VK_NULL_HANDLE;
+    VkImageView m_sssDiffuseView = VK_NULL_HANDLE;
     bool m_hasSss = false; // prepBuffers: any ssssWeight > 0
     bool m_hasGlass = false; // prepBuffers: any refraction > 0
     bool m_hasTrans = false; // prepBuffers: any alphaMode == 2 or glass (the sorted pass runs)

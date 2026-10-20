@@ -4,6 +4,7 @@ layout(location = 0) in vec3 vN;
 layout(location = 1) in vec2 vUv;
 layout(location = 2) in vec3 vWorldPos;
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outDiff; // the diffuse term (A = ssssWeight): the SSS pass blurs only this
 
 layout(binding = 3) uniform UBO {
     mat4 viewProj;
@@ -257,4 +258,5 @@ void main() {
     // opaque pass: the alpha is the ssssWeight side channel (the background clears to 0); the
     // transparent pass: the alpha is the blend factor (the glass self-composites over the scene)
     outColor = vec4(color, passU.passId < 0.5 ? modelU.ssssWeight : alpha);
+    outDiff = passU.passId < 0.5 ? vec4(diffSum, modelU.ssssWeight) : vec4(0.0);
 }
