@@ -493,20 +493,22 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     mat.alphaCutoff = (float)gm.alpha_cutoff;
     const std::string am = s(gm.alpha_mode);
     mat.alphaMode = am == "BLEND" ? 2 : (am == "MASK" ? 1 : 0);
-    // KHR_materials_transmission (glass, e.g. cornea): v1 approximation -> blend, with the
-    // surface alpha from the transmission factor (1.0 = fully clear)
+    // KHR_materials_transmission (glass, e.g. cornea) -> the refraction field (0..1); the
+    // spec default for a missing factor is 1.0
     for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
         if (s(gm.ext.extensions[i].name) != "KHR_materials_transmission")
             continue;
         const tg3_value& ext = gm.ext.extensions[i].value;
         double tf = 1.0;
-        for (uint32_t j = 0; j < ext.object_count; ++j)
-            if (s(ext.object_data[j].key) == "transmissionFactor" && ext.object_data[j].value.type == TG3_VALUE_REAL)
-                tf = ext.object_data[j].value.real_val;
-        if (tf > 0.02) {
-            mat.alphaMode = 2;
-            mat.alpha = std::max(1.0f - (float)tf, 0.08f);
+        for (uint32_t j = 0; j < ext.object_count; ++j) {
+            const auto& od = ext.object_data[j];
+            if (s(od.key) == "transmissionFactor" && od.value.type == TG3_VALUE_REAL)
+                tf = od.value.real_val;
+            if (s(od.key) == "transmissionTexture" && od.value.type == TG3_VALUE_INT && od.value.int_val >= 0)
+                warn(c, "transmissionTexture is not supported (ignored; use transmissionFactor)");
         }
+        if (tf > 0.0)
+            mat.refraction = (float)tf; // 1:1: transmissionFactor drives the refraction amount (0..1)
         break;
     }
     return c.materials[matIdx] = e;

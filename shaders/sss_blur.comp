@@ -1,0 +1,65 @@
+#version 450
+// Godot subsurface_scattering.glsl port: a separable two-pass 1D blur (the host dispatches
+// twice: horizontal into temp, vertical back into sceneColor). strength = abs(alpha) (the
+// ssssWeight side channel the opaque pass writes); the blur breaks at alpha < 0.001 so the
+// background (cleared to (bg, 0)) is never mixed in. 11-sample kernel (6 taps, applied on
+// both sides). Scalar kernel only (the per-channel skin kernel + tiers are deferred).
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D src;
+layout(r16f, binding = 1) uniform writeonly image2D dst;
+layout(binding = 2) uniform sampler2D depthTex; // the R32 depth copy (raw 0..1 values)
+
+layout(push_constant, std430) uniform Params {
+    vec2 screenSize;
+    float zNear;
+    float zFar;
+    float unitSize;
+    float scale;
+    float depthScale;
+    bool vertical;
+} params;
+
+const int KERNEL_SIZE = 6;
+const float kernel[KERNEL_SIZE] = float[](
+    0.560479, 0.0771802, 0.0821904, 0.03639, 0.0192831, 0.00471691);
+const float kernelDist[KERNEL_SIZE] = float[](
+    0.0, 0.08, 0.32, 0.72, 1.28, 2.0);
+
+void do_filter(inout vec3 color, inout float divisor, vec2 uv, vec2 step) {
+    for (int i = 1; i < KERNEL_SIZE; ++i) {
+        vec4 c = texture(src, uv + kernelDist[i] * step);
+        if (abs(c.a) < 0.001)
+            break; // mix no more
+        color += c.rgb * kernel[i];
+        divisor += kernel[i];
+    }
+}
+
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(id, ivec2(params.screenSize))))
+        return;
+    vec2 uv = (vec2(id) + 0.5) / params.screenSize;
+    vec4 base = texture(src, uv);
+    const float strength = abs(base.a);
+    if (strength > 0.0) {
+        // the engine's 0..1 depth (near = 0, far = 1, cleared to 1) -> linear view distance
+        float z = texture(depthTex, uv).r;
+        if (z >= 1.0) {
+            imageStore(dst, id, base); // background: passthrough (no blur)
+            return;
+        }
+        float d = (params.zNear * params.zFar) / ((1.0 - z) * params.zFar + z * params.zNear);
+        const float depthScale = params.unitSize / d;
+        const float scale = mix(params.scale, depthScale, params.depthScale);
+        vec2 dir = params.vertical ? vec2(0.0, 1.0) : vec2(1.0, 0.0);
+        vec2 step = scale * dir * (strength / 3.0);
+        float divisor = kernel[0];
+        vec3 color = base.rgb * kernel[0];
+        do_filter(color, divisor, uv, step);
+        do_filter(color, divisor, uv, -step);
+        base.rgb = color / divisor;
+    }
+    imageStore(dst, id, base);
+}

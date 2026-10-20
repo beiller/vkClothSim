@@ -227,8 +227,7 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
             w.cam = e;
 
         const VkExtent2D ext = w.app->extent();
-        w.renderer.setViewProj(cameraViewProj(w, w.cam, (float)ext.width / (float)ext.height),
-                              worldTransform(w.reg, w.cam).pos);
+        w.renderer.setViewProj(cameraView(w, w.cam, (float)ext.width / (float)ext.height));
 
         for (const auto& o : objects)
             if (&o != camObj)

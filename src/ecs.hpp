@@ -214,6 +214,9 @@ struct Material {
     int alphaMode = 0;
     float alphaCutoff = 0.5f;
     float alpha = 1.0f;
+    // SSS + glass (appended at the end: spawnMaterial uses a partial aggregate emplace)
+    float ssssWeight = 0.0f; // 0 = off; the SSS strength scalar (Godot subsurface_scattering_strength)
+    float refraction = 0.0f; // 0 = off; the refraction scale (Godot refraction, 0..1)
 };
 
 // mesh -> shared material entity

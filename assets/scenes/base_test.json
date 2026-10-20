@@ -21,5 +21,19 @@
         { "name": "ground" },
         { "name": "char" },
         { "name": "probe", "script": "scenes/base_test" }
-    ]
+    ],
+    "ui": {
+        "title": "glass",
+        "size": [320, 560],
+        "widgets": [
+            {
+                "type": "section",
+                "label": "tone",
+                "children": [
+                    { "type": "slider-f", "label": "exposure", "bind": "render.exposure" },
+                    { "type": "slider-f", "label": "hdri intensity", "bind": "render.envIntensity" }
+                ]
+            }
+        ]
+    }
 }

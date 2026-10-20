@@ -23,6 +23,11 @@ Use a functional style where possible.
 - rigid/Jolt sim: `src/app`
 - glue: `src/main.cpp` (app loop only; design for future command queues / separate threads)
 
+## Debugging Tips:
+
+UBOs cause lots of problems in the past - ensure they are aligned correctly!
+ UBO verification command: spirv-dis build/gen/mesh_frag.spv then check OpMemberDecorate ... Offset lines.
+
 ## Systems
 
 - **World/ECS** — shared `World` state; entities carry components (transforms, renderables,

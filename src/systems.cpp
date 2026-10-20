@@ -51,10 +51,14 @@ static V3 walkPos(const Engine& w) {
     return w.vrRoot != entt::null ? w.reg.get<Transform>(w.vrRoot).pos : V3{0, 0, 0};
 }
 
-Mat4 cameraViewProj(Engine& w, entt::entity cam, float aspect) {
+CameraView cameraView(Engine& w, entt::entity cam, float aspect) {
     const Transform wt = worldTransform(w.reg, cam);
     const Camera& c = w.reg.get<Camera>(cam);
-    return mul4(perspective(c.fovDeg, aspect, c.nearP, c.farP), viewFromPose(wt.pos, wt.quat));
+    const Mat4 view = viewFromPose(wt.pos, wt.quat);
+    const float tanU = std::tan(c.fovDeg * 0.5f * kPi / 180.0f);
+    const float tanR = tanU * aspect;
+    return {mul4(perspective(c.fovDeg, aspect, c.nearP, c.farP), view), view, wt.pos, -tanR, tanR, tanU, -tanU,
+            c.nearP, c.farP};
 }
 
 void stepXr(Engine& w, const XrFrame& fr) {

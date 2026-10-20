@@ -175,8 +175,7 @@ int main(int argc, char** argv) {
 
         const entt::entity cam = findActiveCamera(engine); // current camera (swapped by display mode)
         if (cam != entt::null)
-            engine.renderer.setViewProj(cameraViewProj(engine, cam, (float)app.extent().width / (float)app.extent().height),
-                                   worldTransform(engine.reg, cam).pos);
+            engine.renderer.setViewProj(cameraView(engine, cam, (float)app.extent().width / (float)app.extent().height));
         imguiNewFrame();
         drawUi(engine);
         if (engine.showDemo) // ImGui's own demo window, not ours to decompose

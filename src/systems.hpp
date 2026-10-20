@@ -21,7 +21,9 @@ entt::entity spawnMaterial(Engine& w, const V3& baseColor, float metallic, float
 entt::entity textureBytes(Engine& w, const std::string& id, const uint8_t* rgba, int wpx, int hpx);
 // the active camera (entt::null if none)
 entt::entity findActiveCamera(const Engine& w);
-Mat4 cameraViewProj(Engine& w, entt::entity cam, float aspect);
+// the camera's full view data (the SSS/glass passes need the view matrix + frustum, not just
+// the combined viewProj): the signed tangents match the XR View convention
+CameraView cameraView(Engine& w, entt::entity cam, float aspect);
 
 // project new RigidBody/KinematicBody/Joint components to Jolt, step, copy dynamic poses back
 // into the ECS (kinematic poses are script/XR-owned, never copied back)

@@ -7,20 +7,30 @@ layout(location = 0) out vec4 outColor;
 
 layout(binding = 3) uniform UBO {
     mat4 viewProj;
+    mat4 view;
     vec3 camPos;
     float envIntensity;
     float shadowTexels;
-    float pad[2];
+    // no pad here: a std140 float array has 16-byte stride (it would shift frustum to 208);
+    // the vec4 below 16-aligns to 160 and leaves 148..160 unused, matching the C++ ViewUbo
+    vec4 frustum; // tanL tanR tanU tanD (signed, supports the asymmetric VR frustums)
+    float zNear;
+    float zFar;
+    vec2 screenSize;
+    vec4 pad2;
 } ubo;
-layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; }
+layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; float ssssWeight; float refraction; vec2 pad; }
     modelU;
 layout(binding = 6) uniform sampler2D albedoTex;
 layout(binding = 7) uniform sampler2D mrTex; // glTF metallicRoughness: G = roughness, B = metallic
 layout(binding = 9) uniform samplerCube envPrefilter;
 layout(binding = 10) uniform samplerCube envIrradiance;
 layout(binding = 11) uniform sampler2D normalTex; // tangent-space normal; (0.5, 0.5, 1) = off
+layout(binding = 2) uniform sampler2D sceneDepth; // scene depth copy (glass refraction)
 layout(binding = 12) uniform samplerCubeArray shadowCube;
 layout(binding = 14) uniform sampler2D emissiveTex;
+layout(binding = 15) uniform sampler2D sceneColor; // the SSS-blurred scene (glass refraction; mips = roughness blur)
+layout(push_constant) uniform PassId { float passId; } passU; // 0 = opaque (alpha out = the ssssWeight side channel), 1 = transparent (alpha out = blend factor)
 
 const int MAX_LIGHTS = 8;
 struct Light {
@@ -119,6 +129,21 @@ float pcssShadow(vec3 N, vec3 L, float NoL, float dist, Light li, int idx) {
     return pcfShadow(N, L, dist, bias, radius, idx);
 }
 
+// the depth copy is 0..1 (near = 0, far = 1); linearize to a view distance (positive in
+// front). the background (db = 1) gives zFar; the near plane (db = 0) gives zNear
+float depthToDist(float db) {
+    return (ubo.zNear * ubo.zFar) / ((1.0 - db) * ubo.zFar + db * ubo.zNear);
+}
+
+// clip (-1..1 after the viewport flip) + distance -> view space (z = -dist); the signed
+// frustum tangents make this exact for the asymmetric VR eye projections
+vec3 clipToView(vec2 clip, float dist) {
+    vec4 f = ubo.frustum;
+    return vec3(((f.x + f.y) + clip.x * (f.y - f.x)) * 0.5 * dist,
+                ((f.z + f.w) + clip.y * (f.w - f.z)) * 0.5 * dist,
+                -dist);
+}
+
 // perturb N by the normal map; the 8-bit neutral texel (128,128,255) is not exactly (0,0,1)
 void applyNormalMap(inout vec3 N, vec2 uv, vec3 worldPos) {
     vec3 nT = texture(normalTex, uv).rgb * 2.0 - 1.0;
@@ -166,7 +191,9 @@ void main() {
     vec3 indirectDiffuse = irr * albedo * (1.0 - metal) * ubo.envIntensity / PI;
     vec3 indirectSpecular = prefilt * specF * ubo.envIntensity;
 
-    vec3 color = indirectDiffuse + indirectSpecular;
+    // the diff/spec are accumulated separately: the glass scales the diffuse by (1 - refraction)
+    vec3 diffSum = indirectDiffuse;
+    vec3 specSum = indirectSpecular;
     for (int i = 0; i < MAX_LIGHTS; ++i) {
         if (i >= lts.count)
             break;
@@ -189,9 +216,45 @@ void main() {
         vec3 diff = kd * albedo / PI;
         float shadow = pcssShadow(N, L, NoL, dist, li, i);
         vec3 radiance = li.colorRadius.xyz * li.posIntensity.w / max(d2, 1e-3);
-        color += radiance * NoL * (spec + diff) * shadow;
+        diffSum += radiance * NoL * diff * shadow;
+        specSum += radiance * NoL * spec * shadow;
     }
 
+    // glass (screen-space refraction): the refraction field (0..1) drives both the
+    // transmission energy (linear) and the screen-uv offset (max 0.1 uv at 1.0); an
+    // off-screen ray falls back to the environment in the refracted direction
+    vec3 trans = vec3(0.0);
+    float refAmount = modelU.refraction;
+    if (refAmount > 0.0) {
+        float refEnergy = refAmount;
+        diffSum *= 1.0 - refEnergy;
+        vec3 refN = normalize((ubo.view * vec4(N, 0.0)).xyz);
+        vec2 screenUv = gl_FragCoord.xy / ubo.screenSize;
+        vec2 refOfs = screenUv - refN.xy * (refAmount * 0.1);
+        if (refOfs.x >= 0.0 && refOfs.x <= 1.0 && refOfs.y >= 0.0 && refOfs.y <= 1.0) {
+            // the depth is read at the offset uv, the position reconstructed at the current uv
+            // (Godot's approximation); the fade hides the refraction when the refracted point
+            // is behind this fragment
+            vec3 pV = (ubo.view * vec4(vWorldPos, 1.0)).xyz;
+            float d = depthToDist(textureLod(sceneDepth, refOfs, 0.0).r);
+            vec2 clip = vec2(screenUv.x * 2.0 - 1.0, 1.0 - screenUv.y * 2.0);
+            vec3 refViewPos = clipToView(clip, d);
+            float see = smoothstep(0.0, 1.0, pV.z - refViewPos.z);
+            vec3 refCol = textureLod(sceneColor, refOfs, rough * 8.0).rgb;
+            trans += (1.0 - specF) * see * (1.0 - metal) * refEnergy * refCol;
+        } else { // off-screen ray: the environment, sampled in the refracted direction
+            vec2 refNdc = vec2(refOfs.x * 2.0 - 1.0, refOfs.y * 2.0 - 1.0);
+            float tanH = 0.5 * (ubo.frustum.y - ubo.frustum.x);
+            float tanV = 0.5 * (ubo.frustum.z - ubo.frustum.w);
+            vec3 refDir = normalize(vec3(refNdc.x * tanH, refNdc.y * tanV, -1.0));
+            vec3 refCol = textureLod(envPrefilter, refDir, rough * 4.0).rgb * ubo.envIntensity;
+            trans += (1.0 - specF) * (1.0 - metal) * refEnergy * refCol;
+        }
+    }
+
+    vec3 color = diffSum + specSum + trans;
     color += modelU.emissive * texture(emissiveTex, vUv).rgb; // unlit HDR emission, tonemapped with the rest
-    outColor = vec4(color, alpha);
+    // opaque pass: the alpha is the ssssWeight side channel (the background clears to 0); the
+    // transparent pass: the alpha is the blend factor (the glass self-composites over the scene)
+    outColor = vec4(color, passU.passId < 0.5 ? modelU.ssssWeight : alpha);
 }

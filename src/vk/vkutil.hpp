@@ -55,7 +55,7 @@ inline void vkMakeBufferDev(VkDevice dev, VkPhysicalDevice pdev, VkBuffer& buf, 
     VkBufferCreateInfo bci{};
     bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bci.size = size;
-    bci.usage = usage;
+    bci.usage = usage | (data ? VK_BUFFER_USAGE_TRANSFER_DST_BIT : 0);
     VK(vkCreateBuffer(dev, &bci, nullptr, &buf));
     VkMemoryRequirements mr;
     vkGetBufferMemoryRequirements(dev, buf, &mr);
@@ -163,7 +163,7 @@ inline void vkMakeImage2D(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint3
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
     ici.tiling = VK_IMAGE_TILING_LINEAR;
     ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
-    ici.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VK(vkCreateImage(dev, &ici, nullptr, &img));
     VkMemoryRequirements mr;
     vkGetImageMemoryRequirements(dev, img, &mr);
@@ -180,6 +180,52 @@ inline void vkMakeImage2D(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint3
         std::memcpy(p, rgba8, (size_t)w * h * 4);
         vkUnmapMemory(dev, mem);
     }
+    // the upload is a host copy: a one-shot transition to the sampled layout
+    VkCommandPool pool;
+    VkCommandPoolCreateInfo cpci{};
+    cpci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    VK(vkCreateCommandPool(dev, &cpci, nullptr, &pool));
+    VkCommandBuffer cb;
+    VkCommandBufferAllocateInfo cba{};
+    cba.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cba.commandPool = pool;
+    cba.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cba.commandBufferCount = 1;
+    VK(vkAllocateCommandBuffers(dev, &cba, &cb));
+    VkCommandBufferBeginInfo cbi{};
+    cbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    VK(vkBeginCommandBuffer(cb, &cbi));
+    VkImageMemoryBarrier tb{};
+    tb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    tb.image = img;
+    tb.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    tb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    tb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    tb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    tb.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    tb.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                        nullptr, 1, &tb);
+    VK(vkEndCommandBuffer(cb));
+    uint32_t fam = 0, famCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(pdev, &famCount, nullptr);
+    std::vector<VkQueueFamilyProperties> fams(famCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(pdev, &famCount, fams.data());
+    for (uint32_t i = 0; i < famCount; ++i)
+        if (fams[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) {
+            fam = i;
+            break;
+        }
+    VkQueue q;
+    vkGetDeviceQueue(dev, fam, 0, &q);
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cb;
+    VK(vkQueueSubmit(q, 1, &si, VK_NULL_HANDLE));
+    VK(vkQueueWaitIdle(q));
+    vkFreeCommandBuffers(dev, pool, 1, &cb);
+    vkDestroyCommandPool(dev, pool, nullptr);
     VkImageViewCreateInfo vci{};
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = img;
@@ -197,8 +243,11 @@ inline void vkFreeImage2D(VkDevice dev, VkImage img, VkDeviceMemory mem, VkImage
     }
 }
 
-inline void vkMakeSamplerEx(VkDevice dev, VkSamplerAddressMode addrU, VkSamplerAddressMode addrV, bool linearMip,
-                            float maxLod, float maxAniso, VkSampler& out) {
+inline void vkMakeSamplerEx(VkDevice dev, VkPhysicalDevice pdev, VkSamplerAddressMode addrU, VkSamplerAddressMode addrV,
+                            bool linearMip, float maxLod, float maxAniso, VkSampler& out) {
+    VkPhysicalDeviceProperties pp{};
+    vkGetPhysicalDeviceProperties(pdev, &pp);
+    const float aniso = maxAniso > 1.0f ? std::min(maxAniso, pp.limits.maxSamplerAnisotropy) : 1.0f;
     VkSamplerCreateInfo s{};
     s.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     s.magFilter = VK_FILTER_LINEAR;
@@ -207,8 +256,8 @@ inline void vkMakeSamplerEx(VkDevice dev, VkSamplerAddressMode addrU, VkSamplerA
     s.addressModeU = addrU;
     s.addressModeV = addrV;
     s.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    s.anisotropyEnable = maxAniso > 1.0f;
-    s.maxAnisotropy = maxAniso;
+    s.anisotropyEnable = aniso > 1.0f;
+    s.maxAnisotropy = aniso;
     s.compareEnable = VK_FALSE;
     s.minLod = 0.0f;
     s.maxLod = maxLod;
@@ -217,7 +266,8 @@ inline void vkMakeSamplerEx(VkDevice dev, VkSamplerAddressMode addrU, VkSamplerA
 }
 
 inline void vkMakeCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, uint32_t mipLevels, VkImage& img,
-                            VkDeviceMemory& mem, VkImageView& cubeView, VkFormat fmt = VK_FORMAT_R16G16B16A16_SFLOAT) {
+                            VkDeviceMemory& mem, VkImageView& cubeView, VkFormat fmt = VK_FORMAT_R16G16B16A16_SFLOAT,
+                            VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL) {
     VkImageCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
@@ -226,9 +276,10 @@ inline void vkMakeCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, 
     ici.mipLevels = mipLevels;
     ici.arrayLayers = 6;
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
-    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.tiling = tiling;
+    ici.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT; // cube + 2D-array views on one image
     ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    ici.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VK(vkCreateImage(dev, &ici, nullptr, &img));
     VkMemoryRequirements mr;
     vkGetImageMemoryRequirements(dev, img, &mr);
@@ -282,8 +333,10 @@ inline void vkMakeCubeArrayImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t s
     ici.arrayLayers = arrayLayers;
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
     ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    ici.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
+    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    ici.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VK(vkCreateImage(dev, &ici, nullptr, &img));
     VkMemoryRequirements mr;
     vkGetImageMemoryRequirements(dev, img, &mr);
@@ -322,6 +375,16 @@ inline void vkMakeCubeMipArrayView(VkDevice dev, VkImage img, uint32_t mip, VkIm
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = img;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    vci.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, 0, 6};
+    VK(vkCreateImageView(dev, &vci, nullptr, &view));
+}
+
+inline void vkMakeCubeMipView(VkDevice dev, VkImage img, uint32_t mip, VkImageView& view) {
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = img;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
     vci.format = VK_FORMAT_R16G16B16A16_SFLOAT;
     vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, 0, 6};
     VK(vkCreateImageView(dev, &vci, nullptr, &view));

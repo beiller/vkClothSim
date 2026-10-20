@@ -20,7 +20,7 @@ void Renderer::initShadow(VkApp& app) {
                            m_shadowDepthFace[f]);
     vkMakeCubeArrayView(m_dev, m_shadowCube, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 0, nLayers,
                         m_shadowSampleView);
-    vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false, 0.0f,
+    vkMakeSamplerEx(m_dev, m_pdev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false, 0.0f,
                     1.0f, m_shadowSampler);
     m_shadowInfo = {m_shadowSampler, m_shadowSampleView, VK_IMAGE_LAYOUT_GENERAL};
 
@@ -75,6 +75,17 @@ void Renderer::initShadow(VkApp& app) {
 
     VkCommandBuffer cmd = app.beginCommands();
     VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, nLayers};
+    VkImageMemoryBarrier sb{}; // created UNDEFINED: transition before the first use
+    sb.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    sb.image = m_shadowCube;
+    sb.subresourceRange = range;
+    sb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    sb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    sb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    sb.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    sb.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                        1, &sb);
     const float farD = m_shadowRange + 1.0f;
     VkClearColorValue clear{{farD, farD, farD, 1.0f}};
     vkCmdClearColorImage(cmd, m_shadowCube, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
@@ -137,8 +148,8 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd, const entt::registry& reg)
                 if (!rend.visible || rend.noShadow)
                     continue;
                 const int inst = instOf(e);
-                if (inst >= 0 && m_insts[(size_t)inst].alphaMode != 2)
-                    drawInstance(cmd, m_shadowPl, m_geoms[m_insts[(size_t)inst].geom], m_insts[(size_t)inst]);
+                if (inst >= 0 && m_insts[(size_t)inst].alphaMode != 2 && m_insts[(size_t)inst].refraction <= 0.0f)
+                    drawInstance(cmd, m_shadowPl, m_geoms[m_insts[(size_t)inst].geom], m_insts[(size_t)inst].set);
             }
             vkCmdEndRenderPass(cmd);
         }

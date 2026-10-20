@@ -6,8 +6,8 @@
 #include "vk/vkutil.hpp"
 
 void Renderer::makeComputePass(const void* spv, uint32_t len, const std::vector<VkDescriptorSetLayoutBinding>& binds,
-                               uint32_t pcSize, EnvPass& out) {
-    vkMakeDslPool(m_dev, binds, 1, out.dsl, out.pool);
+                               uint32_t pcSize, EnvPass& out, uint32_t maxSets) {
+    vkMakeDslPool(m_dev, binds, maxSets, out.dsl, out.pool);
     out.pl = pcSize > 0 ? vkMakePipelineLayoutPC(m_dev, out.dsl, VK_SHADER_STAGE_COMPUTE_BIT, pcSize)
                         : vkMakePipelineLayout(m_dev, out.dsl);
     VkShaderModule cm = vkMakeModule(m_dev, spv, len);
@@ -48,6 +48,8 @@ void Renderer::writeEnvSet(VkDescriptorSet set) {
 void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h) {
     if (m_envReady)
         return;
+    m_envEqW = w;
+    m_envEqH = h;
     const uint32_t cubeSize = 256;
     const uint32_t mips = 5;
 
@@ -78,7 +80,7 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     eci.samples = VK_SAMPLE_COUNT_1_BIT;
     eci.tiling = VK_IMAGE_TILING_OPTIMAL;
     eci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    eci.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
+    eci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VK(vkCreateImage(m_dev, &eci, nullptr, &m_envEq.img));
     VkMemoryRequirements emr;
     vkGetImageMemoryRequirements(m_dev, m_envEq.img, &emr);
@@ -106,24 +108,29 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(m_pdev, &props);
     const float maxAniso = props.limits.maxSamplerAnisotropy;
-    vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false, 0.0f, 1.0f,
+    vkMakeSamplerEx(m_dev, m_pdev, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false, 0.0f, 1.0f,
                     m_eqSampler);
-    vkMakeSamplerEx(m_dev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, true,
+    vkMakeSamplerEx(m_dev, m_pdev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, true,
                     (float)(mips - 1), maxAniso, m_cubeSampler);
 
     m_envSpecInfo = {m_cubeSampler, m_envPre.view, VK_IMAGE_LAYOUT_GENERAL};
     m_envIrrInfo = {m_cubeSampler, m_envIrr.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo eqInfo{m_eqSampler, m_envEq.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo preSam{m_cubeSampler, m_envPre.view, VK_IMAGE_LAYOUT_GENERAL};
-    const VkDescriptorImageInfo preImg{VK_NULL_HANDLE, m_envPreMips[0], VK_IMAGE_LAYOUT_GENERAL};
-    const VkDescriptorImageInfo irrImg{VK_NULL_HANDLE, m_envIrrArr, VK_IMAGE_LAYOUT_GENERAL};
+    // store through CUBE views (the same views the glass samples): on this driver the 2D_ARRAY
+    // view's layer mapping differs from the CUBE view's, and mixing the two scrambles the faces
+    VkImageView prefMipView[5] = {};
+    for (uint32_t m = 0; m < mips; ++m)
+        vkMakeCubeMipView(m_dev, m_envPre.img, m, prefMipView[m]);
+    const VkDescriptorImageInfo preImg{VK_NULL_HANDLE, prefMipView[0], VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo irrImg{VK_NULL_HANDLE, m_envIrr.view, VK_IMAGE_LAYOUT_GENERAL};
 
     const std::vector<VkDescriptorSetLayoutBinding> cubeBinds = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
     };
     makeComputePass(env_cube_spv, env_cube_spv_len / 4, cubeBinds, 4, m_pcCube);
-    makeComputePass(env_prefilter_spv, env_prefilter_spv_len / 4, cubeBinds, 8, m_pcPref);
+    makeComputePass(env_prefilter_spv, env_prefilter_spv_len / 4, cubeBinds, 8, m_pcPref, 5);
     makeComputePass(env_irradiance_spv, env_irradiance_spv_len / 4, cubeBinds, 4, m_pcIrr);
 
     auto writeImg = [&](VkDescriptorSet set, uint32_t binding, VkDescriptorType type, const VkDescriptorImageInfo& ii) {
@@ -140,11 +147,39 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     writeImg(m_pcCube.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, preImg);
     writeImg(m_pcPref.set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, preSam);
     writeImg(m_pcPref.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, preImg);
+    // one descriptor set per prefilter mip: a set must not be re-updated between dispatches
+    VkDescriptorSet prefSet[5];
+    prefSet[0] = m_pcPref.set;
+    {
+        const VkDescriptorSetLayout sl[4] = {m_pcPref.dsl, m_pcPref.dsl, m_pcPref.dsl, m_pcPref.dsl};
+        VkDescriptorSetAllocateInfo sa{};
+        sa.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        sa.descriptorPool = m_pcPref.pool;
+        sa.descriptorSetCount = 4;
+        sa.pSetLayouts = sl;
+        VK(vkAllocateDescriptorSets(m_dev, &sa, prefSet + 1));
+    }
+    for (uint32_t m = 1; m < mips; ++m) {
+        writeImg(prefSet[m], 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, preSam);
+        const VkDescriptorImageInfo mi{VK_NULL_HANDLE, prefMipView[m], VK_IMAGE_LAYOUT_GENERAL};
+        writeImg(prefSet[m], 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, mi);
+    }
     writeImg(m_pcIrr.set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, preSam);
     writeImg(m_pcIrr.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, irrImg);
 
     VkCommandBuffer cmd = app.beginCommands();
 
+    VkImageMemoryBarrier eqFirst{}; // created UNDEFINED: transition before the first use
+    eqFirst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    eqFirst.image = m_envEq.img;
+    eqFirst.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    eqFirst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    eqFirst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    eqFirst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    eqFirst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    eqFirst.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                        nullptr, 1, &eqFirst);
     VkBufferImageCopy bic{};
     bic.bufferOffset = 0;
     bic.bufferRowLength = w;
@@ -165,6 +200,19 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
     eqBar.newLayout = VK_IMAGE_LAYOUT_GENERAL;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
                          nullptr, 1, &eqBar);
+    VkImageMemoryBarrier cubeFirst[2]{}; // created UNDEFINED: transition before the first use
+    for (int i = 0; i < 2; ++i) {
+        cubeFirst[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        cubeFirst[i].image = (i == 0) ? m_envPre.img : m_envIrr.img;
+        cubeFirst[i].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, (uint32_t)(i == 0 ? mips : 1), 0, 6};
+        cubeFirst[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        cubeFirst[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        cubeFirst[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        cubeFirst[i].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        cubeFirst[i].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 2, cubeFirst);
 
     auto imgBar = [&](VkImage img, uint32_t lvl) {
         VkImageMemoryBarrier b{};
@@ -191,17 +239,8 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
 
     for (uint32_t mip = 1; mip < mips; ++mip) {
         const uint32_t size = cubeSize >> mip;
-        const VkDescriptorImageInfo mi{VK_NULL_HANDLE, m_envPreMips[mip], VK_IMAGE_LAYOUT_GENERAL};
-        VkWriteDescriptorSet wr{};
-        wr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        wr.dstSet = m_pcPref.set;
-        wr.dstBinding = 1;
-        wr.descriptorCount = 1;
-        wr.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        wr.pImageInfo = &mi;
-        vkUpdateDescriptorSets(m_dev, 1, &wr, 0, nullptr);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcPref.pipe);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcPref.pl, 0, 1, &m_pcPref.set, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pcPref.pl, 0, 1, &prefSet[mip], 0, nullptr);
         const int pcPref[2] = {(int)mip, (int)size};
         vkCmdPushConstants(cmd, m_pcPref.pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, 8, pcPref);
         vkCmdDispatch(cmd, (size + 7) / 8, (size + 7) / 8, 6);

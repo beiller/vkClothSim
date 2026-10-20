@@ -63,6 +63,8 @@ static const FieldDesc kMaterial[] = {
     {"alphaMode", OFF(Material, alphaMode), FieldKind::SliderI, 0.0f, 2.0f},
     {"alphaCutoff", OFF(Material, alphaCutoff), FieldKind::SliderF, 0.0f, 1.0f},
     {"alpha", OFF(Material, alpha), FieldKind::SliderF, 0.0f, 1.0f},
+    {"ssssWeight", OFF(Material, ssssWeight), FieldKind::SliderF, 0.0f, 1.0f},
+    {"refraction", OFF(Material, refraction), FieldKind::SliderF, -1.0f, 1.0f},
 };
 // offset unused for Ref fields
 static const FieldDesc kMaterialRef[] = {

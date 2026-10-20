@@ -2,7 +2,7 @@
 
 layout(binding = 0) buffer Pos { float p[]; } posB;
 layout(binding = 1) buffer Nrm { float p[]; } nrmB;
-layout(binding = 3) uniform UBO { mat4 viewProj; vec3 camPos; } ubo;
+layout(binding = 3) uniform UBO { mat4 viewProj; mat4 view; vec3 camPos; } ubo;
 layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; } modelU;
 layout(binding = 5) buffer Uv { float p[]; } uvB;
 

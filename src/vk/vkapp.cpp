@@ -136,6 +136,16 @@ bool VkApp::initInstance(int width, int height, const char* title) {
 }
 
 VkDevice VkApp::makeDevice() {
+    VkPhysicalDeviceFeatures feat{};
+    feat.imageCubeArray = VK_TRUE; // the shadow cubes are sampled as a cube array
+    feat.samplerAnisotropy = VK_TRUE;
+    feat.vertexPipelineStoresAndAtomics = VK_TRUE; // mesh/shadow vertex shaders bind ssbos
+    // the depth -> depth-copy image copy converts D32 to R32 (mismatched aspect masks)
+    VkPhysicalDeviceMaintenance8FeaturesKHR m8{};
+    m8.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_8_FEATURES_KHR;
+    m8.maintenance8 = VK_TRUE;
+    m_dci.pNext = &m8;
+    m_dci.pEnabledFeatures = &feat;
     VK(vkCreateDevice(m_pdev, &m_dci, nullptr, &m_dev));
     return m_dev;
 }
@@ -168,7 +178,7 @@ bool VkApp::initDevice(VkDevice dev) {
     satt[1].format = VK_FORMAT_D32_SFLOAT;
     satt[1].samples = VK_SAMPLE_COUNT_1_BIT;
     satt[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    satt[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    satt[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE; // STORE: the noClear (glass/blend) pass LOADs this depth
     satt[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     satt[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     satt[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -186,6 +196,39 @@ bool VkApp::initDevice(VkDevice dev) {
     srpc.subpassCount = 1;
     srpc.pSubpasses = &ssp;
     VK(vkCreateRenderPass(m_dev, &srpc, nullptr, &m_rpScene));
+
+    // transparent (glass/blend) pass over the blitted scene: HDR + depth both LOAD; the depth
+    // starts in the opaque pass's final layout, so no barrier is needed
+    VkAttachmentDescription natt[2]{};
+    natt[0].format = m_hdrFmt;
+    natt[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    natt[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    natt[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    natt[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    natt[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    natt[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // the blitted scene (LOAD)
+    natt[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    natt[1].format = VK_FORMAT_D32_SFLOAT;
+    natt[1].samples = VK_SAMPLE_COUNT_1_BIT;
+    natt[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    natt[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    natt[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    natt[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    natt[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    natt[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    VkAttachmentReference ntr[2] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                                   {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}};
+    VkSubpassDescription nss{};
+    nss.colorAttachmentCount = 1;
+    nss.pColorAttachments = &ntr[0];
+    nss.pDepthStencilAttachment = &ntr[1];
+    VkRenderPassCreateInfo nrpc{};
+    nrpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    nrpc.attachmentCount = 2;
+    nrpc.pAttachments = natt;
+    nrpc.subpassCount = 1;
+    nrpc.pSubpasses = &nss;
+    VK(vkCreateRenderPass(m_dev, &nrpc, nullptr, &m_rpSceneNoClear));
 
     VkAttachmentDescription batt[1]{};
     batt[0].format = m_fmt.format;
@@ -243,6 +286,7 @@ bool VkApp::initDevice(VkDevice dev) {
     VkFenceCreateInfo fci{};
     fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VK(vkCreateFence(m_dev, &fci, nullptr, &m_fence));
+    VK(vkCreateFence(m_dev, &fci, nullptr, &m_acqFence));
     return true;
 }
 
@@ -251,7 +295,9 @@ void VkApp::shutdown() {
     destroySwapchainResources();
     vkDestroyRenderPass(m_dev, m_rp, nullptr);
     vkDestroyRenderPass(m_dev, m_rpScene, nullptr);
+    vkDestroyRenderPass(m_dev, m_rpSceneNoClear, nullptr);
     vkDestroySampler(m_dev, m_hdrSampler, nullptr);
+    vkDestroyFence(m_dev, m_acqFence, nullptr);
     vkDestroyFence(m_dev, m_fence, nullptr);
     vkDestroyCommandPool(m_dev, m_pool, nullptr);
     vkDestroyDevice(m_dev, nullptr);
@@ -275,8 +321,10 @@ void VkApp::pollEvents() {
 
 uint32_t VkApp::acquireNextImage() {
     uint32_t idx = 0;
-    const VkResult r = vkAcquireNextImageKHR(m_dev, m_sc, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &idx);
+    const VkResult r = vkAcquireNextImageKHR(m_dev, m_sc, UINT64_MAX, VK_NULL_HANDLE, m_acqFence, &idx);
     checkResult(r, "acquire");
+    VK(vkWaitForFences(m_dev, 1, &m_acqFence, VK_TRUE, 30000000000ull));
+    VK(vkResetFences(m_dev, 1, &m_acqFence));
     return idx;
 }
 
@@ -315,8 +363,11 @@ void VkApp::recreateSwapchain() {
     VK(vkDeviceWaitIdle(m_dev));
     uint32_t nImg = (uint32_t)m_images.size();
     uint32_t drain;
-    for (uint32_t i = 0; i < nImg; ++i)
-        vkAcquireNextImageKHR(m_dev, m_sc, 1000000000ull, VK_NULL_HANDLE, VK_NULL_HANDLE, &drain);
+    for (uint32_t i = 0; i < nImg; ++i) {
+        vkAcquireNextImageKHR(m_dev, m_sc, 1000000000ull, VK_NULL_HANDLE, m_acqFence, &drain);
+        VK(vkWaitForFences(m_dev, 1, &m_acqFence, VK_TRUE, 30000000000ull));
+        VK(vkResetFences(m_dev, 1, &m_acqFence));
+    }
     destroySwapchainResources();
 
     VkSurfaceCapabilitiesKHR caps;
@@ -370,12 +421,37 @@ void VkApp::recreateSwapchain() {
     m_images.resize(icnt);
     vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, m_images.data());
 
-    createAttachment(m_extent, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+    uint32_t mips = 1; // mip chain for the glass roughness blur (mip level = rough * 8)
+    for (uint32_t s = std::max(m_extent.width, m_extent.height); s > 1; s >>= 1)
+        ++mips;
+    m_sceneColorMips = mips;
+
+    createAttachment(m_extent, VK_FORMAT_D32_SFLOAT,
+                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                      VK_IMAGE_ASPECT_DEPTH_BIT, m_depth, m_depthMem, m_depthView);
-    createAttachment(m_extent, m_hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+    // the sampled depth copy: the glass refraction reads the depth while it is also the
+    // transparent pass's depth-stencil attachment (layouts are exclusive, so a copy)
+    createAttachment(m_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     VK_IMAGE_ASPECT_COLOR_BIT, m_depthCopy, m_depthCopyMem, m_depthCopyView);
+    createAttachment(m_extent, m_hdrFmt,
+                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                         VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                     VK_IMAGE_ASPECT_COLOR_BIT, m_sceneColor, m_sceneColorMem, m_sceneColorView, mips);
+    // the framebuffers need a single-mip view (the view above spans all mips)
+    VkImageViewCreateInfo savci{};
+    savci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    savci.image = m_sceneColor;
+    savci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    savci.format = m_hdrFmt;
+    savci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VK(vkCreateImageView(m_dev, &savci, nullptr, &m_sceneColorAttView));
+    createAttachment(m_extent, m_hdrFmt, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     VK_IMAGE_ASPECT_COLOR_BIT, m_sceneColorTemp, m_sceneColorTempMem, m_sceneColorTempView);
+    createAttachment(m_extent, m_hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_hdr, m_hdrMem, m_hdrView);
 
-    VkImageView satts[2] = {m_hdrView, m_depthView};
+    VkImageView satts[2] = {m_sceneColorAttView, m_depthView};
     VkFramebufferCreateInfo sfci{};
     sfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     sfci.renderPass = m_rpScene;
@@ -385,6 +461,40 @@ void VkApp::recreateSwapchain() {
     sfci.height = m_extent.height;
     sfci.layers = 1;
     VK(vkCreateFramebuffer(m_dev, &sfci, nullptr, &m_sceneFb));
+
+    VkImageView natts[2] = {m_hdrView, m_depthView};
+    VkFramebufferCreateInfo nfci{};
+    nfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    nfci.renderPass = m_rpSceneNoClear;
+    nfci.attachmentCount = 2;
+    nfci.pAttachments = natts;
+    nfci.width = m_extent.width;
+    nfci.height = m_extent.height;
+    nfci.layers = 1;
+    VK(vkCreateFramebuffer(m_dev, &nfci, nullptr, &m_sceneFbNoClear));
+
+    // DBG: noClear rp (depth LOAD) on the sceneColor image
+    VkImageView ncs[2] = {m_sceneColorAttView, m_depthView};
+    VkFramebufferCreateInfo ncfci{};
+    ncfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    ncfci.renderPass = m_rpSceneNoClear;
+    ncfci.attachmentCount = 2;
+    ncfci.pAttachments = ncs;
+    ncfci.width = m_extent.width;
+    ncfci.height = m_extent.height;
+    ncfci.layers = 1;
+    VK(vkCreateFramebuffer(m_dev, &ncfci, nullptr, &m_sceneFbNoClearOnScene));
+    // DBG: scene rp (depth CLEAR) on the hdr image
+    VkImageView soh[2] = {m_hdrView, m_depthView};
+    VkFramebufferCreateInfo sofci{};
+    sofci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    sofci.renderPass = m_rpScene;
+    sofci.attachmentCount = 2;
+    sofci.pAttachments = soh;
+    sofci.width = m_extent.width;
+    sofci.height = m_extent.height;
+    sofci.layers = 1;
+    VK(vkCreateFramebuffer(m_dev, &sofci, nullptr, &m_sceneFbSceneOnHdr));
 
     m_views.resize(icnt);
     m_fbs.resize(icnt);
@@ -418,9 +528,25 @@ void VkApp::destroySwapchainResources() {
         vkDestroyImageView(m_dev, v, nullptr);
     if (m_sc)
         vkDestroySwapchainKHR(m_dev, m_sc, nullptr);
+    if (m_sceneFbNoClear)
+        vkDestroyFramebuffer(m_dev, m_sceneFbNoClear, nullptr);
+    if (m_sceneFbNoClearOnScene)
+        vkDestroyFramebuffer(m_dev, m_sceneFbNoClearOnScene, nullptr);
+    if (m_sceneFbSceneOnHdr)
+        vkDestroyFramebuffer(m_dev, m_sceneFbSceneOnHdr, nullptr);
     vkDestroyImageView(m_dev, m_depthView, nullptr);
     vkDestroyImage(m_dev, m_depth, nullptr);
     vkFreeMemory(m_dev, m_depthMem, nullptr);
+    vkDestroyImageView(m_dev, m_depthCopyView, nullptr);
+    vkDestroyImage(m_dev, m_depthCopy, nullptr);
+    vkFreeMemory(m_dev, m_depthCopyMem, nullptr);
+    vkDestroyImageView(m_dev, m_sceneColorAttView, nullptr);
+    vkDestroyImageView(m_dev, m_sceneColorView, nullptr);
+    vkDestroyImage(m_dev, m_sceneColor, nullptr);
+    vkFreeMemory(m_dev, m_sceneColorMem, nullptr);
+    vkDestroyImageView(m_dev, m_sceneColorTempView, nullptr);
+    vkDestroyImage(m_dev, m_sceneColorTemp, nullptr);
+    vkFreeMemory(m_dev, m_sceneColorTempMem, nullptr);
     vkDestroyImageView(m_dev, m_hdrView, nullptr);
     vkDestroyImage(m_dev, m_hdr, nullptr);
     vkFreeMemory(m_dev, m_hdrMem, nullptr);
@@ -430,19 +556,30 @@ void VkApp::destroySwapchainResources() {
     m_depth = VK_NULL_HANDLE;
     m_depthMem = VK_NULL_HANDLE;
     m_depthView = VK_NULL_HANDLE;
+    m_depthCopy = VK_NULL_HANDLE;
+    m_depthCopyMem = VK_NULL_HANDLE;
+    m_depthCopyView = VK_NULL_HANDLE;
     m_sceneFb = VK_NULL_HANDLE;
+    m_sceneFbNoClear = VK_NULL_HANDLE;
+    m_sceneColor = VK_NULL_HANDLE;
+    m_sceneColorMem = VK_NULL_HANDLE;
+    m_sceneColorAttView = VK_NULL_HANDLE;
+    m_sceneColorView = VK_NULL_HANDLE;
+    m_sceneColorTemp = VK_NULL_HANDLE;
+    m_sceneColorTempMem = VK_NULL_HANDLE;
+    m_sceneColorTempView = VK_NULL_HANDLE;
     m_hdr = VK_NULL_HANDLE;
     m_hdrMem = VK_NULL_HANDLE;
     m_hdrView = VK_NULL_HANDLE;
 }
 
 void VkApp::createAttachment(VkExtent2D ext, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlagBits aspect,
-                             VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
+                             VkImage& img, VkDeviceMemory& mem, VkImageView& view, uint32_t mipLevels) {
     VkImageCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
     ici.extent = {ext.width, ext.height, 1};
-    ici.mipLevels = 1;
+    ici.mipLevels = mipLevels;
     ici.arrayLayers = 1;
     ici.format = fmt;
     ici.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -464,6 +601,6 @@ void VkApp::createAttachment(VkExtent2D ext, VkFormat fmt, VkImageUsageFlags usa
     vci.image = img;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vci.format = fmt;
-    vci.subresourceRange = {aspect, 0, 1, 0, 1};
+    vci.subresourceRange = {aspect, 0, mipLevels, 0, 1};
     VK(vkCreateImageView(m_dev, &vci, nullptr, &view));
 }

@@ -1,0 +1,51 @@
+{
+    "name": "glass",
+    "env": "fly-studio-03_1K.exr",
+    "envIntensity": 1.0,
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 0, 6], "quat": [0, 0, 0, 1] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/camera"
+        },
+        {
+            "name": "light",
+            "components": {
+                "Transform": { "pos": [2, 2, 3] },
+                "PointLight": { "color": [1, 1, 1], "intensity": 20, "radius": 0.15 }
+            }
+        },
+        {
+            "name": "mat_glass",
+            "components": { "Material": { "baseColor": [1, 1, 1], "roughness": 0.05, "refraction": 1.0 } }
+        },
+        { "name": "glass", "script": "scenes/glass" },
+        { "name": "vr", "script": "scenes/vr_controller" }
+    ],
+    "ui": {
+        "title": "glass",
+        "size": [320, 560],
+        "widgets": [
+            {
+                "type": "section",
+                "label": "glass",
+                "children": [
+                    { "type": "slider-f", "label": "refraction", "bind": "sphere.refraction" },
+                    { "type": "slider-f", "label": "roughness", "bind": "sphere.roughness" },
+                    { "type": "slider-f", "label": "ssss", "bind": "sphere.ssssWeight" }
+                ]
+            },
+            {
+                "type": "section",
+                "label": "tone",
+                "children": [
+                    { "type": "slider-f", "label": "exposure", "bind": "render.exposure" },
+                    { "type": "slider-f", "label": "hdri intensity", "bind": "render.envIntensity" }
+                ]
+            }
+        ]
+    }
+}
