@@ -1,9 +1,8 @@
 #include "gltf.hpp"
 
 #include "assets.hpp"
+#include "ecs_ops.hpp"
 #include "math.hpp"
-#include "sim/skin.hpp"
-#include "systems.hpp"
 #include "tiny_gltf_v3.h"
 
 #include "stb_image.h"
@@ -398,7 +397,7 @@ bool nodePose(const tg3_node& n, Transform& out) {
 }
 
 struct GltfCtx {
-    Engine& w;
+    entt::registry& reg;
     const tg3_model* m;
     std::string fileBase;
     std::string fileId;
@@ -439,7 +438,7 @@ entt::entity textureForImage(GltfCtx& c, int32_t imgIdx, bool srgb) {
         warn(c, "cannot decode image " + std::to_string(imgIdx));
         return entt::null;
     }
-    return c.textures[key] = textureBytes(c.w, imageId(c, imgIdx), px.data(), wpx, hpx);
+    return c.textures[key] = makeTexture(c.reg, imageId(c, imgIdx), px.data(), wpx, hpx);
 }
 
 entt::entity textureForTexture(GltfCtx& c, int32_t texIdx, bool srgb) {
@@ -452,7 +451,7 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     if (matIdx >= 0 && (uint32_t)matIdx < c.materials.size() && c.materials[matIdx] != entt::null)
         return c.materials[matIdx];
     if (matIdx < 0 || (uint32_t)matIdx >= c.m->materials_count)
-        return spawnMaterial(c.w, V3{1, 1, 1}, 0.0f, 1.0f, V3{0, 0, 0}, nullptr);
+        return spawnMaterial(c.reg, V3{1, 1, 1}, 0.0f, 1.0f, V3{0, 0, 0}, nullptr);
     const tg3_material& gm = c.m->materials[matIdx];
     const auto& pbr = gm.pbr_metallic_roughness;
     const std::string name = gm.name.data ? s(gm.name) : "mat_" + std::to_string(matIdx);
@@ -465,8 +464,8 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     const V3 emissive = {srgbToLinear((float)gm.emissive_factor[0]), srgbToLinear((float)gm.emissive_factor[1]),
                         srgbToLinear((float)gm.emissive_factor[2])};
     const entt::entity e =
-        spawnMaterial(c.w, baseColor, (float)pbr.metallic_factor, (float)pbr.roughness_factor, emissive, full.c_str());
-    auto& mat = c.w.reg.get<Material>(e);
+        spawnMaterial(c.reg, baseColor, (float)pbr.metallic_factor, (float)pbr.roughness_factor, emissive, full.c_str());
+    auto& mat = c.reg.get<Material>(e);
     const auto slot = [&](int32_t texIdx, int32_t coord, const char* what, entt::entity* field, bool srgb) {
         if (texIdx < 0)
             return;
@@ -549,21 +548,17 @@ std::vector<std::string> targetNames(const tg3_mesh& gm) {
     return out;
 }
 
-// group pending skinned prims by (skin, POSITION accessor): the group shares rest data + joints/weights + morph deltas, never per primitive (memory trap)
+// each skinned prim keeps its full rest data (pos/nrm/joints/weights + shapes) in its own Mesh;
+// Skin::sync lazily adopts a per-mesh GPU state from it
 void finishSkinned(GltfCtx& c) {
-    if (c.pending.empty())
-        return;
-    std::map<std::pair<int32_t, int32_t>, std::vector<GltfCtx::PendingPrim>> byGroup;
     for (const auto& pp : c.pending) {
         const int32_t skin = skinOf(c, pp.nodeIdx);
-        const tg3_primitive& p = c.m->meshes[pp.meshIdx].primitives[pp.primIdx];
-        byGroup[{skin, attrAccessor(p, "POSITION")}].push_back(pp);
-    }
-    for (auto& [key, prims] : byGroup) {
-        const int32_t skin = key.first;
-        const tg3_mesh& gm0 = c.m->meshes[prims[0].meshIdx];
-        const tg3_primitive& p0 = gm0.primitives[prims[0].primIdx];
-
+        const tg3_mesh& gm = c.m->meshes[pp.meshIdx];
+        const tg3_primitive& p = gm.primitives[pp.primIdx];
+        if (p.mode != -1 && p.mode != 4) {
+            warn(c, "skinned prim: primitive mode is not triangles");
+            continue;
+        }
         if (c.skinChars[skin] == entt::null) {
             const tg3_skin& sk = c.m->skins[skin];
             const std::string skelName = s(sk.name);
@@ -602,52 +597,50 @@ void finishSkinned(GltfCtx& c) {
                 skelComp.boneNames.push_back((uint32_t)sk.joints[i] < c.m->nodes_count ? s(c.m->nodes[sk.joints[i]].name) : "");
             skelComp.joints = std::move(jointEntities);
             skelComp.invBinds = std::move(invBinds);
-            skelComp.placement = c.nodeEntities[prims[0].nodeIdx];
-            const entt::entity skelEnt = c.w.reg.create();
-            c.w.gpuSim.skin.addSkeleton(skelEnt, (int)sk.joints_count);
-            c.w.reg.emplace<Name>(skelEnt, skelName);
-            c.w.reg.emplace<Skeleton>(skelEnt, std::move(skelComp));
-            c.w.reg.emplace<Parent>(skelEnt, c.root);
+            skelComp.placement = c.nodeEntities[pp.nodeIdx];
+            const entt::entity skelEnt = c.reg.create();
+            c.reg.emplace<Name>(skelEnt, skelName);
+            c.reg.emplace<Skeleton>(skelEnt, std::move(skelComp));
+            c.reg.emplace<Parent>(skelEnt, c.root);
             c.skinChars[skin] = skelEnt;
         }
         const entt::entity skelEnt = c.skinChars[skin];
         if (skelEnt == entt::null)
             continue;
+        const int nJ = (int)c.m->skins[skin].joints_count;
 
         std::vector<float> pos0;
-        if (!readAccessor(*c.m, key.second, 3, pos0) || pos0.empty()) {
-            warn(c, "skinned group: bad POSITION accessor");
+        if (!readAccessor(*c.m, attrAccessor(p, "POSITION"), 3, pos0) || pos0.empty()) {
+            warn(c, "skinned prim: bad POSITION");
             continue;
         }
         const int nV = (int)(pos0.size() / 3);
-        const int nJ = (int)c.m->skins[skin].joints_count;
-        SkelGroupDesc g;
-        g.nV = nV;
-        g.pos0 = pos0;
+        Mesh pm;
+        pm.pos = std::move(pos0);
         std::vector<float> nrm0;
-        if (readAccessor(*c.m, attrAccessor(p0, "NORMAL"), 3, nrm0) && nrm0.size() == (size_t)nV * 3)
-            g.nrm0 = std::move(nrm0);
+        if (readAccessor(*c.m, attrAccessor(p, "NORMAL"), 3, nrm0) && nrm0.size() == (size_t)nV * 3)
+            pm.nrm = std::move(nrm0);
         else {
             std::vector<uint32_t> idx;
             std::vector<float> idxf;
-            if (p0.indices >= 0 && readAccessor(*c.m, p0.indices, 1, idxf))
+            if (p.indices >= 0 && readAccessor(*c.m, p.indices, 1, idxf))
                 for (float v : idxf)
                     idx.push_back((uint32_t)v);
-            computeNormals(pos0, idx, g.nrm0);
+            computeNormals(pm.pos, idx, pm.nrm);
         }
-        const int32_t ja = jointAcc(p0);
-        const int32_t wa = attrAccessor(p0, "WEIGHTS_0") >= 0 ? attrAccessor(p0, "WEIGHTS_0") : attrAccessor(p0, "WEIGHT_0");
+        const int32_t ja = jointAcc(p);
+        const int32_t wa = attrAccessor(p, "WEIGHTS_0") >= 0 ? attrAccessor(p, "WEIGHTS_0") : attrAccessor(p, "WEIGHT_0");
         std::vector<float> jf, wf;
         if (!readAccessor(*c.m, ja, 4, jf) || jf.size() != (size_t)4 * nV) {
-            warn(c, "skinned group: bad JOINTS_0");
+            warn(c, "skinned prim: bad JOINTS_0");
             continue;
         }
         const int wc = wa >= 0 ? typeComps(c.m->accessors[wa].type) : 0;
         const bool haveW = wc > 0 && readAccessor(*c.m, wa, wc, wf) && wf.size() == (size_t)wc * nV;
         if (wc > 0 && !haveW)
-            warn(c, "skinned group: bad WEIGHTS_0 (treating as zero)");
-        g.joints.resize((size_t)4 * nV);
-        g.weights.assign((size_t)4 * nV, 0.0f);
+            warn(c, "skinned prim: bad WEIGHTS_0 (treating as zero)");
+        pm.joints.resize((size_t)4 * nV);
+        pm.weights.assign((size_t)4 * nV, 0.0f);
         bool badJoint = false;
         for (int v = 0; v < nV; ++v) {
             float sum = 0.0f;
@@ -656,112 +649,71 @@ void finishSkinned(GltfCtx& c) {
                 const bool okJ = jv >= 0.0f && jv < (float)nJ;
                 if (!okJ)
                     badJoint = true;
-                g.joints[4 * v + i] = okJ ? (uint32_t)jv : 0;
+                pm.joints[4 * v + i] = okJ ? (uint32_t)jv : 0;
                 const float wgt = (i < wc && haveW) ? wf[wc * v + i] : 0.0f;
-                g.weights[4 * v + i] = wgt;
+                pm.weights[4 * v + i] = wgt;
                 sum += wgt;
             }
             if (sum > 1e-6f)
                 for (int i = 0; i < 4; ++i)
-                    g.weights[4 * v + i] /= sum;
+                    pm.weights[4 * v + i] /= sum;
         }
         if (badJoint)
-            warn(c, "skinned group: joint index out of range (clamped)");
-        auto readShapes = [&](const tg3_mesh& gm, const tg3_primitive& p, Mesh& pm, const std::string& prefix) {
-            const std::vector<std::string> names = targetNames(gm);
-            for (int t = 0; t < (int)p.targets_count; ++t) {
-                SubMesh sh;
-                sh.name = t < (int)names.size() && !names[t].empty() ? names[t] : "target" + std::to_string(t);
-                if (t < (int)gm.weights_count)
-                    sh.weight = (float)gm.weights[t];
-                int32_t acc = -1;
-                bool hasNrm = false;
-                for (uint32_t i = 0; i < p.target_attribute_counts[t]; ++i) {
-                    const std::string k = s(p.targets[t][i].key);
-                    if (k == "POSITION")
-                        acc = p.targets[t][i].value;
-                    else if (k == "NORMAL")
-                        hasNrm = true;
+            warn(c, "skinned prim: joint index out of range (clamped)");
+        std::vector<float> uv, idxf;
+        if (!readAccessor(*c.m, attrAccessor(p, "TEXCOORD_0"), 2, uv) || uv.size() != (size_t)nV * 2)
+            uv.assign((size_t)nV * 2, 0.0f);
+        pm.uv = std::move(uv);
+        bool badIdx = false;
+        if (p.indices >= 0) {
+            if (!readAccessor(*c.m, p.indices, 1, idxf))
+                badIdx = true;
+            for (float v : idxf) {
+                if (v < 0.0f || v >= (float)nV) {
+                    badIdx = true;
+                    break;
                 }
-                if (acc >= 0) {
-                    std::vector<float> d;
-                    if (readAccessor(*c.m, acc, 3, d) && d.size() == (size_t)nV * 3)
-                        sh.pos = std::move(d);
-                    else
-                        warn(c, prefix + "target " + std::to_string(t) + " POSITION delta mismatch (slot zeroed)");
-                } else if (hasNrm)
-                    warn(c, prefix + "target " + std::to_string(t) + " has no POSITION delta (slot zeroed)");
-                pm.shapes.push_back(std::move(sh));
+                pm.indices.push_back((uint32_t)v);
             }
-        };
-        std::vector<entt::entity> children(prims.size(), entt::null);
-        entt::entity firstChild = entt::null;
-        for (size_t i = 0; i < prims.size(); ++i) {
-            const auto& pp = prims[i];
-            const tg3_mesh& gm = c.m->meshes[pp.meshIdx];
-            const tg3_primitive& p = gm.primitives[pp.primIdx];
-            if (p.mode != -1 && p.mode != 4) {
-                warn(c, "skinned prim: primitive mode is not triangles");
-                continue;
-            }
-            Mesh pm;
-            std::vector<float> uv, idxf;
-            if (!readAccessor(*c.m, attrAccessor(p, "TEXCOORD_0"), 2, uv) || uv.size() != (size_t)nV * 2)
-                uv.assign((size_t)nV * 2, 0.0f);
-            pm.uv = std::move(uv);
-            bool bad = false;
-            if (p.indices >= 0) {
-                if (!readAccessor(*c.m, p.indices, 1, idxf))
-                    bad = true;
-                for (float v : idxf) {
-                    if (v < 0.0f || v >= (float)nV) {
-                        bad = true;
-                        break;
-                    }
-                    pm.indices.push_back((uint32_t)v);
-                }
-            } else
-                for (int i = 0; i < nV; ++i)
-                    pm.indices.push_back((uint32_t)i);
-            if (bad) {
-                warn(c, "skinned prim: index out of range");
-                continue;
-            }
-            const std::string mName = s(gm.name);
-            const std::string cname = mName.empty() ? "prim" : (gm.primitives_count > 1 ? mName + "_" + std::to_string(pp.primIdx) : mName);
-            readShapes(gm, p, pm, "skinned prim " + cname + ": ");
-            const entt::entity child = c.w.reg.create();
-            c.w.reg.emplace<Name>(child, cname);
-            c.w.reg.emplace<Geometry>(child, Geometry{std::move(pm)});
-            children[i] = child;
-            if (firstChild == entt::null)
-                firstChild = child;
-        }
-        if (firstChild == entt::null) {
-            warn(c, "skinned group: no valid primitive");
+        } else
+            for (int i = 0; i < nV; ++i)
+                pm.indices.push_back((uint32_t)i);
+        if (badIdx) {
+            warn(c, "skinned prim: index out of range");
             continue;
         }
-        const Mesh& firstMesh = c.w.reg.get<Geometry>(firstChild).mesh;
-        const int nT = (int)firstMesh.shapes.size();
-        g.deltas.assign((size_t)nT * nV * 3, 0.0f);
-        for (int t = 0; t < nT; ++t)
-            if (!firstMesh.shapes[t].pos.empty())
-                std::memcpy(g.deltas.data() + (size_t)t * nV * 3, firstMesh.shapes[t].pos.data(), (size_t)nV * 12);
-        const int gid = c.w.gpuSim.skin.addGroup(skelEnt, firstChild, g);
-        if (gid < 0)
-            continue;
-        const MeshGpu rw = c.w.gpuSim.skin.groupOut(gid);
-        for (size_t i = 0; i < prims.size(); ++i) {
-            if (children[i] == entt::null)
-                continue;
-            const auto& pp = prims[i];
-            const tg3_primitive& p = c.m->meshes[pp.meshIdx].primitives[pp.primIdx];
-            const Mesh& pm = c.w.reg.get<Geometry>(children[i]).mesh;
-            c.w.renderer.addSharedMesh(children[i], pm, rw.pos.buffer, rw.pos.memory, rw.nrm.buffer, rw.nrm.memory, (uint32_t)nV);
-            addMesh(c.w, children[i], children[i], materialFor(c, p.material), c.nodeEntities[pp.nodeIdx]);
-            c.w.gpuSim.skin.linkMesh(children[i], gid);
-            c.w.reg.get<Skeleton>(skelEnt).meshes.push_back(children[i]);
+        const std::string mName = s(gm.name);
+        const std::string cname = mName.empty() ? "prim" : (gm.primitives_count > 1 ? mName + "_" + std::to_string(pp.primIdx) : mName);
+        const std::vector<std::string> names = targetNames(gm);
+        for (int t = 0; t < (int)p.targets_count; ++t) {
+            SubMesh sh;
+            sh.name = t < (int)names.size() && !names[t].empty() ? names[t] : "target" + std::to_string(t);
+            if (t < (int)gm.weights_count)
+                sh.weight = (float)gm.weights[t];
+            int32_t acc = -1;
+            bool hasNrm = false;
+            for (uint32_t i = 0; i < p.target_attribute_counts[t]; ++i) {
+                const std::string k = s(p.targets[t][i].key);
+                if (k == "POSITION")
+                    acc = p.targets[t][i].value;
+                else if (k == "NORMAL")
+                    hasNrm = true;
+            }
+            if (acc >= 0) {
+                std::vector<float> d;
+                if (readAccessor(*c.m, acc, 3, d) && d.size() == (size_t)nV * 3)
+                    sh.pos = std::move(d);
+                else
+                    warn(c, "skinned prim " + cname + ": target " + std::to_string(t) + " POSITION delta mismatch (slot zeroed)");
+            } else if (hasNrm)
+                warn(c, "skinned prim " + cname + ": target " + std::to_string(t) + " has no POSITION delta (slot zeroed)");
+            pm.shapes.push_back(std::move(sh));
         }
+        const entt::entity child = c.reg.create();
+        c.reg.emplace<Name>(child, cname);
+        c.reg.emplace<Geometry>(child, Geometry{std::move(pm)});
+        addMesh(c.reg, child, child, materialFor(c, p.material), c.nodeEntities[pp.nodeIdx]);
+        c.reg.get<Skeleton>(skelEnt).meshes.push_back(child);
     }
 }
 
@@ -774,13 +726,13 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
         warn(c, "node " + s(n.name) + ": degenerate transform");
         return entt::null;
     }
-    entt::entity e = c.w.reg.create();
+    entt::entity e = c.reg.create();
     const std::string name = s(n.name).empty() ? "node" + std::to_string(nodeIdx) : s(n.name);
-    c.w.reg.emplace<Name>(e, c.fileBase + "/" + name);
-    c.w.reg.emplace<Transform>(e, t);
+    c.reg.emplace<Name>(e, c.fileBase + "/" + name);
+    c.reg.emplace<Transform>(e, t);
     c.nodeEntities[nodeIdx] = e;
     if (parent != entt::null)
-        c.w.reg.emplace<Parent>(e, parent);
+        c.reg.emplace<Parent>(e, parent);
     if (n.mesh >= 0 && (uint32_t)n.mesh < c.m->meshes_count) {
         const tg3_mesh& gm = c.m->meshes[n.mesh];
         const std::string mName = s(gm.name);
@@ -800,12 +752,12 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
                 warn(c, "mesh " + mName + " primitive " + std::to_string(i) + ": " + pwarn);
             if (!ok || pm.vertexCount() == 0)
                 continue;
-            const entt::entity child = c.w.reg.create();
+            const entt::entity child = c.reg.create();
             const std::string cname = mName.empty() ? "prim" : (gm.primitives_count > 1 ? mName + "_" + std::to_string(i) : mName);
-            c.w.reg.emplace<Name>(child, cname);
-            entt::entity geomEnt = c.w.reg.create();
-            c.w.reg.emplace<Geometry>(geomEnt, Geometry{pm});
-            addMesh(c.w, child, geomEnt, materialFor(c, p.material), e);
+            c.reg.emplace<Name>(child, cname);
+            entt::entity geomEnt = c.reg.create();
+            c.reg.emplace<Geometry>(geomEnt, Geometry{pm});
+            addMesh(c.reg, child, geomEnt, materialFor(c, p.material), e);
         }
     }
     for (uint32_t i = 0; i < n.children_count; ++i)
@@ -815,7 +767,7 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
 
 }
 
-entt::entity loadGltf(Engine& w, entt::entity e, const std::string& path, std::string& err) {
+entt::entity loadGltf(entt::registry& reg, entt::entity e, const std::string& path, std::string& err) {
     std::string file;
     if (std::filesystem::exists("assets/" + path))
         file = "assets/" + path;
@@ -868,9 +820,9 @@ entt::entity loadGltf(Engine& w, entt::entity e, const std::string& path, std::s
         tg3_model_free(&model);
         return entt::null;
     }
-    if (!w.reg.try_get<Transform>(e))
-        w.reg.emplace<Transform>(e);
-    GltfCtx c{w, &model, fileBase, file, baseDir, e, {}, {}};
+    if (!reg.try_get<Transform>(e))
+        reg.emplace<Transform>(e);
+    GltfCtx c{reg, &model, fileBase, file, baseDir, e, {}, {}};
     // note: value-initialized entt::entity is 0, not entt::null (all bits set in EnTT 4)
     c.materials.assign(model.materials_count, entt::null);
     c.nodeEntities.assign(model.nodes_count, entt::null);

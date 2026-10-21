@@ -165,6 +165,7 @@ int main(int argc, char** argv) {
             ImGui::ShowDemoWindow(&engine.showDemo);
         ImGui::Render();
 
+        engine.renderer.adoptSkinned(engine.gpuSim.skin, engine.reg);
         const uint32_t idx = app.acquireNextImage();
         VkCommandBuffer cmd = app.beginCommands();
         if (engine.xr) {

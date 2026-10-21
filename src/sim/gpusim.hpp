@@ -3,6 +3,7 @@
 
 #include "sim/skin.hpp"
 #include "sim/soft.hpp"
+#include <entt/entt.hpp>
 
 class GpuSim {
 public:
@@ -13,9 +14,9 @@ public:
         skin.init(dev, pdev);
         soft.init(dev, pdev);
     }
-    void build() {
+    void build(const entt::registry& reg) {
         soft.build();
-        skin.build();
+        skin.build(reg);
     }
     void shutdown() {
         soft.shutdown();

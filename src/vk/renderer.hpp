@@ -4,6 +4,7 @@
 #include "gpuverts.hpp"
 #include "math.hpp"
 #include "mesh.hpp"
+#include "sim/skin.hpp"
 #include "xr_frame.hpp"
 #include <entt/entt.hpp>
 #include <imgui.h>
@@ -39,8 +40,7 @@ public:
 
     void init(VkApp& app, int nInstances, const Mat4& viewProj);
     GpuMeshRef addMesh(const Mesh& mesh);
-    void addSharedMesh(entt::entity geomEnt, const Mesh& m, VkBuffer pos, VkDeviceMemory posMem, VkBuffer nrm,
-                       VkDeviceMemory nrmMem, uint32_t n);
+    void adoptSkinned(Skin& skin, const entt::registry& reg);
     void shareGeomSlot(entt::entity geomEnt, int slot);
     int instFor(entt::entity e, entt::entity geomEnt, const entt::registry& reg);
     int instOf(entt::entity e) const;

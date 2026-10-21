@@ -1,40 +1,12 @@
 #include "systems.hpp"
 
 #include "assets.hpp"
+#include "ecs_ops.hpp"
 #include "vk/vkapp.hpp"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <unordered_map>
-
-void addMesh(Engine& w, entt::entity e, entt::entity geom, entt::entity mat, entt::entity parent, bool noShadow) {
-    if (!w.reg.try_get<Transform>(e))
-        w.reg.emplace<Transform>(e);
-    w.reg.emplace<Renderable>(e, geom, noShadow);
-    w.reg.emplace<MaterialRef>(e, mat);
-    if (parent != entt::null)
-        w.reg.emplace<Parent>(e, parent);
-}
-
-entt::entity spawnMaterial(Engine& w, const V3& baseColor, float metallic, float roughness, const V3& emissive,
-                           const char* name) {
-    entt::entity e = w.reg.create();
-    w.reg.emplace<Material>(e, baseColor, metallic, roughness, emissive);
-    if (name)
-        w.reg.emplace<Name>(e, name);
-    return e;
-}
-
-entt::entity textureBytes(Engine& w, const std::string& id, const uint8_t* rgba, int wpx, int hpx) {
-    for (auto [e, tx] : w.reg.view<Texture>().each())
-        if (tx.path == id)
-            return e;
-    entt::entity e = w.reg.create();
-    w.renderer.addTexture(e, rgba, (uint32_t)wpx, (uint32_t)hpx);
-    w.reg.emplace<Texture>(e, id);
-    w.reg.emplace<Name>(e, id);
-    return e;
-}
 
 entt::entity findActiveCamera(const Engine& w) {
     entt::entity cam = entt::null;
@@ -121,7 +93,7 @@ void spawnControllers(Engine& w) {
         std::fprintf(stderr, "3dsim: controller grip geometry: %s\n", err.c_str());
         std::exit(1);
     }
-    const entt::entity gripMat = spawnMaterial(w, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f, V3{0.0f, 0.0f, 0.0f});
+    const entt::entity gripMat = spawnMaterial(w.reg, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f, V3{0.0f, 0.0f, 0.0f});
     for (int h = 0; h < 2; ++h) {
         entt::entity e = w.reg.create();
         w.reg.emplace<Transform>(e, V3{0, 0, 0}, V4{0, 0, 0, 1});

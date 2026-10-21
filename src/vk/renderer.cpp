@@ -212,21 +212,35 @@ Renderer::GpuMeshRef Renderer::addMesh(const Mesh& mesh) {
     return {(int)m_geoms.size() - 1, MeshGpu{VertexStore{g.pos, g.posMem, n}, VertexStore{g.nrm, g.nrmMem, n}}};
 }
 
-void Renderer::addSharedMesh(entt::entity geomEnt, const Mesh& m, VkBuffer pos, VkDeviceMemory posMem, VkBuffer nrm,
-                             VkDeviceMemory nrmMem, uint32_t n) {
-    GpuMesh g;
-    g.vtxCount = n;
-    g.idxCount = (uint32_t)m.indices.size();
-    g.externalPosNrm = true;
-    g.pos = pos;
-    g.posMem = posMem;
-    g.nrm = nrm;
-    g.nrmMem = nrmMem;
-    vkMakeBufferDev(m_dev, m_pdev, g.uv, g.uvMem, (VkDeviceSize)8 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m.uv.data());
-    vkMakeBufferDev(m_dev, m_pdev, g.ibuf, g.ibmem, (VkDeviceSize)g.idxCount * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                    m.indices.data());
-    m_geoms.push_back(g);
-    m_entGeom[geomEnt] = (int)m_geoms.size() - 1;
+void Renderer::adoptSkinned(Skin& skin, const entt::registry& reg) {
+    for (const auto e : reg.view<Skeleton>()) {
+        const auto& skel = reg.get<Skeleton>(e);
+        for (const entt::entity meshEnt : skel.meshes) {
+            if (m_entGeom.count(meshEnt))
+                continue;
+            MeshGpu rw;
+            if (!skin.meshGpu(meshEnt, rw))
+                continue;
+            const auto* gc = reg.try_get<Geometry>(meshEnt);
+            if (!gc)
+                continue;
+            const Mesh& m = gc->mesh;
+            GpuMesh g;
+            g.vtxCount = rw.pos.count;
+            g.idxCount = (uint32_t)m.indices.size();
+            g.externalPosNrm = true;
+            g.pos = rw.pos.buffer;
+            g.posMem = rw.pos.memory;
+            g.nrm = rw.nrm.buffer;
+            g.nrmMem = rw.nrm.memory;
+            vkMakeBufferDev(m_dev, m_pdev, g.uv, g.uvMem, (VkDeviceSize)8 * rw.pos.count,
+                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m.uv.data());
+            vkMakeBufferDev(m_dev, m_pdev, g.ibuf, g.ibmem, (VkDeviceSize)g.idxCount * 4,
+                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT, m.indices.data());
+            m_geoms.push_back(g);
+            m_entGeom[meshEnt] = (int)m_geoms.size() - 1;
+        }
+    }
 }
 
 void Renderer::shareGeomSlot(entt::entity geomEnt, int slot) {
@@ -350,6 +364,10 @@ int Renderer::textureFor(entt::entity e, const entt::registry& reg) {
     const auto* t = reg.try_get<Texture>(e);
     if (!t)
         return -1;
+    if (!t->rgba.empty()) {
+        addTexture(e, t->rgba.data(), t->w, t->h);
+        return textureId(e);
+    }
     TextureData td;
     bool ok = loadTexture(exeDir() + "/../assets/" + t->path, td);
     if (!ok)

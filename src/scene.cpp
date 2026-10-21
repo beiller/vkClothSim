@@ -86,7 +86,7 @@ void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh)
             fail(p, what + ": the camera object cannot have a gltf");
         const auto gpath = o["gltf"].get<std::string>();
         std::string gerr;
-        if (loadGltf(w, e, gpath, gerr) == entt::null)
+        if (loadGltf(w.reg, e, gpath, gerr) == entt::null)
             fail(p, what + ": gltf '" + gpath + "': " + gerr);
     }
 
@@ -228,7 +228,7 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
             }
         }
 
-        w.gpuSim.build();
+        w.gpuSim.build(w.reg);
         if (j.contains("env")) {
             const auto env = j["env"].get<std::string>();
             HdrData hdr;

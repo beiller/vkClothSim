@@ -10,28 +10,16 @@
 #include <unordered_map>
 #include <vector>
 
-struct SkelGroupDesc {
-    int nV = 0;
-    std::vector<float> pos0;
-    std::vector<float> nrm0;
-    std::vector<uint32_t> joints;
-    std::vector<float> weights;
-    std::vector<float> deltas; // load-time staging for the GPU buffer, sourced from Mesh.shapes
-};
-
 class Skin {
 public:
     static constexpr int kMaxActiveMorphs = 256; // a Daz character's full stack is 190-222 targets, all nonzero
     static constexpr int kPoolChunk = 16;
 
     void init(VkDevice dev, VkPhysicalDevice pdev);
-    void addSkeleton(entt::entity e, int nJoints);
-    int addGroup(entt::entity e, entt::entity firstMesh, const SkelGroupDesc& d);
-    void linkMesh(entt::entity mesh, int groupId);
-    MeshGpu groupOut(int groupId) const;
-    void build();
+    void sync(const entt::registry& reg);
+    void build(const entt::registry& reg);
+    bool meshGpu(entt::entity mesh, MeshGpu& out) const;
     void step(const entt::registry& reg, VkCommandBuffer cmd);
-    void destroySkeleton(entt::entity e);
     void reset();
     void watch(entt::registry& reg);
     void flushFrees();
@@ -43,34 +31,40 @@ private:
         VkDeviceMemory m = VK_NULL_HANDLE;
         VkDeviceSize sz = 0;
     };
-    struct Group {
+    // shared morph-delta buffer; character prims usually repeat the same vertex set + target stack,
+    // so states with content-identical shapes share one allocation (refcounted)
+    struct ShapeSet {
+        uint64_t key = 0;
+        int nV = 0, nT = 0;
+        int refs = 0;
+        Buf deltas;
+    };
+    // per linked-mesh GPU state, adopted lazily from the mesh's Geometry component
+    struct MeshState {
+        entt::entity mesh = entt::null;
         int skelGpu = -1;
         int nV = 0;
         int activeCount = 0;
         bool dead = false;
         bool freed = false;
-        std::vector<float> cpuPos;      // rest positions, 3 * nV
-        std::vector<uint32_t> cpuJoints; // 4 * nV
-        std::vector<float> cpuWeights;   // 4 * nV
-        entt::entity firstMesh = entt::null; // shape source; shape weights are read from its Mesh
-        Buf pos0, nrm0, joints, weights, deltas, activeMorphs, posOut, nrmOut;
+        int shapeSet = -1;
+        Buf pos0, nrm0, joints, weights, activeMorphs, posOut, nrmOut;
         VkDescriptorSet set = VK_NULL_HANDLE;
     };
     struct Skel {
         bool dead = false;
-        std::vector<int> groups;
+        std::vector<int> states;
         Buf jointDQ;
         std::vector<DualQuat> dqStaging;
     };
 
-    void makeGroupSet(Group& g);
+    void adoptState(const entt::registry& reg, const Skeleton& s, entt::entity mesh, int skelGpu);
+    void makeStateSet(MeshState& st);
     void ensurePoolSlot();
     void stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c);
-    void packMorphs(const entt::registry& reg, Group& g);
-    int meshRefs(int groupId) const;
-    void maybeFreeGroup(int groupId);
-    void releaseGroupBufs(Group& g);
-    std::unordered_map<entt::entity, int>::const_iterator skelFor(const entt::registry& reg, entt::entity skel) const;
+    void packMorphs(const entt::registry& reg, MeshState& st);
+    void maybeFreeState(int stateId);
+    void releaseStateBufs(MeshState& st);
     void onSkeletonDestroyed(entt::registry&, entt::entity e);
     void onMeshDestroyed(entt::registry&, entt::entity e);
 
@@ -78,9 +72,11 @@ private:
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;
     std::vector<Skel> m_skels;
     std::unordered_map<entt::entity, int> m_ent;
-    std::unordered_map<entt::entity, int> m_meshGroup;
-    std::vector<int> m_freeGroups;
-    std::vector<Group> m_groups;
+    std::unordered_map<entt::entity, int> m_meshState;
+    std::vector<int> m_freeStates;
+    std::vector<MeshState> m_states;
+    std::vector<ShapeSet> m_shapeSets;
+    std::unordered_map<uint64_t, int> m_shapeKey;
     VkPipeline m_pipe = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_dsl = VK_NULL_HANDLE;
     std::vector<VkDescriptorPool> m_pools;

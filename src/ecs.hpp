@@ -161,6 +161,8 @@ struct Skeleton {
 
 struct Texture {
     std::string path;
+    std::vector<uint8_t> rgba;
+    uint32_t w = 0, h = 0;
 };
 
 struct Material {

@@ -134,4 +134,28 @@ add_executable(dualquat_test tests/dualquat_test.cpp src/sim/dualquat.cpp)
 target_compile_features(dualquat_test PRIVATE cxx_std_23)
 target_include_directories(dualquat_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
+# CPU self-test for the tapered-capsule collision shape fitter.
+add_executable(collision_shape_solver_test solvers/collision_shape_solver_test.cpp solvers/collision_shape_solver.cpp)
+target_compile_features(collision_shape_solver_test PRIVATE cxx_std_23)
+target_include_directories(collision_shape_solver_test PRIVATE ${CMAKE_SOURCE_DIR}/solvers)
+
+# GPU-free probe: ECS + GLTF loader + collision shape solver (no Vulkan/GLFW/Jolt/ImGui).
+add_executable(bone_probe
+    probe/bone_probe.cpp
+    src/gltf.cpp
+    src/assets.cpp
+    solvers/collision_shape_solver.cpp
+    ${CMAKE_SOURCE_DIR}/lib/tinygltf/tiny_gltf_v3.c
+    ${CMAKE_SOURCE_DIR}/lib/tinyexr/tinyexr.cc
+    ${CMAKE_SOURCE_DIR}/lib/miniz/miniz.c)
+target_compile_features(bone_probe PRIVATE cxx_std_23)
+target_link_libraries(bone_probe PRIVATE ZLIB::ZLIB)
+target_include_directories(bone_probe PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/lib/entt/single_include
+    ${CMAKE_SOURCE_DIR}/lib/stb
+    ${CMAKE_SOURCE_DIR}/lib/tinyexr
+    ${CMAKE_SOURCE_DIR}/lib/miniz
+    ${CMAKE_SOURCE_DIR}/lib/tinygltf)
+
 

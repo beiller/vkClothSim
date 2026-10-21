@@ -835,7 +835,7 @@ int SceneScript::lGltf(lua_State* L) {
     const entt::entity e = readEnt(L, 1);
     const std::string path = luaL_checkstring(L, 2);
     std::string err;
-    if (loadGltf(w, e, path, err) == entt::null)
+    if (loadGltf(w.reg, e, path, err) == entt::null)
         return luaL_error(L, "render.gltf: %s", err.c_str());
     pushEnt(L, e);
     return 1;

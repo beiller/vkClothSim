@@ -77,71 +77,128 @@ void Skin::init(VkDevice dev, VkPhysicalDevice pdev) {
     m_pdev = pdev;
 }
 
-void Skin::addSkeleton(entt::entity e, int nJoints) {
-    Skel c;
-    c.dqStaging.resize((size_t)nJoints);
-    const auto bytes = (VkDeviceSize)nJoints * sizeof(DualQuat);
-    vkMakeBuffer(m_dev, m_pdev, c.jointDQ.b, c.jointDQ.m, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
-    c.jointDQ.sz = bytes;
-    m_skels.push_back(std::move(c));
-    m_ent[e] = (int)m_skels.size() - 1;
+void Skin::sync(const entt::registry& reg) {
+    if (m_dev == VK_NULL_HANDLE)
+        return;
+    for (const auto e : reg.view<Skeleton>()) {
+        const Skeleton& s = reg.get<Skeleton>(e);
+        const auto ce = m_ent.find(e);
+        int skelGpu = ce != m_ent.end() ? ce->second : -1;
+        if (skelGpu < 0) {
+            Skel c;
+            c.dqStaging.resize(s.joints.size());
+            const auto bytes = (VkDeviceSize)s.joints.size() * sizeof(DualQuat);
+            if (bytes > 0)
+                vkMakeBuffer(m_dev, m_pdev, c.jointDQ.b, c.jointDQ.m, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+            c.jointDQ.sz = bytes;
+            m_skels.push_back(std::move(c));
+            skelGpu = (int)m_skels.size() - 1;
+            m_ent[e] = skelGpu;
+        }
+        if (m_skels[(size_t)skelGpu].dead)
+            continue;
+        for (const entt::entity m : s.meshes)
+            adoptState(reg, s, m, skelGpu);
+    }
 }
 
-void Skin::linkMesh(entt::entity mesh, int groupId) {
-    m_meshGroup[mesh] = groupId;
-}
-
-int Skin::addGroup(entt::entity e, entt::entity firstMesh, const SkelGroupDesc& d) {
-    const auto ce = m_ent.find(e);
-    if (ce == m_ent.end())
-        return -1;
-    const int skelGpu = ce->second;
-    Group g;
-    g.skelGpu = skelGpu;
-    g.nV = d.nV;
-    g.firstMesh = firstMesh;
-    const int nT = d.nV > 0 ? (int)(d.deltas.size() / ((size_t)d.nV * 3)) : 0;
-    const auto vn = (VkDeviceSize)d.nV;
+void Skin::adoptState(const entt::registry& reg, const Skeleton& s, entt::entity mesh, int skelGpu) {
+    if (m_meshState.count(mesh))
+        return;
+    if (s.joints.empty())
+        return;
+    const auto* gc = reg.try_get<Geometry>(mesh);
+    if (!gc)
+        return;
+    const Mesh& m = gc->mesh;
+    const int nV = m.vertexCount();
+    if (nV <= 0 || m.joints.size() != (size_t)4 * nV || m.weights.size() != (size_t)4 * nV)
+        return;
+    MeshState st;
+    st.mesh = mesh;
+    st.skelGpu = skelGpu;
+    st.nV = nV;
+    const auto vn = (VkDeviceSize)nV;
     auto mkDev = [this](Buf& b, VkDeviceSize bytes, const void* data) {
         vkMakeBufferDev(m_dev, m_pdev, b.b, b.m, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, data);
         b.sz = bytes;
     };
-    mkDev(g.pos0, 12 * vn, d.pos0.data());
-    mkDev(g.nrm0, 12 * vn, d.nrm0.data());
-    mkDev(g.joints, 16 * vn, d.joints.data());
-    mkDev(g.weights, 16 * vn, d.weights.data());
-    g.cpuPos = d.pos0;
-    g.cpuJoints = d.joints;
-    g.cpuWeights = d.weights;
-    if (nT > 0)
-        mkDev(g.deltas, 12 * vn * (VkDeviceSize)nT, d.deltas.data());
-    else
-        mkDev(g.deltas, 4, nullptr);
-    vkMakeBuffer(m_dev, m_pdev, g.activeMorphs.b, g.activeMorphs.m, 8 * kMaxActiveMorphs,
+    const int nT = (int)m.shapes.size();
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    auto fnv = [&hash](const void* p, size_t n) {
+        const uint8_t* b = (const uint8_t*)p;
+        for (size_t i = 0; i < n; ++i) {
+            hash ^= b[i];
+            hash *= 0x100000001b3ULL;
+        }
+    };
+    fnv(&nV, 4);
+    fnv(&nT, 4);
+    for (const SubMesh& sh : m.shapes) {
+        fnv(sh.name.data(), sh.name.size());
+        float w = sh.weight;
+        fnv(&w, 4);
+        fnv(sh.pos.data(), sh.pos.size() * 4);
+    }
+    const auto hit = m_shapeKey.find(hash);
+    const bool share = hit != m_shapeKey.end() && m_shapeSets[(size_t)hit->second].nV == nV &&
+                       m_shapeSets[(size_t)hit->second].nT == nT;
+    if (share)
+        st.shapeSet = hit->second;
+    else {
+        ShapeSet ss;
+        ss.key = hash;
+        ss.nV = nV;
+        ss.nT = nT;
+        if (nT > 0) {
+            std::vector<float> deltas((size_t)nT * (size_t)nV * 3, 0.0f);
+            for (int t = 0; t < nT; ++t)
+                if (!m.shapes[t].pos.empty())
+                    std::memcpy(deltas.data() + (size_t)t * (size_t)nV * 3, m.shapes[t].pos.data(), (size_t)nV * 12);
+            mkDev(ss.deltas, 12 * vn * (VkDeviceSize)nT, deltas.data());
+        } else
+            mkDev(ss.deltas, 4, nullptr);
+        ss.refs = 1;
+        m_shapeSets.push_back(std::move(ss));
+        st.shapeSet = (int)m_shapeSets.size() - 1;
+        m_shapeKey[hash] = st.shapeSet;
+    }
+    mkDev(st.pos0, 12 * vn, m.pos.data());
+    mkDev(st.nrm0, 12 * vn, m.nrm.data());
+    mkDev(st.joints, 16 * vn, m.joints.data());
+    mkDev(st.weights, 16 * vn, m.weights.data());
+    vkMakeBuffer(m_dev, m_pdev, st.activeMorphs.b, st.activeMorphs.m, 8 * kMaxActiveMorphs,
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
-    g.activeMorphs.sz = 8 * kMaxActiveMorphs;
-    mkDev(g.posOut, 12 * vn, d.pos0.data());
-    mkDev(g.nrmOut, 12 * vn, d.nrm0.data());
-    m_groups.push_back(std::move(g));
-    m_skels[(size_t)skelGpu].groups.push_back((int)m_groups.size() - 1);
+    st.activeMorphs.sz = 8 * kMaxActiveMorphs;
+    mkDev(st.posOut, 12 * vn, m.pos.data());
+    mkDev(st.nrmOut, 12 * vn, m.nrm.data());
+    if (share)
+        ++m_shapeSets[(size_t)st.shapeSet].refs;
+    m_states.push_back(std::move(st));
+    m_meshState[mesh] = (int)m_states.size() - 1;
+    m_skels[(size_t)skelGpu].states.push_back((int)m_states.size() - 1);
     if (!m_pools.empty()) {
         ensurePoolSlot();
-        makeGroupSet(m_groups.back());
+        makeStateSet(m_states.back());
         ++m_poolUsed;
     }
-    return (int)m_groups.size() - 1;
 }
 
-MeshGpu Skin::groupOut(int groupId) const {
-    const Group& g = m_groups[groupId];
-    return {VertexStore{g.posOut.b, g.posOut.m, (uint32_t)g.nV}, VertexStore{g.nrmOut.b, g.nrmOut.m, (uint32_t)g.nV}};
+bool Skin::meshGpu(entt::entity mesh, MeshGpu& out) const {
+    const auto it = m_meshState.find(mesh);
+    if (it == m_meshState.end())
+        return false;
+    const MeshState& st = m_states[(size_t)it->second];
+    out = {VertexStore{st.posOut.b, st.posOut.m, (uint32_t)st.nV}, VertexStore{st.nrmOut.b, st.nrmOut.m, (uint32_t)st.nV}};
+    return true;
 }
 
-void Skin::build() {
+void Skin::build(const entt::registry& reg) {
     if (m_dev == VK_NULL_HANDLE)
         return;
+    sync(reg);
     const auto binds = skelBinds();
-    auto maxSets = (uint32_t)m_groups.size();
+    auto maxSets = (uint32_t)m_states.size();
     if (maxSets == 0)
         maxSets = 1;
     VkDescriptorPool pool;
@@ -162,8 +219,10 @@ void Skin::build() {
     cpc.layout = m_pl;
     VK(vkCreateComputePipelines(m_dev, VK_NULL_HANDLE, 1, &cpc, nullptr, &m_pipe));
     vkDestroyShaderModule(m_dev, cm, nullptr);
-    for (auto& g : m_groups) {
-        makeGroupSet(g);
+    for (auto& st : m_states) {
+        if (st.set != VK_NULL_HANDLE)
+            continue;
+        makeStateSet(st);
         ++m_poolUsed;
     }
 }
@@ -176,20 +235,21 @@ void Skin::ensurePoolSlot() {
     m_poolUsed = 0;
 }
 
-void Skin::makeGroupSet(Group& g) {
-    const Skel& c = m_skels[(size_t)g.skelGpu];
+void Skin::makeStateSet(MeshState& st) {
+    const Skel& c = m_skels[(size_t)st.skelGpu];
+    const Buf& deltas = m_shapeSets[(size_t)st.shapeSet].deltas;
     std::vector<VkDescriptorBufferInfo> bi = {
-        {g.pos0.b, 0, g.pos0.sz},
-        {g.nrm0.b, 0, g.nrm0.sz},
-        {g.joints.b, 0, g.joints.sz},
-        {g.weights.b, 0, g.weights.sz},
-        {g.deltas.b, 0, g.deltas.sz},
+        {st.pos0.b, 0, st.pos0.sz},
+        {st.nrm0.b, 0, st.nrm0.sz},
+        {st.joints.b, 0, st.joints.sz},
+        {st.weights.b, 0, st.weights.sz},
+        {deltas.b, 0, deltas.sz},
         {c.jointDQ.b, 0, c.jointDQ.sz},
-        {g.activeMorphs.b, 0, g.activeMorphs.sz},
-        {g.posOut.b, 0, g.posOut.sz},
-        {g.nrmOut.b, 0, g.nrmOut.sz},
+        {st.activeMorphs.b, 0, st.activeMorphs.sz},
+        {st.posOut.b, 0, st.posOut.sz},
+        {st.nrmOut.b, 0, st.nrmOut.sz},
     };
-    vkMakeSet(m_dev, m_pools.back(), m_dsl, skelBinds(), g.set, bi);
+    vkMakeSet(m_dev, m_pools.back(), m_dsl, skelBinds(), st.set, bi);
 }
 
 void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
@@ -208,14 +268,15 @@ void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
                 mm[col][row] = M.m[col * 4 + row];
         dq::mat4ToDquat(&c.dqStaging[k], kIdentity4, mm);
     }
+    if (!c.jointDQ.sz)
+        return;
     vkWriteBuffer(m_dev, c.jointDQ.m, c.dqStaging.data(), c.jointDQ.sz);
 }
 
-void Skin::packMorphs(const entt::registry& reg, Group& g) {
+void Skin::packMorphs(const entt::registry& reg, MeshState& st) {
     uint32_t pack[kMaxActiveMorphs * 2] = {};
     int k = 0;
-    const auto* gc = g.firstMesh != entt::null ? reg.try_get<Geometry>(g.firstMesh) : nullptr;
-    if (gc)
+    if (const auto* gc = reg.try_get<Geometry>(st.mesh))
         for (size_t t = 0; t < gc->mesh.shapes.size() && k < kMaxActiveMorphs; ++t) {
             const float wgt = gc->mesh.shapes[t].weight;
             if (std::fabs(wgt) < 1e-4f)
@@ -226,13 +287,14 @@ void Skin::packMorphs(const entt::registry& reg, Group& g) {
             pack[k * 2 + 1] = bits;
             ++k;
         }
-    g.activeCount = k;
-    vkWriteBuffer(m_dev, g.activeMorphs.m, pack, g.activeMorphs.sz);
+    st.activeCount = k;
+    vkWriteBuffer(m_dev, st.activeMorphs.m, pack, st.activeMorphs.sz);
 }
 
 void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
     if (m_pl == VK_NULL_HANDLE)
         return;
+    sync(reg);
     for (const auto e : reg.view<Skeleton>()) {
         const auto ce = m_ent.find(e);
         if (ce == m_ent.end() || m_skels[(size_t)ce->second].dead)
@@ -240,59 +302,45 @@ void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
         const Skeleton& s = reg.get<Skeleton>(e);
         Skel& c = m_skels[(size_t)ce->second];
         stepSkeleton(reg, s, c);
-        for (int gid : c.groups)
-            if ((size_t)gid < m_groups.size() && !m_groups[gid].dead)
-                packMorphs(reg, m_groups[gid]);
-        for (int gid : c.groups) {
-            Group& g = m_groups[gid];
-            if (g.dead || g.nV <= 0)
+        for (int sid : c.states)
+            if ((size_t)sid < m_states.size() && !m_states[sid].dead)
+                packMorphs(reg, m_states[sid]);
+        for (int sid : c.states) {
+            MeshState& st = m_states[sid];
+            if (st.dead || st.nV <= 0)
                 continue;
-            const Buf* srcs[7] = {&g.pos0, &g.nrm0, &g.joints, &g.weights, &g.deltas, &c.jointDQ, &g.activeMorphs};
+            const Buf& deltas = m_shapeSets[(size_t)st.shapeSet].deltas;
+            const Buf* srcs[7] = {&st.pos0, &st.nrm0, &st.joints, &st.weights, &deltas, &c.jointDQ, &st.activeMorphs};
             VkBufferMemoryBarrier pre[7];
             for (int i = 0; i < 7; ++i)
                 pre[i] = bufBarrier(srcs[i]->b);
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
                                  nullptr, 7, pre, 0, nullptr);
-            int pc[4] = {g.nV, (int)s.joints.size(), g.activeCount, 0};
+            int pc[4] = {st.nV, (int)s.joints.size(), st.activeCount, 0};
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipe);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pl, 0, 1, &g.set, 0, nullptr);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pl, 0, 1, &st.set, 0, nullptr);
             vkCmdPushConstants(cmd, m_pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, (uint32_t)sizeof(pc), pc);
-            vkCmdDispatch(cmd, (g.nV + 63) / 64, 1, 1);
-            VkBufferMemoryBarrier post[2] = {bufBarrier(g.posOut.b), bufBarrier(g.nrmOut.b)};
+            vkCmdDispatch(cmd, (st.nV + 63) / 64, 1, 1);
+            VkBufferMemoryBarrier post[2] = {bufBarrier(st.posOut.b), bufBarrier(st.nrmOut.b)};
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, 0, 0,
                                  nullptr, 2, post, 0, nullptr);
         }
     }
 }
 
-std::unordered_map<entt::entity, int>::const_iterator Skin::skelFor(const entt::registry& reg, entt::entity skel) const {
-    if (!reg.valid(skel) || !reg.all_of<Skeleton>(skel))
-        return m_ent.end();
-    const auto ce = m_ent.find(skel);
-    if (ce == m_ent.end() || m_skels[(size_t)ce->second].dead)
-        return m_ent.end();
-    return ce;
-}
-
-int Skin::meshRefs(int groupId) const {
-    int refs = 0;
-    for (const auto& [m, g] : m_meshGroup)
-        if (g == groupId)
-            ++refs;
-    return refs;
-}
-
-void Skin::maybeFreeGroup(int groupId) {
-    Group& g = m_groups[(size_t)groupId];
-    if (g.freed || !g.dead)
+void Skin::maybeFreeState(int stateId) {
+    MeshState& st = m_states[(size_t)stateId];
+    if (st.freed || !st.dead)
         return;
-    if (!m_skels[(size_t)g.skelGpu].dead)
+    if (!m_skels[(size_t)st.skelGpu].dead)
         return;
-    g.freed = true;
-    m_freeGroups.push_back(groupId);
+    if (m_meshState.count(st.mesh))
+        return;
+    st.freed = true;
+    m_freeStates.push_back(stateId);
 }
 
-void Skin::destroySkeleton(entt::entity e) {
+void Skin::onSkeletonDestroyed(entt::registry&, entt::entity e) {
     const auto ce = m_ent.find(e);
     if (ce == m_ent.end())
         return;
@@ -301,30 +349,24 @@ void Skin::destroySkeleton(entt::entity e) {
     if (m_skels[(size_t)skelGpu].dead)
         return;
     m_skels[(size_t)skelGpu].dead = true;
-    for (int gid : m_skels[(size_t)skelGpu].groups) {
-        m_groups[(size_t)gid].dead = true;
-        maybeFreeGroup(gid);
+    for (const int sid : m_skels[(size_t)skelGpu].states) {
+        m_states[(size_t)sid].dead = true;
+        maybeFreeState(sid);
     }
-}
-
-void Skin::onSkeletonDestroyed(entt::registry&, entt::entity e) {
-    destroySkeleton(e);
 }
 
 void Skin::onMeshDestroyed(entt::registry&, entt::entity e) {
-    const auto it = m_meshGroup.find(e);
-    if (it == m_meshGroup.end())
+    const auto it = m_meshState.find(e);
+    if (it == m_meshState.end())
         return;
-    const int gid = it->second;
-    m_meshGroup.erase(it);
-    if (meshRefs(gid) == 0) {
-        m_groups[(size_t)gid].dead = true;
-        maybeFreeGroup(gid);
-    }
+    const int sid = it->second;
+    m_meshState.erase(it);
+    m_states[(size_t)sid].dead = true;
+    maybeFreeState(sid);
 }
 
-void Skin::releaseGroupBufs(Group& g) {
-    Buf* bufs[8] = {&g.pos0, &g.nrm0, &g.joints, &g.weights, &g.deltas, &g.activeMorphs, &g.posOut, &g.nrmOut};
+void Skin::releaseStateBufs(MeshState& st) {
+    Buf* bufs[7] = {&st.pos0, &st.nrm0, &st.joints, &st.weights, &st.activeMorphs, &st.posOut, &st.nrmOut};
     for (Buf* bp : bufs) {
         if (bp->b == VK_NULL_HANDLE)
             continue;
@@ -332,14 +374,23 @@ void Skin::releaseGroupBufs(Group& g) {
         bp->b = VK_NULL_HANDLE;
         bp->m = VK_NULL_HANDLE;
     }
+    if (st.shapeSet < 0)
+        return;
+    ShapeSet& ss = m_shapeSets[(size_t)st.shapeSet];
+    if (--ss.refs > 0)
+        return;
+    if (ss.deltas.b)
+        vkFreeBuffer(m_dev, ss.deltas.b, ss.deltas.m);
+    m_shapeKey.erase(ss.key);
+    st.shapeSet = -1;
 }
 
 void Skin::flushFrees() {
     if (m_dev == VK_NULL_HANDLE)
         return;
-    for (const int gid : m_freeGroups)
-        releaseGroupBufs(m_groups[(size_t)gid]);
-    m_freeGroups.clear();
+    for (const int sid : m_freeStates)
+        releaseStateBufs(m_states[(size_t)sid]);
+    m_freeStates.clear();
 }
 
 void Skin::watch(entt::registry& reg) {
@@ -352,13 +403,20 @@ void Skin::reset() {
         return;
     flushFrees();
     m_ent.clear();
-    m_meshGroup.clear();
+    m_meshState.clear();
     for (auto& c : m_skels)
-        vkFreeBuffer(m_dev, c.jointDQ.b, c.jointDQ.m);
+        if (c.jointDQ.b)
+            vkFreeBuffer(m_dev, c.jointDQ.b, c.jointDQ.m);
     m_skels.clear();
-    for (auto& g : m_groups)
-        releaseGroupBufs(g);
-    m_groups.clear();
+    for (auto& st : m_states)
+        releaseStateBufs(st);
+    m_states.clear();
+    m_freeStates.clear();
+    for (auto& ss : m_shapeSets)
+        if (ss.deltas.b)
+            vkFreeBuffer(m_dev, ss.deltas.b, ss.deltas.m);
+    m_shapeSets.clear();
+    m_shapeKey.clear();
     for (auto& p : m_pools)
         if (p)
             vkDestroyDescriptorPool(m_dev, p, nullptr);
