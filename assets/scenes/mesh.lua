@@ -61,6 +61,55 @@ function m.capsule(p)
     return { pos = pos, nrm = nrm, uv = uv, idx = idx }
 end
 
+-- surface-of-revolution tapered capsule: the radius ramps linearly from bottomRadius
+-- (at y = -halfHeight) to topRadius (at y = +halfHeight), hemispherical cap at each end
+function m.taperedCapsule(p)
+    local h, rb, rt = p.halfHeight, p.bottomRadius, p.topRadius
+    local S, M = p.S or 20, p.M or 32
+    local pos, nrm, uv, idx = {}, {}, {}, {}
+    local top, bot, twoPi = h + rt, -h - rb, 2 * math.pi
+    for i = 0, M do
+        local y = top - i / M * (top - bot)
+        local dy, rc
+        if y >= h then
+            dy, rc = y - h, rt
+        elseif y <= -h then
+            dy, rc = y + h, rb
+        else
+            dy, rc = 0.0, h > 0 and (rt + (rb - rt) * (0.5 * (1 - y / h))) or 0.5 * (rt + rb)
+        end
+        local cr = dy == 0.0 and rc or math.sqrt(math.max(0, rc * rc - dy * dy))
+        for j = 0, S - 1 do
+            local phi = j / S * twoPi
+            local cp, sp = math.cos(phi), math.sin(phi)
+            local v = i * S + j
+            pos[3 * v + 1], pos[3 * v + 2], pos[3 * v + 3] = cr * cp, y, cr * sp
+            local nx, ny, nz
+            if cr <= 1e-5 then -- degenerate ring: all segments share the vertical normal
+                nx, nz = 0, 0
+                ny = dy > 0 and 1 or (dy < 0 and -1 or (y >= 0 and 1 or -1))
+            else
+                local nl = math.sqrt(cr * cr + dy * dy)
+                nx, ny, nz = cr * cp / nl, dy / nl, cr * sp / nl
+            end
+            nrm[3 * v + 1], nrm[3 * v + 2], nrm[3 * v + 3] = nx, ny, nz
+            uv[2 * v + 1], uv[2 * v + 2] = j / S, i / M
+        end
+    end
+    for i = 0, M - 1 do
+        for j = 0, S - 1 do
+            local a = i * S + j
+            local b = i * S + ((j + 1) % S)
+            local c = (i + 1) * S + j
+            local d = (i + 1) * S + ((j + 1) % S)
+            local n = #idx
+            idx[n + 1], idx[n + 2], idx[n + 3] = a, b, d
+            idx[n + 4], idx[n + 5], idx[n + 6] = a, d, c
+        end
+    end
+    return { pos = pos, nrm = nrm, uv = uv, idx = idx }
+end
+
 -- icosphere (subdivided icosahedron), centered at the origin
 local function icoSphere(subdiv)
     local t = (1 + math.sqrt(5)) * 0.5

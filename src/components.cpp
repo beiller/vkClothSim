@@ -16,6 +16,7 @@ enum class Cmp {
     KinematicBody,
     CapsuleShape,
     BoxShape,
+    TaperedCapsule,
     Collider,
     ControllerInput,
     MouseInput,
@@ -48,6 +49,8 @@ const char* cmpName(Cmp c) {
         return "CapsuleShape";
     case Cmp::BoxShape:
         return "BoxShape";
+    case Cmp::TaperedCapsule:
+        return "TaperedCapsule";
     case Cmp::Collider:
         return "Collider";
     case Cmp::ControllerInput:
@@ -97,6 +100,8 @@ void* base(const entt::registry& reg, entt::entity e, Cmp c) {
         return const_cast<CapsuleShape*>(reg.try_get<CapsuleShape>(e));
     case Cmp::BoxShape:
         return const_cast<BoxShape*>(reg.try_get<BoxShape>(e));
+    case Cmp::TaperedCapsule:
+        return const_cast<TaperedCapsule*>(reg.try_get<TaperedCapsule>(e));
     case Cmp::Collider:
         return const_cast<Collider*>(reg.try_get<Collider>(e));
     case Cmp::ControllerInput:
@@ -150,6 +155,9 @@ void emplaceDefault(entt::registry& reg, entt::entity e, Cmp c) {
         break;
     case Cmp::BoxShape:
         reg.emplace<BoxShape>(e);
+        break;
+    case Cmp::TaperedCapsule:
+        reg.emplace<TaperedCapsule>(e);
         break;
     case Cmp::Collider:
         reg.emplace<Collider>(e);
@@ -205,6 +213,9 @@ void removeC(entt::registry& reg, entt::entity e, Cmp c) {
         break;
     case Cmp::BoxShape:
         reg.remove<BoxShape>(e);
+        break;
+    case Cmp::TaperedCapsule:
+        reg.remove<TaperedCapsule>(e);
         break;
     case Cmp::Collider:
         reg.remove<Collider>(e);
@@ -435,6 +446,13 @@ bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typ
     }
     if (c == Cmp::Geometry && !validateGeometry(reg, e, err))
         return false;
+    if (c == Cmp::TaperedCapsule) {
+        const auto& tc = reg.get<TaperedCapsule>(e);
+        if (tc.bottomRadius <= 0.0f || tc.topRadius <= 0.0f || tc.halfHeight < 0.0f) {
+            err = "TaperedCapsule: radii must be > 0 and halfHeight >= 0";
+            return false;
+        }
+    }
     return true;
 }
 

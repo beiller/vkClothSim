@@ -77,6 +77,14 @@ struct BoxShape {
     V3 half{};
 };
 
+struct TaperedCapsule {
+    // Jolt layout: centered at the origin, axis = local Y; the radius ramps linearly
+    // from bottomRadius (at -Y * halfHeight) to topRadius (at +Y * halfHeight)
+    float halfHeight = 0.0f;
+    float bottomRadius = 0.0f;
+    float topRadius = 0.0f;
+};
+
 struct Collider {
     entt::entity shape = entt::null;
 };

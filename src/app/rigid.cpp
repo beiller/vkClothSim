@@ -8,6 +8,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
+#include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
 #include <Jolt/RegisterTypes.h>
@@ -168,6 +169,14 @@ const JPH::Shape* RigidScene::shape(const entt::registry& reg, entt::entity e) {
         s = JPH::ShapeRefC(new JPH::CapsuleShape(cs->halfLen, cs->radius));
     else if (const auto* bs = reg.try_get<BoxShape>(e))
         s = JPH::ShapeRefC(new JPH::BoxShape(JPH::Vec3(bs->half.x, bs->half.y, bs->half.z)));
+    else if (const auto* tc = reg.try_get<TaperedCapsule>(e)) {
+        // Create() may return a (rotated-translated) sphere for degenerate tapers
+        const JPH::TaperedCapsuleShapeSettings settings(tc->halfHeight, tc->topRadius, tc->bottomRadius);
+        const JPH::Shape::ShapeResult r = settings.Create();
+        if (!r.Get())
+            return nullptr;
+        s = r.Get();
+    }
     if (!s.GetPtr())
         return nullptr;
     const JPH::Shape* ptr = s.GetPtr();
@@ -189,6 +198,7 @@ void RigidScene::watch(entt::registry& reg) {
     reg.on_destroy<Joint>().connect<&RigidScene::onJointDestroyed>(this);
     reg.on_destroy<CapsuleShape>().connect<&RigidScene::onShapeDestroyed>(this);
     reg.on_destroy<BoxShape>().connect<&RigidScene::onShapeDestroyed>(this);
+    reg.on_destroy<TaperedCapsule>().connect<&RigidScene::onShapeDestroyed>(this);
 }
 
 void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const V4& quat) {

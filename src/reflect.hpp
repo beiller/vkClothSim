@@ -116,6 +116,11 @@ static const FieldDesc kBoxShape[] = {
     {"hy", OFF(BoxShape, half) + 4, FieldKind::SliderF, 0.0f, 100.0f},
     {"hz", OFF(BoxShape, half) + 8, FieldKind::SliderF, 0.0f, 100.0f},
 };
+static const FieldDesc kTaperedCapsule[] = {
+    {"halfHeight", OFF(TaperedCapsule, halfHeight), FieldKind::SliderF, 0.0f, 10.0f},
+    {"bottomRadius", OFF(TaperedCapsule, bottomRadius), FieldKind::SliderF, 0.0f, 5.0f},
+    {"topRadius", OFF(TaperedCapsule, topRadius), FieldKind::SliderF, 0.0f, 5.0f},
+};
 static const FieldDesc kCollider[] = {
     {"shape", OFF(Collider, shape), FieldKind::Ref},
 };
@@ -183,6 +188,7 @@ static const TypeDesc kTypes[] = {
     {"KinematicBody", kKinematicBody},
     {"CapsuleShape", kCapsuleShape},
     {"BoxShape", kBoxShape},
+    {"TaperedCapsule", kTaperedCapsule},
     {"Collider", kCollider},
     {"Joint", kJoint},
     {"ControllerInput", kControllerInput},
@@ -221,6 +227,8 @@ inline std::vector<std::pair<const TypeDesc*, const void*>> entityFields(const e
         out.push_back({findType("CapsuleShape"), (const void*)p});
     if (auto* p = reg.try_get<BoxShape>(e))
         out.push_back({findType("BoxShape"), (const void*)p});
+    if (auto* p = reg.try_get<TaperedCapsule>(e))
+        out.push_back({findType("TaperedCapsule"), (const void*)p});
     if (auto* p = reg.try_get<Collider>(e))
         out.push_back({findType("Collider"), (const void*)p});
     if (auto* p = reg.try_get<Joint>(e))
