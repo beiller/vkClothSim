@@ -276,14 +276,6 @@ int main(int argc, char** argv) {
                 pHit = true;
             }
         }
-        if (engine.xr) {
-            // the panel is static (placed once): only commit the placement from a focused session,
-            // so a headset-off (visible) start doesn't place it facing the stale default head pose
-            if (fr.focused && fr.havePose)
-                updateUiPanel(engine.reg, panel, headPos, headQuat);
-        } else if (cam != entt::null) {
-            updateUiPanel(engine.reg, panel, headPos, headQuat);
-        }
         if (pHit || (engine.xr && fr.running && (fr.controller[0].active || fr.controller[1].active)) ||
             (engine.xr == nullptr && cam != entt::null)) {
             ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, pHit || !engine.xr ? pDown : false);

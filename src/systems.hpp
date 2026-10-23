@@ -32,7 +32,6 @@ void stepControllers(entt::registry& reg, const XrFrame& fr);
 // UI panel (UICanvas entity): pose, static placement, raycast hit point -> uv
 entt::entity findUiPanel(const entt::registry& reg);
 entt::entity ensureUiPanel(entt::registry& reg);
-void updateUiPanel(entt::registry& reg, entt::entity panel, const V3& viewPos, const V4& viewQuat);
 bool uiPanelUv(const entt::registry& reg, entt::entity panel, const V3& hitPos, V2& uv);
 void stepMouse(Engine& w);
 void stepKeyboard(Engine& w);

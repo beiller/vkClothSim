@@ -310,19 +310,6 @@ V4 panelLookQuat(const V3& panelPos, const V3& atPos) {
 }
 } // namespace
 
-void updateUiPanel(entt::registry& reg, entt::entity panel, const V3& viewPos, const V4& viewQuat) {
-    if (panel == entt::null)
-        return;
-    UICanvas& uc = reg.get<UICanvas>(panel);
-    if (uc.initialized)
-        return;
-    uc.initialized = true;
-    Transform& t = reg.get<Transform>(panel);
-    const V3 fwd = vNormalize(quatRotate(viewQuat, V3{0, 0, -1}));
-    t.pos = vAdd(viewPos, vScale(fwd, kPanelDist));
-    t.quat = panelLookQuat(t.pos, viewPos);
-}
-
 bool uiPanelUv(const entt::registry& reg, entt::entity panel, const V3& hitPos, V2& uv) {
     if (panel == entt::null)
         return false;
