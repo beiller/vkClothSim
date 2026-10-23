@@ -10,6 +10,13 @@
             "script": "scenes/menu"
         },
         {
+            "name": "ui light",
+            "components": {
+                "Transform": { "pos": [0, 2.5, 3.5] },
+                "PointLight": { "color": [1.0, 1.0, 1.0], "intensity": 1.5, "radius": 0.2 }
+            }
+        },
+        {
             "name": "vr",
             "script": "scenes/vr_controller"
         }

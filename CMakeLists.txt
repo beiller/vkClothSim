@@ -55,8 +55,6 @@ spirv(shadow_vert ${CMAKE_SOURCE_DIR}/shaders/shadow.vert)
 spirv(shadow_frag ${CMAKE_SOURCE_DIR}/shaders/shadow.frag)
 spirv(tonemap_vert ${CMAKE_SOURCE_DIR}/shaders/tonemap.vert)
 spirv(tonemap_frag ${CMAKE_SOURCE_DIR}/shaders/tonemap.frag)
-spirv(ui_quad_vert ${CMAKE_SOURCE_DIR}/shaders/ui_quad.vert)
-spirv(ui_quad_frag ${CMAKE_SOURCE_DIR}/shaders/ui_quad.frag)
 spirv(softbody ${CMAKE_SOURCE_DIR}/shaders/softbody.comp)
 spirv(sss_blur ${CMAKE_SOURCE_DIR}/shaders/sss_blur.comp)
 spirv(skeleton ${CMAKE_SOURCE_DIR}/shaders/skeleton.comp)
@@ -142,15 +140,20 @@ target_compile_features(3dsim_xr PRIVATE cxx_std_23)
 target_include_directories(3dsim_xr PRIVATE ${CMAKE_SOURCE_DIR}/src/xr ${CMAKE_SOURCE_DIR}/src/io ${XR_INCLUDES})
 target_link_libraries(3dsim_xr PUBLIC 3dsim_core PRIVATE Vulkan::Vulkan glfw)
 
+add_library(3dsim_ui STATIC
+    src/ui/ui.cpp)
+target_compile_features(3dsim_ui PRIVATE cxx_std_23)
+target_include_directories(3dsim_ui PRIVATE ${CMAKE_SOURCE_DIR}/src/ui ${CMAKE_SOURCE_DIR}/src/io ${GEN_DIR})
+target_link_libraries(3dsim_ui PUBLIC 3dsim_core imgui PRIVATE Vulkan::Vulkan glfw)
+
 add_library(3dsim_render STATIC
     src/vk/vkapp.cpp
     src/vk/renderer.cpp
     src/vk/renderer_env.cpp
-    src/vk/renderer_shadow.cpp
-    src/vk/ui.cpp)
+    src/vk/renderer_shadow.cpp)
 target_compile_features(3dsim_render PRIVATE cxx_std_23)
-target_include_directories(3dsim_render PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/io ${GEN_DIR})
-target_link_libraries(3dsim_render PUBLIC 3dsim_core imgui PRIVATE glfw Vulkan::Vulkan Jolt::Jolt)
+target_include_directories(3dsim_render PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/io ${CMAKE_SOURCE_DIR}/src/ui ${GEN_DIR})
+target_link_libraries(3dsim_render PUBLIC 3dsim_core 3dsim_ui PRIVATE glfw Vulkan::Vulkan Jolt::Jolt)
 
 add_library(3dsim_script STATIC
     src/script/lua_host.cpp
@@ -159,8 +162,8 @@ add_library(3dsim_script STATIC
     src/script/api_scene.cpp
     src/script/api_ui.cpp)
 target_compile_features(3dsim_script PRIVATE cxx_std_23)
-target_include_directories(3dsim_script PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${LUA_INCLUDE_DIR})
-target_link_libraries(3dsim_script PUBLIC 3dsim_core 3dsim_io 3dsim_render 3dsim_app 3dsim_sim PRIVATE Jolt::Jolt ${LUA_LIBRARY})
+target_include_directories(3dsim_script PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/ui ${LUA_INCLUDE_DIR})
+target_link_libraries(3dsim_script PUBLIC 3dsim_core 3dsim_io 3dsim_render 3dsim_ui 3dsim_app 3dsim_sim PRIVATE Jolt::Jolt ${LUA_LIBRARY})
 
 # the app: glue (main loop, systems, scene loading) + all subsystems
 add_executable(vksim
@@ -168,7 +171,7 @@ add_executable(vksim
     src/systems.cpp
     src/scene.cpp)
 target_compile_features(vksim PRIVATE cxx_std_23)
-target_include_directories(vksim PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/sim ${XR_INCLUDES} ${GEN_DIR})
+target_include_directories(vksim PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/sim ${CMAKE_SOURCE_DIR}/src/ui ${XR_INCLUDES} ${GEN_DIR})
 target_link_libraries(vksim PRIVATE
     3dsim_script 3dsim_sim 3dsim_app 3dsim_xr 3dsim_render 3dsim_io
     glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB dl ${LUA_LIBRARY})

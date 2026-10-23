@@ -6,7 +6,6 @@
 #include "sim/sim.hpp"
 #include "ui.hpp"
 #include "engine.hpp"
-#include <imgui.h>
 #include <vector>
 
 template <typename Marker>
@@ -22,7 +21,6 @@ CameraView cameraView(const entt::registry& reg, entt::entity cam, float aspect)
 void stepRigid(RigidScene& rigid, entt::registry& reg);
 void resolveWorldTransforms(entt::registry& reg);
 void stepSoft(Engine& w, VkCommandBuffer cmd);
-void draw(Engine& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui);
 
 void stepXr(entt::registry& reg, const XrFrame& fr);
 entt::entity spawnVrRoot(entt::registry& reg);
@@ -30,9 +28,7 @@ void spawnControllers(Engine& w);
 void stepControllers(entt::registry& reg, const XrFrame& fr);
 
 // UI panel (UICanvas entity): pose, static placement, raycast hit point -> uv
-entt::entity findUiPanel(const entt::registry& reg);
-entt::entity ensureUiPanel(entt::registry& reg);
-bool uiPanelUv(const entt::registry& reg, entt::entity panel, const V3& hitPos, V2& uv);
+bool uiPanelUv(const entt::registry& reg, entt::entity canvas, const V3& hitPos, V2& uv);
 void stepMouse(Engine& w);
 void stepKeyboard(Engine& w);
 void spawnInputEntities(Engine& w);

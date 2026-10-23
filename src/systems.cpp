@@ -157,14 +157,14 @@ void stepMouse(Engine& w) {
     auto& reg = w.reg;
     double cx, cy;
     glfwGetCursorPos(app->glfwWindow(), &cx, &cy);
-    ImGuiIO& io = ImGui::GetIO();
+    const bool wantCap = ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantCaptureMouse;
     const int btns[4] = {GLFW_MOUSE_BUTTON_LEFT, GLFW_MOUSE_BUTTON_RIGHT, GLFW_MOUSE_BUTTON_MIDDLE,
                          GLFW_MOUSE_BUTTON_4};
     reg.view<MouseInput>().each([&](auto, MouseInput& mi) {
         mi.x = (float)cx;
         mi.y = (float)cy;
         for (int i = 0; i < 4; ++i)
-            mi.buttons[i] = glfwGetMouseButton(app->glfwWindow(), btns[i]) == GLFW_PRESS && !io.WantCaptureMouse;
+            mi.buttons[i] = glfwGetMouseButton(app->glfwWindow(), btns[i]) == GLFW_PRESS && !wantCap;
     });
 }
 
@@ -172,8 +172,8 @@ void stepKeyboard(Engine& w) {
     auto* app = w.app;
     if (!app)
         return;
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureKeyboard)
+    const bool wantCap = ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantCaptureKeyboard;
+    if (wantCap)
         return;
     auto& reg = w.reg;
     reg.view<KeyboardInput>().each([&](auto, KeyboardInput& ki) {
@@ -266,46 +266,16 @@ void stepSoft(Engine& w, VkCommandBuffer cmd) {
     w.gpuSim.soft.record(cmd);
 }
 
-void draw(Engine& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui) {
-    const entt::entity p = findUiPanel(w.reg);
-    Transform panelT;
-    const Transform* pp = nullptr;
-    if (p != entt::null) {
-        panelT = worldTransform(w.reg, p);
-        pp = &panelT;
-    }
-    w.renderer.draw(cmd, *w.app, fb, w.reg, w.render, imgui, pp);
-}
 
-entt::entity findUiPanel(const entt::registry& reg) {
-    for (auto e : reg.view<UICanvas>())
-        return e;
-    return entt::null;
-}
-
-entt::entity ensureUiPanel(entt::registry& reg) {
-    const entt::entity found = findUiPanel(reg);
-    if (found != entt::null)
-        return found;
-    const entt::entity panel = reg.create();
-    reg.emplace<UICanvas>(panel);
-    reg.emplace<Transform>(panel);
-    const entt::entity shape = reg.create();
-    reg.emplace<BoxShape>(shape, BoxShape{V3{kPanelW * 0.5f, kPanelH * 0.5f, 0.01f}});
-    const entt::entity col = reg.create();
-    reg.emplace<Collider>(col, Collider{shape});
-    reg.emplace<KinematicBody>(panel, KinematicBody{{col}});
-    return panel;
-}
-
-bool uiPanelUv(const entt::registry& reg, entt::entity panel, const V3& hitPos, V2& uv) {
-    if (panel == entt::null)
+bool uiPanelUv(const entt::registry& reg, entt::entity canvas, const V3& hitPos, V2& uv) {
+    if (canvas == entt::null)
         return false;
-    const Transform& t = reg.get<Transform>(panel);
+    const Transform& t = reg.get<Transform>(canvas);
+    const V2 ws = reg.get<UICanvas>(canvas).worldSize;
     const V3 xh = quatRotate(t.quat, V3{1, 0, 0});
     const V3 yh = quatRotate(t.quat, V3{0, 1, 0});
-    const float u = 0.5f + vDot(vSub(hitPos, t.pos), xh) / (kPanelW);
-    const float v = 0.5f + vDot(vSub(hitPos, t.pos), yh) / (kPanelH);
+    const float u = 0.5f + vDot(vSub(hitPos, t.pos), xh) / ws.x;
+    const float v = 0.5f + vDot(vSub(hitPos, t.pos), yh) / ws.y;
     if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f)
         return false;
     uv = {u, v}; // v up-positive (1 = panel top), as the ImGui feed expects

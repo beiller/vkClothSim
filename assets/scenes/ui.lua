@@ -38,7 +38,7 @@ local function main(spec)
     local ui = spec.ui
     if not ui or ui.hidden then return end
     local size = ui.size or { 320, 720 }
-    local win = scene.ui_window(ui.title or spec.name or "scene", 20, 20, size[1], size[2], true)
+    local win = scene.ui_window(ui.title or spec.name or "scene", size[1], size[2])
     if ui.widgets then
         build(scene.ui_tab(win, "scene"), ui.widgets)
     end

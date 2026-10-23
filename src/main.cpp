@@ -57,7 +57,6 @@ int main(int argc, char** argv) {
     }
     app.initDevice(engine.xr ? engine.xr->device() : app.makeDevice());
     initEngine(engine);
-    spawnFpsHud(engine);
     if (engine.xr) {
         engine.xrSession = engine.xr->init(app);
         if (engine.xrSession) {
@@ -77,7 +76,8 @@ int main(int argc, char** argv) {
     }
     spawnInputEntities(engine);
 
-    initImGui(app);
+    uiInit({app.instance(), app.pdev(), app.device(), app.queueFamily(), app.queue(), (int)app.imageCount(),
+            [&engine](entt::entity c) -> VkImage { return engine.renderer.gpuTextureImage(c); }});
 
     std::printf("3dsim: vulkan+imgui | GPU soft-body sim | startup scene select (or --scene file.json) | "
                 "VR auto-detected, --no-vr for plain window | esc/close to quit\n");
@@ -162,83 +162,76 @@ int main(int argc, char** argv) {
         if (cam != entt::null)
             engine.renderer.setViewProj(cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height));
         // UI pointer: world-space ray (VR: controller aim; window: camera through cursor)
-        // -> rigid-body raycast against the panel collider -> uv of the hit point
-        const entt::entity panel = findUiPanel(engine.reg);
-        V2 pUv{};
-        bool pDown = false;
-        float pWheel = 0.0f;
-        bool pHit = false;
-        auto tryRay = [&](const V3& o, const V3& d) {
+        // -> rigid-body raycast against each canvas collider -> uv of the hit point
+        std::vector<entt::entity> canvases;
+        for (auto e : engine.reg.view<UICanvas>())
+            canvases.push_back(e);
+        auto canvasPx = [&](entt::entity c) -> V2 {
+            for (auto [e, w] : engine.reg.view<UIWindow>().each())
+                if (w.canvas == c)
+                    return w.size;
+            return V2{320.0f, 200.0f};
+        };
+        auto tryRay = [&](entt::entity canvas, const V3& o, const V3& d, UiFeed& f) {
             // the hand's own bodies (anchor, controller) hug the ray origin and would win at t=0;
-            // exclude them by name so the panel stays castable even when the hand is close
+            // exclude them by name so the canvas stays castable even when the hand is close
             std::vector<entt::entity> excl;
             engine.reg.view<Name>().each([&](entt::entity e, const Name& n) {
                 if (std::strstr(n.id.c_str(), "hand") || std::strstr(n.id.c_str(), "controller"))
                     excl.push_back(e);
             });
             const RayHit h = engine.rigid.raycast(o, d, 30.0f, excl);
-            if (!h.hit || engine.rigid.entityFor(h.body) != panel)
+            if (!h.hit || engine.rigid.entityFor(h.body) != canvas)
                 return false;
-            return uiPanelUv(engine.reg, panel, h.pos, pUv);
+            V2 uv;
+            if (!uiPanelUv(engine.reg, canvas, h.pos, uv))
+                return false;
+            const V2 px = canvasPx(canvas);
+            f.pos = {(float)uv.x * px.x, (1.0f - (float)uv.y) * px.y};
+            return true;
         };
-        if (engine.xr && fr.running && fr.havePose) {
-            const entt::entity root = findMarker<VrRoot>(engine.reg);
-            const V3 rootPos = root != entt::null ? worldTransform(engine.reg, root).pos : V3{0, 0, 0};
-            for (int i = 0; i < 2; ++i) {
-                const XrController& ctl = fr.controller[i];
-                if (!ctl.active)
-                    continue;
-                const V3 o = vAdd(rootPos, ctl.aimPos); // the aim pose is in the vr-root (locomotion) frame
-                const V3 d = quatRotate(ctl.aimQuat, V3{0, 0, -1});
-                if (tryRay(o, d)) {
-                    pDown = ctl.triggers[0] > 0.3f;
-                    pWheel = -ctl.axis[1];
-                    pHit = true;
-                    break;
+        std::vector<UiFeed> feeds;
+        for (entt::entity c : canvases) {
+            engine.renderer.uiEnsureTarget(engine.reg, c);
+            UiFeed f{c, ImVec2{-1.0f, -1.0f}, false, 0.0f, false};
+            if (engine.xr && fr.running && fr.havePose) {
+                const entt::entity root = findMarker<VrRoot>(engine.reg);
+                const V3 rootPos = root != entt::null ? worldTransform(engine.reg, root).pos : V3{0, 0, 0};
+                for (int i = 0; i < 2; ++i) {
+                    const XrController& ctl = fr.controller[i];
+                    if (!ctl.active)
+                        continue;
+                    const V3 o = vAdd(rootPos, ctl.aimPos); // the aim pose is in the vr-root (locomotion) frame
+                    const V3 d = quatRotate(ctl.aimQuat, V3{0, 0, -1});
+                    f.down = ctl.triggers[0] > 0.3f; // button state live; hover below
+                    f.wheel = -ctl.axis[1];
+                    if (tryRay(c, o, d, f))
+                        break;
                 }
-                if (!pHit) {
-                    pDown = ctl.triggers[0] > 0.3f; // fallback owner: hover off, button state live
-                }
+            } else if (cam != entt::null) {
+                const CameraView cv = cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height);
+                double mx, my;
+                glfwGetCursorPos(app.glfwWindow(), &mx, &my);
+                // cursor is in window pixels but the camera projects in framebuffer pixels
+                const float x = 2.0f * (float)mx / (float)app.extent().width - 1.0f;
+                const float y = 1.0f - 2.0f * (float)my / (float)app.extent().height;
+                const V3 cd = {(x * 0.5f + 0.5f) * (cv.tanR - cv.tanL) + cv.tanL,
+                              (y * 0.5f + 0.5f) * (cv.tanU - cv.tanD) + cv.tanD, -1.0f};
+                const float* m = cv.view.m;
+                const V3 o = cv.pos;
+                const V3 d = vNormalize({cd.x * m[0] + cd.y * m[4] + cd.z * m[8],
+                                       cd.x * m[1] + cd.y * m[5] + cd.z * m[9],
+                                       cd.x * m[2] + cd.y * m[6] + cd.z * m[10]});
+                f.down = glfwGetMouseButton(app.glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+                tryRay(c, o, d, f);
             }
-        } else if (cam != entt::null) {
-            const CameraView cv = cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height);
-            double mx, my;
-            glfwGetCursorPos(app.glfwWindow(), &mx, &my);
-            // cursor is in window pixels but the camera projects in framebuffer pixels
-            const float x = 2.0f * (float)mx / (float)app.extent().width - 1.0f;
-            const float y = 1.0f - 2.0f * (float)my / (float)app.extent().height;
-            const V3 cd = {(x * 0.5f + 0.5f) * (cv.tanR - cv.tanL) + cv.tanL,
-                          (y * 0.5f + 0.5f) * (cv.tanU - cv.tanD) + cv.tanD, -1.0f};
-            const float* m = cv.view.m;
-            const V3 o = cv.pos;
-            const V3 d = vNormalize({cd.x * m[0] + cd.y * m[4] + cd.z * m[8],
-                                   cd.x * m[1] + cd.y * m[5] + cd.z * m[9],
-                                   cd.x * m[2] + cd.y * m[6] + cd.z * m[10]});
-            if (tryRay(o, d)) {
-                pDown = glfwGetMouseButton(app.glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-                pHit = true;
-            }
+            feeds.push_back(f);
         }
-        if (pHit || (engine.xr && fr.running && (fr.controller[0].active || fr.controller[1].active)) ||
-            (engine.xr == nullptr && cam != entt::null)) {
-            ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, pHit || !engine.xr ? pDown : false);
-            if (pWheel != 0.0f)
-                ImGui::GetIO().AddMouseWheelEvent(0.0f, pWheel);
-        } else {
-            // keep the physical (OS) mouse from hijacking the pointer: we own io.MousePos below
-            ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, false);
-        }
-        imguiNewFrame(
-            (float)engine.renderer.uiWidth(), 
-            (float)engine.renderer.uiHeight(),
-            pHit ? ImVec2(pUv.x * (float)engine.renderer.uiWidth(),
-                                               (1.0f - pUv.y) * (float)engine.renderer.uiHeight())
-                                      : ImVec2(-1.0f, -1.0f)
-        );
-        drawUi(engine);
-        if (engine.showDemo)
-            ImGui::ShowDemoWindow(&engine.showDemo);
-        ImGui::Render();
+        if (!feeds.empty() && engine.showDemo)
+            feeds[0].demo = true;
+        for (entt::entity c : canvases)
+            uiEnsureContext(engine.reg, c, engine.renderer.uiTargetPass(c), engine.renderer.uiTargetFb(c));
+        uiFrame(engine.reg, feeds);
 
         const uint32_t idx = app.acquireNextImage();
         VkCommandBuffer cmd = app.beginCommands();
@@ -249,20 +242,13 @@ int main(int argc, char** argv) {
                     engine.xr->acquireImage(i);
                     imgIdx[i] = (uint32_t)engine.xr->imageIndex(i);
                 }
-            Transform panelT;
-            const Transform* panelP = nullptr;
-            if (panel != entt::null) {
-                panelT = worldTransform(engine.reg, panel);
-                panelP = &panelT;
-            }
-            engine.renderer.drawVr(cmd, app, idx, engine.reg, engine.render, ImGui::GetDrawData(), cam,
-                              fr.shouldRender ? imgIdx : nullptr, fr.shouldRender ? engine.xr->eyeCount() : 0,
-                              panelP);
+            engine.renderer.drawVr(cmd, app, idx, engine.reg, engine.render, cam,
+                                  fr.shouldRender ? imgIdx : nullptr, fr.shouldRender ? engine.xr->eyeCount() : 0);
             if (fr.shouldRender)
                 for (int i = 0; i < engine.xr->eyeCount(); ++i)
                     engine.xr->releaseImage(i);
         } else {
-            draw(engine, cmd, idx, ImGui::GetDrawData());
+            engine.renderer.draw(cmd, app, idx, engine.reg, engine.render);
         }
         const auto tRender = std::chrono::steady_clock::now();
         if (engine.xr)
@@ -279,7 +265,7 @@ int main(int argc, char** argv) {
             pace.add(msBetween(nowFrame, tXrEnd) - wait);
     }
 
-    shutdownImGui();
+    uiShutdown();
     engine.gpuSim.shutdown();
     engine.script.shutdown();
     engine.renderer.shutdown();

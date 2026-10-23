@@ -3,6 +3,8 @@
 
 #include "engine.hpp"
 #include "ui.hpp"
+#include "scene.hpp"
+#include "url.hpp"
 
 namespace {
 
@@ -24,17 +26,16 @@ const UrlRef bindRef(Engine& w, lua_State* L, int idx) {
 
 int lUiWindow(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
-    const float x = (float)luaL_optnumber(L, 2, 20.0), y = (float)luaL_optnumber(L, 3, 20.0);
-    const float w = (float)luaL_optnumber(L, 4, 0.0), h = (float)luaL_optnumber(L, 5, 0.0);
-    luaPushEnt(L, spawnUiWindow(self->w(),
-                                UIWindow{luaL_checkstring(L, 1), [x, y] { return V2{x, y}; }, V2{w, h},
-                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove}));
+    const float w = (float)luaL_optnumber(L, 2, 0.0), h = (float)luaL_optnumber(L, 3, 0.0);
+    const V2 px{w > 0.0f ? w : 320.0f, h > 0.0f ? h : 200.0f};
+    // static world spot in front of the default view; scenes may re-place via the canvas Transform
+    luaPushEnt(L, spawnUiWindow(self->w().reg, self->w().uiSeq, luaL_checkstring(L, 1), px, V3{0.0f, 1.5f, 2.8f}));
     return 1;
 }
 
 int lUiTab(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
-    luaPushEnt(L, spawnWidget(self->w(), luaReadEnt(L, 1), UITab{luaL_checkstring(L, 2)}));
+    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1), UITab{luaL_checkstring(L, 2)}));
     return 1;
 }
 
@@ -52,20 +53,20 @@ int lUiButton(lua_State* L) {
     const int ref = self->newRef(L, 3);
     const std::string action = "ui" + std::to_string(self->nextActionSeq());
     self->addButton(action, ref);
-    luaPushEnt(L, spawnWidget(self->w(), parent, UIButton{label, [self, action] { self->button(action); }}));
+    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, parent, UIButton{label, [self, action] { self->button(action); }}));
     return 1;
 }
 
 int lUiText(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
-    luaPushEnt(L, spawnWidget(self->w(), luaReadEnt(L, 1), UIText{luaL_checkstring(L, 2)}));
+    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1), UIText{luaL_checkstring(L, 2)}));
     return 1;
 }
 
 int lUiSection(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const bool collapsible = lua_isnoneornil(L, 3) ? true : lua_toboolean(L, 3);
-    luaPushEnt(L, spawnWidget(self->w(), luaReadEnt(L, 1), UISection{luaL_checkstring(L, 2), collapsible}));
+    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1), UISection{luaL_checkstring(L, 2), collapsible}));
     return 1;
 }
 
@@ -73,7 +74,7 @@ int lUiSliderF(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
     auto* p = (float*)r.base;
-    luaPushEnt(L, spawnWidget(self->w(), luaReadEnt(L, 1),
+    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1),
                              UISliderF{luaL_checkstring(L, 2), (float)luaL_optnumber(L, 4, r.field->lo),
                                       (float)luaL_optnumber(L, 5, r.field->hi),
                                       luaL_optstring(L, 6, "%.2f"), [p] { return p; }}));
@@ -84,7 +85,7 @@ int lUiSliderI(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
     auto* p = (int*)r.base;
-    luaPushEnt(L, spawnWidget(self->w(), luaReadEnt(L, 1),
+    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1),
                              UISliderI{luaL_checkstring(L, 2), (int)luaL_optnumber(L, 4, r.field->lo),
                                       (int)luaL_optnumber(L, 5, r.field->hi), [p] { return p; }}));
     return 1;
@@ -94,7 +95,7 @@ int lUiCheckbox(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
     auto* p = (bool*)r.base;
-    luaPushEnt(L, spawnWidget(self->w(), luaReadEnt(L, 1), UICheckbox{luaL_checkstring(L, 2), [p] { return p; }}));
+    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1), UICheckbox{luaL_checkstring(L, 2), [p] { return p; }}));
     return 1;
 }
 
@@ -102,7 +103,7 @@ int lUiColor(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
     auto* p = (float*)r.base;
-    luaPushEnt(L, spawnWidget(self->w(), luaReadEnt(L, 1), UIColorEdit{luaL_checkstring(L, 2), [p] { return p; }}));
+    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1), UIColorEdit{luaL_checkstring(L, 2), [p] { return p; }}));
     return 1;
 }
 
@@ -110,7 +111,7 @@ int lUiDragV3(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
     auto* p = (float*)r.base;
-    luaPushEnt(L, spawnWidget(self->w(), luaReadEnt(L, 1),
+    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1),
                              UIDragV3{luaL_checkstring(L, 2), (float)luaL_optnumber(L, 4, 0.1f), [p] { return p; }}));
     return 1;
 }

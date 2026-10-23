@@ -110,7 +110,7 @@ void spawnEditorUi(Engine& w, entt::entity tab) {
         auto comps = refl::entityFields(w.reg, e);
         if (comps.empty())
             continue;
-        entt::entity sec = spawnWidget(w, tab, UISection{name, true});
+        entt::entity sec = spawnWidget(w.reg, w.uiSeq, tab, UISection{name, true});
         for (auto& [t, b] : comps)
             for (const auto& f : t->fields) {
                 char label[128];
@@ -118,13 +118,13 @@ void spawnEditorUi(Engine& w, entt::entity tab) {
                     std::snprintf(label, sizeof label, "%s.%s", t->name, f.name);
                 else
                     std::snprintf(label, sizeof label, "%s", f.name);
-                spawnFieldWidget(w, sec, label, &f, (void*)b);
+                spawnFieldWidget(w.reg, w.uiSeq, sec, label, &f, (void*)b);
             }
     }
     for (const auto& r : engineRoots(w)) {
-        entt::entity sec = spawnWidget(w, tab, UISection{r.type->name, true});
+        entt::entity sec = spawnWidget(w.reg, w.uiSeq, tab, UISection{r.type->name, true});
         for (const auto& f : r.type->fields)
-            spawnFieldWidget(w, sec, f.name, &f, r.base);
+            spawnFieldWidget(w.reg, w.uiSeq, sec, f.name, &f, r.base);
     }
 }
 
@@ -136,7 +136,6 @@ void initEngine(Engine& w) {
     };
     w.gpuSim.skin.setRequestVerts(requestVerts);
     w.gpuSim.soft.setRequestVerts(requestVerts);
-    ensureUiPanel(w.reg);
     w.renderer.init(*w.app, 256, mat4Identity());
     w.script.init(w);
     std::string err;
@@ -168,8 +167,19 @@ void resetScene(Engine& w) {
     w.uiSeq = 0;
     w.showDemo = false;
     w.render = {};
-    ensureUiPanel(w.reg);
-    spawnFpsHud(w);
+    spawnFpsHud(w.reg, w.uiSeq, [&w] {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "%.1f fps  %.1f ms\n"
+                                      "poll  %6.1f\n"
+                                      "sim   %6.1f\n"
+                                      "rend  %6.1f\n"
+                                      "xrend %6.1f\n"
+                                      "idle  %6.1f",
+                                      w.fps, 1000.0f / (w.fps > 1.0f ? w.fps : 1.0f), w.phase.poll, w.phase.sim,
+                                      w.phase.render, w.phase.xrEnd, w.phase.idle);
+        return std::string(buf);
+    },
+               V3{0.45f, 1.72f, 2.8f}, V2{150.0f, 120.0f});
     spawnInputEntities(w);
     if (w.xr && w.xrSession) {
         spawnVrRoot(w.reg);
@@ -250,6 +260,24 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
     }
 }
 
+// upload every Texture to a GPUTexture and repoint materials at the GPU-side entity
+void publishTextures(Engine& w) {
+    std::vector<std::pair<entt::entity, entt::entity>> ups;
+    for (auto [e, t] : w.reg.view<Texture>().each()) {
+        (void)t;
+        const entt::entity g = w.renderer.uploadTexture(w.reg, e);
+        if (g != entt::null)
+            ups.emplace_back(e, g);
+    }
+    for (auto [e, m] : w.reg.view<Material>().each()) {
+        (void)e;
+        for (entt::entity* f : {&m.tex, &m.texMR, &m.texNormal, &m.texEmissive})
+            for (auto& [t, g] : ups)
+                if (*f == t)
+                    *f = g;
+    }
+}
+
 bool loadScene(Engine& w, const std::string& path) {
     resetScene(w);
     std::string err;
@@ -257,6 +285,7 @@ bool loadScene(Engine& w, const std::string& path) {
         w.loadError = err;
         return false;
     }
+    publishTextures(w);
     w.loadError = "";
     w.scenePath = path;
     std::printf("3dsim: scene %s\n", path.c_str());

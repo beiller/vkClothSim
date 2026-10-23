@@ -179,10 +179,16 @@ struct Camera {
     View views[2];
 };
 
-// UI panel: its Transform is the panel pose; the renderer draws the ImGui texture here
-struct UICanvas {};
-inline constexpr float kPanelW = 0.96f;
-inline constexpr float kPanelH = 0.54f;
+// GPU-side texture: uploaded from a Texture (Renderer::uploadTexture) or produced by a
+// render target; the only component Material texture fields may reference
+struct GPUTexture {
+    uint32_t w = 0, h = 0;
+};
+
+// UI canvas: one ImGui context + one GPU texture + one quad; its Transform is the canvas pose
+struct UICanvas {
+    V2 worldSize{0.5f, 0.28f}; // full width/height in meters
+};
 
 struct ControllerInput {
     int hand = -1;          // 0 left, 1 right
@@ -265,8 +271,8 @@ struct Name {
 // UI descriptors (consumed by the ImGui layer; see ui.hpp)
 struct UIWindow {
     std::string title;
-    std::function<V2()> pos;
-    V2 size{};
+    entt::entity canvas = entt::null;
+    V2 size{320.0f, 200.0f}; // canvas pixel size; the window fills the canvas
     int flags = 0;
     int order = 0;
 };

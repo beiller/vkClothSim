@@ -36,30 +36,42 @@ public:
     int instOf(entt::entity e) const;
     int textureId(entt::entity e) const;
     int textureFor(entt::entity e, const entt::registry& reg);
-    void addTexture(entt::entity e, const void* rgba, uint32_t w, uint32_t h);
+    void addGpuTexture(entt::entity e, const void* rgba, uint32_t w, uint32_t h);
+    VkImage gpuTextureImage(entt::entity e) const {
+        const auto it = m_entTex.find(e);
+        return (it != m_entTex.end() && it->second < (int)m_texs.size() && m_texs[it->second].img != VK_NULL_HANDLE)
+                   ? m_texs[it->second].img
+                   : VK_NULL_HANDLE;
+    }
+    void makeGpuTexture(entt::entity e, uint32_t w, uint32_t h);
+    entt::entity uploadTexture(entt::registry& reg, entt::entity texEnt);
+    void uiEnsureTarget(const entt::registry& reg, entt::entity canvas);
+    VkRenderPass uiTargetPass(entt::entity canvas) const {
+        const auto it = m_uiTargs.find(canvas);
+        return it != m_uiTargs.end() ? it->second.rp : VK_NULL_HANDLE;
+    }
+    VkFramebuffer uiTargetFb(entt::entity canvas) const {
+        const auto it = m_uiTargs.find(canvas);
+        return it != m_uiTargs.end() ? it->second.fb : VK_NULL_HANDLE;
+    }
     void watch(entt::registry& reg);
     void flushFrees();
     void reset();
     void setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h);
     void setViewProj(const CameraView& cv);
     void shutdown();
-    void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
-              ImDrawData* imgui, const Transform* uiPanel);
-    uint32_t uiWidth() const { return m_uiW; }
-    uint32_t uiHeight() const { return m_uiH; }
+    void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs);
 
     void initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vector<std::vector<VkImage>>& images,
                       const VkExtent2D* exts);
     void drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
-                ImDrawData* imgui, entt::entity cam, const uint32_t* xrImg, int nXr, const Transform* uiPanel);
+                entt::entity cam, const uint32_t* xrImg, int nXr);
 
 private:
-    void initUi(VkApp& app);
     void releaseUi();
-    void renderUiToTexture(VkCommandBuffer cmd, ImDrawData* imgui);
-    void drawUiQuad(VkCommandBuffer cmd, const Transform& panel, const Mat4& viewProj);
-    void drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx, const CameraView& cv,
-                   const Transform* uiPanel);
+    void freeUiTarget(entt::entity e);
+    void onUiCanvasDestroyed(entt::registry&, entt::entity e);
+    void drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx, const CameraView& cv);
     struct GpuMesh {
         VkBuffer pos = VK_NULL_HANDLE, nrm = VK_NULL_HANDLE, uv = VK_NULL_HANDLE;
         VkDeviceMemory posMem = VK_NULL_HANDLE, nrmMem = VK_NULL_HANDLE, uvMem = VK_NULL_HANDLE;
@@ -130,21 +142,10 @@ private:
                          uint32_t pcSize, EnvPass& out, uint32_t maxSets = 1);
     void writeEnvSet(VkDescriptorSet set);
 
-    uint32_t m_uiW = 1280, m_uiH = 720;
-    VkImage m_uiTex = VK_NULL_HANDLE;
-    VkDeviceMemory m_uiMem = VK_NULL_HANDLE;
-    VkImageView m_uiView = VK_NULL_HANDLE;
-    VkSampler m_uiSampler = VK_NULL_HANDLE;
-    VkRenderPass m_uiRp = VK_NULL_HANDLE;
-    VkFramebuffer m_uiFb = VK_NULL_HANDLE;
-    VkPipeline m_uiQuadPipe = VK_NULL_HANDLE;
-    VkPipelineLayout m_uiQuadPl = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_uiQuadDsl = VK_NULL_HANDLE;
-    VkDescriptorPool m_uiQuadPool;
-    VkDescriptorSet m_uiQuadSet = VK_NULL_HANDLE;
-    VkBuffer m_uiQuadVb = VK_NULL_HANDLE;
-    VkDeviceMemory m_uiQuadVm = VK_NULL_HANDLE;
-    float* m_uiQuadVbMap = nullptr;
+    struct UiTarget {
+        VkRenderPass rp = VK_NULL_HANDLE;
+        VkFramebuffer fb = VK_NULL_HANDLE;
+    };
 
     VkDevice m_dev = VK_NULL_HANDLE;
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;
@@ -183,6 +184,8 @@ private:
     std::unordered_map<entt::entity, int> m_entGeom;
     std::unordered_set<entt::entity> m_geomWarned, m_texWarned;
     std::vector<int> m_freeInst, m_freeTex;
+    std::unordered_map<entt::entity, UiTarget> m_uiTargs;
+    std::vector<entt::entity> m_freeUiTargs;
     GpuTexture m_white;
     GpuTexture m_neutralNrm;
     VkSampler m_texSampler = VK_NULL_HANDLE;
