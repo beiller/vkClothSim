@@ -136,6 +136,7 @@ void initEngine(Engine& w) {
     };
     w.gpuSim.skin.setRequestVerts(requestVerts);
     w.gpuSim.soft.setRequestVerts(requestVerts);
+    ensureUiPanel(w.reg);
     w.renderer.init(*w.app, 256, mat4Identity());
     w.script.init(w);
     std::string err;
@@ -167,6 +168,7 @@ void resetScene(Engine& w) {
     w.uiSeq = 0;
     w.showDemo = false;
     w.render = {};
+    ensureUiPanel(w.reg);
     spawnFpsHud(w);
     spawnInputEntities(w);
     if (w.xr && w.xrSession) {

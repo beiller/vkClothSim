@@ -44,15 +44,22 @@ public:
     void setViewProj(const CameraView& cv);
     void shutdown();
     void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
-              ImDrawData* imgui);
+              ImDrawData* imgui, const Transform* uiPanel);
+    uint32_t uiWidth() const { return m_uiW; }
+    uint32_t uiHeight() const { return m_uiH; }
 
     void initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vector<std::vector<VkImage>>& images,
                       const VkExtent2D* exts);
     void drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
-                ImDrawData* imgui, entt::entity cam, const uint32_t* xrImg, int nXr);
+                ImDrawData* imgui, entt::entity cam, const uint32_t* xrImg, int nXr, const Transform* uiPanel);
 
 private:
-    void drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx);
+    void initUi(VkApp& app);
+    void releaseUi();
+    void renderUiToTexture(VkCommandBuffer cmd, ImDrawData* imgui);
+    void drawUiQuad(VkCommandBuffer cmd, const Transform& panel, const Mat4& viewProj);
+    void drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx, const CameraView& cv,
+                   const Transform* uiPanel);
     struct GpuMesh {
         VkBuffer pos = VK_NULL_HANDLE, nrm = VK_NULL_HANDLE, uv = VK_NULL_HANDLE;
         VkDeviceMemory posMem = VK_NULL_HANDLE, nrmMem = VK_NULL_HANDLE, uvMem = VK_NULL_HANDLE;
@@ -122,6 +129,22 @@ private:
     void makeComputePass(const void* spv, uint32_t len, const std::vector<VkDescriptorSetLayoutBinding>& binds,
                          uint32_t pcSize, EnvPass& out, uint32_t maxSets = 1);
     void writeEnvSet(VkDescriptorSet set);
+
+    uint32_t m_uiW = 1280, m_uiH = 720;
+    VkImage m_uiTex = VK_NULL_HANDLE;
+    VkDeviceMemory m_uiMem = VK_NULL_HANDLE;
+    VkImageView m_uiView = VK_NULL_HANDLE;
+    VkSampler m_uiSampler = VK_NULL_HANDLE;
+    VkRenderPass m_uiRp = VK_NULL_HANDLE;
+    VkFramebuffer m_uiFb = VK_NULL_HANDLE;
+    VkPipeline m_uiQuadPipe = VK_NULL_HANDLE;
+    VkPipelineLayout m_uiQuadPl = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_uiQuadDsl = VK_NULL_HANDLE;
+    VkDescriptorPool m_uiQuadPool;
+    VkDescriptorSet m_uiQuadSet = VK_NULL_HANDLE;
+    VkBuffer m_uiQuadVb = VK_NULL_HANDLE;
+    VkDeviceMemory m_uiQuadVm = VK_NULL_HANDLE;
+    float* m_uiQuadVbMap = nullptr;
 
     VkDevice m_dev = VK_NULL_HANDLE;
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;

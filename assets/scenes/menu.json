@@ -8,6 +8,10 @@
                 "Camera": { "fovDeg": 50, "active": true }
             },
             "script": "scenes/menu"
+        },
+        {
+            "name": "vr",
+            "script": "scenes/vr_controller"
         }
     ]
 }

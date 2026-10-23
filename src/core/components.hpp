@@ -179,6 +179,14 @@ struct Camera {
     View views[2];
 };
 
+// UI panel: its Transform is the panel pose; the renderer draws the ImGui texture here
+struct UICanvas {
+    bool initialized = false;
+};
+inline constexpr float kPanelDist = 1.2f;
+inline constexpr float kPanelW = 0.96f;
+inline constexpr float kPanelH = 0.54f;
+
 struct ControllerInput {
     int hand = -1;          // 0 left, 1 right
     float triggers[2] = {}; // 0 = trigger, 1 = squeeze (0..1)

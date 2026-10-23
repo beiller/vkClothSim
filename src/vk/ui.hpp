@@ -21,4 +21,4 @@ void spawnFieldWidget(Engine& w, entt::entity parent, const char* label, const F
 void spawnFpsHud(Engine& w);
 void initImGui(VkApp& app);
 void shutdownImGui();
-void imguiNewFrame();
+void imguiNewFrame(float dw, float dh, ImVec2 pos);

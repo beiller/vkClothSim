@@ -28,7 +28,8 @@ int lUiWindow(lua_State* L) {
     const float w = (float)luaL_optnumber(L, 4, 0.0), h = (float)luaL_optnumber(L, 5, 0.0);
     const bool collapse = lua_isboolean(L, 6) && lua_toboolean(L, 6);
     luaPushEnt(L, spawnUiWindow(self->w(),
-                                UIWindow{luaL_checkstring(L, 1), [x, y] { return V2{x, y}; }, V2{w, h}, 0, collapse}));
+                                UIWindow{luaL_checkstring(L, 1), [x, y] { return V2{x, y}; }, V2{w, h},
+                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove, collapse}));
     return 1;
 }
 

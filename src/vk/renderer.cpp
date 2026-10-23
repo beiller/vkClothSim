@@ -7,6 +7,8 @@
 #include "sss_blur_spv.hpp"
 #include "tonemap_frag_spv.hpp"
 #include "tonemap_vert_spv.hpp"
+#include "ui_quad_frag_spv.hpp"
+#include "ui_quad_vert_spv.hpp"
 #include "vk/vkapp.hpp"
 #include "vk/vkutil.hpp"
 #include <algorithm>
@@ -45,6 +47,10 @@ struct ViewUbo {
     float pad2[4];      // 192
 };
 static_assert(sizeof(ViewUbo) == 208, "ViewUbo must match the shader std140 layout");
+
+std::vector<VkDescriptorSetLayoutBinding> uiQuadBinds() {
+    return {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}};
+}
 
 // the SSS compute's push constants (std430: scalars are 4-byte aligned)
 struct SssPc {
@@ -194,6 +200,200 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     VK(vkCreateRenderPass(m_dev, &nrpc, nullptr, &m_noClearRp));
     rebuildTonemapSet(app);
     initShadow(app);
+    initUi(app);
+}
+
+void Renderer::initUi(VkApp& app) {
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = app.swapchainFormat();
+    ici.extent = {m_uiW, m_uiH, 1};
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VK(vkCreateImage(m_dev, &ici, nullptr, &m_uiTex));
+    VkMemoryRequirements mr;
+    vkGetImageMemoryRequirements(m_dev, m_uiTex, &mr);
+    VkMemoryAllocateInfo maa{};
+    maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    maa.allocationSize = mr.size;
+    maa.memoryTypeIndex = vkFindMemoryType(m_pdev, mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK(vkAllocateMemory(m_dev, &maa, nullptr, &m_uiMem));
+    VK(vkBindImageMemory(m_dev, m_uiTex, m_uiMem, 0));
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = m_uiTex;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = app.swapchainFormat();
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VK(vkCreateImageView(m_dev, &vci, nullptr, &m_uiView));
+    vkMakeSamplerEx(m_dev, m_pdev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                    false, 0.0f, 1.0f, m_uiSampler);
+    VkAttachmentDescription att{};
+    att.format = app.swapchainFormat();
+    att.samples = VK_SAMPLE_COUNT_1_BIT;
+    att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkAttachmentReference ar{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription ss{};
+    ss.colorAttachmentCount = 1;
+    ss.pColorAttachments = &ar;
+    VkRenderPassCreateInfo rpc{};
+    rpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    rpc.attachmentCount = 1;
+    rpc.pAttachments = &att;
+    rpc.subpassCount = 1;
+    rpc.pSubpasses = &ss;
+    VK(vkCreateRenderPass(m_dev, &rpc, nullptr, &m_uiRp));
+    VkFramebufferCreateInfo fci{};
+    fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fci.renderPass = m_uiRp;
+    fci.attachmentCount = 1;
+    fci.pAttachments = &m_uiView;
+    fci.width = m_uiW;
+    fci.height = m_uiH;
+    fci.layers = 1;
+    VK(vkCreateFramebuffer(m_dev, &fci, nullptr, &m_uiFb));
+    vkMakeBuffer(m_dev, m_pdev, m_uiQuadVb, m_uiQuadVm, 6 * 20, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, nullptr);
+    VK(vkMapMemory(m_dev, m_uiQuadVm, 0, 6 * 20, 0, (void**)&m_uiQuadVbMap));
+    const auto binds = uiQuadBinds();
+    vkMakeDslPool(m_dev, binds, 1, m_uiQuadDsl, m_uiQuadPool);
+    VkDescriptorSetAllocateInfo sa{};
+    sa.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    sa.descriptorPool = m_uiQuadPool;
+    sa.descriptorSetCount = 1;
+    sa.pSetLayouts = &m_uiQuadDsl;
+    VK(vkAllocateDescriptorSets(m_dev, &sa, &m_uiQuadSet));
+    VkDescriptorImageInfo dii{m_uiSampler, m_uiView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet wd{};
+    wd.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    wd.dstSet = m_uiQuadSet;
+    wd.dstBinding = 0;
+    wd.descriptorCount = 1;
+    wd.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    wd.pImageInfo = &dii;
+    vkUpdateDescriptorSets(m_dev, 1, &wd, 0, nullptr);
+    VkPushConstantRange pcr{VK_SHADER_STAGE_VERTEX_BIT, 0, 64};
+    VkPipelineLayoutCreateInfo plc{};
+    plc.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plc.setLayoutCount = 1;
+    plc.pSetLayouts = &m_uiQuadDsl;
+    plc.pushConstantRangeCount = 1;
+    plc.pPushConstantRanges = &pcr;
+    VK(vkCreatePipelineLayout(m_dev, &plc, nullptr, &m_uiQuadPl));
+    VkShaderModule vs = vkMakeModule(m_dev, ui_quad_vert_spv, ui_quad_vert_spv_len / 4);
+    VkShaderModule fs = vkMakeModule(m_dev, ui_quad_frag_spv, ui_quad_frag_spv_len / 4);
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vs;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fs;
+    stages[1].pName = "main";
+    VkVertexInputBindingDescription vb{0, 20, VK_VERTEX_INPUT_RATE_VERTEX};
+    VkVertexInputAttributeDescription va[2] = {{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
+                                             {1, 0, VK_FORMAT_R32G32_SFLOAT, 12}};
+    VkPipelineVertexInputStateCreateInfo vi{};
+    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vi.vertexBindingDescriptionCount = 1;
+    vi.pVertexBindingDescriptions = &vb;
+    vi.vertexAttributeDescriptionCount = 2;
+    vi.pVertexAttributeDescriptions = va;
+    VkPipelineInputAssemblyStateCreateInfo ia{};
+    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo vps{};
+    vps.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vps.viewportCount = 1;
+    vps.scissorCount = 1;
+    VkDynamicState dyn[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynState{};
+    dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynState.dynamicStateCount = 2;
+    dynState.pDynamicStates = dyn;
+    VkPipelineRasterizationStateCreateInfo rs{};
+    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = VK_CULL_MODE_NONE;
+    rs.depthClampEnable = VK_FALSE;
+    rs.rasterizerDiscardEnable = VK_FALSE;
+    rs.lineWidth = 1.0f;
+    VkPipelineMultisampleStateCreateInfo ms{};
+    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo ds{};
+    ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    ds.depthTestEnable = VK_FALSE;
+    ds.depthWriteEnable = VK_FALSE;
+    ds.stencilTestEnable = VK_FALSE;
+    VkPipelineColorBlendAttachmentState ca{};
+    ca.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+                       VK_COLOR_COMPONENT_A_BIT;
+    ca.blendEnable = VK_TRUE;
+    ca.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    ca.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    ca.colorBlendOp = VK_BLEND_OP_ADD;
+    ca.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    ca.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    ca.alphaBlendOp = VK_BLEND_OP_ADD;
+    VkPipelineColorBlendStateCreateInfo cb{};
+    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    cb.attachmentCount = 1;
+    cb.pAttachments = &ca;
+    VkGraphicsPipelineCreateInfo gpc{};
+    gpc.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    gpc.stageCount = 2;
+    gpc.pStages = stages;
+    gpc.pVertexInputState = &vi;
+    gpc.pInputAssemblyState = &ia;
+    gpc.pDynamicState = &dynState;
+    gpc.pViewportState = &vps;
+    gpc.pRasterizationState = &rs;
+    gpc.pMultisampleState = &ms;
+    gpc.pDepthStencilState = &ds;
+    gpc.pColorBlendState = &cb;
+    gpc.layout = m_uiQuadPl;
+    gpc.renderPass = m_uiRp;
+    VK(vkCreateGraphicsPipelines(m_dev, VK_NULL_HANDLE, 1, &gpc, nullptr, &m_uiQuadPipe));
+    vkDestroyShaderModule(m_dev, vs, nullptr);
+    vkDestroyShaderModule(m_dev, fs, nullptr);
+}
+
+void Renderer::releaseUi() {
+    if (m_uiQuadVb) {
+        vkUnmapMemory(m_dev, m_uiQuadVm);
+        vkFreeBuffer(m_dev, m_uiQuadVb, m_uiQuadVm);
+        m_uiQuadVbMap = nullptr;
+    }
+    if (m_uiQuadPool)
+        vkDestroyDescriptorPool(m_dev, m_uiQuadPool, nullptr);
+    if (m_uiQuadDsl)
+        vkDestroyDescriptorSetLayout(m_dev, m_uiQuadDsl, nullptr);
+    if (m_uiQuadPl)
+        vkDestroyPipelineLayout(m_dev, m_uiQuadPl, nullptr);
+    if (m_uiQuadPipe)
+        vkDestroyPipeline(m_dev, m_uiQuadPipe, nullptr);
+    if (m_uiFb)
+        vkDestroyFramebuffer(m_dev, m_uiFb, nullptr);
+    if (m_uiRp)
+        vkDestroyRenderPass(m_dev, m_uiRp, nullptr);
+    if (m_uiSampler)
+        vkDestroySampler(m_dev, m_uiSampler, nullptr);
+    if (m_uiTex) {
+        vkDestroyImageView(m_dev, m_uiView, nullptr);
+        vkDestroyImage(m_dev, m_uiTex, nullptr);
+        vkFreeMemory(m_dev, m_uiMem, nullptr);
+    }
 }
 
 int Renderer::addMesh(const Mesh& mesh) {
@@ -943,7 +1143,7 @@ void Renderer::rebuildTonemapSet(VkApp& app) {
 }
 
 void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
-                    ImDrawData* imgui) {
+                    ImDrawData* imgui, const Transform* uiPanel) {
     m_exposure = rs.exposure;
     const VkExtent2D ext = app.extent();
     writeViewUbo(m_camView, rs.envIntensity, ext);
@@ -952,12 +1152,13 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::re
     renderShadowCubes(cmd, reg);
     renderSceneBuffers(cmd, app, rs.bgColor, m_camView);
     hdrBarrier(cmd, app);
+    renderUiToTexture(cmd, imgui);
     if (app.hdrView() != m_tmSrcView)
         rebuildTonemapSet(app);
     writeTonemapUbo(0.0f, 0.0f, (float)ext.width, (float)ext.height);
     drawTonemapRegion(cmd, app, fb, {0, 0, ext.width, ext.height}, true);
-    if (imgui && imgui->CmdLists.Size > 0)
-        ImGui_ImplVulkan_RenderDrawData(imgui, cmd);
+    if (uiPanel)
+        drawUiQuad(cmd, *uiPanel, m_camView.viewProj);
     const bool dbgHdr = std::getenv("VKSIM_DBG_HDR") != nullptr || std::getenv("VKSIM_DBG_SCENE") != nullptr;
     const bool dbgMips = std::getenv("VKSIM_DBG_MIPS") != nullptr;
     if ((dbgHdr || dbgMips) && m_dbgBuf == VK_NULL_HANDLE) {
@@ -1123,6 +1324,53 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::re
     }
 }
 
+void Renderer::renderUiToTexture(VkCommandBuffer cmd, ImDrawData* imgui) {
+    if (!imgui || imgui->CmdLists.Size == 0)
+        return;
+    VkClearValue bcv = {{0.0f, 0.0f, 0.0f, 0.0f}};
+    VkRenderPassBeginInfo bpb{};
+    bpb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    bpb.renderPass = m_uiRp;
+    bpb.framebuffer = m_uiFb;
+    bpb.renderArea = {{0, 0}, {m_uiW, m_uiH}};
+    bpb.clearValueCount = 1;
+    bpb.pClearValues = &bcv;
+    vkCmdBeginRenderPass(cmd, &bpb, VK_SUBPASS_CONTENTS_INLINE);
+    VkViewport vpt{0, (float)m_uiH, (float)m_uiW, -(float)m_uiH, 0, 1};
+    vkCmdSetViewport(cmd, 0, 1, &vpt);
+    VkRect2D sc{0, 0, m_uiW, m_uiH};
+    vkCmdSetScissor(cmd, 0, 1, &sc);
+    ImGui_ImplVulkan_RenderDrawData(imgui, cmd);
+    vkCmdEndRenderPass(cmd);
+    vkImgBarrier(cmd, m_uiTex, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, VK_ACCESS_SHADER_READ_BIT, 1,
+                 VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+}
+
+void Renderer::drawUiQuad(VkCommandBuffer cmd, const Transform& panel, const Mat4& viewProj) {
+    const V3 c = panel.pos;
+    const V3 x = vScale(quatRotate(panel.quat, V3{1, 0, 0}), kPanelW * 0.5f);
+    const V3 y = vScale(quatRotate(panel.quat, V3{0, 1, 0}), kPanelH * 0.5f);
+    struct V {
+        float x, y, z, u, v;
+    };
+    const V verts[6] = {
+        {c.x - x.x - y.x, c.y - x.y - y.y, c.z - x.z - y.z, 0.0f, 1.0f},
+        {c.x + x.x - y.x, c.y + x.y - y.y, c.z + x.z - y.z, 1.0f, 1.0f},
+        {c.x - x.x + y.x, c.y - x.y + y.y, c.z - x.z + y.z, 0.0f, 0.0f},
+        {c.x + x.x + y.x, c.y + x.y + y.y, c.z + x.z + y.z, 1.0f, 0.0f},
+        {c.x + x.x - y.x, c.y + x.y - y.y, c.z + x.z - y.z, 1.0f, 1.0f},
+        {c.x - x.x + y.x, c.y - x.y + y.y, c.z - x.z + y.z, 0.0f, 0.0f},
+    };
+    std::memcpy(m_uiQuadVbMap, verts, sizeof(verts));
+    vkCmdPushConstants(cmd, m_uiQuadPl, VK_SHADER_STAGE_VERTEX_BIT, 0, 64, &viewProj);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_uiQuadPipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_uiQuadPl, 0, 1, &m_uiQuadSet, 0, nullptr);
+    VkDeviceSize off = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &m_uiQuadVb, &off);
+    vkCmdDraw(cmd, 6, 1, 0, 0);
+}
+
 Mat4 Renderer::eyeVP(const View& v) const {
     const Mat4 proj = projFov(v.tanL, v.tanR, v.tanU, v.tanD, 0.1f, 300.0f);
     return mul4(proj, viewFromPose(v.pos, v.quat));
@@ -1168,14 +1416,15 @@ void Renderer::ensureNoClearFbs(VkApp& app) {
 }
 
 void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
-                      ImDrawData* imgui, entt::entity cam, const uint32_t* xrImg, int nXr) {
+                      ImDrawData* imgui, entt::entity cam, const uint32_t* xrImg, int nXr,
+                      const Transform* uiPanel) {
     m_exposure = rs.exposure;
     prepBuffers(reg);
     const VkExtent2D ext = app.extent();
     ensureSceneSamplers(app);
     renderShadowCubes(cmd, reg);
     ensureNoClearFbs(app);
-    VkRect2D full{0, 0, ext.width, ext.height};
+    renderUiToTexture(cmd, imgui);
     const Camera* c = cam != entt::null ? &reg.get<Camera>(cam) : nullptr;
     const int nViews = c ? c->nViews : 0;
     for (int eye = 0; eye < nViews; ++eye) {
@@ -1196,19 +1445,16 @@ void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::
         if (app.hdrView() != m_tmSrcView)
             rebuildTonemapSet(app);
         const VkRect2D r = eyeRegion(v, ext, eye);
-        writeTonemapUbo((float)r.offset.x, (float)r.offset.y, (float)r.extent.width, (float)r.extent.height);
         const bool first = eye == 0;
-        const bool last = eye == nViews - 1;
+        writeTonemapUbo((float)r.offset.x, (float)r.offset.y, (float)r.extent.width, (float)r.extent.height);
         drawTonemapRegion(cmd, app, fb, r, first);
-        if (last && imgui && imgui->CmdLists.Size > 0) {
-            vkCmdSetScissor(cmd, 0, 1, &full);
-            ImGui_ImplVulkan_RenderDrawData(imgui, cmd);
-        }
+        if (uiPanel)
+            drawUiQuad(cmd, *uiPanel, cv.viewProj);
         vkCmdEndRenderPass(cmd);
         if (xrImg && eye < nXr)
-            drawXrEye(cmd, app, eye, xrImg[eye]);
+            drawXrEye(cmd, app, eye, xrImg[eye], cv, uiPanel);
         app.submit(cmd);
-        if (!last)
+        if (eye != nViews - 1)
             cmd = app.beginCommands();
     }
 }
@@ -1268,7 +1514,8 @@ void Renderer::initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vect
     rebuildTonemapSet(app);
 }
 
-void Renderer::drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx) {
+void Renderer::drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx, const CameraView& cv,
+                        const Transform* uiPanel) {
     if (!m_xrReady)
         return;
     if (app.hdrView() != m_tmSrcView)
@@ -1276,15 +1523,15 @@ void Renderer::drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgI
     const uint32_t w = m_xrExt[eye].width, h = m_xrExt[eye].height;
     const float tm[8] = {0.0f, 0.0f, (float)w, (float)h, m_exposure, 0.0f, 0.0f, 0.0f};
     vkWriteBuffer(m_dev, m_xrTmMem, tm, 32);
-    VkClearValue cv[1]{};
-    cv[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
+    VkClearValue clr[1]{};
+    clr[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
     VkRenderPassBeginInfo rpb{};
     rpb.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rpb.renderPass = m_xrRp;
     rpb.framebuffer = m_xrFbs[eye][imgIdx];
     rpb.renderArea = {{0, 0}, {w, h}};
     rpb.clearValueCount = 1;
-    rpb.pClearValues = cv;
+    rpb.pClearValues = clr;
     vkCmdBeginRenderPass(cmd, &rpb, VK_SUBPASS_CONTENTS_INLINE);
     VkViewport vp{0, (float)h, (float)w, -(float)h, 0, 1};
     VkRect2D sc{0, 0, w, h};
@@ -1293,6 +1540,8 @@ void Renderer::drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgI
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_xrPipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPl, 0, 1, &m_xrSet, 0, nullptr);
     vkCmdDraw(cmd, 3, 1, 0, 0);
+    if (uiPanel)
+        drawUiQuad(cmd, *uiPanel, cv.viewProj);
     vkCmdEndRenderPass(cmd);
 }
 
@@ -1410,4 +1659,5 @@ void Renderer::shutdown() {
         vkDestroyImage(m_dev, m_shadowDepth, nullptr);
         vkFreeMemory(m_dev, m_shadowDepthMem, nullptr);
     }
+    releaseUi();
 }

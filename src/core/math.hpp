@@ -39,6 +39,10 @@ inline float vDot(V3 a, V3 b) {
 inline float vLen(V3 a) {
     return std::sqrt(vDot(a, a));
 }
+inline V3 vNormalize(V3 a) {
+    const float l = vLen(a);
+    return l > 1e-8f ? vScale(a, 1.0f / l) : V3{0, 0, 0};
+}
 inline V3 vNorm(V3 a) {
     float l = vLen(a);
     return vScale(a, 1.0f / l);
@@ -66,6 +70,43 @@ inline V4 quatFromTo(const V3& from, const V3& to) {
     V4 q{c.x, c.y, c.z, d + 1.0f};
     const float l = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
     return {q.x / l, q.y / l, q.z / l, q.w / l};
+}
+// basis vectors are the rotation columns; the classic formula wants rows, so transpose
+inline V4 basisToQuat(const V3& x, const V3& y, const V3& z) {
+    const float a = x.x, b = x.y, c = x.z;
+    const float d = y.x, e = y.y, f = y.z;
+    const float g = z.x, h = z.y, i = z.z;
+    const float tr = a + e + i;
+    V4 q;
+    if (tr > 0.0f) {
+        const float s = std::sqrt(tr + 1.0f) * 2.0f;
+        q.w = 0.25f * s;
+        q.x = (f - h) / s;
+        q.y = (g - c) / s;
+        q.z = (b - d) / s;
+    } else if (a > e && a > i) {
+        const float s = std::sqrt(1.0f + a - e - i) * 2.0f;
+        q.w = (f - h) / s;
+        q.x = 0.25f * s;
+        q.y = (d + b) / s;
+        q.z = (g + c) / s;
+    } else if (e > i) {
+        const float s = std::sqrt(1.0f + e - a - i) * 2.0f;
+        q.w = (g - c) / s;
+        q.x = (d + b) / s;
+        q.y = 0.25f * s;
+        q.z = (h + f) / s;
+    } else {
+        const float s = std::sqrt(1.0f + i - a - e) * 2.0f;
+        q.w = (b - d) / s;
+        q.x = (h + f) / s;
+        q.y = (g + c) / s;
+        q.z = 0.25f * s;
+    }
+    const float len = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    if (len < 1e-6f)
+        return {0, 0, 0, 1};
+    return {q.x / len, q.y / len, q.z / len, q.w / len};
 }
 struct Mat4 {
     float m[16];

@@ -163,6 +163,24 @@ bool RigidScene::hasBody(entt::entity e) const {
     return m_body.count(e) > 0;
 }
 
+V3 RigidScene::bodyPos(entt::entity e) const {
+    const auto it = m_body.find(e);
+    if (it == m_body.end())
+        return {999, 999, 999};
+    const JPH::RVec3 p = m_phys->GetBodyInterface().GetPosition(it->second);
+    return {p.GetX(), p.GetY(), p.GetZ()};
+}
+
+std::vector<entt::entity> RigidScene::nearBodies(const V3& origin, float radius) const {
+    std::vector<entt::entity> out;
+    for (const auto& [e, id] : m_body) {
+        const JPH::RVec3 p = m_phys->GetBodyInterface().GetPosition(id);
+        if (vLen(vSub({p.GetX(), p.GetY(), p.GetZ()}, origin)) < radius)
+            out.push_back(e);
+    }
+    return out;
+}
+
 entt::entity RigidScene::entityFor(JPH::BodyID id) const {
     for (const auto& [e, b] : m_body)
         if (b == id)

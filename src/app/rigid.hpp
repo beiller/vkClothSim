@@ -38,6 +38,8 @@ public:
     RayHit raycast(const V3& origin, const V3& dir, float maxDist,
                    const std::vector<entt::entity>& excludes = {}) const;
     entt::entity entityFor(JPH::BodyID id) const;
+    std::vector<entt::entity> nearBodies(const V3& origin, float radius) const;
+    V3 bodyPos(entt::entity e) const;
     const JPH::Shape* shape(const entt::registry& reg, entt::entity e);
     void watch(entt::registry& reg);
 

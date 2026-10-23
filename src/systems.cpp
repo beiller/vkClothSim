@@ -267,5 +267,72 @@ void stepSoft(Engine& w, VkCommandBuffer cmd) {
 }
 
 void draw(Engine& w, VkCommandBuffer cmd, uint32_t fb, ImDrawData* imgui) {
-    w.renderer.draw(cmd, *w.app, fb, w.reg, w.render, imgui);
+    const entt::entity p = findUiPanel(w.reg);
+    Transform panelT;
+    const Transform* pp = nullptr;
+    if (p != entt::null) {
+        panelT = worldTransform(w.reg, p);
+        pp = &panelT;
+    }
+    w.renderer.draw(cmd, *w.app, fb, w.reg, w.render, imgui, pp);
+}
+
+entt::entity findUiPanel(const entt::registry& reg) {
+    for (auto e : reg.view<UICanvas>())
+        return e;
+    return entt::null;
+}
+
+entt::entity ensureUiPanel(entt::registry& reg) {
+    const entt::entity found = findUiPanel(reg);
+    if (found != entt::null)
+        return found;
+    const entt::entity panel = reg.create();
+    reg.emplace<UICanvas>(panel);
+    reg.emplace<Transform>(panel);
+    const entt::entity shape = reg.create();
+    reg.emplace<BoxShape>(shape, BoxShape{V3{kPanelW * 0.5f, kPanelH * 0.5f, 0.01f}});
+    const entt::entity col = reg.create();
+    reg.emplace<Collider>(col, Collider{shape});
+    reg.emplace<KinematicBody>(panel, KinematicBody{{col}});
+    return panel;
+}
+
+namespace {
+V4 panelLookQuat(const V3& panelPos, const V3& atPos) {
+    const V3 z = vNormalize(vSub(atPos, panelPos)); // +z faces the viewer
+    V3 up{0, 1, 0};
+    if (std::fabs(vDot(up, z)) > 0.99f)
+        up = {0, 0, 1};
+    const V3 x = vNormalize(vCross(up, z));
+    const V3 y = vCross(z, x);
+    return basisToQuat(x, y, z);
+}
+} // namespace
+
+void updateUiPanel(entt::registry& reg, entt::entity panel, const V3& viewPos, const V4& viewQuat) {
+    if (panel == entt::null)
+        return;
+    UICanvas& uc = reg.get<UICanvas>(panel);
+    if (uc.initialized)
+        return;
+    uc.initialized = true;
+    Transform& t = reg.get<Transform>(panel);
+    const V3 fwd = vNormalize(quatRotate(viewQuat, V3{0, 0, -1}));
+    t.pos = vAdd(viewPos, vScale(fwd, kPanelDist));
+    t.quat = panelLookQuat(t.pos, viewPos);
+}
+
+bool uiPanelUv(const entt::registry& reg, entt::entity panel, const V3& hitPos, V2& uv) {
+    if (panel == entt::null)
+        return false;
+    const Transform& t = reg.get<Transform>(panel);
+    const V3 xh = quatRotate(t.quat, V3{1, 0, 0});
+    const V3 yh = quatRotate(t.quat, V3{0, 1, 0});
+    const float u = 0.5f + vDot(vSub(hitPos, t.pos), xh) / (kPanelW);
+    const float v = 0.5f + vDot(vSub(hitPos, t.pos), yh) / (kPanelH);
+    if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f)
+        return false;
+    uv = {u, v}; // v up-positive (1 = panel top), as the ImGui feed expects
+    return true;
 }

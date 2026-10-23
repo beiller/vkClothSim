@@ -90,8 +90,7 @@ void spawnFpsHud(Engine& w) {
     const entt::entity fpsWin =
         spawnUiWindow(w, UIWindow{"##fps",
                                   [&w] {
-                                      const VkExtent2D ext = w.app->extent();
-                                      return V2{(float)ext.width - 136.0f, 8.0f};
+                                      return V2{(float)w.renderer.uiWidth() - 136.0f, 8.0f};
                                   },
                                   V2{128.0f, 118.0f},
                                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
@@ -114,7 +113,9 @@ void spawnFpsHud(Engine& w) {
 void initImGui(VkApp& app) {
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
-    ImGui_ImplGlfw_InitForVulkan(app.glfwWindow(), true);
+    // we feed mouse/scroll manually (panel-space pointer); the GLFW mouse callback would
+    // queue OS-mouse events that win in NewFrame and hijack drags/hover
+    ImGui_ImplGlfw_InitForVulkan(app.glfwWindow(), false);
     ImGui_ImplVulkan_InitInfo ii{};
     ii.ApiVersion = VK_API_VERSION_1_1;
     ii.Instance = app.instance();
@@ -141,9 +142,11 @@ void shutdownImGui() {
     ImGui::DestroyContext();
 }
 
-void imguiNewFrame() {
+void imguiNewFrame(float dw, float dh, ImVec2 pos) {
+    ImGui::GetIO().DisplaySize = ImVec2(dw, dh);
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
+    ImGui::GetIO().AddMousePosEvent(pos.x, pos.y);  // queued last, wins
     ImGui::NewFrame();
 }
 
@@ -232,6 +235,22 @@ void drawUi(Engine& w) {
         if (cfg.collapseOnAppear)
             ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
         ImGui::Begin(cfg.title.c_str(), nullptr, cfg.flags);
+        if (std::getenv("VKSIM_UI_LOG") && std::strstr(cfg.title.c_str(), "scene")) {
+            const ImVec2 wp = ImGui::GetWindowPos();
+            static ImVec2 last{-999, -999};
+            static int frames = 0;
+            frames++;
+            const bool changed = std::fabs(wp.x - last.x) > 1.0f || std::fabs(wp.y - last.y) > 1.0f;
+            if (changed || frames <= 90) {
+                last = wp;
+                const ImVec2 mp = ImGui::GetIO().MousePos;
+                const V2 cp = cfg.pos();
+                std::printf("ui win '%s' f=%d pos=(%.0f,%.0f) cfgpos=(%.0f,%.0f) mouse=(%.0f,%.0f) down=%d\n", cfg.title.c_str(),
+                           frames, (double)wp.x, (double)wp.y, (double)cp.x, (double)cp.y, (double)mp.x, (double)mp.y,
+                           (int)ImGui::GetIO().MouseDown[0]);
+                std::fflush(stdout);
+            }
+        }
         drawKids(win);
         ImGui::End();
     }
