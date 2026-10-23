@@ -6,6 +6,7 @@
 #include "math.hpp"
 #include "sim/dualquat.hpp"
 #include <entt/entt.hpp>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -16,9 +17,9 @@ public:
     static constexpr int kPoolChunk = 16;
 
     void init(VkDevice dev, VkPhysicalDevice pdev);
+    void setRequestVerts(std::function<GpuMeshRef(const entt::registry&, const Mesh&, entt::entity)> request);
     void sync(const entt::registry& reg);
     void build(const entt::registry& reg);
-    bool meshGpu(entt::entity mesh, MeshGpu& out) const;
     void step(const entt::registry& reg, VkCommandBuffer cmd);
     void reset();
     void watch(entt::registry& reg);
@@ -48,7 +49,8 @@ private:
         bool dead = false;
         bool freed = false;
         int shapeSet = -1;
-        Buf pos0, nrm0, joints, weights, activeMorphs, posOut, nrmOut;
+        Buf pos0, nrm0, joints, weights, activeMorphs;
+        MeshGpu out; // renderer-owned; the sim writes it, the renderer reads it
         VkDescriptorSet set = VK_NULL_HANDLE;
     };
     struct Skel {
@@ -79,6 +81,7 @@ private:
     std::unordered_map<uint64_t, int> m_shapeKey;
     VkPipeline m_pipe = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_dsl = VK_NULL_HANDLE;
+    std::function<GpuMeshRef(const entt::registry&, const Mesh&, entt::entity)> m_request;
     std::vector<VkDescriptorPool> m_pools;
     int m_poolCap = 0, m_poolUsed = 0;
     VkPipelineLayout m_pl = VK_NULL_HANDLE;

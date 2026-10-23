@@ -131,6 +131,11 @@ void spawnEditorUi(Engine& w, entt::entity tab) {
 void initEngine(Engine& w) {
     w.rigid.init();
     w.gpuSim.init(w.app->device(), w.app->pdev());
+    const auto requestVerts = [&w](const entt::registry& reg, const Mesh& m, entt::entity key) {
+        return w.renderer.requestVerts(reg, m, key);
+    };
+    w.gpuSim.skin.setRequestVerts(requestVerts);
+    w.gpuSim.soft.setRequestVerts(requestVerts);
     w.renderer.init(*w.app, 256, mat4Identity());
     w.script.init(w);
     std::string err;

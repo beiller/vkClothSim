@@ -165,9 +165,6 @@ int main(int argc, char** argv) {
             ImGui::ShowDemoWindow(&engine.showDemo);
         ImGui::Render();
 
-        Renderer::SkinnedMeshProvider skinned;
-        skinned.meshGpu = [&](entt::entity m, MeshGpu& rw) { return engine.gpuSim.skin.meshGpu(m, rw); };
-        engine.renderer.adoptSkinned(engine.reg, skinned);
         const uint32_t idx = app.acquireNextImage();
         VkCommandBuffer cmd = app.beginCommands();
         if (engine.xr) {

@@ -196,7 +196,7 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     initShadow(app);
 }
 
-Renderer::GpuMeshRef Renderer::addMesh(const Mesh& mesh) {
+int Renderer::addMesh(const Mesh& mesh) {
     const auto n = (uint32_t)mesh.vertexCount();
     const VkDeviceSize attrSize = (VkDeviceSize)12 * n;
     GpuMesh g;
@@ -209,42 +209,19 @@ Renderer::GpuMeshRef Renderer::addMesh(const Mesh& mesh) {
     vkMakeBufferDev(m_dev, m_pdev, g.ibuf, g.ibmem, (VkDeviceSize)g.idxCount * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                     mesh.indices.data());
     m_geoms.push_back(g);
-    return {(int)m_geoms.size() - 1, MeshGpu{VertexStore{g.pos, g.posMem, n}, VertexStore{g.nrm, g.nrmMem, n}}};
+    return (int)m_geoms.size() - 1;
 }
 
-void Renderer::adoptSkinned(const entt::registry& reg, const SkinnedMeshProvider& skinned) {
-    for (const auto e : reg.view<Skeleton>()) {
-        const auto& skel = reg.get<Skeleton>(e);
-        for (const entt::entity meshEnt : skel.meshes) {
-            if (m_entGeom.count(meshEnt))
-                continue;
-            MeshGpu rw;
-            if (!skinned.meshGpu(meshEnt, rw))
-                continue;
-            const auto* gc = reg.try_get<Geometry>(meshEnt);
-            if (!gc)
-                continue;
-            const Mesh& m = gc->mesh;
-            GpuMesh g;
-            g.vtxCount = rw.pos.count;
-            g.idxCount = (uint32_t)m.indices.size();
-            g.externalPosNrm = true;
-            g.pos = rw.pos.buffer;
-            g.posMem = rw.pos.memory;
-            g.nrm = rw.nrm.buffer;
-            g.nrmMem = rw.nrm.memory;
-            vkMakeBufferDev(m_dev, m_pdev, g.uv, g.uvMem, (VkDeviceSize)8 * rw.pos.count,
-                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m.uv.data());
-            vkMakeBufferDev(m_dev, m_pdev, g.ibuf, g.ibmem, (VkDeviceSize)g.idxCount * 4,
-                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT, m.indices.data());
-            m_geoms.push_back(g);
-            m_entGeom[meshEnt] = (int)m_geoms.size() - 1;
-        }
+GpuMeshRef Renderer::requestVerts(const entt::registry& reg, const Mesh& mesh, entt::entity keyEnt) {
+    const auto it = m_entGeom.find(keyEnt);
+    if (it != m_entGeom.end()) {
+        const GpuMesh& g = m_geoms[(size_t)it->second];
+        return {it->second, MeshGpu{VertexStore{g.pos, g.posMem, g.vtxCount}, VertexStore{g.nrm, g.nrmMem, g.vtxCount}}};
     }
-}
-
-void Renderer::shareGeomSlot(entt::entity geomEnt, int slot) {
-    m_entGeom[geomEnt] = slot;
+    const int slot = addMesh(mesh);
+    m_entGeom[keyEnt] = slot;
+    const GpuMesh& g = m_geoms[(size_t)slot];
+    return {slot, MeshGpu{VertexStore{g.pos, g.posMem, g.vtxCount}, VertexStore{g.nrm, g.nrmMem, g.vtxCount}}};
 }
 
 int Renderer::geomFor(entt::entity g, const entt::registry& reg) {
@@ -279,7 +256,7 @@ int Renderer::geomFor(entt::entity g, const entt::registry& reg) {
                 std::fprintf(stderr, "3dsim: geometry entity has an out-of-range index\n");
             return -1;
         }
-    m_entGeom[g] = addMesh(m).geom;
+    m_entGeom[g] = addMesh(m);
     return m_entGeom[g];
 }
 
@@ -461,10 +438,8 @@ void Renderer::reset() {
     m_freeTex.clear();
     m_entTex.clear();
     for (auto& g : m_geoms) {
-        if (!g.externalPosNrm) {
-            vkFreeBuffer(m_dev, g.pos, g.posMem);
-            vkFreeBuffer(m_dev, g.nrm, g.nrmMem);
-        }
+        vkFreeBuffer(m_dev, g.pos, g.posMem);
+        vkFreeBuffer(m_dev, g.nrm, g.nrmMem);
         vkFreeBuffer(m_dev, g.uv, g.uvMem);
         vkFreeBuffer(m_dev, g.ibuf, g.ibmem);
     }
@@ -1358,10 +1333,8 @@ void Renderer::shutdown() {
     for (auto& inst : m_insts)
         vkFreeBuffer(m_dev, inst.modelUbuf, inst.modelMem);
     for (auto& g : m_geoms) {
-        if (!g.externalPosNrm) {
-            vkFreeBuffer(m_dev, g.pos, g.posMem);
-            vkFreeBuffer(m_dev, g.nrm, g.nrmMem);
-        }
+        vkFreeBuffer(m_dev, g.pos, g.posMem);
+        vkFreeBuffer(m_dev, g.nrm, g.nrmMem);
         vkFreeBuffer(m_dev, g.uv, g.uvMem);
         vkFreeBuffer(m_dev, g.ibuf, g.ibmem);
     }

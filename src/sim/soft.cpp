@@ -45,6 +45,10 @@ void Soft::init(VkDevice dev, VkPhysicalDevice pdev) {
     m_pdev = pdev;
 }
 
+void Soft::setRequestVerts(std::function<GpuMeshRef(const entt::registry&, const Mesh&, entt::entity)> request) {
+    m_request = std::move(request);
+}
+
 void Soft::setFloor(float y) {
     m_floorY = y;
 }
@@ -74,7 +78,7 @@ void Soft::syncCapsules(const entt::registry& reg) {
     uploadCapsules(n);
 }
 
-void Soft::project(const entt::registry& reg, const MeshProvider& meshes) {
+void Soft::project(const entt::registry& reg) {
     for (auto [e, sb] : reg.view<SoftBodyData>().each()) {
         if (m_ent.count(e))
             continue;
@@ -125,8 +129,11 @@ void Soft::project(const entt::registry& reg, const MeshProvider& meshes) {
                 m.nrm[3 * i + 2] = n.z;
             }
         }
-        const GpuMeshRef ref = meshes.addMesh(m);
-        meshes.shareGeomSlot(rend->geom, ref.slot);
+        if (!m_request) {
+            fail("no vertex source wired");
+            continue;
+        }
+        const GpuMeshRef ref = m_request(reg, m, rend->geom);
         addSoftBody(e, m, cons, ref.rw);
     }
 }

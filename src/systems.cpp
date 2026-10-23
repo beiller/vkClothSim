@@ -257,14 +257,8 @@ void resolveWorldTransforms(entt::registry& reg) {
 }
 
 void stepSoft(Engine& w, VkCommandBuffer cmd) {
-    MeshProvider meshes;
-    meshes.addMesh = [&](const Mesh& m) {
-        const auto r = w.renderer.addMesh(m);
-        return GpuMeshRef{r.geom, r.rw};
-    };
-    meshes.shareGeomSlot = [&](entt::entity g, int slot) { w.renderer.shareGeomSlot(g, slot); };
     w.gpuSim.soft.syncCapsules(w.reg);
-    w.gpuSim.soft.project(w.reg, meshes);
+    w.gpuSim.soft.project(w.reg);
     for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
         w.gpuSim.soft.setPinned(entity, sb.pinned);
         w.gpuSim.soft.setParams(entity, sb.params, sb.steps);

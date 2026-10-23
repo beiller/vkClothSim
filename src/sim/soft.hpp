@@ -14,22 +14,11 @@
 #include <unordered_set>
 #include <vector>
 
-// a GPU mesh slot (owned by the renderer): slot index + read-write vertex stores
-struct GpuMeshRef {
-    int slot = -1;
-    MeshGpu rw;
-};
-
-// narrow interface the sim uses to obtain GPU mesh slots (implemented by the renderer)
-struct MeshProvider {
-    std::function<GpuMeshRef(const Mesh&)> addMesh;
-    std::function<void(entt::entity, int)> shareGeomSlot;
-};
-
 class Soft {
 public:
     void init(VkDevice dev, VkPhysicalDevice pdev);
-    void project(const entt::registry& reg, const MeshProvider& meshes);
+    void setRequestVerts(std::function<GpuMeshRef(const entt::registry&, const Mesh&, entt::entity)> request);
+    void project(const entt::registry& reg);
     void setFloor(float y);
     void syncCapsules(const entt::registry& reg);
     static constexpr int kMaxCapsules = 16384;
@@ -72,6 +61,7 @@ private:
     void ensurePoolSlot();
     void freeBody(GpuBody& b);
     void onBodyDestroyed(entt::registry&, entt::entity e);
+    std::function<GpuMeshRef(const entt::registry&, const Mesh&, entt::entity)> m_request;
     static int modeBarriers(const GpuBody& b, int mode, VkBufferMemoryBarrier* out);
     void dispatch(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset);
     void recordMode(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset);

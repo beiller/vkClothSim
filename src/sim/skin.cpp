@@ -77,6 +77,10 @@ void Skin::init(VkDevice dev, VkPhysicalDevice pdev) {
     m_pdev = pdev;
 }
 
+void Skin::setRequestVerts(std::function<GpuMeshRef(const entt::registry&, const Mesh&, entt::entity)> request) {
+    m_request = std::move(request);
+}
+
 void Skin::sync(const entt::registry& reg) {
     if (m_dev == VK_NULL_HANDLE)
         return;
@@ -118,6 +122,9 @@ void Skin::adoptState(const entt::registry& reg, const Skeleton& s, entt::entity
     st.mesh = mesh;
     st.skelGpu = skelGpu;
     st.nV = nV;
+    if (!m_request)
+        return;
+    st.out = m_request(reg, m, mesh).rw;
     const auto vn = (VkDeviceSize)nV;
     auto mkDev = [this](Buf& b, VkDeviceSize bytes, const void* data) {
         vkMakeBufferDev(m_dev, m_pdev, b.b, b.m, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, data);
@@ -170,8 +177,6 @@ void Skin::adoptState(const entt::registry& reg, const Skeleton& s, entt::entity
     vkMakeBuffer(m_dev, m_pdev, st.activeMorphs.b, st.activeMorphs.m, 8 * kMaxActiveMorphs,
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     st.activeMorphs.sz = 8 * kMaxActiveMorphs;
-    mkDev(st.posOut, 12 * vn, m.pos.data());
-    mkDev(st.nrmOut, 12 * vn, m.nrm.data());
     if (share)
         ++m_shapeSets[(size_t)st.shapeSet].refs;
     m_states.push_back(std::move(st));
@@ -182,15 +187,6 @@ void Skin::adoptState(const entt::registry& reg, const Skeleton& s, entt::entity
         makeStateSet(m_states.back());
         ++m_poolUsed;
     }
-}
-
-bool Skin::meshGpu(entt::entity mesh, MeshGpu& out) const {
-    const auto it = m_meshState.find(mesh);
-    if (it == m_meshState.end())
-        return false;
-    const MeshState& st = m_states[(size_t)it->second];
-    out = {VertexStore{st.posOut.b, st.posOut.m, (uint32_t)st.nV}, VertexStore{st.nrmOut.b, st.nrmOut.m, (uint32_t)st.nV}};
-    return true;
 }
 
 void Skin::build(const entt::registry& reg) {
@@ -246,8 +242,8 @@ void Skin::makeStateSet(MeshState& st) {
         {deltas.b, 0, deltas.sz},
         {c.jointDQ.b, 0, c.jointDQ.sz},
         {st.activeMorphs.b, 0, st.activeMorphs.sz},
-        {st.posOut.b, 0, st.posOut.sz},
-        {st.nrmOut.b, 0, st.nrmOut.sz},
+        {st.out.pos.buffer, 0, 12 * st.out.pos.count},
+        {st.out.nrm.buffer, 0, 12 * st.out.nrm.count},
     };
     vkMakeSet(m_dev, m_pools.back(), m_dsl, skelBinds(), st.set, bi);
 }
@@ -321,7 +317,7 @@ void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pl, 0, 1, &st.set, 0, nullptr);
             vkCmdPushConstants(cmd, m_pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, (uint32_t)sizeof(pc), pc);
             vkCmdDispatch(cmd, (st.nV + 63) / 64, 1, 1);
-            VkBufferMemoryBarrier post[2] = {bufBarrier(st.posOut.b), bufBarrier(st.nrmOut.b)};
+            VkBufferMemoryBarrier post[2] = {bufBarrier(st.out.pos.buffer), bufBarrier(st.out.nrm.buffer)};
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, 0, 0,
                                  nullptr, 2, post, 0, nullptr);
         }
@@ -366,7 +362,7 @@ void Skin::onMeshDestroyed(entt::registry&, entt::entity e) {
 }
 
 void Skin::releaseStateBufs(MeshState& st) {
-    Buf* bufs[7] = {&st.pos0, &st.nrm0, &st.joints, &st.weights, &st.activeMorphs, &st.posOut, &st.nrmOut};
+    Buf* bufs[5] = {&st.pos0, &st.nrm0, &st.joints, &st.weights, &st.activeMorphs};
     for (Buf* bp : bufs) {
         if (bp->b == VK_NULL_HANDLE)
             continue;

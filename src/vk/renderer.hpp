@@ -25,22 +25,13 @@ struct CameraView {
 
 class Renderer {
 public:
-    struct GpuMeshRef {
-        int geom;
-        MeshGpu rw;
-    };
-
     static constexpr int kMaxLights = 8;
     static constexpr int kPoolChunk = 64;
 
     void init(VkApp& app, int nInstances, const Mat4& viewProj);
-    GpuMeshRef addMesh(const Mesh& mesh);
-    // narrow interface the renderer uses to obtain skinned vertex buffers (implemented by the sim)
-    struct SkinnedMeshProvider {
-        std::function<bool(entt::entity, MeshGpu&)> meshGpu;
-    };
-    void adoptSkinned(const entt::registry& reg, const SkinnedMeshProvider& skinned);
-    void shareGeomSlot(entt::entity geomEnt, int slot);
+    // sole owner of drawable vertex buffers; sim stages request a read-write store on adoption
+    GpuMeshRef requestVerts(const entt::registry& reg, const Mesh& mesh, entt::entity keyEnt);
+    int addMesh(const Mesh& mesh);
     int instFor(entt::entity e, entt::entity geomEnt, const entt::registry& reg);
     int instOf(entt::entity e) const;
     int textureId(entt::entity e) const;
@@ -69,7 +60,6 @@ private:
         VkDeviceMemory ibmem = VK_NULL_HANDLE;
         uint32_t idxCount = 0;
         uint32_t vtxCount = 0;
-        bool externalPosNrm = false;
     };
 
     struct GpuTexture {
