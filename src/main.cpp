@@ -164,10 +164,7 @@ int main(int argc, char** argv) {
         // UI pointer: world-space ray (VR: controller aim; window: camera through cursor)
         // -> rigid-body raycast against the panel collider -> uv of the hit point
         const entt::entity panel = findUiPanel(engine.reg);
-        V3 headPos{};
-        V4 headQuat{0, 0, 0, 1};
         V2 pUv{};
-        V3 pHitPos{};
         bool pDown = false;
         float pWheel = 0.0f;
         bool pHit = false;
@@ -182,12 +179,9 @@ int main(int argc, char** argv) {
             const RayHit h = engine.rigid.raycast(o, d, 30.0f, excl);
             if (!h.hit || engine.rigid.entityFor(h.body) != panel)
                 return false;
-            pHitPos = h.pos;
             return uiPanelUv(engine.reg, panel, h.pos, pUv);
         };
         if (engine.xr && fr.running && fr.havePose) {
-            headPos = fr.eye[0].pos;
-            headQuat = fr.eye[0].quat;
             const entt::entity root = findMarker<VrRoot>(engine.reg);
             const V3 rootPos = root != entt::null ? worldTransform(engine.reg, root).pos : V3{0, 0, 0};
             for (int i = 0; i < 2; ++i) {
@@ -206,59 +200,8 @@ int main(int argc, char** argv) {
                     pDown = ctl.triggers[0] > 0.3f; // fallback owner: hover off, button state live
                 }
             }
-            // debounced stdout trace: on hit change, on uv move > 2cm, or once per second
-            static int lastSec = -1;
-            static float lastUvX = -1.0f, lastUvY = -1.0f;
-            static int lastHit = -1;
-            for (int i = 0; i < 2; ++i) {
-                const XrController& ctl = fr.controller[i];
-                if (!ctl.active)
-                    continue;
-                const V3 o = vAdd(rootPos, ctl.aimPos);
-                const V3 d = quatRotate(ctl.aimQuat, V3{0, 0, -1});
-                const int sec = (int)std::time(nullptr);
-                const bool moved = std::fabs(pUv.x - lastUvX) > 0.02f || std::fabs(pUv.y - lastUvY) > 0.02f;
-                if (pHit != lastHit || moved || sec != lastSec) {
-                    const V3 pp = panel != entt::null ? worldTransform(engine.reg, panel).pos : V3{0, 0, 0};
-                    static bool printedBox = false;
-                    if (!printedBox && panel != entt::null) {
-                        printedBox = true;
-                        const Transform pt = worldTransform(engine.reg, panel);
-                        const V3 xh = quatRotate(pt.quat, V3{1, 0, 0});
-                        const V3 yh = quatRotate(pt.quat, V3{0, 1, 0});
-                        const RayHit hx = engine.rigid.raycast(vSub(pt.pos, vScale(xh, 2.0f)), xh, 2.5f);
-                        const RayHit hy = engine.rigid.raycast(vSub(pt.pos, vScale(yh, 2.0f)), yh, 2.5f);
-                        const float ex = hx.hit ? 2.0f - (float)vLen(vSub(hx.pos, vSub(pt.pos, vScale(xh, 2.0f)))) : -1.0f;
-                        const float ey = hy.hit ? 2.0f - (float)vLen(vSub(hy.pos, vSub(pt.pos, vScale(yh, 2.0f)))) : -1.0f;
-                        std::printf("ui body half-extents probed=(%.3f,%.3f) expect=(%.3f,%.3f)\n",
-                                   (double)ex, (double)ey, (double)(kPanelW * 0.5f), (double)(kPanelH * 0.5f));
-                        const V4 q = pt.quat;
-                        const float ql = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-                        const V3 xh2 = quatRotate(q, V3{1, 0, 0});
-                        const V3 yh2 = quatRotate(q, V3{0, 1, 0});
-                        std::printf("ui panel quat=(%.4f,%.4f,%.4f,%.4f) |q|=%.4f |xh|=%.4f |yh|=%.4f\n",
-                                   (double)q.x, (double)q.y, (double)q.z, (double)q.w, (double)ql,
-                                   (double)vLen(xh2), (double)vLen(yh2));
-                        std::fflush(stdout);
-                    }
-                    std::printf("ui hit=%d trig=(%.2f/%.2f,%.2f/%.2f) uv=(%.2f,%.2f) o=(%.2f,%.2f,%.2f) d=(%.2f,%.2f,%.2f) panel=(%.2f,%.2f,%.2f) hitpos=(%.2f,%.2f,%.2f)\n",
-                               (int)pHit, (double)fr.controller[0].triggers[0], (double)fr.controller[0].triggers[1],
-                               (double)fr.controller[1].triggers[0], (double)fr.controller[1].triggers[1],
-                               (double)pUv.x, (double)pUv.y, (double)o.x, (double)o.y, (double)o.z,
-                               (double)d.x, (double)d.y, (double)d.z, (double)pp.x, (double)pp.y, (double)pp.z,
-                               (double)pHitPos.x, (double)pHitPos.y, (double)pHitPos.z);
-                    std::fflush(stdout);
-                    lastUvX = pUv.x;
-                    lastUvY = pUv.y;
-                    lastHit = pHit;
-                    lastSec = sec;
-                }
-                break;
-            }
         } else if (cam != entt::null) {
             const CameraView cv = cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height);
-            headPos = cv.pos;
-            headQuat = worldTransform(engine.reg, cam).quat;
             double mx, my;
             glfwGetCursorPos(app.glfwWindow(), &mx, &my);
             // cursor is in window pixels but the camera projects in framebuffer pixels
@@ -292,15 +235,7 @@ int main(int argc, char** argv) {
                                                (1.0f - pUv.y) * (float)engine.renderer.uiHeight())
                                       : ImVec2(-1.0f, -1.0f)
         );
-        // direct write after NewFrame so it wins over any GLFW backend mouse events this frame
-        //ImGui::GetIO().MousePos = ;
         drawUi(engine);
-        if (pHit) {
-            const ImVec2 dp(pUv.x * (float)engine.renderer.uiWidth(), (1.0f - pUv.y) * (float)engine.renderer.uiHeight());
-            auto* dl = ImGui::GetForegroundDrawList();
-            dl->AddCircle(dp, 14.0f, IM_COL32(255, 0, 0, 255), 24);
-            dl->AddCircle(dp, 3.0f, IM_COL32(255, 0, 0, 255));
-        }
         if (engine.showDemo)
             ImGui::ShowDemoWindow(&engine.showDemo);
         ImGui::Render();

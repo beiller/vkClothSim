@@ -180,10 +180,7 @@ struct Camera {
 };
 
 // UI panel: its Transform is the panel pose; the renderer draws the ImGui texture here
-struct UICanvas {
-    bool initialized = false;
-};
-inline constexpr float kPanelDist = 1.2f;
+struct UICanvas {};
 inline constexpr float kPanelW = 0.96f;
 inline constexpr float kPanelH = 0.54f;
 
@@ -271,7 +268,6 @@ struct UIWindow {
     std::function<V2()> pos;
     V2 size{};
     int flags = 0;
-    bool collapseOnAppear = false;
     int order = 0;
 };
 

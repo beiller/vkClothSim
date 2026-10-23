@@ -411,7 +411,6 @@ void Xr::pollEvents() {
             const auto* ev = (XrEventDataSessionStateChanged*)&buf;
             if (ev->session == m_session) {
                 m_state = ev->state;
-                m_focused = ev->state == XR_SESSION_STATE_FOCUSED;
                 switch (m_state) {
                 case XR_SESSION_STATE_READY:
                     if (!m_running) {
@@ -459,7 +458,6 @@ void Xr::waitFrame() {
 XrFrame Xr::poll() {
     XrFrame fr;
     fr.running = m_running;
-    fr.focused = m_focused;
     if (!m_running)
         return fr;
     fr.shouldRender = m_fs.shouldRender != 0;

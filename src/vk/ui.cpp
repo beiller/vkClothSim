@@ -228,29 +228,10 @@ void drawUi(Engine& w) {
               [&](entt::entity a, entt::entity b) { return reg.get<UIWindow>(a).order < reg.get<UIWindow>(b).order; });
     for (entt::entity win : wins) {
         const UIWindow& cfg = reg.get<UIWindow>(win);
-        const bool pin = cfg.flags & ImGuiWindowFlags_NoMove;
-        ImGui::SetNextWindowPos(ImVec2(cfg.pos().x, cfg.pos().y), pin ? ImGuiCond_Always : ImGuiCond_Appearing);
+        ImGui::SetNextWindowPos(ImVec2(cfg.pos().x, cfg.pos().y), ImGuiCond_Always);
         if (cfg.size.x > 0.0f && cfg.size.y > 0.0f)
             ImGui::SetNextWindowSize(ImVec2(cfg.size.x, cfg.size.y), ImGuiCond_Appearing);
-        if (cfg.collapseOnAppear)
-            ImGui::SetNextWindowCollapsed(true, ImGuiCond_Appearing);
         ImGui::Begin(cfg.title.c_str(), nullptr, cfg.flags);
-        if (std::getenv("VKSIM_UI_LOG") && std::strstr(cfg.title.c_str(), "scene")) {
-            const ImVec2 wp = ImGui::GetWindowPos();
-            static ImVec2 last{-999, -999};
-            static int frames = 0;
-            frames++;
-            const bool changed = std::fabs(wp.x - last.x) > 1.0f || std::fabs(wp.y - last.y) > 1.0f;
-            if (changed || frames <= 90) {
-                last = wp;
-                const ImVec2 mp = ImGui::GetIO().MousePos;
-                const V2 cp = cfg.pos();
-                std::printf("ui win '%s' f=%d pos=(%.0f,%.0f) cfgpos=(%.0f,%.0f) mouse=(%.0f,%.0f) down=%d\n", cfg.title.c_str(),
-                           frames, (double)wp.x, (double)wp.y, (double)cp.x, (double)cp.y, (double)mp.x, (double)mp.y,
-                           (int)ImGui::GetIO().MouseDown[0]);
-                std::fflush(stdout);
-            }
-        }
         drawKids(win);
         ImGui::End();
     }

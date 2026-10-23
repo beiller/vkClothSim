@@ -14,7 +14,6 @@ struct XrController {
 
 struct XrFrame {
     bool running = false;
-    bool focused = false;
     bool shouldRender = false;
     bool havePose = false;
     int nEyes = 0;

@@ -298,18 +298,6 @@ entt::entity ensureUiPanel(entt::registry& reg) {
     return panel;
 }
 
-namespace {
-V4 panelLookQuat(const V3& panelPos, const V3& atPos) {
-    const V3 z = vNormalize(vSub(atPos, panelPos)); // +z faces the viewer
-    V3 up{0, 1, 0};
-    if (std::fabs(vDot(up, z)) > 0.99f)
-        up = {0, 0, 1};
-    const V3 x = vNormalize(vCross(up, z));
-    const V3 y = vCross(z, x);
-    return basisToQuat(x, y, z);
-}
-} // namespace
-
 bool uiPanelUv(const entt::registry& reg, entt::entity panel, const V3& hitPos, V2& uv) {
     if (panel == entt::null)
         return false;

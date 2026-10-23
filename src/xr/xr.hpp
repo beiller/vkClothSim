@@ -107,7 +107,6 @@ private:
     VkFormat m_fmt = VK_FORMAT_UNDEFINED;
     int m_eyeCount = 0;
     bool m_running = false;
-    bool m_focused = false;
     XrSessionState m_state = XR_SESSION_STATE_UNKNOWN;
     XrFrameState m_fs{};
     XrView m_views[2]{};
