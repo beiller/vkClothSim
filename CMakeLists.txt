@@ -141,7 +141,7 @@ target_include_directories(collision_shape_solver_test PRIVATE ${CMAKE_SOURCE_DI
 
 # GPU-free probe: ECS + GLTF loader + collision shape solver (no Vulkan/GLFW/Jolt/ImGui).
 add_executable(bone_probe
-    probe/bone_probe.cpp
+    solvers/bone_probe.cpp
     src/gltf.cpp
     src/assets.cpp
     solvers/collision_shape_solver.cpp

@@ -93,6 +93,7 @@ struct RigidBody {
     float friction = 0.7f;
     float restitution = 0.05f;
     float damping = 0.05f;
+    float mass = 0.0f; // kg; 0 = auto (shape volume x 1000 kg/m^3)
     bool isStatic = false;
     std::vector<entt::entity> colliders;
 };
@@ -104,11 +105,55 @@ struct Joint {
     V3 grabPos{};
 };
 
+struct SixDofJoint {
+    entt::entity bodyA = entt::null;
+    entt::entity bodyB = entt::null; // null = fixed-to-world anchor
+    V3 grabPos{};
+    bool worldSpace = false; // anchor + frames in world space (default: baked body-local)
+    V4 relQuat{0, 0, 0, 1}; // bodyB frame orientation relative to bodyA (identity = coincident)
+    // limits, relative to the creation pose (0 = body A at the anchor, in its +axis direction).
+    // limOn = false -> all axes free; min > max on an axis fixes it at 0.
+    bool limOn = false;
+    V3 limTransMin{}, limTransMax{}; // translation limits (m)
+    V3 limAngMin{}, limAngMax{}; // rotation limits (rad)
+    V3 softTransFreq{}, softTransDamp{}; // soft translation-limit spring (Hz); freq <= 0 = hard
+    bool pyramid = false; // rotation-limit shape: false = cone (symmetric), true = pyramid (independent)
+    V3 frictionTrans{}, frictionAng{}; // max friction force (N) / torque (N m); 0 = frictionless
+    // motors, per axis (6 values: 0-2 translation, 3-5 rotation). state: 0 off, 1 velocity,
+    // 2 position, 3 position + velocity; a motor that is off ignores the other motor params.
+    // mode: 0 frequency + damping, 1 stiffness + damping, 2 mass-normalized stiffness + damping.
+    std::vector<float> motorState; // 6 values
+    std::vector<float> motorMode; // 6 values
+    V3 motorFreq{}, motorDamp{};
+    V3 motorForceMin{}, motorForceMax{}; // translation-motor force limits (N); all-zero = unlimited
+    V3 motorTorqueMin{}, motorTorqueMax{}; // rotation-motor torque limits (N m); all-zero = unlimited
+    V3 motorTargetPos{}, motorTargetVel{}, motorTargetAngVel{}; // body A displacement / velocity in its +axis direction (0 = creation pose)
+    V4 motorTargetQuat{0, 0, 0, 1}; // body A orientation target (identity = creation orientation)
+    int priority = 0; // solver priority; higher = solved first
+    int velSteps = 0; // solver velocity iterations; 0 = global default
+    int posSteps = 0; // solver position iterations; 0 = global default
+    bool enabled = true;
+};
+
 struct SoftBodyData {
     int pinned = 0;
     SimParams params;
     int steps = kDefaultSteps;
     std::vector<float> cons;
+};
+
+struct PointLight {
+    V3 color{1.0f, 0.97f, 0.92f};
+    float intensity = 25.0f;
+    float radius = 0.25f;
+    float on = 1.0f;
+    float shadowNear = 0.01f;
+    float shadowFar = 30.0f;
+    float shadowNormalBias = 0.05f;
+    float shadowBiasBase = 0.3f;
+    float shadowBiasSlope = 0.3f;
+    float shadowSearchScale = 2.0f;
+    float shadowMaxRadius = 16.0f;
 };
 
 struct Camera {

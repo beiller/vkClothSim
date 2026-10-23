@@ -3,7 +3,7 @@
 #include <numbers>
 
 inline constexpr float kPi = std::numbers::pi_v<float>;
-inline constexpr float kFrameDt = 1.0f / 60.0f;
+inline constexpr float kFrameDt = 1.0f / 240.0f;
 
 struct V2 {
     float x = 0.0f, y = 0.0f;
@@ -11,20 +11,6 @@ struct V2 {
 
 struct V3 {
     float x, y, z;
-};
-
-struct PointLight {
-    V3 color{1.0f, 0.97f, 0.92f};
-    float intensity = 25.0f;
-    float radius = 0.25f;
-    float on = 1.0f;
-    float shadowNear = 0.01f;
-    float shadowFar = 30.0f;
-    float shadowNormalBias = 0.05f;
-    float shadowBiasBase = 0.3f;
-    float shadowBiasSlope = 0.3f;
-    float shadowSearchScale = 2.0f;
-    float shadowMaxRadius = 16.0f;
 };
 
 struct V4 {

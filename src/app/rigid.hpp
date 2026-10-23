@@ -42,6 +42,7 @@ public:
     void watch(entt::registry& reg);
 
     int velocitySteps = 10;
+    int positionSteps = 10;
 
 private:
     std::vector<ColliderDesc> colliderDescs(const entt::registry& reg,
@@ -51,6 +52,7 @@ private:
                    const Transform& t);
     void buildKinematic(entt::entity e, const std::vector<ColliderDesc>& colliders, const Transform& t);
     bool makeJoint(entt::entity e, const Joint& j);
+    bool makeSixDofJoint(entt::entity e, const SixDofJoint& j);
     void releaseJoint(int idx);
     void onBodyDestroyed(entt::registry&, entt::entity e);
     void onShapeDestroyed(entt::registry&, entt::entity e);
@@ -72,4 +74,5 @@ private:
     std::unordered_map<entt::entity, int> m_jointIdx;
     std::unordered_map<entt::entity, JPH::BodyID> m_body;
     std::unordered_map<entt::entity, JPH::ShapeRefC> m_shape;
+    std::unordered_map<entt::entity, JPH::RVec3> m_kinTarget;
 };

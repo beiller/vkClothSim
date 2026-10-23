@@ -100,6 +100,7 @@ static const FieldDesc kRigidBody[] = {
     {"friction", OFF(RigidBody, friction), FieldKind::SliderF, 0.0f, 1.0f},
     {"restitution", OFF(RigidBody, restitution), FieldKind::SliderF, 0.0f, 1.0f},
     {"damping", OFF(RigidBody, damping), FieldKind::SliderF, 0.0f, 1.0f},
+    {"mass", OFF(RigidBody, mass), FieldKind::SliderF, 0.0f, 1000.0f},
     {"isStatic", OFF(RigidBody, isStatic), FieldKind::Checkbox},
     {"colliders", OFF(RigidBody, colliders), FieldKind::EntArr},
 };
@@ -129,6 +130,39 @@ static const FieldDesc kJoint[] = {
     {"bodyB", OFF(Joint, bodyB), FieldKind::Ref},
     {"type", OFF(Joint, type), FieldKind::SliderI, 0.0f, 1.0f},
     {"grabPos", OFF(Joint, grabPos), FieldKind::DragV3},
+};
+static const FieldDesc kSixDofJoint[] = {
+    {"bodyA", OFF(SixDofJoint, bodyA), FieldKind::Ref},
+    {"bodyB", OFF(SixDofJoint, bodyB), FieldKind::Ref},
+    {"grabPos", OFF(SixDofJoint, grabPos), FieldKind::DragV3},
+    {"worldSpace", OFF(SixDofJoint, worldSpace), FieldKind::Checkbox},
+    {"relQuat", OFF(SixDofJoint, relQuat), FieldKind::Quat},
+    {"limOn", OFF(SixDofJoint, limOn), FieldKind::Checkbox},
+    {"limTransMin", OFF(SixDofJoint, limTransMin), FieldKind::DragV3},
+    {"limTransMax", OFF(SixDofJoint, limTransMax), FieldKind::DragV3},
+    {"limAngMin", OFF(SixDofJoint, limAngMin), FieldKind::DragV3},
+    {"limAngMax", OFF(SixDofJoint, limAngMax), FieldKind::DragV3},
+    {"softTransFreq", OFF(SixDofJoint, softTransFreq), FieldKind::DragV3},
+    {"softTransDamp", OFF(SixDofJoint, softTransDamp), FieldKind::DragV3},
+    {"pyramid", OFF(SixDofJoint, pyramid), FieldKind::Checkbox},
+    {"frictionTrans", OFF(SixDofJoint, frictionTrans), FieldKind::DragV3},
+    {"frictionAng", OFF(SixDofJoint, frictionAng), FieldKind::DragV3},
+    {"motorState", OFF(SixDofJoint, motorState), FieldKind::FloatArr},
+    {"motorMode", OFF(SixDofJoint, motorMode), FieldKind::FloatArr},
+    {"motorFreq", OFF(SixDofJoint, motorFreq), FieldKind::DragV3},
+    {"motorDamp", OFF(SixDofJoint, motorDamp), FieldKind::DragV3},
+    {"motorForceMin", OFF(SixDofJoint, motorForceMin), FieldKind::DragV3},
+    {"motorForceMax", OFF(SixDofJoint, motorForceMax), FieldKind::DragV3},
+    {"motorTorqueMin", OFF(SixDofJoint, motorTorqueMin), FieldKind::DragV3},
+    {"motorTorqueMax", OFF(SixDofJoint, motorTorqueMax), FieldKind::DragV3},
+    {"motorTargetPos", OFF(SixDofJoint, motorTargetPos), FieldKind::DragV3},
+    {"motorTargetVel", OFF(SixDofJoint, motorTargetVel), FieldKind::DragV3},
+    {"motorTargetAngVel", OFF(SixDofJoint, motorTargetAngVel), FieldKind::DragV3},
+    {"motorTargetQuat", OFF(SixDofJoint, motorTargetQuat), FieldKind::Quat},
+    {"priority", OFF(SixDofJoint, priority), FieldKind::SliderI, 0.0f, 1023.0f},
+    {"velSteps", OFF(SixDofJoint, velSteps), FieldKind::SliderI, 0.0f, 64.0f},
+    {"posSteps", OFF(SixDofJoint, posSteps), FieldKind::SliderI, 0.0f, 64.0f},
+    {"enabled", OFF(SixDofJoint, enabled), FieldKind::Checkbox},
 };
 static const FieldDesc kControllerInput[] = {
     {"trigger_0", OFF(ControllerInput, triggers), FieldKind::SliderF, 0.0f, 1.0f},
@@ -175,6 +209,7 @@ static const FieldDesc kRenderSettings[] = {
 };
 static const FieldDesc kRigidScene[] = {
     {"velocitySteps", 0, FieldKind::SliderI, 1.0f, 64.0f},
+    {"positionSteps", 4, FieldKind::SliderI, 1.0f, 64.0f},
 };
 
 static const TypeDesc kTypes[] = {
@@ -191,6 +226,7 @@ static const TypeDesc kTypes[] = {
     {"TaperedCapsule", kTaperedCapsule},
     {"Collider", kCollider},
     {"Joint", kJoint},
+    {"SixDofJoint", kSixDofJoint},
     {"ControllerInput", kControllerInput},
     {"MouseInput", kMouseInput},
     {"Renderable", kRenderable},
@@ -233,6 +269,8 @@ inline std::vector<std::pair<const TypeDesc*, const void*>> entityFields(const e
         out.push_back({findType("Collider"), (const void*)p});
     if (auto* p = reg.try_get<Joint>(e))
         out.push_back({findType("Joint"), (const void*)p});
+    if (auto* p = reg.try_get<SixDofJoint>(e))
+        out.push_back({findType("SixDofJoint"), (const void*)p});
     if (auto* p = reg.try_get<ControllerInput>(e))
         out.push_back({findType("ControllerInput"), (const void*)p});
     if (auto* p = reg.try_get<Renderable>(e))

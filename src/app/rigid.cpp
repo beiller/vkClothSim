@@ -10,6 +10,7 @@
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
+#include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 #include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
 #include <Jolt/RegisterTypes.h>
 
@@ -19,6 +20,9 @@
 #include <thread>
 
 namespace {
+
+// max kinematic displacement per physics step (0.25 m = 15 m/s at 60 Hz)
+constexpr float kMaxKinematicStep = 0.25f;
 
 JPH::Quat jQuat(V4 q) {
     return {q.x, q.y, q.z, q.w};
@@ -64,6 +68,7 @@ void RigidScene::reset() {
         m_phys->GetBodyInterface().RemoveBody(id);
     m_body.clear();
     m_shape.clear();
+    m_kinTarget.clear();
     for (int i = (int)m_joints.size() - 1; i >= 0; --i)
         releaseJoint(i);
     m_joints.clear();
@@ -111,6 +116,10 @@ void RigidScene::buildBody(entt::entity e, const std::vector<ColliderDesc>& coll
     cs.mFriction = body.friction;
     cs.mRestitution = body.restitution;
     cs.mLinearDamping = body.damping;
+    if (body.mass > 0) {
+        cs.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+        cs.mMassPropertiesOverride.mMass = body.mass;
+    }
     JPH::BodyID id;
     if (isStatic) {
         JPH::Body* b = bi.CreateBody(cs);
@@ -137,6 +146,7 @@ void RigidScene::removeBody(entt::entity e) {
         return;
     const JPH::BodyID id = it->second;
     m_body.erase(it);
+    m_kinTarget.erase(e);
     m_phys->GetBodyInterface().RemoveBody(id);
     for (size_t i = 0; i < m_joints.size(); ++i) {
         if (!m_joints[i].alive)
@@ -196,6 +206,7 @@ void RigidScene::watch(entt::registry& reg) {
     reg.on_destroy<RigidBody>().connect<&RigidScene::onBodyDestroyed>(this);
     reg.on_destroy<KinematicBody>().connect<&RigidScene::onBodyDestroyed>(this);
     reg.on_destroy<Joint>().connect<&RigidScene::onJointDestroyed>(this);
+    reg.on_destroy<SixDofJoint>().connect<&RigidScene::onJointDestroyed>(this);
     reg.on_destroy<CapsuleShape>().connect<&RigidScene::onShapeDestroyed>(this);
     reg.on_destroy<BoxShape>().connect<&RigidScene::onShapeDestroyed>(this);
     reg.on_destroy<TaperedCapsule>().connect<&RigidScene::onShapeDestroyed>(this);
@@ -206,7 +217,35 @@ void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const V4& quat)
     if (it == m_body.end())
         return;
     auto& bi = m_phys->GetBodyInterface();
-    bi.SetPositionAndRotation(it->second, JPH::RVec3(pos.x, pos.y, pos.z), jQuat(quat), JPH::EActivation::Activate);
+    const JPH::BodyID id = it->second;
+    const JPH::RVec3 old = bi.GetPosition(id);
+    const JPH::RVec3 p(pos.x, pos.y, pos.z);
+    // Jolt integrates the kinematic velocity every step, so after a move the
+    // body drifts by the clamped delta. Re-applying a render-rate target at the
+    // physics rate with a fresh velocity therefore sawtooths the body every
+    // step; instead, hold: once the target is reached, zero the velocity so
+    // the body stays put until the next target update
+    const auto kt = m_kinTarget.find(e);
+    if (kt != m_kinTarget.end() && kt->second == p) {
+        if (JPH::Vec3(p - old).Length() <= kMaxKinematicStep) {
+            bi.SetPositionAndRotation(id, p, jQuat(quat), JPH::EActivation::Activate);
+            bi.SetLinearVelocity(id, JPH::Vec3::sZero());
+            return;
+        }
+    } else {
+        m_kinTarget[e] = p;
+    }
+    // velocity is what the constraint solver matches against; without it a
+    // kinematic body only teleports and the joint gap is never chased
+    JPH::RVec3 delta = p - old;
+    // clamp the step: teleport spikes (render hitches, VR recenter) would fling the chain
+    const float stepLen = JPH::Vec3(delta).Length();
+    if (stepLen > kMaxKinematicStep)
+        delta = delta / stepLen * kMaxKinematicStep;
+    // move by the clamped delta, not to p: keeps position and velocity
+    // consistent so the constraint doesn't oscillate against a mismatch
+    bi.SetPositionAndRotation(id, old + delta, jQuat(quat), JPH::EActivation::Activate);
+    bi.SetLinearVelocity(id, delta / kFrameDt);
 }
 
 bool RigidScene::makeJoint(entt::entity e, const Joint& j) {
@@ -230,6 +269,90 @@ bool RigidScene::makeJoint(entt::entity e, const Joint& j) {
     cs.mPoint1 = bodyA->GetRotation().InverseRotate(grab - bodyA->GetPosition());
     cs.mPoint2 = bodyB->GetRotation().InverseRotate(grab - bodyB->GetPosition());
     JPH::TwoBodyConstraint* constraint = cs.Create(*bodyA, *bodyB);
+    m_phys->AddConstraint(constraint);
+    m_joints.push_back({e, constraint, true});
+    return true;
+}
+
+bool RigidScene::makeSixDofJoint(entt::entity e, const SixDofJoint& j) {
+    const auto ia = m_body.find(j.bodyA);
+    if (ia == m_body.end())
+        return false;
+    if (j.bodyB != entt::null && m_body.find(j.bodyB) == m_body.end())
+        return false;
+    JPH::Body* bodyA = m_phys->GetBodyLockInterface().TryGetBody(ia->second);
+    JPH::Body* bodyB = j.bodyB == entt::null ? &JPH::Body::sFixedToWorld
+                                             : m_phys->GetBodyLockInterface().TryGetBody(m_body[j.bodyB]);
+    if (!bodyA || !bodyB)
+        return false;
+    const JPH::RVec3 grab(j.grabPos.x, j.grabPos.y, j.grabPos.z);
+    const JPH::Quat rel(j.relQuat.x, j.relQuat.y, j.relQuat.z, j.relQuat.w);
+    using Axis = JPH::SixDOFConstraintSettings::EAxis;
+    JPH::SixDOFConstraintSettings cs;
+    cs.mSpace = j.worldSpace ? JPH::EConstraintSpace::WorldSpace : JPH::EConstraintSpace::LocalToBodyCOM;
+    if (j.worldSpace) {
+        cs.mPosition1 = grab;
+        cs.mPosition2 = grab;
+    } else {
+        cs.mPosition1 = bodyA->GetRotation().InverseRotate(grab - bodyA->GetPosition());
+        cs.mPosition2 = bodyB->GetRotation().InverseRotate(grab - bodyB->GetPosition());
+    }
+    cs.mAxisX2 = rel * JPH::Vec3::sAxisX();
+    cs.mAxisY2 = rel * JPH::Vec3::sAxisY();
+    cs.mSwingType = j.pyramid ? JPH::ESwingType::Pyramid : JPH::ESwingType::Cone;
+    cs.mConstraintPriority = (unsigned)j.priority;
+    cs.mNumVelocityStepsOverride = (unsigned)j.velSteps;
+    cs.mNumPositionStepsOverride = (unsigned)j.posSteps;
+    cs.mEnabled = j.enabled;
+    if (j.limOn) {
+        // Jolt measures translation along (pos2 - pos1), so negate to get body A's displacement
+        cs.SetLimitedAxis(Axis::TranslationX, -j.limTransMax.x, -j.limTransMin.x);
+        cs.SetLimitedAxis(Axis::TranslationY, -j.limTransMax.y, -j.limTransMin.y);
+        cs.SetLimitedAxis(Axis::TranslationZ, -j.limTransMax.z, -j.limTransMin.z);
+        cs.SetLimitedAxis(Axis::RotationX, j.limAngMin.x, j.limAngMax.x);
+        cs.SetLimitedAxis(Axis::RotationY, j.limAngMin.y, j.limAngMax.y);
+        cs.SetLimitedAxis(Axis::RotationZ, j.limAngMin.z, j.limAngMax.z);
+    }
+    const float sf[3] = {j.softTransFreq.x, j.softTransFreq.y, j.softTransFreq.z};
+    const float sd[3] = {j.softTransDamp.x, j.softTransDamp.y, j.softTransDamp.z};
+    for (int i = 0; i < 3; ++i)
+        cs.mLimitsSpringSettings[i] = JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping, sf[i], sd[i]);
+    const float ft[3] = {j.frictionTrans.x, j.frictionTrans.y, j.frictionTrans.z};
+    const float fa[3] = {j.frictionAng.x, j.frictionAng.y, j.frictionAng.z};
+    for (int i = 0; i < 3; ++i) {
+        cs.mMaxFriction[i] = ft[i];
+        cs.mMaxFriction[i + 3] = fa[i];
+    }
+    const auto mv = [](const std::vector<float>& v, int i, float def) {
+        return i < (int)v.size() ? v[i] : def;
+    };
+    const float mf[3] = {j.motorFreq.x, j.motorFreq.y, j.motorFreq.z};
+    const float md[3] = {j.motorDamp.x, j.motorDamp.y, j.motorDamp.z};
+    const float fmin[3] = {j.motorForceMin.x, j.motorForceMin.y, j.motorForceMin.z};
+    const float fmax[3] = {j.motorForceMax.x, j.motorForceMax.y, j.motorForceMax.z};
+    const float tmin[3] = {j.motorTorqueMin.x, j.motorTorqueMin.y, j.motorTorqueMin.z};
+    const float tmax[3] = {j.motorTorqueMax.x, j.motorTorqueMax.y, j.motorTorqueMax.z};
+    for (int i = 0; i < 6; ++i) {
+        if (mv(j.motorState, i, 0.f) <= 0.f)
+            continue; // off: defaults stay (unlimited, spring off)
+        cs.mMotorSettings[i].mSpringSettings =
+            JPH::SpringSettings((JPH::ESpringMode)(int)mv(j.motorMode, i, 0.f), mf[i % 3], md[i % 3]);
+        if (i < 3 && (fmin[i] != 0.f || fmax[i] != 0.f))
+            cs.mMotorSettings[i].SetForceLimits(fmin[i], fmax[i]);
+        if (i >= 3 && (tmin[i - 3] != 0.f || tmax[i - 3] != 0.f))
+            cs.mMotorSettings[i].SetTorqueLimits(tmin[i - 3], tmax[i - 3]);
+    }
+    JPH::TwoBodyConstraint* constraint = cs.Create(*bodyA, *bodyB);
+    auto* six = static_cast<JPH::SixDOFConstraint*>(constraint);
+    for (int i = 0; i < 6; ++i)
+        six->SetMotorState(Axis(i), JPH::EMotorState((int)mv(j.motorState, i, 0.f)));
+    // targets are in Jolt's (pos2 - pos1) space, negate to express body A's motion;
+    // orientation target is the relative frame rotation, so conjugate
+    six->SetTargetPositionCS(JPH::Vec3(-j.motorTargetPos.x, -j.motorTargetPos.y, -j.motorTargetPos.z));
+    six->SetTargetVelocityCS(JPH::Vec3(-j.motorTargetVel.x, -j.motorTargetVel.y, -j.motorTargetVel.z));
+    six->SetTargetAngularVelocityCS(JPH::Vec3(-j.motorTargetAngVel.x, -j.motorTargetAngVel.y, -j.motorTargetAngVel.z));
+    six->SetTargetOrientationCS(JPH::Quat(j.motorTargetQuat.x, j.motorTargetQuat.y, j.motorTargetQuat.z,
+                                        j.motorTargetQuat.w).Conjugated());
     m_phys->AddConstraint(constraint);
     m_joints.push_back({e, constraint, true});
     return true;
@@ -267,11 +390,36 @@ void RigidScene::project(const entt::registry& reg) {
             continue;
         m_jointIdx[e] = (int)m_joints.size() - 1;
     }
+    for (auto [e, j] : reg.view<SixDofJoint>().each()) {
+        if (m_jointIdx.count(e))
+            continue;
+        if (!makeSixDofJoint(e, j))
+            continue;
+        m_jointIdx[e] = (int)m_joints.size() - 1;
+    }
 }
 
 void RigidScene::step() {
     m_settings.mNumVelocitySteps = (unsigned)velocitySteps;
+    m_settings.mNumPositionSteps = (unsigned)positionSteps;
     m_phys->SetPhysicsSettings(m_settings);
+    // a constraint never wakes a sleeping body (Jolt only wakes on collision),
+    // so a chain dragged by a moving body would leave its asleep tail behind
+    auto& bi = m_phys->GetBodyInterface();
+    for (auto& j : m_joints) {
+        if (!j.alive)
+            continue;
+        auto* two = static_cast<JPH::TwoBodyConstraint*>(j.constraint.GetPtr());
+        JPH::Body* a = two->GetBody1();
+        JPH::Body* b = two->GetBody2();
+        if (!a->GetMotionProperties() || !b->GetMotionProperties())
+            continue; // world-anchored side
+        const float motion = a->GetLinearVelocity().LengthSq() + a->GetAngularVelocity().LengthSq()
+                         + b->GetLinearVelocity().LengthSq() + b->GetAngularVelocity().LengthSq();
+        if (motion < 1e-4f)
+            continue;
+        bi.ActivateConstraint(two);
+    }
     m_phys->Update(kFrameDt, 1, m_temp, m_job);
 }
 

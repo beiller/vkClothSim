@@ -1,0 +1,31 @@
+{
+    "name": "fitted capsule visual",
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 1.0, 8.0], "quat": [-0.0157, 0, 0, 0.9999] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/camera"
+        },
+        {
+            "name": "key light",
+            "components": {
+                "Transform": { "pos": [0, 12, 0] },
+                "PointLight": { "color": [1, 0.95, 0.9], "intensity": 120, "radius": 0.5 }
+            }
+        },
+        {
+            "name": "rim light",
+            "components": {
+                "Transform": { "pos": [-9, 6, -7] },
+                "PointLight": { "color": [0.4, 0.6, 1], "intensity": 60, "radius": 0.5 }
+            }
+        },
+        { "name": "mat_ground", "components": { "Material": { "baseColor": [0.19, 0.21, 0.17], "roughness": 0.85 } } },
+        { "name": "mat_caps", "components": { "Material": { "baseColor": [0.2, 0.9, 0.4], "metallic": 0.1, "roughness": 0.4, "emissive": [0.15, 0.9, 0.35] } } },
+        { "name": "char" },
+        { "name": "caps", "script": "scenes/caps_fit" }
+    ]
+}

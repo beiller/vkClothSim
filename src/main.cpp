@@ -141,8 +141,8 @@ int main(int argc, char** argv) {
         }
 
         simAccum += dt;
-        if (simAccum > 0.1f)
-            simAccum = 0.1f;
+        if (simAccum > 0.4f)
+            simAccum = 0.4f;
         while (simAccum >= kFrameDt) {
             engine.script.physicsAll(kFrameDt);
             stepRigid(engine);
