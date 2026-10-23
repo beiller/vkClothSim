@@ -80,82 +80,112 @@ set(JPH_USE_DX12 OFF)
 set(JPH_USE_CPU_COMPUTE OFF)
 include(${PHYSICS_REPO_ROOT}/Jolt/Jolt.cmake)
 
-set(XR_SOURCES src/xr/openxr_loader.cpp src/xr/xr.cpp)
-set(XR_INCLUDES ${CMAKE_SOURCE_DIR}/lib/openxr)
-
 find_path(LUA_INCLUDE_DIR lua.hpp PATH_SUFFIXES lua5.4)
 find_library(LUA_LIBRARY NAMES lua5.4 lua)
 if(NOT LUA_INCLUDE_DIR OR NOT LUA_LIBRARY)
     message(FATAL_ERROR "Lua 5.4 not found (need lua5.4 dev headers + lib)")
 endif()
 
-add_executable(vksim
-    src/main.cpp
-    src/components.cpp
-    src/gltf.cpp
-    src/scene.cpp
-    src/scene_script.cpp
-    src/systems.cpp
-    src/ui.cpp
-    src/url.cpp
-    src/app/rigid.cpp
-    src/assets.cpp
+# third-party (object/static)
+add_library(tinygltf_v3 STATIC ${CMAKE_SOURCE_DIR}/lib/tinygltf/tiny_gltf_v3.c)
+target_include_directories(tinygltf_v3 PUBLIC ${CMAKE_SOURCE_DIR}/lib/tinygltf)
+add_library(tinyexr STATIC ${CMAKE_SOURCE_DIR}/lib/tinyexr/tinyexr.cc)
+target_include_directories(tinyexr PUBLIC ${CMAKE_SOURCE_DIR}/lib/tinyexr)
+add_library(miniz STATIC ${CMAKE_SOURCE_DIR}/lib/miniz/miniz.c)
+target_include_directories(miniz PUBLIC ${CMAKE_SOURCE_DIR}/lib/miniz)
+add_library(imgui STATIC ${IMGUI_SOURCES})
+target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
+target_link_libraries(imgui PRIVATE glfw)
+target_compile_features(imgui PRIVATE cxx_std_23)
+
+# subsystem libraries
+add_library(3dsim_core STATIC
+    src/core/components.cpp
+    src/core/url.cpp)
+target_compile_features(3dsim_core PRIVATE cxx_std_23)
+target_link_libraries(3dsim_core PUBLIC Jolt::Jolt imgui)  # engine.hpp references rigid (Jolt) + renderer (imgui) headers
+target_include_directories(3dsim_core PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/core
+    ${CMAKE_SOURCE_DIR}/lib/entt/single_include
+    ${CMAKE_SOURCE_DIR}/lib/json)
+
+add_library(3dsim_io STATIC
+    src/io/gltf.cpp
+    src/io/assets.cpp)
+target_compile_features(3dsim_io PRIVATE cxx_std_23)
+target_include_directories(3dsim_io PUBLIC ${CMAKE_SOURCE_DIR}/src/io PRIVATE ${CMAKE_SOURCE_DIR}/lib/stb)
+target_link_libraries(3dsim_io PUBLIC 3dsim_core PRIVATE tinygltf_v3 tinyexr miniz ZLIB::ZLIB)
+
+add_library(3dsim_solvers STATIC solvers/collision_shape_solver.cpp)
+target_compile_features(3dsim_solvers PRIVATE cxx_std_23)
+target_include_directories(3dsim_solvers PUBLIC ${CMAKE_SOURCE_DIR}/solvers)
+
+add_library(3dsim_sim STATIC
     src/sim/soft.cpp
     src/sim/dualquat.cpp
-    src/sim/skin.cpp
+    src/sim/skin.cpp)
+target_compile_features(3dsim_sim PRIVATE cxx_std_23)
+target_include_directories(3dsim_sim PRIVATE ${CMAKE_SOURCE_DIR}/src/sim ${GEN_DIR})
+target_link_libraries(3dsim_sim PUBLIC 3dsim_core PRIVATE Vulkan::Vulkan)
+
+add_library(3dsim_app STATIC src/app/rigid.cpp)
+target_compile_features(3dsim_app PRIVATE cxx_std_23)
+target_include_directories(3dsim_app PRIVATE ${CMAKE_SOURCE_DIR}/src/app)
+target_link_libraries(3dsim_app PUBLIC 3dsim_core PRIVATE Jolt::Jolt)
+
+set(XR_SOURCES src/xr/openxr_loader.cpp src/xr/xr.cpp)
+set(XR_INCLUDES ${CMAKE_SOURCE_DIR}/lib/openxr)
+add_library(3dsim_xr STATIC ${XR_SOURCES})
+target_compile_features(3dsim_xr PRIVATE cxx_std_23)
+target_include_directories(3dsim_xr PRIVATE ${CMAKE_SOURCE_DIR}/src/xr ${CMAKE_SOURCE_DIR}/src/io ${XR_INCLUDES})
+target_link_libraries(3dsim_xr PUBLIC 3dsim_core PRIVATE Vulkan::Vulkan glfw)
+
+add_library(3dsim_render STATIC
     src/vk/vkapp.cpp
     src/vk/renderer.cpp
     src/vk/renderer_env.cpp
     src/vk/renderer_shadow.cpp
-    ${CMAKE_SOURCE_DIR}/lib/tinyexr/tinyexr.cc
-    ${CMAKE_SOURCE_DIR}/lib/miniz/miniz.c
-    ${CMAKE_SOURCE_DIR}/lib/tinygltf/tiny_gltf_v3.c
-    ${XR_SOURCES}
-    ${IMGUI_SOURCES})
-target_link_libraries(vksim PRIVATE glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB dl ${LUA_LIBRARY})
+    src/vk/ui.cpp)
+target_compile_features(3dsim_render PRIVATE cxx_std_23)
+target_include_directories(3dsim_render PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/io ${GEN_DIR})
+target_link_libraries(3dsim_render PUBLIC 3dsim_core PRIVATE imgui glfw Vulkan::Vulkan)
+
+add_library(3dsim_script STATIC
+    src/script/lua_host.cpp
+    src/script/api_math.cpp
+    src/script/api_components.cpp
+    src/script/api_scene.cpp
+    src/script/api_ui.cpp)
+target_compile_features(3dsim_script PRIVATE cxx_std_23)
+target_include_directories(3dsim_script PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${LUA_INCLUDE_DIR})
+target_link_libraries(3dsim_script PUBLIC 3dsim_core 3dsim_io 3dsim_render 3dsim_app 3dsim_sim PRIVATE ${LUA_LIBRARY})
+
+# the app: glue (main loop, systems, scene loading) + all subsystems
+add_executable(vksim
+    src/main.cpp
+    src/systems.cpp
+    src/scene.cpp)
 target_compile_features(vksim PRIVATE cxx_std_23)
-target_include_directories(vksim PRIVATE
-    ${GEN_DIR}
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
-    ${CMAKE_SOURCE_DIR}/lib/entt/single_include
-    ${CMAKE_SOURCE_DIR}/lib/json
-    ${LUA_INCLUDE_DIR}
-    ${CMAKE_SOURCE_DIR}/lib/stb
-    ${CMAKE_SOURCE_DIR}/lib/tinyexr
-    ${CMAKE_SOURCE_DIR}/lib/miniz
-    ${CMAKE_SOURCE_DIR}/lib/tinygltf
-    ${XR_INCLUDES}
-    ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(vksim PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/sim ${XR_INCLUDES} ${GEN_DIR})
+target_link_libraries(vksim PRIVATE
+    3dsim_script 3dsim_sim 3dsim_app 3dsim_xr 3dsim_render 3dsim_io
+    glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB dl ${LUA_LIBRARY})
 
 # CPU self-test for the ported dual-quaternion math (Blender ground truth). Build with -Dvksim's
 # default; run ./build/dualquat_test (no GPU needed).
 add_executable(dualquat_test tests/dualquat_test.cpp src/sim/dualquat.cpp)
 target_compile_features(dualquat_test PRIVATE cxx_std_23)
-target_include_directories(dualquat_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(dualquat_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/core)
 
 # CPU self-test for the tapered-capsule collision shape fitter.
-add_executable(collision_shape_solver_test solvers/collision_shape_solver_test.cpp solvers/collision_shape_solver.cpp)
+add_executable(collision_shape_solver_test solvers/collision_shape_solver_test.cpp)
 target_compile_features(collision_shape_solver_test PRIVATE cxx_std_23)
-target_include_directories(collision_shape_solver_test PRIVATE ${CMAKE_SOURCE_DIR}/solvers)
+target_link_libraries(collision_shape_solver_test PRIVATE 3dsim_solvers)
 
-# GPU-free probe: ECS + GLTF loader + collision shape solver (no Vulkan/GLFW/Jolt/ImGui).
-add_executable(bone_probe
-    solvers/bone_probe.cpp
-    src/gltf.cpp
-    src/assets.cpp
-    solvers/collision_shape_solver.cpp
-    ${CMAKE_SOURCE_DIR}/lib/tinygltf/tiny_gltf_v3.c
-    ${CMAKE_SOURCE_DIR}/lib/tinyexr/tinyexr.cc
-    ${CMAKE_SOURCE_DIR}/lib/miniz/miniz.c)
+# GPU-free probe: core + IO (GLTF loader) + collision shape solver (no Vulkan/GLFW/Jolt/ImGui).
+add_executable(bone_probe solvers/bone_probe.cpp)
 target_compile_features(bone_probe PRIVATE cxx_std_23)
-target_link_libraries(bone_probe PRIVATE ZLIB::ZLIB)
-target_include_directories(bone_probe PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/lib/entt/single_include
-    ${CMAKE_SOURCE_DIR}/lib/stb
-    ${CMAKE_SOURCE_DIR}/lib/tinyexr
-    ${CMAKE_SOURCE_DIR}/lib/miniz
-    ${CMAKE_SOURCE_DIR}/lib/tinygltf)
+target_link_libraries(bone_probe PRIVATE 3dsim_io 3dsim_solvers)
 
 

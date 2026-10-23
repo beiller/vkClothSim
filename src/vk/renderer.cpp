@@ -212,14 +212,14 @@ Renderer::GpuMeshRef Renderer::addMesh(const Mesh& mesh) {
     return {(int)m_geoms.size() - 1, MeshGpu{VertexStore{g.pos, g.posMem, n}, VertexStore{g.nrm, g.nrmMem, n}}};
 }
 
-void Renderer::adoptSkinned(Skin& skin, const entt::registry& reg) {
+void Renderer::adoptSkinned(const entt::registry& reg, const SkinnedMeshProvider& skinned) {
     for (const auto e : reg.view<Skeleton>()) {
         const auto& skel = reg.get<Skeleton>(e);
         for (const entt::entity meshEnt : skel.meshes) {
             if (m_entGeom.count(meshEnt))
                 continue;
             MeshGpu rw;
-            if (!skin.meshGpu(meshEnt, rw))
+            if (!skinned.meshGpu(meshEnt, rw))
                 continue;
             const auto* gc = reg.try_get<Geometry>(meshEnt);
             if (!gc)

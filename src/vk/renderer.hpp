@@ -4,9 +4,9 @@
 #include "gpuverts.hpp"
 #include "math.hpp"
 #include "mesh.hpp"
-#include "sim/skin.hpp"
 #include "xr_frame.hpp"
 #include <entt/entt.hpp>
+#include <functional>
 #include <imgui.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -40,7 +40,11 @@ public:
 
     void init(VkApp& app, int nInstances, const Mat4& viewProj);
     GpuMeshRef addMesh(const Mesh& mesh);
-    void adoptSkinned(Skin& skin, const entt::registry& reg);
+    // narrow interface the renderer uses to obtain skinned vertex buffers (implemented by the sim)
+    struct SkinnedMeshProvider {
+        std::function<bool(entt::entity, MeshGpu&)> meshGpu;
+    };
+    void adoptSkinned(const entt::registry& reg, const SkinnedMeshProvider& skinned);
     void shareGeomSlot(entt::entity geomEnt, int slot);
     int instFor(entt::entity e, entt::entity geomEnt, const entt::registry& reg);
     int instOf(entt::entity e) const;

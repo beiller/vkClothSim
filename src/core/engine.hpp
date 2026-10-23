@@ -1,6 +1,6 @@
 #pragma once
 #include "app/rigid.hpp"
-#include "scene_script.hpp"
+#include "script/scene_script.hpp"
 #include "sim/gpusim.hpp"
 #include "vk/renderer.hpp"
 #include "xr_backend.hpp"
