@@ -1,6 +1,7 @@
 #pragma once
 #include <vulkan/vulkan.h>
 
+#include "components.hpp"
 #include "gpuverts.hpp"
 #include "math.hpp"
 #include "mesh.hpp"
@@ -13,12 +14,6 @@
 #include <vector>
 
 class VkApp;
-
-struct RenderSettings {
-    float bgColor[3] = {0.10f, 0.11f, 0.15f};
-    float exposure = 1.0f;
-    float envIntensity = 1.0f;
-};
 
 struct CameraView {
     Mat4 viewProj;

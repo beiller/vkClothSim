@@ -1,5 +1,6 @@
 #pragma once
 #include "app/rigid.hpp"
+#include "core/reflect.hpp"
 #include "script/scene_script.hpp"
 #include "sim/gpusim.hpp"
 #include "vk/renderer.hpp"
@@ -7,6 +8,7 @@
 #include <entt/entt.hpp>
 #include <memory>
 #include <utility>
+#include <vector>
 
 class VkApp;
 
@@ -36,3 +38,8 @@ struct Engine {
     std::string scenePath;
     std::string loadError;
 };
+
+// the non-entity reflection roots (editor / url binding); only glue code builds this
+inline std::vector<refl::RootRef> engineRoots(Engine& w) {
+    return {{refl::findType("RenderSettings"), &w.render}, {refl::findType("RigidScene"), &w.rigid}};
+}

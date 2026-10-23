@@ -1,6 +1,5 @@
 #include "url.hpp"
 
-#include "engine.hpp"
 #include <cstring>
 #include <entt/entt.hpp>
 
@@ -11,9 +10,9 @@ static const FieldDesc* findField(const TypeDesc* t, const std::string& name) {
     return nullptr;
 }
 
-bool resolveEntityField(const Engine& w, entt::entity ent, const std::string& field, const std::string& label,
+bool resolveEntityField(const entt::registry& reg, entt::entity ent, const std::string& field, const std::string& label,
                         UrlRef& out, std::string& err) {
-    auto comps = refl::entityFields(w.reg, ent);
+    auto comps = refl::entityFields(reg, ent);
     if (comps.empty()) {
         err = "entity '" + label + "' has no reflectable components";
         return false;
@@ -40,8 +39,8 @@ bool resolveEntityField(const Engine& w, entt::entity ent, const std::string& fi
         }
     }
     if (matches == 0 && !qual)
-        if (const auto* ref = w.reg.try_get<MaterialRef>(ent))
-            for (auto& [t, b] : refl::entityFields(w.reg, ref->mat)) {
+        if (const auto* ref = reg.try_get<MaterialRef>(ent))
+            for (auto& [t, b] : refl::entityFields(reg, ref->mat)) {
                 if (const FieldDesc* f = findField(t, fn)) {
                     match = f;
                     matchBase = (char*)b + f->offset;
@@ -60,7 +59,8 @@ bool resolveEntityField(const Engine& w, entt::entity ent, const std::string& fi
     return true;
 }
 
-bool resolveUrl(const Engine& w, const std::string& url, UrlRef& out, std::string& err) {
+bool resolveUrl(const entt::registry& reg, const std::vector<refl::RootRef>& roots, const std::string& url, UrlRef& out,
+                std::string& err) {
     const auto dot = url.find('.');
     if (dot == std::string::npos) {
         err = "expected 'name.field'";
@@ -70,20 +70,25 @@ bool resolveUrl(const Engine& w, const std::string& url, UrlRef& out, std::strin
     const std::string rest = url.substr(dot + 1);
 
     if (head == "render" || head == "rigid") {
-        const auto* root = refl::findType(head == "render" ? "RenderSettings" : "RigidScene");
-        void* base = head == "render" ? (void*)&w.render : (void*)&w.rigid;
-        const FieldDesc* f = findField(root, rest);
-        if (!f) {
-            err = "no field '" + rest + "' in " + head;
-            return false;
+        const TypeDesc* want = refl::findType(head == "render" ? "RenderSettings" : "RigidScene");
+        for (const auto& root : roots) {
+            if (root.type != want)
+                continue;
+            const FieldDesc* f = findField(root.type, rest);
+            if (!f) {
+                err = "no field '" + rest + "' in " + head;
+                return false;
+            }
+            out = {f, (char*)root.base + f->offset};
+            return true;
         }
-        out = {f, (char*)base + f->offset};
-        return true;
+        err = "no '" + head + "' root";
+        return false;
     }
 
     entt::entity ent = entt::null;
     int found = 0;
-    for (auto [e, n] : w.reg.view<Name>().each()) {
+    for (auto [e, n] : reg.view<Name>().each()) {
         if (n.id == head) {
             ent = e;
             ++found;
@@ -98,7 +103,7 @@ bool resolveUrl(const Engine& w, const std::string& url, UrlRef& out, std::strin
         return false;
     }
 
-    return resolveEntityField(w, ent, rest, head, out, err);
+    return resolveEntityField(reg, ent, rest, head, out, err);
 }
 
 static bool applySet(const UrlRef& r, const float* vals, int n, std::string& err) {
@@ -197,31 +202,34 @@ static bool applyGet(const UrlRef& r, float* vals, int maxN, int& n, std::string
     return false;
 }
 
-bool sceneSet(Engine& w, const std::string& url, const float* vals, int n, std::string& err) {
+bool sceneSet(const entt::registry& reg, const std::vector<refl::RootRef>& roots, const std::string& url, const float* vals,
+              int n, std::string& err) {
     UrlRef r;
-    if (!resolveUrl(w, url, r, err))
+    if (!resolveUrl(reg, roots, url, r, err))
         return false;
     return applySet(r, vals, n, err);
 }
 
-bool sceneGet(const Engine& w, const std::string& url, float* vals, int maxN, int& n, std::string& err) {
+bool sceneGet(const entt::registry& reg, const std::vector<refl::RootRef>& roots, const std::string& url, float* vals,
+              int maxN, int& n, std::string& err) {
     UrlRef r;
-    if (!resolveUrl(w, url, r, err))
+    if (!resolveUrl(reg, roots, url, r, err))
         return false;
     return applyGet(r, vals, maxN, n, err);
 }
 
-bool sceneSetEnt(Engine& w, entt::entity ent, const std::string& field, const float* vals, int n, std::string& err) {
+bool sceneSetEnt(const entt::registry& reg, entt::entity ent, const std::string& field, const float* vals, int n,
+                 std::string& err) {
     UrlRef r;
-    if (!resolveEntityField(w, ent, field, "entity", r, err))
+    if (!resolveEntityField(reg, ent, field, "entity", r, err))
         return false;
     return applySet(r, vals, n, err);
 }
 
-bool sceneGetEnt(const Engine& w, entt::entity ent, const std::string& field, float* vals, int maxN, int& n,
+bool sceneGetEnt(const entt::registry& reg, entt::entity ent, const std::string& field, float* vals, int maxN, int& n,
                  std::string& err) {
     UrlRef r;
-    if (!resolveEntityField(w, ent, field, "entity", r, err))
+    if (!resolveEntityField(reg, ent, field, "entity", r, err))
         return false;
     return applyGet(r, vals, maxN, n, err);
 }

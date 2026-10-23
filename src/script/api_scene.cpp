@@ -41,25 +41,25 @@ int lSet(lua_State* L) {
         const entt::entity e = luaReadEnt(L, 1);
         const std::string field = luaL_checkstring(L, 2);
         const auto vals = readVals(3);
-        if (vals.empty() || !sceneSetEnt(w, e, field, vals.data(), (int)vals.size(), err))
+        if (vals.empty() || !sceneSetEnt(w.reg, e, field, vals.data(), (int)vals.size(), err))
             return luaL_error(L, "scene.set %s: %s", field.c_str(), err.c_str());
         return 0;
     }
     const std::string url = luaL_checkstring(L, 1);
     const auto vals = readVals(2);
-    if (vals.empty() || !sceneSet(w, url, vals.data(), (int)vals.size(), err))
+    if (vals.empty() || !sceneSet(w.reg, engineRoots(w), url, vals.data(), (int)vals.size(), err))
         return luaL_error(L, "scene.set '%s': %s", url.c_str(), err.c_str());
     return 0;
 }
 
 int lGet(lua_State* L) {
-    const Engine& w = SceneScript::sSelf(L)->w();
+    Engine& w = SceneScript::sSelf(L)->w();
     float vals[4]{};
     int n = 0;
     std::string err;
     const bool ok = lua_isnumber(L, 1)
-                        ? sceneGetEnt(w, luaReadEnt(L, 1), luaL_checkstring(L, 2), vals, 4, n, err)
-                        : sceneGet(w, luaL_checkstring(L, 1), vals, 4, n, err);
+                        ? sceneGetEnt(w.reg, luaReadEnt(L, 1), luaL_checkstring(L, 2), vals, 4, n, err)
+                        : sceneGet(w.reg, engineRoots(w), luaL_checkstring(L, 1), vals, 4, n, err);
     if (!ok)
         return luaL_error(L, "scene.get: %s", err.c_str());
     if (n == 1) {

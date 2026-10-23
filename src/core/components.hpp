@@ -164,6 +164,12 @@ struct PointLight {
     float shadowMaxRadius = 16.0f;
 };
 
+struct RenderSettings {
+    float bgColor[3] = {0.10f, 0.11f, 0.15f};
+    float exposure = 1.0f;
+    float envIntensity = 1.0f;
+};
+
 struct Camera {
     float fovDeg = 50.0f;
     float nearP = 0.01f;

@@ -103,7 +103,6 @@ add_library(3dsim_core STATIC
     src/core/components.cpp
     src/core/url.cpp)
 target_compile_features(3dsim_core PRIVATE cxx_std_23)
-target_link_libraries(3dsim_core PUBLIC Jolt::Jolt imgui)  # engine.hpp references rigid (Jolt) + renderer (imgui) headers
 target_include_directories(3dsim_core PUBLIC
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/core
@@ -149,7 +148,7 @@ add_library(3dsim_render STATIC
     src/vk/ui.cpp)
 target_compile_features(3dsim_render PRIVATE cxx_std_23)
 target_include_directories(3dsim_render PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/io ${GEN_DIR})
-target_link_libraries(3dsim_render PUBLIC 3dsim_core PRIVATE imgui glfw Vulkan::Vulkan)
+target_link_libraries(3dsim_render PUBLIC 3dsim_core imgui PRIVATE glfw Vulkan::Vulkan Jolt::Jolt)
 
 add_library(3dsim_script STATIC
     src/script/lua_host.cpp
@@ -159,7 +158,7 @@ add_library(3dsim_script STATIC
     src/script/api_ui.cpp)
 target_compile_features(3dsim_script PRIVATE cxx_std_23)
 target_include_directories(3dsim_script PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${LUA_INCLUDE_DIR})
-target_link_libraries(3dsim_script PUBLIC 3dsim_core 3dsim_io 3dsim_render 3dsim_app 3dsim_sim PRIVATE ${LUA_LIBRARY})
+target_link_libraries(3dsim_script PUBLIC 3dsim_core 3dsim_io 3dsim_render 3dsim_app 3dsim_sim PRIVATE Jolt::Jolt ${LUA_LIBRARY})
 
 # the app: glue (main loop, systems, scene loading) + all subsystems
 add_executable(vksim

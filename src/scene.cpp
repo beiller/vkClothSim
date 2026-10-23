@@ -121,7 +121,7 @@ void spawnEditorUi(Engine& w, entt::entity tab) {
                 spawnFieldWidget(w, sec, label, &f, (void*)b);
             }
     }
-    for (const auto& r : refl::roots(w)) {
+    for (const auto& r : engineRoots(w)) {
         entt::entity sec = spawnWidget(w, tab, UISection{r.type->name, true});
         for (const auto& f : r.type->fields)
             spawnFieldWidget(w, sec, f.name, &f, r.base);
@@ -222,7 +222,7 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
                 else
                     vals[0] = v.get<float>();
                 std::string err;
-                if (!sceneSet(w, k, vals, n, err))
+                if (!sceneSet(w.reg, engineRoots(w), k, vals, n, err))
                     fail(p, "set '" + k + "': " + err);
             }
         }

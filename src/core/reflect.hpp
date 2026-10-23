@@ -1,5 +1,5 @@
 #pragma once
-#include "engine.hpp"
+#include "components.hpp"
 #include <cstddef>
 #include <cstring>
 #include <span>
@@ -286,9 +286,5 @@ struct RootRef {
     const TypeDesc* type;
     void* base;
 };
-
-inline std::vector<RootRef> roots(Engine& w) {
-    return {{findType("RenderSettings"), &w.render}, {findType("RigidScene"), &w.rigid}};
-}
 
 }

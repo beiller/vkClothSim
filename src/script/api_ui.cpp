@@ -17,7 +17,7 @@ const UrlRef bindRef(Engine& w, lua_State* L, int idx) {
     const char* bind = luaL_checkstring(L, idx);
     UrlRef r;
     std::string err;
-    if (!resolveUrl(w, bind, r, err))
+    if (!resolveUrl(w.reg, engineRoots(w), bind, r, err))
         luaL_error(L, "bind '%s': %s", bind, err.c_str());
     return r;
 }

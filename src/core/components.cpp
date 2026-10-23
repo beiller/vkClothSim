@@ -1,4 +1,5 @@
 #include "components.hpp"
+#include "ecs.hpp"
 
 #include "reflect.hpp"
 #include <cstring>
