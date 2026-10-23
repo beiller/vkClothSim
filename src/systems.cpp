@@ -8,22 +8,23 @@
 #include <cstdlib>
 #include <unordered_map>
 
-entt::entity findActiveCamera(const Engine& w) {
+entt::entity findActiveCamera(const entt::registry& reg) {
     entt::entity cam = entt::null;
-    w.reg.view<Camera>().each([&](entt::entity e, const Camera& c) {
+    reg.view<Camera>().each([&](entt::entity e, const Camera& c) {
         if (c.active)
             cam = e;
     });
     return cam;
 }
 
-static V3 walkPos(const Engine& w) {
-    return w.vrRoot != entt::null ? w.reg.get<Transform>(w.vrRoot).pos : V3{0, 0, 0};
+static V3 walkPos(const entt::registry& reg) {
+    const entt::entity root = findMarker<VrRoot>(reg);
+    return root != entt::null ? reg.get<Transform>(root).pos : V3{0, 0, 0};
 }
 
-CameraView cameraView(Engine& w, entt::entity cam, float aspect) {
-    const Transform wt = worldTransform(w.reg, cam);
-    const Camera& c = w.reg.get<Camera>(cam);
+CameraView cameraView(const entt::registry& reg, entt::entity cam, float aspect) {
+    const Transform wt = worldTransform(reg, cam);
+    const Camera& c = reg.get<Camera>(cam);
     const Mat4 view = viewFromPose(wt.pos, wt.quat);
     const float tanU = std::tan(c.fovDeg * 0.5f * kPi / 180.0f);
     const float tanR = tanU * aspect;
@@ -31,29 +32,31 @@ CameraView cameraView(Engine& w, entt::entity cam, float aspect) {
             c.nearP, c.farP};
 }
 
-void stepXr(Engine& w, const XrFrame& fr) {
+void stepXr(entt::registry& reg, const XrFrame& fr) {
     const bool havePose = fr.havePose && fr.nEyes > 0;
-    if (w.vrCam != entt::null)
-        w.reg.get<Camera>(w.vrCam).active = havePose;
-    if (w.cam != entt::null)
-        w.reg.get<Camera>(w.cam).active = !havePose;
-    const entt::entity cam = findActiveCamera(w);
-    if (cam == entt::null)
+    const entt::entity vrCam = findMarker<VrCamera>(reg);
+    if (vrCam != entt::null)
+        reg.get<Camera>(vrCam).active = havePose;
+    const entt::entity cam = findMarker<SceneCamera>(reg);
+    if (cam != entt::null)
+        reg.get<Camera>(cam).active = !havePose;
+    const entt::entity active = findActiveCamera(reg);
+    if (active == entt::null)
         return;
-    Camera& c = w.reg.get<Camera>(cam);
+    Camera& c = reg.get<Camera>(active);
     if (havePose) {
         const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
-        Transform& t = w.reg.get<Transform>(cam);
+        Transform& t = reg.get<Transform>(active);
         t.pos = mid;
         t.quat = fr.eye[0].quat;
-        const V3 walk = walkPos(w);
+        const V3 walk = walkPos(reg);
         c.nViews = fr.nEyes;
         for (int i = 0; i < c.nViews; ++i) {
             c.views[i] = fr.eye[i];
             c.views[i].pos = vAdd(c.views[i].pos, walk);
         }
     } else {
-        const Transform wt = worldTransform(w.reg, cam);
+        const Transform wt = worldTransform(reg, active);
         const V3 head = wt.pos;
         const V4 q = wt.quat;
         const float qf[4] = {q.x, q.y, q.z, q.w};
@@ -72,17 +75,17 @@ static V3 restPose(int hand) {
     return hand == 0 ? V3{-0.30f, -0.40f, 0.40f} : V3{0.30f, -0.40f, 0.40f};
 }
 
-entt::entity spawnVrRoot(Engine& w) {
-    entt::entity root = w.reg.create();
-    w.reg.emplace<Transform>(root, V3{0, 0, 0}, V4{0, 0, 0, 1});
-    w.reg.emplace<Name>(root, "vr root");
-    entt::entity head = w.reg.create();
-    w.reg.emplace<Transform>(head, V3{0, 0, 0}, V4{0, 0, 0, 1});
-    w.reg.emplace<Camera>(head, Camera{90.0f, 0.01f, 300.0f, false});
-    w.reg.emplace<Parent>(head, root);
-    w.reg.emplace<Name>(head, "vr cam");
-    w.vrCam = head;
-    w.vrRoot = root;
+entt::entity spawnVrRoot(entt::registry& reg) {
+    entt::entity root = reg.create();
+    reg.emplace<Transform>(root, V3{0, 0, 0}, V4{0, 0, 0, 1});
+    reg.emplace<VrRoot>(root);
+    reg.emplace<Name>(root, "vr root");
+    entt::entity head = reg.create();
+    reg.emplace<Transform>(head, V3{0, 0, 0}, V4{0, 0, 0, 1});
+    reg.emplace<Camera>(head, Camera{90.0f, 0.01f, 300.0f, false});
+    reg.emplace<VrCamera>(head);
+    reg.emplace<Parent>(head, root);
+    reg.emplace<Name>(head, "vr cam");
     return root;
 }
 
@@ -97,8 +100,8 @@ void spawnControllers(Engine& w) {
     for (int h = 0; h < 2; ++h) {
         entt::entity e = w.reg.create();
         w.reg.emplace<Transform>(e, V3{0, 0, 0}, V4{0, 0, 0, 1});
-        if (w.vrRoot != entt::null)
-            w.reg.emplace<Parent>(e, w.vrRoot);
+        if (const entt::entity root = findMarker<VrRoot>(w.reg); root != entt::null)
+            w.reg.emplace<Parent>(e, root);
         w.reg.emplace<ControllerInput>(e, ControllerInput{h});
         w.reg.emplace<Renderable>(e, geom);
         w.reg.emplace<MaterialRef>(e, gripMat);
@@ -106,18 +109,18 @@ void spawnControllers(Engine& w) {
     }
 }
 
-void stepControllers(Engine& w, const XrFrame& fr) {
-    const entt::entity cam = findActiveCamera(w);
+void stepControllers(entt::registry& reg, const XrFrame& fr) {
+    const entt::entity cam = findActiveCamera(reg);
     Transform headLocal{};
     if (cam != entt::null) {
         if (fr.havePose && fr.nEyes > 0)
-            headLocal = w.reg.get<Transform>(cam);
+            headLocal = reg.get<Transform>(cam);
         else {
-            const Transform wt = worldTransform(w.reg, cam);
-            headLocal = Transform{vSub(wt.pos, walkPos(w)), wt.quat};
+            const Transform wt = worldTransform(reg, cam);
+            headLocal = Transform{vSub(wt.pos, walkPos(reg)), wt.quat};
         }
     }
-    w.reg.view<ControllerInput, Transform>().each([&](auto e, ControllerInput& ci, Transform& t) {
+    reg.view<ControllerInput, Transform>().each([&](auto e, ControllerInput& ci, Transform& t) {
         if (ci.hand < 0 || ci.hand >= 2)
             return;
         const XrController& c = fr.controller[ci.hand];
@@ -179,22 +182,21 @@ void stepKeyboard(Engine& w) {
     });
 }
 
-void stepRigid(Engine& w) {
-    w.rigid.project(w.reg);
-    for (const auto e : w.reg.view<KinematicBody>()) {
-        const Transform wt = worldTransform(w.reg, e);
-        w.rigid.setKinematicPose(e, wt.pos, wt.quat);
+void stepRigid(RigidScene& rigid, entt::registry& reg) {
+    rigid.project(reg);
+    for (const auto e : reg.view<KinematicBody>()) {
+        const Transform wt = worldTransform(reg, e);
+        rigid.setKinematicPose(e, wt.pos, wt.quat);
     }
-    w.rigid.step();
-    w.reg.view<RigidBody, Transform>().each([&](entt::entity e, auto&, Transform& t) {
-        const Transform p = w.rigid.pose(e);
+    rigid.step();
+    reg.view<RigidBody, Transform>().each([&](entt::entity e, auto&, Transform& t) {
+        const Transform p = rigid.pose(e);
         t.pos = p.pos;
         t.quat = p.quat;
     });
 }
 
-void resolveWorldTransforms(Engine& w) {
-    auto& reg = w.reg;
+void resolveWorldTransforms(entt::registry& reg) {
     struct Node {
         entt::entity e;
         Transform local;
@@ -255,8 +257,14 @@ void resolveWorldTransforms(Engine& w) {
 }
 
 void stepSoft(Engine& w, VkCommandBuffer cmd) {
-    w.gpuSim.soft.syncCapsules(w);
-    w.gpuSim.soft.project(w);
+    MeshProvider meshes;
+    meshes.addMesh = [&](const Mesh& m) {
+        const auto r = w.renderer.addMesh(m);
+        return GpuMeshRef{r.geom, r.rw};
+    };
+    meshes.shareGeomSlot = [&](entt::entity g, int slot) { w.renderer.shareGeomSlot(g, slot); };
+    w.gpuSim.soft.syncCapsules(w.reg);
+    w.gpuSim.soft.project(w.reg, meshes);
     for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
         w.gpuSim.soft.setPinned(entity, sb.pinned);
         w.gpuSim.soft.setParams(entity, sb.params, sb.steps);

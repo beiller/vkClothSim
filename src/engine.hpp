@@ -26,9 +26,6 @@ struct Engine {
     Renderer renderer;
     std::unique_ptr<IXrBackend> xr;
     RenderSettings render;
-    entt::entity cam = entt::null;
-    entt::entity vrCam = entt::null;
-    entt::entity vrRoot = entt::null;
     SceneScript script;
     float fps = 0.0f;
     PhaseMs phase;

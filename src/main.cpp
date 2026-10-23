@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
                     imgs[i] = engine.xr->images(i);
             }
             engine.renderer.initXrTarget(app, engine.xr->format(), engine.xr->eyeCount(), imgs, exts);
-            spawnVrRoot(engine);
+            spawnVrRoot(engine.reg);
             spawnControllers(engine);
         } else
             std::printf(
@@ -136,8 +136,8 @@ int main(int argc, char** argv) {
         engine.script.activateScripts();
         engine.script.animateAll(dt);
         if (engine.xr) {
-            stepXr(engine, fr);
-            stepControllers(engine, fr);
+            stepXr(engine.reg, fr);
+            stepControllers(engine.reg, fr);
         }
 
         simAccum += dt;
@@ -145,20 +145,20 @@ int main(int argc, char** argv) {
             simAccum = 0.4f;
         while (simAccum >= kFrameDt) {
             engine.script.physicsAll(kFrameDt);
-            stepRigid(engine);
-            resolveWorldTransforms(engine);
+            stepRigid(engine.rigid, engine.reg);
+            resolveWorldTransforms(engine.reg);
             VkCommandBuffer simCmd = app.beginCommands();
             engine.gpuSim.skin.step(engine.reg, simCmd);
             stepSoft(engine, simCmd);
             app.submit(simCmd);
             simAccum -= kFrameDt;
         }
-        resolveWorldTransforms(engine);
+        resolveWorldTransforms(engine.reg);
         const auto tSim = std::chrono::steady_clock::now();
 
-        const entt::entity cam = findActiveCamera(engine);
+        const entt::entity cam = findActiveCamera(engine.reg);
         if (cam != entt::null)
-            engine.renderer.setViewProj(cameraView(engine, cam, (float)app.extent().width / (float)app.extent().height));
+            engine.renderer.setViewProj(cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height));
         imguiNewFrame();
         drawUi(engine);
         if (engine.showDemo)

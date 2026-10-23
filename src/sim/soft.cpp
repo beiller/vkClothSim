@@ -1,6 +1,6 @@
 #include "sim/soft.hpp"
 
-#include "engine.hpp"
+#include "ecs.hpp"
 #include "softbody_spv.hpp"
 #include "vk/vkutil.hpp"
 #include <cmath>
@@ -49,43 +49,43 @@ void Soft::setFloor(float y) {
     m_floorY = y;
 }
 
-void Soft::syncCapsules(Engine& w) {
+void Soft::syncCapsules(const entt::registry& reg) {
     CapsuleGPU* caps = m_caps.data();
     int n = 0;
     const auto push = [&](entt::entity e, const std::vector<entt::entity>& cols) {
-        const auto* wt = w.reg.try_get<WorldTransform>(e);
+        const auto* wt = reg.try_get<WorldTransform>(e);
         if (!wt)
             return;
         for (entt::entity c : cols) {
-            const auto* col = w.reg.try_get<Collider>(c);
-            auto* cs = col ? w.reg.try_get<CapsuleShape>(col->shape) : nullptr;
+            const auto* col = reg.try_get<Collider>(c);
+            auto* cs = col ? reg.try_get<CapsuleShape>(col->shape) : nullptr;
             if (!cs || n >= kMaxCapsules)
                 continue;
             Transform t = *wt;
-            if (const auto* lt = w.reg.try_get<Transform>(c))
+            if (const auto* lt = reg.try_get<Transform>(c))
                 t = transformCompose(t, *lt);
             fillCapsule(caps[n++], t.pos, t.quat, cs->halfLen, cs->radius);
         }
     };
-    for (auto [e, rb] : w.reg.view<RigidBody>().each())
+    for (auto [e, rb] : reg.view<RigidBody>().each())
         push(e, rb.colliders);
-    for (auto [e, kb] : w.reg.view<KinematicBody>().each())
+    for (auto [e, kb] : reg.view<KinematicBody>().each())
         push(e, kb.colliders);
     uploadCapsules(n);
 }
 
-void Soft::project(Engine& w) {
-    for (auto [e, sb] : w.reg.view<SoftBodyData>().each()) {
+void Soft::project(const entt::registry& reg, const MeshProvider& meshes) {
+    for (auto [e, sb] : reg.view<SoftBodyData>().each()) {
         if (m_ent.count(e))
             continue;
-        const auto fail = [this, &w, e](const char* why) {
+        const auto fail = [this, &reg, e](const char* why) {
             if (m_warned.insert(e).second) {
-                const auto* n = w.reg.try_get<Name>(e);
+                const auto* n = reg.try_get<Name>(e);
                 std::fprintf(stderr, "3dsim: soft body '%s': %s\n", n ? n->id.c_str() : "?", why);
             }
         };
-        const auto* rend = w.reg.try_get<Renderable>(e);
-        const auto* geom = rend ? w.reg.try_get<Geometry>(rend->geom) : nullptr;
+        const auto* rend = reg.try_get<Renderable>(e);
+        const auto* geom = rend ? reg.try_get<Geometry>(rend->geom) : nullptr;
         if (!geom) {
             fail("no geometry (Renderable.geom)");
             continue;
@@ -111,8 +111,8 @@ void Soft::project(Engine& w) {
             cons.push_back({(int)sb.cons[i], (int)sb.cons[i + 1], sb.cons[i + 2], sb.cons[i + 3]});
         Mesh m = geom->mesh;
         Transform t{};
-        if (w.reg.try_get<Transform>(e))
-            t = worldTransform(w.reg, e);
+        if (reg.try_get<Transform>(e))
+            t = worldTransform(reg, e);
         for (int i = 0; i < nv; ++i) {
             const V3 v = vAdd(quatRotate(t.quat, V3{m.pos[3 * i], m.pos[3 * i + 1], m.pos[3 * i + 2]}), t.pos);
             m.pos[3 * i] = v.x;
@@ -125,8 +125,8 @@ void Soft::project(Engine& w) {
                 m.nrm[3 * i + 2] = n.z;
             }
         }
-        const Renderer::GpuMeshRef ref = w.renderer.addMesh(m);
-        w.renderer.shareGeomSlot(rend->geom, ref.geom);
+        const GpuMeshRef ref = meshes.addMesh(m);
+        meshes.shareGeomSlot(rend->geom, ref.slot);
         addSoftBody(e, m, cons, ref.rw);
     }
 }

@@ -1,12 +1,6 @@
 #pragma once
 #include "math.hpp"
 
-struct View {
-    V3 pos{0, 0, 0};
-    V4 quat{0, 0, 0, 1};
-    float tanL = 1.0f, tanR = 1.0f, tanU = 0.58f, tanD = 0.58f;
-};
-
 struct XrController {
     bool active = false;
     V3 pos{};

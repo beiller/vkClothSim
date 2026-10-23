@@ -72,7 +72,7 @@ void addComponents(entt::registry& reg, entt::entity e, const json& cj, const st
     }
 }
 
-void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh) {
+entt::entity buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh) {
     const auto name = o.at("name").get<std::string>();
     const std::string what = "object '" + name + "'";
     const entt::entity e = w.reg.create();
@@ -96,6 +96,7 @@ void buildObject(Engine& w, const json& o, const std::string& p, bool allowMesh)
     } else if (!o.contains("gltf") && !w.reg.try_get<Transform>(e)) {
         w.reg.emplace<Transform>(e);
     }
+    return e;
 }
 
 }
@@ -158,14 +159,13 @@ void resetScene(Engine& w) {
     std::string err;
     if (!w.script.loadMeshStdlib(err))
         std::fprintf(stderr, "3dsim: geometry stdlib: %s\n", err.c_str());
-    w.cam = w.vrCam = w.vrRoot = entt::null;
     w.uiSeq = 0;
     w.showDemo = false;
     w.render = {};
     spawnFpsHud(w);
     spawnInputEntities(w);
     if (w.xr && w.xrSession) {
-        spawnVrRoot(w);
+        spawnVrRoot(w.reg);
         spawnControllers(w);
     }
 }
@@ -198,12 +198,11 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
             }
         if (!camObj)
             fail(p, "scene must declare exactly one camera object (an object with a 'Camera' component)");
-        buildObject(w, *camObj, p, false);
-        for (auto e : w.reg.view<Camera>())
-            w.cam = e;
+        const entt::entity cam = buildObject(w, *camObj, p, false);
+        w.reg.emplace<SceneCamera>(cam);
 
         const VkExtent2D ext = w.app->extent();
-        w.renderer.setViewProj(cameraView(w, w.cam, (float)ext.width / (float)ext.height));
+        w.renderer.setViewProj(cameraView(w.reg, cam, (float)ext.width / (float)ext.height));
 
         for (const auto& o : objects)
             if (&o != camObj)

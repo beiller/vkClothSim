@@ -2,25 +2,36 @@
 #include <vulkan/vulkan.h>
 
 #include "capsule.hpp"
-#include "ecs.hpp"
+#include "components.hpp"
 #include "gpuverts.hpp"
 #include "mesh.hpp"
-#include "sim/params.hpp"
+#include "params.hpp"
 #include "sim/phys.hpp"
 #include "sim/sim.hpp"
+#include <functional>
 #include <limits>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
-struct Engine;
+// a GPU mesh slot (owned by the renderer): slot index + read-write vertex stores
+struct GpuMeshRef {
+    int slot = -1;
+    MeshGpu rw;
+};
+
+// narrow interface the sim uses to obtain GPU mesh slots (implemented by the renderer)
+struct MeshProvider {
+    std::function<GpuMeshRef(const Mesh&)> addMesh;
+    std::function<void(entt::entity, int)> shareGeomSlot;
+};
 
 class Soft {
 public:
     void init(VkDevice dev, VkPhysicalDevice pdev);
-    void project(Engine& w);
+    void project(const entt::registry& reg, const MeshProvider& meshes);
     void setFloor(float y);
-    void syncCapsules(Engine& w);
+    void syncCapsules(const entt::registry& reg);
     static constexpr int kMaxCapsules = 16384;
     static constexpr int kPoolChunk = 16;
     CapsuleGPU* caps() { return m_caps.data(); }

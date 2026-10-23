@@ -17,6 +17,13 @@ struct V4 {
     float x, y, z, w;
 };
 
+// a view frustum: position + orientation + per-edge tangent extents
+struct View {
+    V3 pos{0, 0, 0};
+    V4 quat{0, 0, 0, 1};
+    float tanL = 1.0f, tanR = 1.0f, tanU = 0.58f, tanD = 0.58f;
+};
+
 inline V3 vAdd(V3 a, V3 b) {
     return {a.x + b.x, a.y + b.y, a.z + b.z};
 }
