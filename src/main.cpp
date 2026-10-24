@@ -40,7 +40,15 @@ struct PaceWatch {
 
 int main(int argc, char** argv) {
     VkApp app;
-    if (!app.initInstance(900, 900, "3dsim"))
+    int winW = 900, winH = 900;
+    if (const char* sz = std::getenv("VKSIM_SIZE")) {
+        int w, h;
+        if (std::sscanf(sz, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
+            winW = w;
+            winH = h;
+        }
+    }
+    if (!app.initInstance(winW, winH, "3dsim"))
         return 1;
 
     Engine engine;
@@ -99,6 +107,10 @@ int main(int argc, char** argv) {
     float simAccum = 0.0f;
     int softTick = 0;
     const bool uncapped = std::getenv("NO_VSYNC") != nullptr;
+    const bool prof = std::getenv("VKSIM_PROFILE") != nullptr;
+    if (prof)
+        engine.renderer.profOn = true;
+    float uiAccum = 0.0f, acqAccum = 0.0f, drawAccum = 0.0f;
     PhaseWatch phaseMs;
     PaceWatch pace;
     while (rc == 0 && !app.windowShouldClose()) {
@@ -113,6 +125,18 @@ int main(int argc, char** argv) {
                        phaseMs.jolt / fpsFrames, phaseMs.skel / fpsFrames, phaseMs.sim / fpsFrames,
                        phaseMs.rend / fpsFrames, phaseMs.xend / fpsFrames,
                        (phaseMs.wait + phaseMs.tail) / fpsFrames};
+            if (prof) {
+                auto& p = engine.renderer.prof;
+                std::printf("prof: %5.1ffps poll %5.2f cpu %5.2f jolt %5.2f skel %5.2f sim %5.2f "
+                           "ui %5.2f acq %5.2f draw %5.2f (ui %5.2f shadow %5.2f scene %5.2f tonemap %5.2f) "
+                           "idle %5.2f\n",
+                           fps, engine.phase.poll, engine.phase.cpu, engine.phase.jolt, engine.phase.skel,
+                           engine.phase.sim, uiAccum / fpsFrames, acqAccum / fpsFrames, drawAccum / fpsFrames,
+                           p.ui / fpsFrames, p.shadow / fpsFrames, p.scene / fpsFrames, p.tonemap / fpsFrames,
+                           engine.phase.idle);
+                p.reset();
+            }
+            uiAccum = acqAccum = drawAccum = 0.0f;
             phaseMs.reset();
             fpsAccum = 0.0f;
             fpsFrames = 0;
@@ -259,9 +283,11 @@ int main(int argc, char** argv) {
             uiEnsureContext(engine.reg, c, engine.renderer.uiTargetPass(c), engine.renderer.uiTargetFb(c));
         uiFrame(engine.reg, feeds);
 
+        uiAccum += msBetween(tSim, std::chrono::steady_clock::now());
         const auto tAcq = std::chrono::steady_clock::now();
         const uint32_t idx = app.acquireNextImage();
         frameAcq += msBetween(tAcq, std::chrono::steady_clock::now());
+        acqAccum += frameAcq;
         VkCommandBuffer cmd = app.beginCommands();
         if (engine.xr) {
             uint32_t imgIdx[2] = {0, 0};
@@ -276,7 +302,9 @@ int main(int argc, char** argv) {
                 for (int i = 0; i < engine.xr->eyeCount(); ++i)
                     engine.xr->releaseImage(i);
         } else {
+            const auto tDraw = std::chrono::steady_clock::now();
             engine.renderer.draw(cmd, app, idx, engine.reg, engine.render);
+            drawAccum += msBetween(tDraw, std::chrono::steady_clock::now());
         }
         const auto tRender = std::chrono::steady_clock::now();
         if (engine.xr)

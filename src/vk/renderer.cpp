@@ -11,9 +11,14 @@
 #include "vk/vkapp.hpp"
 #include "vk/vkutil.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 
 namespace {
+
+float msBetween(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
+    return std::chrono::duration<float, std::milli>(b - a).count();
+}
 
 struct ModelUbo {
     float model[16];    // 0
@@ -28,7 +33,8 @@ struct ModelUbo {
     float ssssWeight[3]; // 112
     float refraction;    // 124
     float ior;           // 128
-    float pad[7];        // 132 (the shader's vec3 pad sits at 144; block size 160)
+    float normalScale;   // 132
+    float pad[6];        // 136 (the shader's vec3 pad sits at 144; block size 160)
 };
 static_assert(sizeof(ModelUbo) == 160, "ModelUbo must match the shader std140 layout");
 
@@ -92,7 +98,7 @@ static_assert(sizeof(LightsUbo) == 16 + Renderer::kMaxLights * 64, "LightsUbo mu
 
 ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float roughness, const V3& emissive,
                    float baseAlpha, float alphaCutoff, float alphaMode, const V3& ssssWeight, float refraction,
-                   float ior) {
+                   float ior, float normalScale) {
     ModelUbo mb{};
     std::memcpy(mb.model, model.m, 64);
     mb.baseColor[0] = baseColor.x;
@@ -111,6 +117,7 @@ ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float
     mb.ssssWeight[2] = ssssWeight.z;
     mb.refraction = refraction;
     mb.ior = ior;
+    mb.normalScale = normalScale;
     return mb;
 }
 
@@ -171,7 +178,7 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     vkMakeImage2D(m_dev, m_pdev, 1, 1, white, m_white.img, m_white.mem, m_white.view);
     const uint8_t neutralNrm[4] = {128, 128, 255, 255}; // tangent-space (0,0,1)
     vkMakeImage2D(m_dev, m_pdev, 1, 1, neutralNrm, m_neutralNrm.img, m_neutralNrm.mem, m_neutralNrm.view);
-    vkMakeSamplerEx(m_dev, m_pdev, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, false, 0.0f, 1.0f,
+    vkMakeSamplerEx(m_dev, m_pdev, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, true, 0.0f, 16.0f,
                     m_texSampler);
 
     vkMakeBuffer(m_dev, m_pdev, m_tmUbuf, m_tmMem, 32, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
@@ -295,7 +302,7 @@ int Renderer::allocInstance(int geom) {
     InstancedMesh inst;
     inst.geom = geom;
     const ModelUbo modelInit = packModel(mat4Identity(), V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, V3{0.0f, 0.0f, 0.0f}, 1.0f,
-                                        0.5f, 0.0f, V3{0.0f, 0.0f, 0.0f}, 0.0f, 1.5f);
+                                        0.5f, 0.0f, V3{0.0f, 0.0f, 0.0f}, 0.0f, 1.5f, 1.0f);
     vkMakeBuffer(m_dev, m_pdev, inst.modelUbuf, inst.modelMem, sizeof(ModelUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                  &modelInit);
     const VkDeviceSize attrSize = (VkDeviceSize)12 * g.vtxCount;
@@ -333,7 +340,7 @@ int Renderer::allocInstance(int geom) {
 
 void Renderer::addGpuTexture(entt::entity e, const void* rgba, uint32_t w, uint32_t h) {
     GpuTexture t;
-    vkMakeImage2D(m_dev, m_pdev, w, h, rgba, t.img, t.mem, t.view);
+    vkMakeImage2DMips(m_dev, m_pdev, w, h, rgba, t.img, t.mem, t.view);
     m_texs.push_back(t);
     m_entTex[e] = (int)m_texs.size() - 1;
 }
@@ -594,7 +601,7 @@ void Renderer::prepBuffers(const entt::registry& reg) {
         V3 base{1.0f, 1.0f, 1.0f}, emissive{0.0f, 0.0f, 0.0f};
         float metallic = 0.0f, roughness = 0.5f, baseAlpha = 1.0f, alphaCutoff = 0.5f;
         V3 ssssWeight{0.0f, 0.0f, 0.0f};
-        float refraction = 0.0f, ior = 1.5f;
+        float refraction = 0.0f, ior = 1.5f, normalScale = 1.0f;
         int alphaMode = 0;
         if (const auto* ref = reg.try_get<MaterialRef>(e))
             if (const auto* mat = reg.try_get<Material>(ref->mat)) {
@@ -608,6 +615,7 @@ void Renderer::prepBuffers(const entt::registry& reg) {
                 ssssWeight = mat->ssssWeight;
                 refraction = mat->refraction;
                 ior = mat->ior;
+                normalScale = mat->normalScale;
                 const entt::entity slots[kTexChannels] = {mat->tex, mat->texMR, mat->texNormal, mat->texEmissive};
                 for (int c = 0; c < kTexChannels; ++c)
                     setTexture(inst, c, textureFor(slots[c], reg));
@@ -627,7 +635,7 @@ void Renderer::prepBuffers(const entt::registry& reg) {
         if (alphaMode == 2 || refraction > 0.0f)
             m_hasTrans = true;
         const ModelUbo mb = packModel(model, base, metallic, roughness, emissive, baseAlpha, alphaCutoff, alphaMode,
-                                      ssssWeight, refraction, ior);
+                                      ssssWeight, refraction, ior, normalScale);
         vkWriteBuffer(m_dev, im.modelMem, &mb, sizeof(ModelUbo));
     }
 }
@@ -1062,15 +1070,26 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::re
     writeViewUbo(m_camView, rs.envIntensity, ext);
     prepBuffers(reg);
     ensureSceneSamplers(app);
+    const auto tUi = std::chrono::steady_clock::now();
     for (auto e : reg.view<UICanvas>())
         uiRender(e, cmd);
+    const auto tSh = msBetween(tUi, std::chrono::steady_clock::now());
+    const auto tScene = std::chrono::steady_clock::now();
     renderShadowCubes(cmd, reg);
+    const auto tShadow = msBetween(tScene, std::chrono::steady_clock::now());
     renderSceneBuffers(cmd, app, rs.bgColor, m_camView);
+    const auto tTon = std::chrono::steady_clock::now();
     hdrBarrier(cmd, app);
     if (app.hdrView() != m_tmSrcView)
         rebuildTonemapSet(app);
     writeTonemapUbo(0.0f, 0.0f, (float)ext.width, (float)ext.height);
     drawTonemapRegion(cmd, app, fb, {0, 0, ext.width, ext.height}, true);
+    if (profOn) {
+        prof.ui += tSh;
+        prof.shadow += tShadow;
+        prof.scene += msBetween(tScene, tTon);
+        prof.tonemap += msBetween(tTon, std::chrono::steady_clock::now());
+    }
     const bool dbgHdr = std::getenv("VKSIM_DBG_HDR") != nullptr || std::getenv("VKSIM_DBG_SCENE") != nullptr;
     const bool dbgMips = std::getenv("VKSIM_DBG_MIPS") != nullptr;
     if ((dbgHdr || dbgMips) && m_dbgBuf == VK_NULL_HANDLE) {

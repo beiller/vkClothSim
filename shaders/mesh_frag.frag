@@ -21,7 +21,7 @@ layout(binding = 3) uniform UBO {
     vec2 screenSize;
     vec4 pad2;
 } ubo;
-layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; vec3 ssssWeight; float refraction; float ior; vec3 pad; }
+layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; vec3 ssssWeight; float refraction; float ior; float normalScale; vec3 pad; }
     modelU;
 layout(binding = 6) uniform sampler2D albedoTex;
 layout(binding = 7) uniform sampler2D mrTex; // glTF metallicRoughness: G = roughness, B = metallic
@@ -61,8 +61,8 @@ float vSmith(float NoV, float NoL, float a) {
     return 0.5 / max(gv + gl, 1e-4);
 }
 
-vec3 fSchlick(vec3 F0, float VoH) {
-    return F0 + (1.0 - F0) * pow(1.0 - VoH, 5.0);
+vec3 fSchlick(vec3 F0, float cosTheta) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
 float shadowSample(vec3 dir, float dist, float bias, int idx) {
@@ -152,15 +152,19 @@ void applyNormalMap(inout vec3 N, vec2 uv, vec3 worldPos) {
     const float neu = 0.004; // 128/255 * 2 - 1
     if (abs(nT.x) <= neu && abs(nT.y) <= neu && abs(nT.z - 1.0) <= neu)
         return;
+    nT.xy *= modelU.normalScale; // gltf normalTexture.scale (0 = normal map off)
     // derivative-based TBN (no tangent attribute in the geometry)
     vec3 dpdx = dFdx(worldPos);
     vec3 dpdy = dFdy(worldPos);
     vec2 dudx = dFdx(uv);
     vec2 dudy = dFdy(uv);
+    // relative degeneracy: the position*uv product's magnitude scales with distance, so only
+    // the uv derivatives' own scale is a valid threshold
+    float uvdet = dudx.x * dudy.y - dudy.x * dudx.y;
+    if (uvdet * uvdet < 1e-12 * max(dot(dudx, dudx) * dot(dudy, dudy), 1e-30))
+        return; // degenerate uv on this pixel: keep the analytic normal
     vec3 T = dpdx * dudy.y - dpdy * dudx.y;
     vec3 B = -(dpdx * dudy.x - dpdy * dudx.x);
-    if (dot(T, T) < 1e-12 || dot(B, B) < 1e-12)
-        return; // degenerate uv on this pixel: keep the analytic normal
     T = normalize(T - N * dot(T, N));
     B = cross(N, T);
     N = normalize(T * nT.x + B * nT.y + N * nT.z);
@@ -169,8 +173,7 @@ void applyNormalMap(inout vec3 N, vec2 uv, vec3 worldPos) {
 void main() {
     vec3 N = normalize(vN);
     if (!gl_FrontFacing)
-        N = -N; // two-sided: light the back face as front-facing; an un-flipped N gives NoV/NoH ~ 0 and
-                // the GGX denominator max(4*NoL*NoH, 1e-4) then blows the specular up to white
+        N = -N; // two-sided: light the back face as front-facing
     vec3 V = normalize(ubo.camPos - vWorldPos);
     applyNormalMap(N, vUv, vWorldPos);
     float NoV = max(dot(N, V), 0.0) + 1e-4;
@@ -183,7 +186,7 @@ void main() {
         discard; // MASK: alpha test
     float metal = modelU.metallic * mr.b;
     float rough = clamp(modelU.roughness * mr.g, 0.04, 1.0);
-    float a = rough;
+    float a = max(rough * rough, 0.002); // glTF perceptual roughness -> GGX alpha; the floor keeps the D peak (1/(PI*a^2)) bounded
     vec3 F0 = mix(vec3(0.04), albedo, metal);
 
     vec3 R = reflect(-V, N);
@@ -213,11 +216,14 @@ void main() {
         float NoH = max(dot(N, H), 0.0);
         float VoH = max(dot(V, H), 0.0);
         vec3 F = fSchlick(F0, VoH);
-        vec3 spec = dGGX(NoH, a) * vSmith(NoV, NoL, a) * F / max(4.0 * NoL * NoH, 1e-4);
+        // vSmith is G/4 (like Godot's V_GGX), so the Cook-Torrance 4*NoL*NoV factor is already
+        // included: the final NoL * spec below supplies the NoL, no extra division (dividing by
+        // 4*NoL*NoH double-counted and diverged at grazing, producing fireflies)
+        vec3 spec = dGGX(NoH, a) * vSmith(NoV, NoL, a) * F;
         vec3 kd = (1.0 - F) * (1.0 - metal);
         vec3 diff = kd * albedo / PI;
         float shadow = pcssShadow(N, L, NoL, dist, li, i);
-        vec3 radiance = li.colorRadius.xyz * li.posIntensity.w / max(d2, 1e-3);
+        vec3 radiance = li.colorRadius.xyz * li.posIntensity.w / max(d2, 0.01);
         diffSum += radiance * NoL * diff * shadow;
         specSum += radiance * NoL * spec * shadow;
     }

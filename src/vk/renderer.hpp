@@ -67,6 +67,13 @@ public:
     void drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
                 entt::entity cam, const uint32_t* xrImg, int nXr);
 
+    struct ProfMs {
+        float ui = 0.0f, shadow = 0.0f, scene = 0.0f, tonemap = 0.0f;
+        void reset() { ui = shadow = scene = tonemap = 0.0f; }
+    };
+    ProfMs prof;
+    bool profOn = false;
+
 private:
     void releaseUi();
     void freeUiTarget(entt::entity e);

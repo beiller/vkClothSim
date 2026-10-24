@@ -478,6 +478,8 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     slot(pbr.base_color_texture.index, pbr.base_color_texture.tex_coord, "baseColor", &mat.tex, true);
     slot(pbr.metallic_roughness_texture.index, pbr.metallic_roughness_texture.tex_coord, "metallicRoughness", &mat.texMR, false);
     slot(gm.normal_texture.index, gm.normal_texture.tex_coord, "normal", &mat.texNormal, false);
+    if (gm.normal_texture.index >= 0)
+        mat.normalScale = (float)gm.normal_texture.scale;
     slot(gm.emissive_texture.index, gm.emissive_texture.tex_coord, "emissive", &mat.texEmissive, true);
     mat.alpha = (float)pbr.base_color_factor[3];
     mat.alphaCutoff = (float)gm.alpha_cutoff;

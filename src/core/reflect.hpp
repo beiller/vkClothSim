@@ -62,6 +62,7 @@ static const FieldDesc kMaterial[] = {
     {"ssssWeight", OFF(Material, ssssWeight), FieldKind::Color},
     {"refraction", OFF(Material, refraction), FieldKind::SliderF, -1.0f, 1.0f},
     {"ior", OFF(Material, ior), FieldKind::SliderF, 1.0f, 1.8f},
+    {"normalScale", OFF(Material, normalScale), FieldKind::SliderF, 0.0f, 3.0f},
 };
 static const FieldDesc kMaterialRef[] = {
     {"material", 0, FieldKind::Ref},

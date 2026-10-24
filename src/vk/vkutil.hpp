@@ -253,6 +253,88 @@ inline void vkMakeImage2D(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint3
     VK(vkCreateImageView(dev, &vci, nullptr, &view));
 }
 
+// optimal-tiling sampled image with a full GPU-generated mip chain (staging copy + blit ladder)
+inline void vkMakeImage2DMips(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint32_t h, const void* rgba8,
+                             VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
+    const uint32_t mx = w > h ? w : h;
+    uint32_t mips = 1;
+    while ((1u << mips) <= mx && mips < 15)
+        mips++;
+    VkImageCreateInfo ici{};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ici.extent = {w, h, 1};
+    ici.mipLevels = mips;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VK(vkCreateImage(dev, &ici, nullptr, &img));
+    VkMemoryRequirements mr;
+    vkGetImageMemoryRequirements(dev, img, &mr);
+    VkMemoryAllocateInfo maa{};
+    maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    maa.allocationSize = mr.size;
+    maa.memoryTypeIndex = vkFindMemoryType(pdev, mr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK(vkAllocateMemory(dev, &maa, nullptr, &mem));
+    VK(vkBindImageMemory(dev, img, mem, 0));
+    VkBuffer stg = VK_NULL_HANDLE;
+    VkDeviceMemory stgMem = VK_NULL_HANDLE;
+    vkMakeBuffer(dev, pdev, stg, stgMem, (VkDeviceSize)w * h * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, rgba8);
+    vkSubmitAndWait(dev, pdev, [&](VkCommandBuffer cb) {
+        vkImgBarrier(cb, img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
+                     VK_ACCESS_TRANSFER_WRITE_BIT, 1, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        VkBufferImageCopy bic{};
+        bic.bufferOffset = 0;
+        bic.bufferRowLength = w;
+        bic.bufferImageHeight = h;
+        bic.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        bic.imageOffset = {0, 0, 0};
+        bic.imageExtent = {w, h, 1};
+        vkCmdCopyBufferToImage(cb, stg, img, VK_IMAGE_LAYOUT_GENERAL, 1, &bic);
+        for (uint32_t i = 1; i < mips; ++i) {
+            const uint32_t sw = w > (1u << i) ? w >> i : 1;
+            const uint32_t sh = h > (1u << i) ? h >> i : 1;
+            VkImageMemoryBarrier br[2] = {};
+            for (int b = 0; b < 2; ++b) {
+                br[b].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                br[b].image = img;
+                br[b].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                br[b].subresourceRange.baseMipLevel = i - 1 + (uint32_t)b;
+                br[b].subresourceRange.levelCount = 1;
+                br[b].subresourceRange.layerCount = 1;
+                br[b].oldLayout = b == 1 ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL;
+                br[b].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                br[b].srcAccessMask = b == 0 ? VK_ACCESS_TRANSFER_WRITE_BIT : 0;
+                br[b].dstAccessMask = b == 0 ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_TRANSFER_WRITE_BIT;
+            }
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                                nullptr, 2, br);
+            VkImageBlit blit{};
+            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i - 1, 0, 1};
+            blit.srcOffsets[0] = {0, 0, 0};
+            blit.srcOffsets[1] = {(int32_t)sw, (int32_t)sh, 1};
+            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
+            blit.dstOffsets[0] = {0, 0, 0};
+            blit.dstOffsets[1] = {(int32_t)sw, (int32_t)sh, 1};
+            vkCmdBlitImage(cb, img, VK_IMAGE_LAYOUT_GENERAL, img, VK_IMAGE_LAYOUT_GENERAL, 1, &blit, VK_FILTER_LINEAR);
+        }
+        vkImgBarrier(cb, img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, mips, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    });
+    vkFreeBuffer(dev, stg, stgMem);
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = img;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, 1};
+    VK(vkCreateImageView(dev, &vci, nullptr, &view));
+}
+
 inline void vkFreeImage2D(VkDevice dev, VkImage img, VkDeviceMemory mem, VkImageView view) {
     if (img) {
         vkDestroyImageView(dev, view, nullptr);

@@ -262,6 +262,7 @@ struct Material {
     V3 ssssWeight{0.0f, 0.0f, 0.0f}; // per-channel SSS strength: blur distance per color channel (gltf baseColorTransmission)
     float refraction = 0.0f; // 0 = off; the refraction scale (Godot refraction, 0..1)
     float ior = 1.5f;
+    float normalScale = 1.0f; // gltf normalTexture.scale; 0 = normal map off
 };
 
 struct MaterialRef {
