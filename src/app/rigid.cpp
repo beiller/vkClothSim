@@ -69,6 +69,7 @@ void RigidScene::reset() {
     m_body.clear();
     m_shape.clear();
     m_kinTarget.clear();
+    m_applied.clear();
     for (int i = (int)m_joints.size() - 1; i >= 0; --i)
         releaseJoint(i);
     m_joints.clear();
@@ -110,9 +111,8 @@ void RigidScene::buildBody(entt::entity e, const std::vector<ColliderDesc>& coll
         return;
     auto& bi = m_phys->GetBodyInterface();
     JPH::ShapeRefC shape = buildShape(colliders, t.scale);
-    const bool isStatic = body.isStatic;
     JPH::BodyCreationSettings cs(shape, JPH::RVec3(t.pos.x, t.pos.y, t.pos.z), jQuat(t.quat),
-                                 isStatic ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic, isStatic ? 0 : 1);
+                                JPH::EMotionType::Dynamic, 1);
     cs.mFriction = body.friction;
     cs.mRestitution = body.restitution;
     cs.mLinearDamping = body.damping;
@@ -120,15 +120,7 @@ void RigidScene::buildBody(entt::entity e, const std::vector<ColliderDesc>& coll
         cs.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
         cs.mMassPropertiesOverride.mMass = body.mass;
     }
-    JPH::BodyID id;
-    if (isStatic) {
-        JPH::Body* b = bi.CreateBody(cs);
-        bi.AddBody(b->GetID(), JPH::EActivation::DontActivate);
-        m_phys->OptimizeBroadPhase();
-        id = b->GetID();
-    } else
-        id = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
-    m_body[e] = id;
+    m_body[e] = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
 }
 
 void RigidScene::buildKinematic(entt::entity e, const std::vector<ColliderDesc>& colliders, const Transform& t) {
@@ -147,6 +139,7 @@ void RigidScene::removeBody(entt::entity e) {
     const JPH::BodyID id = it->second;
     m_body.erase(it);
     m_kinTarget.erase(e);
+    m_applied.erase(e);
     m_phys->GetBodyInterface().RemoveBody(id);
     for (size_t i = 0; i < m_joints.size(); ++i) {
         if (!m_joints[i].alive)
@@ -366,22 +359,173 @@ void RigidScene::releaseJoint(int idx) {
     m_joints[idx].alive = false;
 }
 
+// FNV-1a over everything that goes into a Jolt body build: the collider
+// entities, their shape params and local transforms. A change here is a
+// structural change and forces a body rebuild.
+uint64_t RigidScene::shapeFingerprint(const entt::registry& reg, const std::vector<entt::entity>& cols) {
+    uint64_t h = 14695981039346656037ull;
+    const auto mix = [&h](const void* p, size_t n) {
+        const uint8_t* b = (const uint8_t*)p;
+        for (size_t i = 0; i < n; ++i) {
+            h ^= b[i];
+            h *= 1099511628211ull;
+        }
+    };
+    for (entt::entity c : cols) {
+        mix(&c, sizeof(c));
+        const auto* col = reg.try_get<Collider>(c);
+        if (!col)
+            continue;
+        mix(&col->shape, sizeof(col->shape));
+        if (const auto* cs = reg.try_get<CapsuleShape>(col->shape))
+            mix(cs, sizeof(CapsuleShape));
+        else if (const auto* bs = reg.try_get<BoxShape>(col->shape))
+            mix(bs, sizeof(BoxShape));
+        else if (const auto* tc = reg.try_get<TaperedCapsule>(col->shape))
+            mix(tc, sizeof(TaperedCapsule));
+        const Transform t = reg.try_get<Transform>(c) ? reg.get<Transform>(c) : Transform{};
+        mix(&t, sizeof(Transform));
+    }
+    return h;
+}
+
+RigidScene::Applied RigidScene::appliedFor(const RigidBody& rb, uint64_t shapeHash, bool kinematic) {
+    Applied a;
+    a.body = rb;
+    a.shapeHash = shapeHash;
+    a.kinematic = kinematic;
+    return a;
+}
+
+// scalar-only change (friction / restitution / damping / mass): apply in place,
+// no rebuild, velocity preserved. mass 0 = auto (the shape's own mass)
+void RigidScene::syncScalars(entt::entity e, const RigidBody& rb) {
+    const auto it = m_body.find(e);
+    if (it == m_body.end())
+        return;
+    auto& bi = m_phys->GetBodyInterface();
+    const JPH::BodyID id = it->second;
+    bi.SetFriction(id, rb.friction);
+    bi.SetRestitution(id, rb.restitution);
+    JPH::BodyLockWrite lock(m_phys->GetBodyLockInterface(), id);
+    JPH::Body& b = lock.GetBody();
+    JPH::MotionProperties* mp = b.GetMotionProperties();
+    mp->SetLinearDamping(rb.damping);
+    JPH::MassProperties mpp = b.GetShape()->GetMassProperties();
+    if (rb.mass > 0)
+        mpp.ScaleToMass(rb.mass);
+    mpp.mInertia(3, 3) = 1.0f;
+    mp->SetMassProperties(mp->GetAllowedDOFs(), mpp);
+}
+
+// structural change: remove + recreate the Jolt body, keeping pose and velocity
+// (a velocity-0 body keeps zero). removeBody() drops the attached joints, so
+// they are re-made afterwards.
+void RigidScene::rebuildBody(entt::entity e, const entt::registry& reg, const RigidBody& rb, const Transform& t) {
+    JPH::Vec3 linV, angV;
+    bool hasVel = false;
+    std::vector<entt::entity> joints;
+    const auto it = m_body.find(e);
+    if (it != m_body.end()) {
+        joints = affectedJoints(it->second);
+        JPH::BodyLockRead lock(m_phys->GetBodyLockInterface(), it->second);
+        const JPH::Body& b = lock.GetBody();
+        if (b.GetMotionProperties()) {
+            linV = b.GetMotionProperties()->GetLinearVelocity();
+            angV = b.GetMotionProperties()->GetAngularVelocity();
+            hasVel = true;
+        }
+    }
+    // shape params may have changed: drop the cache so the rebuild re-bakes them
+    for (entt::entity c : rb.colliders)
+        if (const auto* col = reg.try_get<Collider>(c))
+            m_shape.erase(col->shape);
+    removeBody(e);
+    buildBody(e, colliderDescs(reg, rb.colliders), rb, t);
+    if (hasVel && m_body.count(e)) {
+        auto& bi = m_phys->GetBodyInterface();
+        bi.SetLinearVelocity(m_body[e], linV);
+        bi.SetAngularVelocity(m_body[e], angV);
+    }
+    rejoinJoints(joints, reg);
+}
+
+void RigidScene::rebuildKinematic(entt::entity e, const entt::registry& reg, const std::vector<entt::entity>& cols,
+                                  const Transform& t) {
+    std::vector<entt::entity> joints;
+    const auto it = m_body.find(e);
+    if (it != m_body.end())
+        joints = affectedJoints(it->second);
+    for (entt::entity c : cols)
+        if (const auto* col = reg.try_get<Collider>(c))
+            m_shape.erase(col->shape);
+    removeBody(e);
+    buildKinematic(e, colliderDescs(reg, cols), t);
+    rejoinJoints(joints, reg);
+}
+
+std::vector<entt::entity> RigidScene::affectedJoints(JPH::BodyID id) const {
+    std::vector<entt::entity> out;
+    for (const auto& j : m_joints) {
+        if (!j.alive)
+            continue;
+        auto* two = static_cast<const JPH::TwoBodyConstraint*>(j.constraint.GetPtr());
+        if (two->GetBody1()->GetID() == id || two->GetBody2()->GetID() == id)
+            out.push_back(j.ent);
+    }
+    return out;
+}
+
+void RigidScene::rejoinJoints(const std::vector<entt::entity>& list, const entt::registry& reg) {
+    for (entt::entity je : list) {
+        if (const auto* j = reg.try_get<Joint>(je)) {
+            if (makeJoint(je, *j)) {
+                m_jointIdx[je] = (int)m_joints.size() - 1;
+                continue;
+            }
+        } else if (const auto* s = reg.try_get<SixDofJoint>(je)) {
+            if (makeSixDofJoint(je, *s)) {
+                m_jointIdx[je] = (int)m_joints.size() - 1;
+                continue;
+            }
+        }
+        m_jointIdx.erase(je);
+    }
+}
+
 void RigidScene::project(const entt::registry& reg) {
     for (auto [e, rb] : reg.view<RigidBody>().each()) {
-        if (m_body.count(e))
-            continue;
+        if (reg.try_get<KinematicBody>(e))
+            continue; // the kinematic body owns the Jolt body
         const auto* t = reg.try_get<Transform>(e);
         if (!t)
             continue;
-        buildBody(e, colliderDescs(reg, rb.colliders), rb, *t);
+        const uint64_t sh = shapeFingerprint(reg, rb.colliders);
+        const auto a = m_applied.find(e);
+        const bool structural = a == m_applied.end() || a->second.kinematic || a->second.body.colliders != rb.colliders ||
+                               a->second.shapeHash != sh;
+        if (structural) {
+            rebuildBody(e, reg, rb, *t);
+            m_applied[e] = appliedFor(rb, sh, false);
+        } else if (a->second.body != rb) {
+            syncScalars(e, rb);
+            m_applied[e] = appliedFor(rb, sh, false);
+        }
     }
     for (auto [e, kb] : reg.view<KinematicBody>().each()) {
-        if (m_body.count(e))
-            continue;
         const auto* t = reg.try_get<Transform>(e);
         if (!t)
             continue;
-        buildKinematic(e, colliderDescs(reg, kb.colliders), *t);
+        const auto a = m_applied.find(e);
+        if (a != m_applied.end() && !a->second.kinematic)
+            continue; // a RigidBody owns the Jolt body
+        const uint64_t sh = shapeFingerprint(reg, kb.colliders);
+        if (a != m_applied.end() && a->second.body.colliders == kb.colliders && a->second.shapeHash == sh)
+            continue;
+        RigidBody rec;
+        rec.colliders = kb.colliders;
+        rebuildKinematic(e, reg, kb.colliders, *t);
+        m_applied[e] = appliedFor(rec, sh, true);
     }
     for (auto [e, j] : reg.view<Joint>().each()) {
         if (m_jointIdx.count(e))

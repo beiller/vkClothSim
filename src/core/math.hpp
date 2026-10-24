@@ -3,7 +3,11 @@
 #include <numbers>
 
 inline constexpr float kPi = std::numbers::pi_v<float>;
-inline constexpr float kFrameDt = 1.0f / 240.0f;
+inline constexpr float kRigidHz = 120.0f; // Jolt (rigid) physics rate
+inline constexpr float kSoftHz = 60.0f;  // cloth (soft) sim rate
+inline constexpr float kFrameDt = 1.0f / kRigidHz;
+inline constexpr int kSoftSubdiv = (int)(kRigidHz / kSoftHz); // rigid steps per cloth step
+inline constexpr float kSoftDt = 1.0f / kSoftHz;
 
 struct V2 {
     float x = 0.0f, y = 0.0f;

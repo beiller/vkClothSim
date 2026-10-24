@@ -25,7 +25,7 @@ function M._on_ready(self)
     scene.replace(gShape, "BoxShape", { half = { 40, 1, 40 } })
     local gCol = scene.entity()
     scene.replace(gCol, "Collider", { shape = gShape })
-    scene.replace(ground, "RigidBody", { isStatic = 1, colliders = { gCol } })
+    scene.replace(ground, "KinematicBody", { colliders = { gCol } })
     soft.floor(0.0001)
 
     math.randomseed(12345)

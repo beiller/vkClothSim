@@ -260,7 +260,7 @@ entt::entity spawnUiCanvas(entt::registry& reg, int& seq, const std::string& tit
 
 entt::entity spawnUiWindow(entt::registry& reg, int& seq, const std::string& title, const V2& px, const V3& pos) {
     return spawnUiCanvas(reg, seq, title, px, pos, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
-                              ImGuiWindowFlags_NoCollapse);
+                              ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
 }
 
 void spawnFpsHud(entt::registry& reg, int& seq, std::function<std::string()> text, const V3& pos, const V2& px) {

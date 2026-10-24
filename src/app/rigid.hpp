@@ -45,6 +45,11 @@ public:
     int positionSteps = 10;
 
 private:
+    struct Applied {
+        RigidBody body; // last-applied RigidBody; for kinematic, body.colliders is the collider list
+        uint64_t shapeHash = 0;
+        bool kinematic = false;
+    };
     std::vector<ColliderDesc> colliderDescs(const entt::registry& reg,
                                             const std::vector<entt::entity>& cols);
     JPH::ShapeRefC buildShape(const std::vector<ColliderDesc>& colliders, const V3& scale);
@@ -54,6 +59,14 @@ private:
     bool makeJoint(entt::entity e, const Joint& j);
     bool makeSixDofJoint(entt::entity e, const SixDofJoint& j);
     void releaseJoint(int idx);
+    static uint64_t shapeFingerprint(const entt::registry& reg, const std::vector<entt::entity>& cols);
+    static Applied appliedFor(const RigidBody& rb, uint64_t shapeHash, bool kinematic);
+    void syncScalars(entt::entity e, const RigidBody& rb);
+    void rebuildBody(entt::entity e, const entt::registry& reg, const RigidBody& rb, const Transform& t);
+    void rebuildKinematic(entt::entity e, const entt::registry& reg, const std::vector<entt::entity>& cols,
+                          const Transform& t);
+    std::vector<entt::entity> affectedJoints(JPH::BodyID id) const;
+    void rejoinJoints(const std::vector<entt::entity>& list, const entt::registry& reg);
     void onBodyDestroyed(entt::registry&, entt::entity e);
     void onShapeDestroyed(entt::registry&, entt::entity e);
     void onJointDestroyed(entt::registry&, entt::entity e);
@@ -75,4 +88,5 @@ private:
     std::unordered_map<entt::entity, JPH::BodyID> m_body;
     std::unordered_map<entt::entity, JPH::ShapeRefC> m_shape;
     std::unordered_map<entt::entity, JPH::RVec3> m_kinTarget;
+    std::unordered_map<entt::entity, Applied> m_applied;
 };

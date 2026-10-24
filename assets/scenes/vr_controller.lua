@@ -21,7 +21,7 @@ local kDead = 0.12
 local kGrabRange = 3.0
 local kMarkerRadius = 0.03
 local kLaserLen = 10.0
-local kLaserHalf = 0.002
+local kLaserHalf = 0.0005
 
 -- stdlib geometry tables are the Geometry struct itself: stash one in a geometry entity
 local function geom(t)
@@ -41,10 +41,9 @@ local function material(name, baseColor, metallic, roughness, emissive)
     return e
 end
 
--- grabbable bodies are RigidBody{isStatic = 0}
+-- grabbable bodies are RigidBody (all rigid bodies are dynamic)
 local function isDynamic(e)
-    local rb = scene.component(e, "RigidBody")
-    return rb and rb.isStatic == 0
+    return scene.component(e, "RigidBody") ~= nil
 end
 
 function M._on_ready(self)

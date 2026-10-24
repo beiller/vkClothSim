@@ -14,7 +14,10 @@ class VkApp;
 
 struct PhaseMs {
     float poll = 0.0f;
-    float sim = 0.0f;
+    float cpu = 0.0f;
+    float jolt = 0.0f;
+    float skel = 0.0f;
+    float sim = 0.0f; // cloth (soft) GPU time only
     float render = 0.0f;
     float xrEnd = 0.0f;
     float idle = 0.0f;

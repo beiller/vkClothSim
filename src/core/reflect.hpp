@@ -101,7 +101,6 @@ static const FieldDesc kRigidBody[] = {
     {"restitution", OFF(RigidBody, restitution), FieldKind::SliderF, 0.0f, 1.0f},
     {"damping", OFF(RigidBody, damping), FieldKind::SliderF, 0.0f, 1.0f},
     {"mass", OFF(RigidBody, mass), FieldKind::SliderF, 0.0f, 1000.0f},
-    {"isStatic", OFF(RigidBody, isStatic), FieldKind::Checkbox},
     {"colliders", OFF(RigidBody, colliders), FieldKind::EntArr},
 };
 static const FieldDesc kKinematicBody[] = {

@@ -9,7 +9,9 @@
 #include "xr/xr.hpp"
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <thread>
 #include <imgui.h>
 
 static float msBetween(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
@@ -17,8 +19,9 @@ static float msBetween(std::chrono::steady_clock::time_point a, std::chrono::ste
 }
 
 struct PhaseWatch {
-    float poll = 0.0f, wait = 0.0f, sim = 0.0f, rend = 0.0f, xend = 0.0f, tail = 0.0f;
-    void reset() { poll = wait = sim = rend = xend = tail = 0.0f; }
+    float poll = 0.0f, wait = 0.0f, cpu = 0.0f, jolt = 0.0f, skel = 0.0f, sim = 0.0f,
+          rend = 0.0f, xend = 0.0f, tail = 0.0f;
+    void reset() { poll = wait = cpu = jolt = skel = sim = rend = xend = tail = 0.0f; }
 };
 
 struct PaceWatch {
@@ -94,6 +97,8 @@ int main(int argc, char** argv) {
     int fpsFrames = 0;
     float fps = 0.0f;
     float simAccum = 0.0f;
+    int softTick = 0;
+    const bool uncapped = std::getenv("NO_VSYNC") != nullptr;
     PhaseWatch phaseMs;
     PaceWatch pace;
     while (rc == 0 && !app.windowShouldClose()) {
@@ -104,7 +109,8 @@ int main(int argc, char** argv) {
         ++fpsFrames;
         if (fpsAccum >= 0.5f) {
             fps = (float)fpsFrames / fpsAccum;
-            engine.phase = {(phaseMs.poll - phaseMs.wait) / fpsFrames, phaseMs.sim / fpsFrames,
+            engine.phase = {(phaseMs.poll - phaseMs.wait) / fpsFrames, phaseMs.cpu / fpsFrames,
+                       phaseMs.jolt / fpsFrames, phaseMs.skel / fpsFrames, phaseMs.sim / fpsFrames,
                        phaseMs.rend / fpsFrames, phaseMs.xend / fpsFrames,
                        (phaseMs.wait + phaseMs.tail) / fpsFrames};
             phaseMs.reset();
@@ -142,19 +148,39 @@ int main(int argc, char** argv) {
             stepControllers(engine.reg, fr);
         }
 
+        float frameJolt = 0.0f, frameSkel = 0.0f, frameSoft = 0.0f, frameAcq = 0.0f;
         simAccum += dt;
         if (simAccum > 0.4f)
             simAccum = 0.4f;
         while (simAccum >= kFrameDt) {
             engine.script.physicsAll(kFrameDt);
+            const auto tJ = std::chrono::steady_clock::now();
             stepRigid(engine.rigid, engine.reg);
+            frameJolt += msBetween(tJ, std::chrono::steady_clock::now());
             resolveWorldTransforms(engine.reg);
-            VkCommandBuffer simCmd = app.beginCommands();
-            engine.gpuSim.skin.step(engine.reg, simCmd);
-            stepSoft(engine, simCmd);
-            app.submit(simCmd);
+            // skel: skin CPU + its own blocking submit, so the GPU skin time is its own bucket
+            const auto tS = std::chrono::steady_clock::now();
+            {
+                VkCommandBuffer skelCmd = app.beginCommands();
+                engine.gpuSim.skin.step(engine.reg, skelCmd);
+                app.submit(skelCmd);
+            }
+            frameSkel += msBetween(tS, std::chrono::steady_clock::now());
+            // sim: cloth only, its own submit, gated to kSoftHz (not the full rigid rate)
+            if ((softTick++ % kSoftSubdiv) == 0) {
+                const auto tC = std::chrono::steady_clock::now();
+                VkCommandBuffer softCmd = app.beginCommands();
+                stepSoft(engine, softCmd);
+                app.submit(softCmd);
+                frameSoft += msBetween(tC, std::chrono::steady_clock::now());
+            }
             simAccum -= kFrameDt;
         }
+        // Pace the loop to the sim rate when uncapped (NO_VSYNC): otherwise the
+        // render spins at full speed and the sim runs at kRigidHz only in the
+        // average sense. Under vsync (default) this is a no-op — vsync paces it.
+        if (uncapped && simAccum < kFrameDt)
+            std::this_thread::sleep_for(std::chrono::duration<double>(kFrameDt - simAccum));
         resolveWorldTransforms(engine.reg);
         const auto tSim = std::chrono::steady_clock::now();
 
@@ -233,7 +259,9 @@ int main(int argc, char** argv) {
             uiEnsureContext(engine.reg, c, engine.renderer.uiTargetPass(c), engine.renderer.uiTargetFb(c));
         uiFrame(engine.reg, feeds);
 
+        const auto tAcq = std::chrono::steady_clock::now();
         const uint32_t idx = app.acquireNextImage();
+        frameAcq += msBetween(tAcq, std::chrono::steady_clock::now());
         VkCommandBuffer cmd = app.beginCommands();
         if (engine.xr) {
             uint32_t imgIdx[2] = {0, 0};
@@ -257,10 +285,14 @@ int main(int argc, char** argv) {
         app.present(idx, !engine.xr);
         phaseMs.poll += msBetween(nowFrame, tPoll);
         phaseMs.wait += wait;
-        phaseMs.sim += msBetween(tPoll, tSim);
-        phaseMs.rend += msBetween(tSim, tRender);
+        phaseMs.cpu += msBetween(tPoll, tSim) - frameJolt - frameSkel - frameSoft;
+        phaseMs.jolt += frameJolt;
+        phaseMs.skel += frameSkel;
+        phaseMs.sim += frameSoft;
+        // acquireNextImage's fence wait is vsync/pacing, not render work — keep it out of rend
+        phaseMs.rend += msBetween(tSim, tRender) - frameAcq;
         phaseMs.xend += msBetween(tRender, tXrEnd);
-        phaseMs.tail += msBetween(tXrEnd, std::chrono::steady_clock::now());
+        phaseMs.tail += msBetween(tXrEnd, std::chrono::steady_clock::now()) + frameAcq;
         if (engine.xr)
             pace.add(msBetween(nowFrame, tXrEnd) - wait);
     }

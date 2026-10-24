@@ -102,8 +102,12 @@ struct RigidBody {
     float restitution = 0.05f;
     float damping = 0.05f;
     float mass = 0.0f; // kg; 0 = auto (shape volume x 1000 kg/m^3)
-    bool isStatic = false;
     std::vector<entt::entity> colliders;
+
+    bool operator==(const RigidBody& o) const {
+        return friction == o.friction && restitution == o.restitution && damping == o.damping &&
+               mass == o.mass && colliders == o.colliders;
+    }
 };
 
 struct Joint {

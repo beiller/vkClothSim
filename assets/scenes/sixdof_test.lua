@@ -39,7 +39,7 @@ function M._on_ready(self)
     scene.replace(gShape, "BoxShape", { half = { 40, 1, 40 } })
     local gCol = scene.entity()
     scene.replace(gCol, "Collider", { shape = gShape })
-    scene.replace(ground, "RigidBody", { isStatic = 1, colliders = { gCol } })
+    scene.replace(ground, "KinematicBody", { colliders = { gCol } })
 
     welded = boxBody("weld", 0, 1.0, 0, scene.find("mat_red"))
     local jw = scene.entity()

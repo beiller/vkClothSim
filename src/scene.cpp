@@ -168,18 +168,22 @@ void resetScene(Engine& w) {
     w.showDemo = false;
     w.render = {};
     spawnFpsHud(w.reg, w.uiSeq, [&w] {
-        char buf[128];
+        char buf[256];
         std::snprintf(buf, sizeof(buf), "%.1f fps  %.1f ms\n"
                                       "poll  %6.1f\n"
+                                      "cpu   %6.1f\n"
+                                      "jolt  %6.1f\n"
+                                      "skel  %6.1f\n"
                                       "sim   %6.1f\n"
                                       "rend  %6.1f\n"
                                       "xrend %6.1f\n"
                                       "idle  %6.1f",
-                                      w.fps, 1000.0f / (w.fps > 1.0f ? w.fps : 1.0f), w.phase.poll, w.phase.sim,
-                                      w.phase.render, w.phase.xrEnd, w.phase.idle);
+                                      w.fps, 1000.0f / (w.fps > 1.0f ? w.fps : 1.0f), w.phase.poll, w.phase.cpu,
+                                      w.phase.jolt, w.phase.skel, w.phase.sim, w.phase.render,
+                                      w.phase.xrEnd, w.phase.idle);
         return std::string(buf);
     },
-               V3{0.45f, 1.72f, 2.8f}, V2{150.0f, 120.0f});
+               V3{0.45f, 1.72f, 2.8f}, V2{160.0f, 180.0f});
     spawnInputEntities(w);
     if (w.xr && w.xrSession) {
         spawnVrRoot(w.reg);

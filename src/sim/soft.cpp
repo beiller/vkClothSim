@@ -326,7 +326,7 @@ void Soft::record(VkCommandBuffer cmd) {
             continue;
         PhysParams phys{};
         phys.nCaps = m_nCaps;
-        phys.dt = kFrameDt / (float)b.steps;
+        phys.dt = kSoftDt / (float)b.steps; // one record spans kSoftDt (1/kSoftHz), split over b.steps substeps
         phys.damping = std::pow(b.params.damping, 1.0f / (float)b.steps);
         phys.gravity = sim::kGravity * b.params.mass;
         phys.friction = b.params.friction;

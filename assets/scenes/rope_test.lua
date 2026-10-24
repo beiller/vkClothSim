@@ -12,6 +12,11 @@ local kR = math.sqrt(0.5) -- exactly-normal 90 deg quat (Jolt asserts normalized
 local kY = 2.0 -- rope height
 local kX0 = -(kN - 1) * kLen / 2 -- left link center; rope spans x = -2.5 .. 2.5
 
+-- kinematic "handle" loop that drags link 1 so the chain never settles/sleeps
+local kCx, kCy, kHandleR = -1.0, 2.0, 1.5 -- loop center + radius (y stays above the floor)
+local kW = 1.5                               -- rad/s
+local kPhase = math.pi                       -- start at the leftmost point (link 1 center)
+
 local function link(i, mat)
     local x = kX0 + (i - 1) * kLen
     local g = scene.entity()
@@ -44,7 +49,7 @@ function M._on_ready(self)
     scene.replace(gShape, "BoxShape", { half = { 40, 1, 40 } })
     local gCol = scene.entity()
     scene.replace(gCol, "Collider", { shape = gShape })
-    scene.replace(ground, "RigidBody", { isStatic = 1, colliders = { gCol } })
+    scene.replace(ground, "KinematicBody", { colliders = { gCol } })
 
     local mat = { scene.find("mat_red"), scene.find("mat_blue"), scene.find("mat_orange") }
     for i = 1, kN do
@@ -67,6 +72,26 @@ function M._on_ready(self)
     for i = 1, kN - 1 do
         joint(links[i], links[i + 1], kX0 + (i - 1) * kLen + kLen / 2, kY, 0)
     end
+
+    -- kinematic handle on link 1, animated in _physics: keeps the chain awake
+    local hs = scene.entity()
+    scene.replace(hs, "BoxShape", { half = { 0.05, 0.05, 0.05 } })
+    local hc = scene.entity()
+    scene.replace(hc, "Collider", { shape = hs })
+    local h = scene.entity("handle")
+    scene.replace(h, "Transform", { pos = { kCx - kHandleR, kCy, 0 }, quat = { 0, 0, 0, 1 } })
+    scene.replace(h, "KinematicBody", { colliders = { hc } })
+    self.handle, self.t = h, 0
+    local hj = scene.entity()
+    scene.replace(hj, "Joint", { bodyA = h, bodyB = links[1], type = 0,
+                                grabPos = { kCx - kHandleR, kCy, 0 } })
+end
+
+function M._physics(self, dt)
+    self.t = self.t + dt
+    local a = kPhase + kW * self.t
+    scene.set_pose(self.handle, { kCx + kHandleR * math.cos(a), kCy + kHandleR * math.sin(a), 0 },
+        { 0, 0, 0, 1 })
 end
 
 return M
