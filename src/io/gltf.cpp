@@ -514,6 +514,37 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
         mat.ior = (float)io;
         break;
     }
+    // KHR_materials_volume is the glTF SSS encoding: baseColorTransmission is the
+    // transmitted fraction; attenuation/colour are ignored (the SSS pass is a
+    // scalar-strength blur, Godot style)
+    for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
+        if (s(gm.ext.extensions[i].name) != "KHR_materials_volume")
+            continue;
+        const tg3_value& ext = gm.ext.extensions[i].value;
+        float bt[3] = {0.0f, 0.0f, 0.0f};
+        bool haveBt = false, warnedAttenuation = false;
+        for (uint32_t j = 0; j < ext.object_count; ++j) {
+            const auto& od = ext.object_data[j];
+            const std::string k = s(od.key);
+            if (k == "baseColorTransmission" && od.value.type == TG3_VALUE_ARRAY && od.value.array_count == 3) {
+                for (uint32_t n = 0; n < 3; ++n)
+                    if (od.value.array_data[n].type == TG3_VALUE_REAL)
+                        bt[n] = (float)od.value.array_data[n].real_val;
+                haveBt = true;
+            }
+            if ((k == "baseColorTransmissionTexture" || k == "thicknessTexture") && od.value.type == TG3_VALUE_INT &&
+                od.value.int_val >= 0)
+                warn(c, k + " is not supported (ignored)");
+            if ((k == "attenuationColor" || k == "attenuationColorExtinction" || k == "attenuationDistance" || k == "thickness") &&
+                !warnedAttenuation) {
+                warn(c, "KHR_materials_volume attenuation/thickness are not supported (ignored; volume maps to ssssWeight only)");
+                warnedAttenuation = true;
+            }
+        }
+        if (haveBt)
+            mat.ssssWeight = V3{bt[0], bt[1], bt[2]};
+        break;
+    }
     return c.materials[matIdx] = e;
 }
 

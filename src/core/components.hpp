@@ -259,7 +259,7 @@ struct Material {
     int alphaMode = 0;
     float alphaCutoff = 0.5f;
     float alpha = 1.0f;
-    float ssssWeight = 0.0f; // 0 = off; the SSS strength scalar (Godot subsurface_scattering_strength)
+    V3 ssssWeight{0.0f, 0.0f, 0.0f}; // per-channel SSS strength: blur distance per color channel (gltf baseColorTransmission)
     float refraction = 0.0f; // 0 = off; the refraction scale (Godot refraction, 0..1)
     float ior = 1.5f;
 };

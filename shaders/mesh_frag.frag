@@ -4,7 +4,8 @@ layout(location = 0) in vec3 vN;
 layout(location = 1) in vec2 vUv;
 layout(location = 2) in vec3 vWorldPos;
 layout(location = 0) out vec4 outColor;
-layout(location = 1) out vec4 outDiff; // the diffuse term (A = ssssWeight): the SSS pass blurs only this
+layout(location = 1) out vec4 outDiff; // the diffuse term (A = max ssssWeight): the SSS pass blurs only this
+layout(location = 2) out vec4 outW; // the per-channel ssssWeight (R/G/B = blur distance per color channel)
 
 layout(binding = 3) uniform UBO {
     mat4 viewProj;
@@ -20,7 +21,7 @@ layout(binding = 3) uniform UBO {
     vec2 screenSize;
     vec4 pad2;
 } ubo;
-layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; float ssssWeight; float refraction; float ior; vec2 pad; }
+layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; vec3 ssssWeight; float refraction; float ior; vec3 pad; }
     modelU;
 layout(binding = 6) uniform sampler2D albedoTex;
 layout(binding = 7) uniform sampler2D mrTex; // glTF metallicRoughness: G = roughness, B = metallic
@@ -287,8 +288,10 @@ void main() {
 
     vec3 color = diffSum + specSum + trans;
     color += modelU.emissive * texture(emissiveTex, vUv).rgb; // unlit HDR emission, tonemapped with the rest
-    // opaque pass: the alpha is the ssssWeight side channel (the background clears to 0); the
+    // opaque pass: the alpha is the max ssssWeight side channel (the background clears to 0); the
     // transparent pass: the alpha is the blend factor (the glass self-composites over the scene)
-    outColor = vec4(color, passU.passId < 0.5 ? modelU.ssssWeight : alpha);
-    outDiff = passU.passId < 0.5 ? vec4(diffRaw, modelU.ssssWeight) : vec4(0.0);
+    const float sssMax = max(modelU.ssssWeight.x, max(modelU.ssssWeight.y, modelU.ssssWeight.z));
+    outColor = vec4(color, passU.passId < 0.5 ? sssMax : alpha);
+    outDiff = passU.passId < 0.5 ? vec4(diffRaw, sssMax) : vec4(0.0);
+    outW = passU.passId < 0.5 ? vec4(modelU.ssssWeight, 1.0) : vec4(0.0);
 }

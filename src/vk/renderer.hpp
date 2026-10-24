@@ -215,6 +215,7 @@ private:
     VkImageView m_sssDepthView = VK_NULL_HANDLE;
     VkImageView m_sssDepthCopyView = VK_NULL_HANDLE;
     VkImageView m_sssDiffuseView = VK_NULL_HANDLE;
+    VkImageView m_sssWeightView = VK_NULL_HANDLE;
     bool m_hasSss = false;
     bool m_hasGlass = false;
     bool m_hasTrans = false;

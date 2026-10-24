@@ -566,7 +566,7 @@ inline VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void
     ds.maxDepthBounds = 1.0f;
     ds.depthBoundsTestEnable = VK_FALSE;
     ds.stencilTestEnable = VK_FALSE;
-    VkPipelineColorBlendAttachmentState ca[2]{};
+    VkPipelineColorBlendAttachmentState ca[4]{};
     for (uint32_t i = 0; i < nColorAttach; ++i) {
         auto& c = ca[i];
         c.colorWriteMask =
