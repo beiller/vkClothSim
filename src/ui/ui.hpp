@@ -36,7 +36,8 @@ entt::entity spawnWidget(entt::registry& reg, int& seq, entt::entity parent, C c
 // canvas (own GPU texture + quad + collider + ImGui context) plus the window that fills it
 entt::entity spawnUiWindow(entt::registry& reg, int& seq, const std::string& title, const V2& px, const V3& pos);
 void spawnFpsHud(entt::registry& reg, int& seq, std::function<std::string()> text, const V3& pos, const V2& px);
-void spawnFieldWidget(entt::registry& reg, int& seq, entt::entity parent, const char* label, const FieldDesc* f, void* base);
+// baseFn re-resolves the component's live address on every draw (entt storage can move)
+void spawnFieldWidget(entt::registry& reg, int& seq, entt::entity parent, const char* label, const FieldDesc* f, const std::function<const void*(void)>& baseFn);
 
 struct UiFeed {
     entt::entity canvas = entt::null;

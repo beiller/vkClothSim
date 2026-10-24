@@ -32,20 +32,22 @@ bool resolveEntityField(const entt::registry& reg, entt::entity ent, const std::
     for (auto& [t, b] : comps) {
         if (qual && t != qual)
             continue;
-        if (const FieldDesc* f = findField(t, fn)) {
-            match = f;
-            matchBase = (char*)b + f->offset;
-            ++matches;
-        }
+        if (const FieldDesc* f = findField(t, fn))
+            if (const void* bp = b()) {
+                match = f;
+                matchBase = (char*)bp + f->offset;
+                ++matches;
+            }
     }
     if (matches == 0 && !qual)
         if (const auto* ref = reg.try_get<MaterialRef>(ent))
             for (auto& [t, b] : refl::entityFields(reg, ref->mat)) {
-                if (const FieldDesc* f = findField(t, fn)) {
-                    match = f;
-                    matchBase = (char*)b + f->offset;
-                    ++matches;
-                }
+                if (const FieldDesc* f = findField(t, fn))
+                    if (const void* bp = b()) {
+                        match = f;
+                        matchBase = (char*)bp + f->offset;
+                        ++matches;
+                    }
             }
     if (matches == 0) {
         err = "no field '" + field + "' on '" + label + "'";

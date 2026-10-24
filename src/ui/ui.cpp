@@ -113,7 +113,7 @@ void uiFrame(const entt::registry& reg, const std::vector<UiFeed>& feeds) {
                 b->on();
         } else if (const auto* sec = reg.try_get<UISection>(e)) {
             if (sec->collapsible) {
-                if (ImGui::CollapsingHeader(sec->label.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+                if (ImGui::CollapsingHeader(sec->label.c_str()))
                     drawKids(e);
             } else {
                 ImGui::SeparatorText(sec->label.c_str());
@@ -270,69 +270,96 @@ void spawnFpsHud(entt::registry& reg, int& seq, std::function<std::string()> tex
     spawnWidget(reg, seq, win, UIText{"", std::move(text)});
 }
 
-void spawnFieldWidget(entt::registry& reg, int& seq, entt::entity parent, const char* label, const FieldDesc* f, void* base) {
-    char* p = (char*)base + f->offset;
+// harmless fallback when the live component is gone (removed): writes land here, display reads zero
+char s_dead[32];
+
+void spawnFieldWidget(entt::registry& reg, int& seq, entt::entity parent, const char* label, const FieldDesc* f, const std::function<const void*(void)>& baseFn) {
+    // re-resolved on every draw: entt component storage can move (pool reallocation) after capture
+    auto pv = [baseFn, off = f->offset] {
+        const void* b = baseFn();
+        return b ? (char*)b + off : nullptr;
+    };
     switch (f->kind) {
     case FieldKind::SliderF:
-        spawnWidget(reg, seq, parent, UISliderF{label, f->lo, f->hi, "%.2f", [p] { return (float*)p; }});
+        spawnWidget(reg, seq, parent, UISliderF{label, f->lo, f->hi, "%.2f", [pv] {
+            char* p = pv();
+            return (float*)(p ? p : s_dead);
+        }});
         break;
-    case FieldKind::SliderI: {
-        int* ip = (int*)p;
-        spawnWidget(reg, seq, parent, UISliderI{label, (int)f->lo, (int)f->hi, [ip] { return ip; }});
+    case FieldKind::SliderI:
+        spawnWidget(reg, seq, parent, UISliderI{label, (int)f->lo, (int)f->hi, [pv] {
+            char* p = pv();
+            return (int*)(p ? p : s_dead);
+        }});
         break;
-    }
-    case FieldKind::Checkbox: {
-        bool* bp = (bool*)p;
-        spawnWidget(reg, seq, parent, UICheckbox{label, [bp] { return bp; }});
+    case FieldKind::Checkbox:
+        spawnWidget(reg, seq, parent, UICheckbox{label, [pv] {
+            char* p = pv();
+            return (bool*)(p ? p : s_dead);
+        }});
         break;
-    }
     case FieldKind::Color:
-        spawnWidget(reg, seq, parent, UIColorEdit{label, [p] { return (float*)p; }});
+        spawnWidget(reg, seq, parent, UIColorEdit{label, [pv] {
+            char* p = pv();
+            return (float*)(p ? p : s_dead);
+        }});
         break;
     case FieldKind::DragV3:
-        spawnWidget(reg, seq, parent, UIDragV3{label, 0.1f, [p] { return (float*)p; }});
+        spawnWidget(reg, seq, parent, UIDragV3{label, 0.1f, [pv] {
+            char* p = pv();
+            return (float*)(p ? p : s_dead);
+        }});
         break;
     case FieldKind::Ref: {
-        const entt::entity target = *(const entt::entity*)p;
         const entt::registry* rp = &reg;
-        spawnWidget(reg, seq, parent, UIText{label, [rp, target] {
+        spawnWidget(reg, seq, parent, UIText{label, [rp, pv] {
+            char* p = pv();
+            if (!p)
+                return std::string("<gone>");
+            const entt::entity target = *(const entt::entity*)p;
             const auto* n = rp->try_get<Name>(target);
             return n ? n->id : "<none>";
         }});
         break;
     }
-    case FieldKind::Str: {
-        const std::string* sp = (const std::string*)p;
-        spawnWidget(reg, seq, parent, UIText{label, [sp] { return *sp; }});
+    case FieldKind::Str:
+        spawnWidget(reg, seq, parent, UIText{label, [pv] {
+            char* p = pv();
+            if (!p)
+                return std::string("<gone>");
+            return *(const std::string*)p;
+        }});
         break;
-    }
-    case FieldKind::FloatArr: {
-        const std::vector<float>* ap = (const std::vector<float>*)p;
-        spawnWidget(reg, seq, parent, UIText{label, [ap] {
+    case FieldKind::FloatArr:
+        spawnWidget(reg, seq, parent, UIText{label, [pv] {
+            char* p = pv();
+            if (!p)
+                return std::string("<gone>");
             char buf[32];
-            std::snprintf(buf, sizeof(buf), "%zu elems", ap->size());
+            std::snprintf(buf, sizeof(buf), "%zu elems", ((const std::vector<float>*)p)->size());
             return std::string(buf);
         }});
         break;
-    }
-    case FieldKind::UIntArr: {
-        const std::vector<uint32_t>* ap = (const std::vector<uint32_t>*)p;
-        spawnWidget(reg, seq, parent, UIText{label, [ap] {
+    case FieldKind::UIntArr:
+        spawnWidget(reg, seq, parent, UIText{label, [pv] {
+            char* p = pv();
+            if (!p)
+                return std::string("<gone>");
             char buf[32];
-            std::snprintf(buf, sizeof(buf), "%zu elems", ap->size());
+            std::snprintf(buf, sizeof(buf), "%zu elems", ((const std::vector<uint32_t>*)p)->size());
             return std::string(buf);
         }});
         break;
-    }
-    case FieldKind::EntArr: {
-        const std::vector<entt::entity>* ap = (const std::vector<entt::entity>*)p;
-        spawnWidget(reg, seq, parent, UIText{label, [ap] {
+    case FieldKind::EntArr:
+        spawnWidget(reg, seq, parent, UIText{label, [pv] {
+            char* p = pv();
+            if (!p)
+                return std::string("<gone>");
             char buf[32];
-            std::snprintf(buf, sizeof(buf), "%zu elems", ap->size());
+            std::snprintf(buf, sizeof(buf), "%zu elems", ((const std::vector<entt::entity>*)p)->size());
             return std::string(buf);
         }});
         break;
-    }
     case FieldKind::Quat:
         break;
     }

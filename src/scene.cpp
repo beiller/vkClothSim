@@ -118,13 +118,13 @@ void spawnEditorUi(Engine& w, entt::entity tab) {
                     std::snprintf(label, sizeof label, "%s.%s", t->name, f.name);
                 else
                     std::snprintf(label, sizeof label, "%s", f.name);
-                spawnFieldWidget(w.reg, w.uiSeq, sec, label, &f, (void*)b);
+                spawnFieldWidget(w.reg, w.uiSeq, sec, label, &f, b);
             }
     }
     for (const auto& r : engineRoots(w)) {
         entt::entity sec = spawnWidget(w.reg, w.uiSeq, tab, UISection{r.type->name, true});
         for (const auto& f : r.type->fields)
-            spawnFieldWidget(w.reg, w.uiSeq, sec, f.name, &f, r.base);
+            spawnFieldWidget(w.reg, w.uiSeq, sec, f.name, &f, [b = r.base] { return (const void*)b; });
     }
 }
 

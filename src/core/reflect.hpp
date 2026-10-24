@@ -2,6 +2,7 @@
 #include "components.hpp"
 #include <cstddef>
 #include <cstring>
+#include <functional>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -243,42 +244,40 @@ inline const TypeDesc* findType(const char* name) {
     return nullptr;
 }
 
-inline std::vector<std::pair<const TypeDesc*, const void*>> entityFields(const entt::registry& reg, entt::entity e) {
-    std::vector<std::pair<const TypeDesc*, const void*>> out;
-    if (auto* p = reg.try_get<Transform>(e))
-        out.push_back({findType("Transform"), (const void*)p});
-    if (auto* p = reg.try_get<Material>(e))
-        out.push_back({findType("Material"), (const void*)p});
-    if (auto* p = reg.try_get<MaterialRef>(e))
-        out.push_back({findType("MaterialRef"), (const void*)p});
-    if (auto* p = reg.try_get<Camera>(e))
-        out.push_back({findType("Camera"), (const void*)p});
-    if (auto* p = reg.try_get<PointLight>(e))
-        out.push_back({findType("PointLight"), (const void*)p});
-    if (auto* p = reg.try_get<SoftBodyData>(e))
-        out.push_back({findType("SoftBodyData"), (const void*)p});
-    if (auto* p = reg.try_get<RigidBody>(e))
-        out.push_back({findType("RigidBody"), (const void*)p});
-    if (auto* p = reg.try_get<CapsuleShape>(e))
-        out.push_back({findType("CapsuleShape"), (const void*)p});
-    if (auto* p = reg.try_get<BoxShape>(e))
-        out.push_back({findType("BoxShape"), (const void*)p});
-    if (auto* p = reg.try_get<TaperedCapsule>(e))
-        out.push_back({findType("TaperedCapsule"), (const void*)p});
-    if (auto* p = reg.try_get<Collider>(e))
-        out.push_back({findType("Collider"), (const void*)p});
-    if (auto* p = reg.try_get<Joint>(e))
-        out.push_back({findType("Joint"), (const void*)p});
-    if (auto* p = reg.try_get<SixDofJoint>(e))
-        out.push_back({findType("SixDofJoint"), (const void*)p});
-    if (auto* p = reg.try_get<ControllerInput>(e))
-        out.push_back({findType("ControllerInput"), (const void*)p});
-    if (auto* p = reg.try_get<Renderable>(e))
-        out.push_back({findType("Renderable"), (const void*)p});
-    if (auto* p = reg.try_get<Texture>(e))
-        out.push_back({findType("Texture"), (const void*)p});
-    if (auto* p = reg.try_get<MouseInput>(e))
-        out.push_back({findType("MouseInput"), (const void*)p});
+// live per-use pointer to a component: entt storage can move (the pool reallocates
+// when new entities join, e.g. a glb load) and components can be re-emplaced, so
+// callers resolve on every draw instead of capturing once
+template <typename T>
+std::function<const void*(void)> liveRef(const entt::registry& reg, entt::entity e) {
+    return [&reg, e] -> const void* {
+        if (auto* p = reg.try_get<T>(e))
+            return (const void*)p;
+        return nullptr;
+    };
+}
+
+inline std::vector<std::pair<const TypeDesc*, std::function<const void*(void)>>> entityFields(const entt::registry& reg, entt::entity e) {
+    std::vector<std::pair<const TypeDesc*, std::function<const void*(void)>>> out;
+    auto add = [&out](const char* tn, std::function<const void*(void)> fn) {
+        out.emplace_back(findType(tn), std::move(fn));
+    };
+    if (reg.try_get<Transform>(e)) add("Transform", liveRef<Transform>(reg, e));
+    if (reg.try_get<Material>(e)) add("Material", liveRef<Material>(reg, e));
+    if (reg.try_get<MaterialRef>(e)) add("MaterialRef", liveRef<MaterialRef>(reg, e));
+    if (reg.try_get<Camera>(e)) add("Camera", liveRef<Camera>(reg, e));
+    if (reg.try_get<PointLight>(e)) add("PointLight", liveRef<PointLight>(reg, e));
+    if (reg.try_get<SoftBodyData>(e)) add("SoftBodyData", liveRef<SoftBodyData>(reg, e));
+    if (reg.try_get<RigidBody>(e)) add("RigidBody", liveRef<RigidBody>(reg, e));
+    if (reg.try_get<CapsuleShape>(e)) add("CapsuleShape", liveRef<CapsuleShape>(reg, e));
+    if (reg.try_get<BoxShape>(e)) add("BoxShape", liveRef<BoxShape>(reg, e));
+    if (reg.try_get<TaperedCapsule>(e)) add("TaperedCapsule", liveRef<TaperedCapsule>(reg, e));
+    if (reg.try_get<Collider>(e)) add("Collider", liveRef<Collider>(reg, e));
+    if (reg.try_get<Joint>(e)) add("Joint", liveRef<Joint>(reg, e));
+    if (reg.try_get<SixDofJoint>(e)) add("SixDofJoint", liveRef<SixDofJoint>(reg, e));
+    if (reg.try_get<ControllerInput>(e)) add("ControllerInput", liveRef<ControllerInput>(reg, e));
+    if (reg.try_get<Renderable>(e)) add("Renderable", liveRef<Renderable>(reg, e));
+    if (reg.try_get<Texture>(e)) add("Texture", liveRef<Texture>(reg, e));
+    if (reg.try_get<MouseInput>(e)) add("MouseInput", liveRef<MouseInput>(reg, e));
     return out;
 }
 
