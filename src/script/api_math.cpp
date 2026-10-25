@@ -1,5 +1,6 @@
 #include "script/scene_script.hpp"
 #include "script/lua_util.hpp"
+#include <glm/ext/quaternion_trigonometric.hpp>
 
 // pure vector/quaternion math (the scene.* vadd..qfromto functions)
 void luaRegisterMath(lua_State* L, SceneScript* host) {
@@ -9,47 +10,48 @@ void luaRegisterMath(lua_State* L, SceneScript* host) {
         lua_setfield(L, -2, name);
     };
     reg("vadd", [](lua_State* L) {
-        luaPushV3(L, vAdd(luaReadV3(L, 1), luaReadV3(L, 2)));
+        luaPushV3(L, luaReadV3(L, 1) + luaReadV3(L, 2));
         return 1;
     });
     reg("vsub", [](lua_State* L) {
-        luaPushV3(L, vSub(luaReadV3(L, 1), luaReadV3(L, 2)));
+        luaPushV3(L, luaReadV3(L, 1) - luaReadV3(L, 2));
         return 1;
     });
     reg("vscale", [](lua_State* L) {
-        luaPushV3(L, vScale(luaReadV3(L, 1), (float)luaL_checknumber(L, 2)));
+        luaPushV3(L, luaReadV3(L, 1) * (float)luaL_checknumber(L, 2));
         return 1;
     });
     reg("vlen", [](lua_State* L) {
-        lua_pushnumber(L, vLen(luaReadV3(L, 1)));
+        lua_pushnumber(L, glm::length(luaReadV3(L, 1)));
         return 1;
     });
     reg("vnorm", [](lua_State* L) {
-        luaPushV3(L, vNorm(luaReadV3(L, 1)));
+        luaPushV3(L, glm::normalize(luaReadV3(L, 1)));
         return 1;
     });
     reg("vcross", [](lua_State* L) {
-        luaPushV3(L, vCross(luaReadV3(L, 1), luaReadV3(L, 2)));
+        luaPushV3(L, glm::cross(luaReadV3(L, 1), luaReadV3(L, 2)));
         return 1;
     });
     reg("vdot", [](lua_State* L) {
-        lua_pushnumber(L, vDot(luaReadV3(L, 1), luaReadV3(L, 2)));
+        lua_pushnumber(L, glm::dot(luaReadV3(L, 1), luaReadV3(L, 2)));
         return 1;
     });
     reg("qmul", [](lua_State* L) {
-        luaPushV4(L, quatMul(luaReadQuat(L, 1), luaReadQuat(L, 2)));
+        luaPushV4(L, v4From(quatFrom(luaReadQuat(L, 1)) * quatFrom(luaReadQuat(L, 2))));
         return 1;
     });
     reg("qinv", [](lua_State* L) {
-        luaPushV4(L, quatInv(luaReadQuat(L, 1)));
+        luaPushV4(L, v4From(glm::inverse(quatFrom(luaReadQuat(L, 1)))));
         return 1;
     });
     reg("qaxis", [](lua_State* L) {
-        luaPushV4(L, quatAxisAngle(luaReadV3(L, 1), (float)luaL_checknumber(L, 2)));
+        const V3 axis = glm::normalize(luaReadV3(L, 1)); // the axis-angle form expects a unit axis
+        luaPushV4(L, v4From(glm::angleAxis((float)luaL_checknumber(L, 2), axis)));
         return 1;
     });
     reg("qrot", [](lua_State* L) {
-        luaPushV3(L, quatRotate(luaReadQuat(L, 1), luaReadV3(L, 2)));
+        luaPushV3(L, quatFrom(luaReadQuat(L, 1)) * luaReadV3(L, 2));
         return 1;
     });
     reg("qfromto", [](lua_State* L) {

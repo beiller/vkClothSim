@@ -25,10 +25,10 @@ static V3 walkPos(const entt::registry& reg) {
 CameraView cameraView(const entt::registry& reg, entt::entity cam, float aspect) {
     const Transform wt = worldTransform(reg, cam);
     const Camera& c = reg.get<Camera>(cam);
-    const Mat4 view = viewFromPose(wt.pos, wt.quat);
+    const Mat4 view = poseView(wt.pos, wt.quat);
     const float tanU = std::tan(c.fovDeg * 0.5f * kPi / 180.0f);
     const float tanR = tanU * aspect;
-    return {mul4(perspective(c.fovDeg, aspect, c.nearP, c.farP), view), view, wt.pos, -tanR, tanR, tanU, -tanU,
+    return {glm::perspective(glm::radians(c.fovDeg), aspect, c.nearP, c.farP) * view, view, wt.pos, -tanR, tanR, tanU, -tanU,
             c.nearP, c.farP};
 }
 
@@ -45,7 +45,7 @@ void stepXr(entt::registry& reg, const XrFrame& fr) {
         return;
     Camera& c = reg.get<Camera>(active);
     if (havePose) {
-        const V3 mid = vScale(vAdd(fr.eye[0].pos, fr.eye[fr.nEyes - 1].pos), 0.5f);
+        const V3 mid = (fr.eye[0].pos + fr.eye[fr.nEyes - 1].pos) * 0.5f;
         Transform& t = reg.get<Transform>(active);
         t.pos = mid;
         t.quat = fr.eye[0].quat;
@@ -53,19 +53,16 @@ void stepXr(entt::registry& reg, const XrFrame& fr) {
         c.nViews = fr.nEyes;
         for (int i = 0; i < c.nViews; ++i) {
             c.views[i] = fr.eye[i];
-            c.views[i].pos = vAdd(c.views[i].pos, walk);
+            c.views[i].pos += walk;
         }
     } else {
         const Transform wt = worldTransform(reg, active);
         const V3 head = wt.pos;
         const V4 q = wt.quat;
-        const float qf[4] = {q.x, q.y, q.z, q.w};
-        float rotm[9];
-        quatToMat3(qf, rotm);
-        const V3 right{rotm[0], rotm[1], rotm[2]};
+        const V3 right = quatFrom(q) * V3{1, 0, 0};
         c.nViews = 2;
         for (int i = 0; i < 2; ++i)
-            c.views[i] = View{vAdd(head, vScale(right, i == 0 ? -0.032f : 0.032f)), q,
+            c.views[i] = View{head + right * (i == 0 ? -0.032f : 0.032f), q,
                              -std::tan(54.0f * kPi / 180.0f), std::tan(40.0f * kPi / 180.0f),
                              std::tan(44.0f * kPi / 180.0f), -std::tan(55.0f * kPi / 180.0f)};
     }
@@ -117,7 +114,7 @@ void stepControllers(entt::registry& reg, const XrFrame& fr) {
             headLocal = reg.get<Transform>(cam);
         else {
             const Transform wt = worldTransform(reg, cam);
-            headLocal = Transform{vSub(wt.pos, walkPos(reg)), wt.quat};
+            headLocal = Transform{wt.pos - walkPos(reg), wt.quat};
         }
     }
     reg.view<ControllerInput, Transform>().each([&](auto e, ControllerInput& ci, Transform& t) {
@@ -272,10 +269,10 @@ bool uiPanelUv(const entt::registry& reg, entt::entity canvas, const V3& hitPos,
         return false;
     const Transform& t = reg.get<Transform>(canvas);
     const V2 ws = reg.get<UICanvas>(canvas).worldSize;
-    const V3 xh = quatRotate(t.quat, V3{1, 0, 0});
-    const V3 yh = quatRotate(t.quat, V3{0, 1, 0});
-    const float u = 0.5f + vDot(vSub(hitPos, t.pos), xh) / ws.x;
-    const float v = 0.5f + vDot(vSub(hitPos, t.pos), yh) / ws.y;
+    const V3 xh = quatFrom(t.quat) * V3{1, 0, 0};
+    const V3 yh = quatFrom(t.quat) * V3{0, 1, 0};
+    const float u = 0.5f + glm::dot(hitPos - t.pos, xh) / ws.x;
+    const float v = 0.5f + glm::dot(hitPos - t.pos, yh) / ws.y;
     if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f)
         return false;
     uv = {u, v}; // v up-positive (1 = panel top), as the ImGui feed expects

@@ -100,7 +100,7 @@ ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float
                    float baseAlpha, float alphaCutoff, float alphaMode, const V3& ssssWeight, float refraction,
                    float ior, float normalScale) {
     ModelUbo mb{};
-    std::memcpy(mb.model, model.m, 64);
+    std::memcpy(mb.model, &model, 64); // mat4 is a trivial 16-float layout
     mb.baseColor[0] = baseColor.x;
     mb.baseColor[1] = baseColor.y;
     mb.baseColor[2] = baseColor.z;
@@ -301,7 +301,7 @@ int Renderer::allocInstance(int geom) {
     const GpuMesh& g = m_geoms[geom];
     InstancedMesh inst;
     inst.geom = geom;
-    const ModelUbo modelInit = packModel(mat4Identity(), V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, V3{0.0f, 0.0f, 0.0f}, 1.0f,
+    const ModelUbo modelInit = packModel(Mat4(1.0f), V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, V3{0.0f, 0.0f, 0.0f}, 1.0f,
                                         0.5f, 0.0f, V3{0.0f, 0.0f, 0.0f}, 0.0f, 1.5f, 1.0f);
     vkMakeBuffer(m_dev, m_pdev, inst.modelUbuf, inst.modelMem, sizeof(ModelUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                  &modelInit);
@@ -664,8 +664,8 @@ void Renderer::syncEnvironments(VkApp& app, entt::registry& reg) {
 
 void Renderer::writeViewUbo(const CameraView& cv, float envIntensity, VkExtent2D ext) {
     ViewUbo u{};
-    std::memcpy(u.viewProj, cv.viewProj.m, 64);
-    std::memcpy(u.view, cv.view.m, 64);
+    std::memcpy(u.viewProj, &cv.viewProj, 64);
+    std::memcpy(u.view, &cv.view, 64);
     u.camPos[0] = cv.pos.x;
     u.camPos[1] = cv.pos.y;
     u.camPos[2] = cv.pos.z;
@@ -714,7 +714,7 @@ void Renderer::prepBuffers(entt::registry& reg) {
                 for (int c = 0; c < kTexChannels; ++c)
                     setTexture(inst, c, textureFor(slots[c], reg));
             }
-        Mat4 model = mat4Identity();
+        Mat4 model = Mat4(1.0f);
         if (const auto* wt = reg.try_get<WorldTransform>(e)) {
             model = wt->toMat4();
             im.wpos = wt->pos;
@@ -809,8 +809,8 @@ void Renderer::renderTransparentPass(VkCommandBuffer cmd, VkApp& app, const V3& 
             (m_insts[i].alphaMode == 2 || m_insts[i].refraction > 0.0f))
             trans.push_back((int)i);
     std::sort(trans.begin(), trans.end(), [&](int a, int b) {
-        const V3 da = vSub(camPos, m_insts[a].wpos), db = vSub(camPos, m_insts[b].wpos);
-        return vDot(db, db) > vDot(da, da);
+        const V3 da = camPos - m_insts[a].wpos, db = camPos - m_insts[b].wpos;
+        return glm::dot(db, db) > glm::dot(da, da);
     });
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeBlend);
     setPassId(cmd, m_pl, passId);
@@ -1352,7 +1352,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
 
 Mat4 Renderer::eyeVP(const View& v) const {
     const Mat4 proj = projFov(v.tanL, v.tanR, v.tanU, v.tanD, 0.1f, 300.0f);
-    return mul4(proj, viewFromPose(v.pos, v.quat));
+    return proj * poseView(v.pos, v.quat);
 }
 
 VkRect2D Renderer::eyeRegion(const View& v, VkExtent2D ext, int eye) const {
@@ -1411,7 +1411,7 @@ void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::regist
         const View& v = c->views[eye];
         CameraView cv;
         cv.viewProj = eyeVP(v);
-        cv.view = viewFromPose(v.pos, v.quat);
+        cv.view = poseView(v.pos, v.quat);
         cv.pos = v.pos;
         cv.tanL = v.tanL;
         cv.tanR = v.tanR;

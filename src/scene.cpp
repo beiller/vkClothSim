@@ -136,7 +136,7 @@ void initEngine(Engine& w) {
     };
     w.gpuSim.skin.setRequestVerts(requestVerts);
     w.gpuSim.soft.setRequestVerts(requestVerts);
-    w.renderer.init(*w.app, 256, mat4Identity());
+    w.renderer.init(*w.app, 256, Mat4(1.0f));
     w.script.init(w);
     std::string err;
     if (!w.script.loadMeshStdlib(err)) {

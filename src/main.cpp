@@ -251,8 +251,8 @@ int main(int argc, char** argv) {
                     const XrController& ctl = fr.controller[i];
                     if (!ctl.active)
                         continue;
-                    const V3 o = vAdd(rootPos, ctl.aimPos); // the aim pose is in the vr-root (locomotion) frame
-                    const V3 d = quatRotate(ctl.aimQuat, V3{0, 0, -1});
+                    const V3 o = rootPos + ctl.aimPos; // the aim pose is in the vr-root (locomotion) frame
+                    const V3 d = quatFrom(ctl.aimQuat) * V3{0, 0, -1};
                     f.down = ctl.buttons[0]; // A = click; hover below
                     f.wheel = -ctl.axis[1];
                     if (tryRay(c, o, d, f))
@@ -267,13 +267,12 @@ int main(int argc, char** argv) {
                 const float y = 1.0f - 2.0f * (float)my / (float)app.extent().height;
                 const V3 cd = {(x * 0.5f + 0.5f) * (cv.tanR - cv.tanL) + cv.tanL,
                               (y * 0.5f + 0.5f) * (cv.tanU - cv.tanD) + cv.tanD, -1.0f};
-                const float* m = cv.view.m;
                 const V3 o = cv.pos;
-                // the view matrix rows are the camera's world basis; world dir = camera-space dir expressed in that basis
-                const V3 right{m[0], m[4], m[8]};
-                const V3 up{m[1], m[5], m[9]};
-                const V3 back{m[2], m[6], m[10]};
-                const V3 d = vNormalize(vAdd(vAdd(vScale(right, cd.x), vScale(up, cd.y)), vScale(back, cd.z)));
+                // the view matrix columns are the camera's world basis; world dir = camera-space dir expressed in that basis
+                const V3 right = cv.view[0];
+                const V3 up = cv.view[1];
+                const V3 back = cv.view[2];
+                const V3 d = glm::normalize(right * cd.x + up * cd.y + back * cd.z);
                 f.down = glfwGetMouseButton(app.glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
                 tryRay(c, o, d, f);
             }

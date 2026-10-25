@@ -118,12 +118,12 @@ void Soft::project(const entt::registry& reg) {
         if (reg.try_get<Transform>(e))
             t = worldTransform(reg, e);
         for (int i = 0; i < nv; ++i) {
-            const V3 v = vAdd(quatRotate(t.quat, V3{m.pos[3 * i], m.pos[3 * i + 1], m.pos[3 * i + 2]}), t.pos);
+            const V3 v = quatFrom(t.quat) * V3{m.pos[3 * i], m.pos[3 * i + 1], m.pos[3 * i + 2]} + t.pos;
             m.pos[3 * i] = v.x;
             m.pos[3 * i + 1] = v.y;
             m.pos[3 * i + 2] = v.z;
             if (m.nrm.size() == m.pos.size()) {
-                const V3 n = quatRotate(t.quat, V3{m.nrm[3 * i], m.nrm[3 * i + 1], m.nrm[3 * i + 2]});
+                const V3 n = quatFrom(t.quat) * V3{m.nrm[3 * i], m.nrm[3 * i + 1], m.nrm[3 * i + 2]};
                 m.nrm[3 * i] = n.x;
                 m.nrm[3 * i + 1] = n.y;
                 m.nrm[3 * i + 2] = n.z;

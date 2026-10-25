@@ -13,23 +13,11 @@ struct Transform {
     V3 scale{1, 1, 1};
 
     Mat4 toMat4() const {
-        const float q[4] = {quat.x, quat.y, quat.z, quat.w};
-        float rot[9];
-        quatToMat3(q, rot);
-        Mat4 m{};
-        m.m[0] = rot[0] * scale.x;
-        m.m[1] = rot[1] * scale.x;
-        m.m[2] = rot[2] * scale.x;
-        m.m[4] = rot[3] * scale.y;
-        m.m[5] = rot[4] * scale.y;
-        m.m[6] = rot[5] * scale.y;
-        m.m[8] = rot[6] * scale.z;
-        m.m[9] = rot[7] * scale.z;
-        m.m[10] = rot[8] * scale.z;
-        m.m[12] = pos.x;
-        m.m[13] = pos.y;
-        m.m[14] = pos.z;
-        m.m[15] = 1.0f;
+        Mat4 m = mat4_cast(quatFrom(quat));
+        m[0] *= scale.x;
+        m[1] *= scale.y;
+        m[2] *= scale.z;
+        m[3] = {pos.x, pos.y, pos.z, 1.0f};
         return m;
     }
 };
@@ -42,18 +30,17 @@ struct Parent {
 
 inline Transform transformCompose(const Transform& parent, const Transform& local) {
     Transform r;
-    r.quat = quatMul(parent.quat, local.quat);
-    r.scale = {parent.scale.x * local.scale.x, parent.scale.y * local.scale.y, parent.scale.z * local.scale.z};
-    r.pos = vAdd(parent.pos,
-                 quatRotate(parent.quat,
-                            V3{local.pos.x * parent.scale.x, local.pos.y * parent.scale.y, local.pos.z * parent.scale.z}));
+    r.quat = v4From(quatFrom(parent.quat) * quatFrom(local.quat));
+    r.scale = parent.scale * local.scale;
+    r.pos = parent.pos + quatFrom(parent.quat) * (local.pos * parent.scale);
     return r;
 }
 
 inline Transform transformInvert(const Transform& t) {
-    const V3 r = quatRotate(quatInv(t.quat), t.pos);
+    const Quat qi = glm::inverse(quatFrom(t.quat));
+    const V3 r = qi * t.pos;
     return {{-r.x / t.scale.x, -r.y / t.scale.y, -r.z / t.scale.z},
-            quatInv(t.quat),
+            v4From(qi),
             {1.0f / t.scale.x, 1.0f / t.scale.y, 1.0f / t.scale.z}};
 }
 

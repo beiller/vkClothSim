@@ -480,7 +480,7 @@ bool bindSkeleton(entt::registry& reg, entt::entity e, std::string& err) {
             err = "Skeleton: joint " + std::to_string(i + 1) + " has no Transform";
             return false;
         }
-        s.invBinds.push_back(mat4InvertAffine(worldTransform(reg, j).toMat4()));
+        s.invBinds.push_back(glm::inverse(worldTransform(reg, j).toMat4()));
     }
     return true;
 }

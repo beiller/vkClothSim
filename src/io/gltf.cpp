@@ -264,7 +264,7 @@ void computeNormals(const std::vector<float>& pos, const std::vector<uint32_t>& 
         const V3 a{pos[idx[i] * 3], pos[idx[i] * 3 + 1], pos[idx[i] * 3 + 2]};
         const V3 b{pos[idx[i + 1] * 3], pos[idx[i + 1] * 3 + 1], pos[idx[i + 1] * 3 + 2]};
         const V3 c{pos[idx[i + 2] * 3], pos[idx[i + 2] * 3 + 1], pos[idx[i + 2] * 3 + 2]};
-        const V3 n = vCross(vSub(b, a), vSub(c, a));
+        const V3 n = glm::cross(b - a, c - a);
         for (int j = 0; j < 3; ++j) {
             const size_t v = idx[i + j] * 3;
             nrm[v] += n.x;
@@ -275,9 +275,9 @@ void computeNormals(const std::vector<float>& pos, const std::vector<uint32_t>& 
     for (size_t i = 0; i < nrm.size(); i += 3) {
         V3 n{
             nrm[i], nrm[i + 1], nrm[i + 2]};
-        if (vLen(n) < 1e-12f)
+        if (glm::length(n) < 1e-12f)
             n = {0, 0, 1};
-        n = vNorm(n);
+        n = glm::normalize(n);
         nrm[i] = n.x;
         nrm[i + 1] = n.y;
         nrm[i + 2] = n.z;
@@ -380,18 +380,18 @@ bool nodePose(const tg3_node& n, Transform& out) {
     V3 c0{(float)M[0], (float)M[1], (float)M[2]};
     V3 c1{(float)M[4], (float)M[5], (float)M[6]};
     V3 c2{(float)M[8], (float)M[9], (float)M[10]};
-    out.scale = {vLen(c0), vLen(c1), vLen(c2)};
+    out.scale = {glm::length(c0), glm::length(c1), glm::length(c2)};
     if (out.scale.x < 1e-9f || out.scale.y < 1e-9f || out.scale.z < 1e-9f)
         return false;
-    c0 = vScale(c0, 1.0f / out.scale.x);
-    c1 = vScale(c1, 1.0f / out.scale.y);
-    c2 = vScale(c2, 1.0f / out.scale.z);
-    if (vDot(vCross(c0, c1), c2) < 0.0f) {
-        c2 = vScale(c2, -1.0f);
+    c0 /= out.scale.x;
+    c1 /= out.scale.y;
+    c2 /= out.scale.z;
+    if (glm::dot(glm::cross(c0, c1), c2) < 0.0f) {
+        c2 = -c2;
         out.scale.z = -out.scale.z;
     }
-    c2 = vNorm(vSub(c2, vScale(c1, vDot(c2, c1))));
-    c1 = vNorm(vSub(c1, vScale(c0, vDot(c1, c0))));
+    c2 = glm::normalize(c2 - c1 * glm::dot(c2, c1));
+    c1 = glm::normalize(c1 - c0 * glm::dot(c1, c0));
     out.quat = mat3ToQuat({c0.x, c1.x, c2.x}, {c0.y, c1.y, c2.y}, {c0.z, c1.z, c2.z});
     return true;
 }
@@ -609,9 +609,9 @@ void finishSkinned(GltfCtx& c) {
                 warn(c, "skin " + std::to_string(skin) + ": missing or bad inverseBindMatrices (identity)");
             std::vector<Mat4> invBinds;
             for (uint32_t i = 0; i < sk.joints_count; ++i) {
-                Mat4 m = mat4Identity();
+                Mat4 m(1.0f);
                 if (haveIbm)
-                    std::memcpy(m.m, ibf.data() + 16 * i, 64);
+                    std::memcpy(&m, ibf.data() + 16 * i, 64); // mat4 is a trivial 16-float layout
                 invBinds.push_back(m);
             }
             for (uint32_t i = 0; i < sk.joints_count; ++i) {

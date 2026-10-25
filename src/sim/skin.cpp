@@ -220,16 +220,16 @@ void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
         if (e != entt::null)
             if (const auto* wt = reg.try_get<WorldTransform>(e))
                 return wt->toMat4();
-        return mat4Identity();
+        return Mat4(1.0f);
     };
-    const Mat4 invPlace = mat4InvertAffine(worldOf(s.placement));
+    const Mat4 invPlace = glm::inverse(worldOf(s.placement));
     for (size_t k = 0; k < s.joints.size(); ++k) {
-        const Mat4 ib = k < s.invBinds.size() ? s.invBinds[k] : mat4Identity();
-        const Mat4 M = mul4(mul4(invPlace, worldOf(s.joints[k])), ib);
+        const Mat4 ib = k < s.invBinds.size() ? s.invBinds[k] : Mat4(1.0f);
+        const Mat4 M = invPlace * worldOf(s.joints[k]) * ib;
         float mm[4][4];
         for (int col = 0; col < 4; ++col)
             for (int row = 0; row < 4; ++row)
-                mm[col][row] = M.m[col * 4 + row];
+                mm[col][row] = M[col][row];
         dq::mat4ToDquat(&c.dqStaging[k], kIdentity4, mm);
     }
     if (!c.jointDQ.sz)

@@ -107,6 +107,7 @@ target_include_directories(3dsim_core PUBLIC
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/core
     ${CMAKE_SOURCE_DIR}/lib/entt/single_include
+    ${CMAKE_SOURCE_DIR}/lib/glm
     ${CMAKE_SOURCE_DIR}/lib/json)
 
 add_library(3dsim_io STATIC
@@ -181,6 +182,11 @@ target_link_libraries(vksim PRIVATE
 add_executable(dualquat_test tests/dualquat_test.cpp src/sim/dualquat.cpp)
 target_compile_features(dualquat_test PRIVATE cxx_std_23)
 target_include_directories(dualquat_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/core)
+
+# CPU self-test: the eyeVP (projFov * poseView) pipeline maps known points to expected NDC.
+add_executable(view_proj_test tests/view_proj_test.cpp)
+target_compile_features(view_proj_test PRIVATE cxx_std_23)
+target_include_directories(view_proj_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/core ${CMAKE_SOURCE_DIR}/lib/glm)
 
 # CPU self-test for the tapered-capsule collision shape fitter.
 add_executable(collision_shape_solver_test solvers/collision_shape_solver_test.cpp)

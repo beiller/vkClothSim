@@ -114,7 +114,7 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd, const entt::registry& reg)
             const Mat4 vpLight = faceVp[f];
 
             Pc pc{};
-            std::memcpy(pc.viewProj, vpLight.m, 64);
+            std::memcpy(pc.viewProj, &vpLight, 64);
             pc.lightPosBias[0] = L.pos.x;
             pc.lightPosBias[1] = L.pos.y;
             pc.lightPosBias[2] = L.pos.z;

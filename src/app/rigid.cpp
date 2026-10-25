@@ -26,7 +26,11 @@ constexpr float kMaxKinematicStep = 0.25f;
 
 // normalize at the Jolt boundary: Jolt asserts on non-unit quats (e.g. user-script values)
 JPH::Quat jQuat(V4 q) {
-    q = qNorm(q);
+    const float l = glm::length(q);
+    if (l < 1e-8f)
+        q = {0.0f, 0.0f, 0.0f, 1.0f};
+    else
+        q /= l;
     return {q.x, q.y, q.z, q.w};
 }
 
