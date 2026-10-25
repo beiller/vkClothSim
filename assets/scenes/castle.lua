@@ -2,7 +2,7 @@ local M = {}
 function M._on_ready(self)
     local mat = scene.entity("mat_ground")
     scene.replace(mat, "Material", { baseColor = {0.35, 0.35, 0.38}, metallic = 0, roughness = 0.95 })
-    local g = scene.entity()
+    local g = scene.entity("ground_geom")
     scene.replace(g, "Geometry", mesh.box({ 20, 1, 20 }))
     local ground = scene.entity("ground")
     scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })

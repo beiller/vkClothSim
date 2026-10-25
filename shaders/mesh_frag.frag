@@ -201,6 +201,11 @@ void main() {
     float nV = dot(N, V);
     float NoV = nV > 0.0 ? nV : max(dot(Ngeo, V), 1e-4);
     vec3 Nv = nV > 0.0 ? N : Ngeo;
+    // variance-based roughness widening against normal-map specular aliasing;
+    // computed before the alpha discard so dFdx stays uniform in the 2x2 quad
+    vec3 dndx = dFdx(N);
+    vec3 dndy = dFdy(N);
+    float variance = 0.25 * (dot(dndx, dndx) + dot(dndy, dndy));
 
     vec4 mr = texture(mrTex, vUv);
     vec4 alb = texture(albedoTex, vUv);
@@ -211,6 +216,7 @@ void main() {
     float metal = modelU.metallic * mr.b;
     float rough = clamp(modelU.roughness * mr.g, 0.04, 1.0);
     float a = max(rough * rough, 0.002); // glTF perceptual roughness -> GGX alpha; the floor keeps the D peak (1/(PI*a^2)) bounded
+    a = sqrt(clamp(a * a + min(2.0 * variance, 0.18), 0.0, 1.0)); // normal-map variance widening
     vec3 F0 = mix(vec3(0.04), albedo, metal);
 
     vec3 R = reflect(-V, Nv);
@@ -245,7 +251,12 @@ void main() {
         // vSmith is G/4 (like Godot's V_GGX), so the Cook-Torrance 4*NoL*NoV factor is already
         // included: the final NoL * spec below supplies the NoL, no extra division (dividing by
         // 4*NoL*NoH double-counted and diverged at grazing, producing fireflies)
-        vec3 spec = dGGX(NoH, a) * vSmith(NoV, NoL, a) * F;
+        // Karis sphere-light widening: widen the lobe by the light's angular radius
+        // (consistent with the PCSS penumbra) and rescale for energy; also removes
+        // the sub-pixel highlight shimmer and keeps spec out of the fp16 inf range
+        float aL = clamp(a + li.colorRadius.w / (3.0 * max(dist, 1e-3)), 0.0, 1.0);
+        float norm = (a / aL) * (a / aL);
+        vec3 spec = dGGX(NoH, aL) * vSmith(NoV, NoL, a) * F * norm;
         vec3 kd = (1.0 - F) * (1.0 - metal);
         vec3 diff = kd * albedo / PI;
         float shadow = pcssShadow(Ngeo, L, dist, li, i);

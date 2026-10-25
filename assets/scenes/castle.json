@@ -14,13 +14,11 @@
         {
             "name": "key light",
             "components": {
-                "Transform": { "pos": [-2, 2, 2.5] },
+                "Transform": { "pos": [-2, 2, 4.0] },
                 "PointLight": { "color": [1, 0.95, 0.9], "intensity": 1.0, "radius": 0.25 }
             }
         },
-        { "name": "ground" },
-        { "name": "castle" },
-        { "name": "probe", "script": "scenes/castle" },
+        { "name": "castle_script", "script": "scenes/castle" },
         { "name": "vr", "script": "scenes/vr_controller" }
     ],
     "ui": {
