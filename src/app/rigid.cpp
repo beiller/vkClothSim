@@ -24,7 +24,9 @@ namespace {
 // max kinematic displacement per physics step (0.25 m = 15 m/s at 60 Hz)
 constexpr float kMaxKinematicStep = 0.25f;
 
+// normalize at the Jolt boundary: Jolt asserts on non-unit quats (e.g. user-script values)
 JPH::Quat jQuat(V4 q) {
+    q = qNorm(q);
     return {q.x, q.y, q.z, q.w};
 }
 

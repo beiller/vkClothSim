@@ -63,6 +63,10 @@ inline V4 quatMul(V4 a, V4 b) {
     return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
             a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
 }
+inline V4 qNorm(V4 q) {
+    const float l = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    return l > 1e-8f ? V4{q.x / l, q.y / l, q.z / l, q.w / l} : V4{0, 0, 0, 1};
+}
 inline V4 quatInv(V4 q) {
     return {-q.x, -q.y, -q.z, q.w};
 }

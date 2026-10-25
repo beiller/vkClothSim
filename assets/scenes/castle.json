@@ -1,0 +1,30 @@
+{
+    "name": "castle test",
+    "env": "fly-studio-03_1K.exr",
+    "envIntensity": 0.15,
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 1.0, 2.5], "quat": [-0.0785, 0, 0, 0.9969] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/camera"
+        },
+        {
+            "name": "key light",
+            "components": {
+                "Transform": { "pos": [-2, 2, 2.5] },
+                "PointLight": { "color": [1, 0.95, 0.9], "intensity": 1.0, "radius": 0.25 }
+            }
+        },
+        { "name": "ground" },
+        { "name": "castle" },
+        { "name": "probe", "script": "scenes/castle" },
+        { "name": "vr", "script": "scenes/vr_controller" }
+    ],
+    "ui": {
+        "title": "castle",
+        "size": [320, 560]
+    }
+}
