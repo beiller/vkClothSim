@@ -35,8 +35,10 @@ public:
     int instFor(entt::entity e, entt::entity geomEnt, const entt::registry& reg);
     int instOf(entt::entity e) const;
     int textureId(entt::entity e) const;
-    int textureFor(entt::entity e, const entt::registry& reg);
-    void addGpuTexture(entt::entity e, const void* rgba, uint32_t w, uint32_t h);
+    int textureFor(entt::entity e, entt::registry& reg);
+    entt::entity resolveTex(entt::registry& reg, entt::entity e);
+    void syncEnvironments(VkApp& app, entt::registry& reg);
+    void addGpuTexture(entt::entity e, const void* data, uint32_t w, uint32_t h, TexelFormat fmt);
     VkImage gpuTextureImage(entt::entity e) const {
         const auto it = m_entTex.find(e);
         return (it != m_entTex.end() && it->second < (int)m_texs.size() && m_texs[it->second].img != VK_NULL_HANDLE)
@@ -57,14 +59,15 @@ public:
     void watch(entt::registry& reg);
     void flushFrees();
     void reset();
-    void setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h);
+    void buildEnvironment(VkApp& app, entt::entity envEnt, entt::entity eqTex);
+    float envIntensity(const entt::registry& reg) const;
     void setViewProj(const CameraView& cv);
     void shutdown();
-    void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs);
+    void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry& reg, const RenderSettings& rs);
 
     void initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vector<std::vector<VkImage>>& images,
                       const VkExtent2D* exts);
-    void drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
+    void drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry& reg, const RenderSettings& rs,
                 entt::entity cam, const uint32_t* xrImg, int nXr);
 
     struct ProfMs {
@@ -92,6 +95,7 @@ private:
         VkImage img = VK_NULL_HANDLE;
         VkDeviceMemory mem = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
+        uint32_t w = 0, h = 0;
     };
 
     struct InstancedMesh {
@@ -122,12 +126,13 @@ private:
     int geomFor(entt::entity g, const entt::registry& reg);
     void onRenderableDestroyed(entt::registry&, entt::entity e);
     void onTextureDestroyed(entt::registry&, entt::entity e);
+    void onGpuTextureDestroyed(entt::registry&, entt::entity e);
     void onGeometryDestroyed(entt::registry&, entt::entity e);
     void rebuildTonemapSet(VkApp& app);
     void releaseEnv();
     void writeViewUbo(const CameraView& cv, float envIntensity, VkExtent2D ext);
     void writeLights(const entt::registry& reg);
-    void prepBuffers(const entt::registry& reg);
+    void prepBuffers(entt::registry& reg);
     void renderSceneBuffers(VkCommandBuffer cmd, VkApp& app, const float bg[3], const CameraView& cv);
     void renderOpaquePass(VkCommandBuffer cmd, VkApp& app, const float bg[3]);
     void renderTransparentPass(VkCommandBuffer cmd, VkApp& app, const V3& camPos);
@@ -188,6 +193,7 @@ private:
     std::vector<GpuTexture> m_texs;
     std::unordered_map<entt::entity, int> m_entInst;
     std::unordered_map<entt::entity, int> m_entTex;
+    std::unordered_map<entt::entity, entt::entity> m_texResolve; // Texture -> its GPUTexture child
     std::unordered_map<entt::entity, int> m_entGeom;
     std::unordered_set<entt::entity> m_geomWarned, m_texWarned;
     std::vector<int> m_freeInst, m_freeTex;
@@ -197,7 +203,10 @@ private:
     GpuTexture m_neutralNrm;
     VkSampler m_texSampler = VK_NULL_HANDLE;
 
-    GpuTexture m_envEq, m_envPre, m_envIrr;
+    GpuTexture m_envPre, m_envIrr;
+    VkImage m_envEqImg = VK_NULL_HANDLE; // non-owning: the equirect is the env's GPUTexture
+    entt::entity m_envEnt = entt::null;
+    entt::entity m_envEqEnt = entt::null;
     uint32_t m_envEqW = 0, m_envEqH = 0;
     std::vector<VkImageView> m_envPreMips;
     VkImageView m_envIrrArr = VK_NULL_HANDLE;

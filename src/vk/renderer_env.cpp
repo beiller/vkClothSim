@@ -37,56 +37,25 @@ void Renderer::writeEnvSet(VkDescriptorSet set) {
     w.update(m_dev);
 }
 
-void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t h) {
-    if (m_envReady)
+void Renderer::buildEnvironment(VkApp& app, entt::entity envEnt, entt::entity eqTex) {
+    m_envEnt = envEnt;
+    if (m_envReady && m_envEqEnt == eqTex)
         return;
-    m_envEqW = w;
-    m_envEqH = h;
+    releaseEnv();
+    if (eqTex == entt::null)
+        return;
+    const int eqId = textureId(eqTex);
+    if (eqId < 0) {
+        std::fprintf(stderr, "3dsim: environment texture not uploaded\n");
+        return;
+    }
+    const GpuTexture& eq = m_texs[(size_t)eqId];
+    m_envEqImg = eq.img;
+    m_envEqW = eq.w;
+    m_envEqH = eq.h;
     const uint32_t cubeSize = 256;
     const uint32_t mips = 5;
 
-    // repack RGB->RGBA in a device-local image: Metal rejects linear tiling for 16/32-bit float and lacks R32G32B32_SFLOAT
-    const VkFormat eqFmt = VK_FORMAT_R32G32B32A32_SFLOAT;
-    const size_t eqPixels = (size_t)w * h;
-    std::vector<float> eqRgba(eqPixels * 4);
-    for (size_t i = 0; i < eqPixels; ++i) {
-        eqRgba[i * 4 + 0] = rgb[i * 3 + 0];
-        eqRgba[i * 4 + 1] = rgb[i * 3 + 1];
-        eqRgba[i * 4 + 2] = rgb[i * 3 + 2];
-        eqRgba[i * 4 + 3] = 1.0f;
-    }
-    const VkDeviceSize eqBytes = eqPixels * 16;
-    VkBuffer eqStg = VK_NULL_HANDLE;
-    VkDeviceMemory eqStgMem = VK_NULL_HANDLE;
-    vkMakeBuffer(m_dev, m_pdev, eqStg, eqStgMem, eqBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, eqRgba.data());
-
-    VkImageCreateInfo eci{};
-    eci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    eci.imageType = VK_IMAGE_TYPE_2D;
-    eci.format = eqFmt;
-    eci.extent = {w, h, 1};
-    eci.mipLevels = 1;
-    eci.arrayLayers = 1;
-    eci.samples = VK_SAMPLE_COUNT_1_BIT;
-    eci.tiling = VK_IMAGE_TILING_OPTIMAL;
-    eci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    eci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VK(vkCreateImage(m_dev, &eci, nullptr, &m_envEq.img));
-    VkMemoryRequirements emr;
-    vkGetImageMemoryRequirements(m_dev, m_envEq.img, &emr);
-    VkMemoryAllocateInfo emaa{};
-    emaa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    emaa.allocationSize = emr.size;
-    emaa.memoryTypeIndex = vkFindMemoryType(m_pdev, emr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VK(vkAllocateMemory(m_dev, &emaa, nullptr, &m_envEq.mem));
-    VK(vkBindImageMemory(m_dev, m_envEq.img, m_envEq.mem, 0));
-    VkImageViewCreateInfo evci{};
-    evci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    evci.image = m_envEq.img;
-    evci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    evci.format = eqFmt;
-    evci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VK(vkCreateImageView(m_dev, &evci, nullptr, &m_envEq.view));
 
     vkMakeCubeImage(m_dev, m_pdev, cubeSize, mips, m_envPre.img, m_envPre.mem, m_envPre.view);
     vkMakeCubeImage(m_dev, m_pdev, cubeSize, 1, m_envIrr.img, m_envIrr.mem, m_envIrr.view);
@@ -105,7 +74,7 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
 
     m_envSpecInfo = {m_cubeSampler, m_envPre.view, VK_IMAGE_LAYOUT_GENERAL};
     m_envIrrInfo = {m_cubeSampler, m_envIrr.view, VK_IMAGE_LAYOUT_GENERAL};
-    const VkDescriptorImageInfo eqInfo{m_eqSampler, m_envEq.view, VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo eqInfo{m_eqSampler, eq.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo preSam{m_cubeSampler, m_envPre.view, VK_IMAGE_LAYOUT_GENERAL};
     // store through CUBE views (the same views the glass samples): on this driver the 2D_ARRAY view's layer mapping differs from the CUBE view's, mixing scrambles the faces
     VkImageView prefMipView[5] = {};
@@ -149,19 +118,9 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
 
     VkCommandBuffer cmd = app.beginCommands();
 
-    vkImgBarrier(cmd, m_envEq.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
-                 VK_ACCESS_TRANSFER_WRITE_BIT, 1, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-    VkBufferImageCopy bic{};
-    bic.bufferOffset = 0;
-    bic.bufferRowLength = w;
-    bic.bufferImageHeight = h;
-    bic.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    bic.imageOffset = {0, 0, 0};
-    bic.imageExtent = {w, h, 1};
-    vkCmdCopyBufferToImage(cmd, eqStg, m_envEq.img, VK_IMAGE_LAYOUT_GENERAL, 1, &bic);
-    vkImgBarrier(cmd, m_envEq.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-                 VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, 1, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+    vkImgBarrier(cmd, m_envEqImg, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, 0,
+                 VK_ACCESS_SHADER_READ_BIT, 1, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+
     for (int i = 0; i < 2; ++i)
         vkImgBarrier(cmd, (i == 0) ? m_envPre.img : m_envIrr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                      VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
@@ -198,9 +157,9 @@ void Renderer::setEnvironment(VkApp& app, const float* rgb, uint32_t w, uint32_t
                  VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, 1,
                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 6);
     app.submit(cmd);
-    vkFreeBuffer(m_dev, eqStg, eqStgMem);
 
     m_envReady = true;
+    m_envEqEnt = eqTex;
     for (auto& inst : m_insts)
         writeEnvSet(inst.set);
 }

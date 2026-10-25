@@ -152,6 +152,32 @@ int lEntity(lua_State* L) {
     return 1;
 }
 
+// create a path-only Texture; the file is loaded and uploaded on first use
+int lLoadTexture(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    const std::string path = luaL_checkstring(L, 1);
+    const entt::entity e = w.reg.create();
+    if (const char* name = luaL_optstring(L, 2, nullptr))
+        w.reg.emplace<Name>(e, name);
+    w.reg.emplace<Texture>(e).path = path;
+    luaPushEnt(L, e);
+    return 1;
+}
+
+// create a standalone GPUTexture render target (no Texture parent); render into it, then attach to a material or environment
+int lRenderTexture(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    const uint32_t wpx = (uint32_t)luaL_checkinteger(L, 1);
+    const uint32_t hpx = (uint32_t)luaL_checkinteger(L, 2);
+    const entt::entity e = w.reg.create();
+    if (const char* name = luaL_optstring(L, 3, nullptr))
+        w.reg.emplace<Name>(e, name);
+    w.reg.emplace<GPUTexture>(e, GPUTexture{wpx, hpx});
+    w.renderer.makeGpuTexture(e, wpx, hpx);
+    luaPushEnt(L, e);
+    return 1;
+}
+
 int lCompEmplace(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
@@ -463,4 +489,6 @@ void luaRegisterComponents(lua_State* L, SceneScript* host) {
     reg(L, host, "attach_script", lAttachScript);
     reg(L, host, "destroy", lDestroy);
     reg(L, host, "add_child", lAddChild);
+    reg(L, host, "load_texture", lLoadTexture);
+    reg(L, host, "render_texture", lRenderTexture);
 }

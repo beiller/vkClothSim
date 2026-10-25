@@ -254,16 +254,17 @@ inline void vkMakeImage2D(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint3
 }
 
 // optimal-tiling sampled image with a full GPU-generated mip chain (staging copy + blit ladder)
-inline void vkMakeImage2DMips(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint32_t h, const void* rgba8,
-                             VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
+inline void vkMakeImage2DMips(VkDevice dev, VkPhysicalDevice pdev, VkFormat fmt, uint32_t w, uint32_t h, const void* data,
+                             VkDeviceSize bytes, bool mipGen, VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
     const uint32_t mx = w > h ? w : h;
     uint32_t mips = 1;
-    while ((1u << mips) <= mx && mips < 15)
-        mips++;
+    if (mipGen)
+        while ((1u << mips) <= mx && mips < 15)
+            mips++;
     VkImageCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ici.format = fmt;
     ici.extent = {w, h, 1};
     ici.mipLevels = mips;
     ici.arrayLayers = 1;
@@ -282,7 +283,7 @@ inline void vkMakeImage2DMips(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, u
     VK(vkBindImageMemory(dev, img, mem, 0));
     VkBuffer stg = VK_NULL_HANDLE;
     VkDeviceMemory stgMem = VK_NULL_HANDLE;
-    vkMakeBuffer(dev, pdev, stg, stgMem, (VkDeviceSize)w * h * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, rgba8);
+    vkMakeBuffer(dev, pdev, stg, stgMem, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data);
     vkSubmitAndWait(dev, pdev, [&](VkCommandBuffer cb) {
         vkImgBarrier(cb, img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
                      VK_ACCESS_TRANSFER_WRITE_BIT, 1, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -330,7 +331,7 @@ inline void vkMakeImage2DMips(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, u
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = img;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+    vci.format = fmt;
     vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, 1};
     VK(vkCreateImageView(dev, &vci, nullptr, &view));
 }

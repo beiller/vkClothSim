@@ -25,7 +25,8 @@ inline entt::entity makeTexture(entt::registry& reg, const std::string& id, cons
         if (tx.path == id)
             return e;
     entt::entity e = reg.create();
-    reg.emplace<Texture>(e, Texture{id, std::vector<uint8_t>(rgba, rgba + (size_t)wpx * (size_t)hpx * 4), (uint32_t)wpx, (uint32_t)hpx});
+    reg.emplace<Texture>(e, Texture{id, TexelFormat::RGBA8, "linear",
+                                   std::vector<uint8_t>(rgba, rgba + (size_t)wpx * (size_t)hpx * 4), (uint32_t)wpx, (uint32_t)hpx});
     reg.emplace<Name>(e, id);
     return e;
 }

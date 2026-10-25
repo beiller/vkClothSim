@@ -77,6 +77,10 @@ static const FieldDesc kCamera[] = {
     {"farP", OFF(Camera, farP), FieldKind::SliderF, 10.0f, 1000.0f},
     {"active", OFF(Camera, active), FieldKind::Checkbox},
 };
+static const FieldDesc kEnvironment[] = {
+    {"intensity", OFF(Environment, intensity), FieldKind::SliderF, 0.0f, 10.0f},
+    {"tex", OFF(Environment, tex), FieldKind::Ref},
+};
 static const FieldDesc kPointLight[] = {
     {"on", OFF(PointLight, on), FieldKind::SliderF, 0.0f, 1.0f},
     {"color", OFF(PointLight, color), FieldKind::Color},
@@ -197,6 +201,7 @@ static const FieldDesc kRenderable[] = {
 };
 static const FieldDesc kTexture[] = {
     {"path", OFF(Texture, path), FieldKind::Str},
+    {"space", OFF(Texture, space), FieldKind::Str},
 };
 static const FieldDesc kGeometry[] = {
     {"pos", OFF(Geometry, mesh.pos), FieldKind::FloatArr},
@@ -209,7 +214,6 @@ static const FieldDesc kGeometry[] = {
 static const FieldDesc kRenderSettings[] = {
     {"bgColor", OFF(RenderSettings, bgColor), FieldKind::Color},
     {"exposure", OFF(RenderSettings, exposure), FieldKind::SliderF, 0.1f, 3.0f},
-    {"envIntensity", OFF(RenderSettings, envIntensity), FieldKind::SliderF, 0.0f, 3.0f},
 };
 static const FieldDesc kRigidScene[] = {
     {"velocitySteps", 0, FieldKind::SliderI, 1.0f, 64.0f},
@@ -222,6 +226,7 @@ static const TypeDesc kTypes[] = {
     {"MaterialRef", kMaterialRef},
     {"Parent", kParent},
     {"Camera", kCamera},
+    {"Environment", kEnvironment},
     {"PointLight", kPointLight},
     {"SoftBodyData", kSoftBodyData},
     {"RigidBody", kRigidBody},
@@ -270,6 +275,7 @@ inline std::vector<std::pair<const TypeDesc*, std::function<const void*(void)>>>
     if (reg.try_get<MaterialRef>(e)) add("MaterialRef", liveRef<MaterialRef>(reg, e));
     if (reg.try_get<Parent>(e)) add("Parent", liveRef<Parent>(reg, e));
     if (reg.try_get<Camera>(e)) add("Camera", liveRef<Camera>(reg, e));
+    if (reg.try_get<Environment>(e)) add("Environment", liveRef<Environment>(reg, e));
     if (reg.try_get<PointLight>(e)) add("PointLight", liveRef<PointLight>(reg, e));
     if (reg.try_get<SoftBodyData>(e)) add("SoftBodyData", liveRef<SoftBodyData>(reg, e));
     if (reg.try_get<RigidBody>(e)) add("RigidBody", liveRef<RigidBody>(reg, e));

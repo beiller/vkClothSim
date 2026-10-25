@@ -1,8 +1,10 @@
 {
     "name": "shadow test",
-    "env": "fly-studio-03_1K.exr",
-    "envIntensity": 0.0,
+
+
     "objects": [
+        { "name": "env_tex", "components": { "Texture": { "path": "fly-studio-03_1K.exr" } } },
+        { "name": "env", "components": { "Environment": { "intensity": 0.0, "tex": "env_tex" } } },
         {
             "name": "cam",
             "components": {
@@ -46,7 +48,7 @@
                 "label": "tone",
                 "children": [
                     { "type": "slider-f", "label": "exposure", "bind": "render.exposure" },
-                    { "type": "slider-f", "label": "hdri intensity", "bind": "render.envIntensity" }
+                    { "type": "slider-f", "label": "hdri intensity", "bind": "env.Environment.intensity" }
                 ]
             },
             {

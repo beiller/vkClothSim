@@ -11,6 +11,7 @@ enum class Cmp {
     Material,
     MaterialRef,
     Camera,
+    Environment,
     PointLight,
     SoftBodyData,
     RigidBody,
@@ -40,6 +41,8 @@ const char* cmpName(Cmp c) {
         return "MaterialRef";
     case Cmp::Camera:
         return "Camera";
+    case Cmp::Environment:
+        return "Environment";
     case Cmp::PointLight:
         return "PointLight";
     case Cmp::SoftBodyData:
@@ -95,6 +98,8 @@ void* base(const entt::registry& reg, entt::entity e, Cmp c) {
         return const_cast<MaterialRef*>(reg.try_get<MaterialRef>(e));
     case Cmp::Camera:
         return const_cast<Camera*>(reg.try_get<Camera>(e));
+    case Cmp::Environment:
+        return const_cast<Environment*>(reg.try_get<Environment>(e));
     case Cmp::PointLight:
         return const_cast<PointLight*>(reg.try_get<PointLight>(e));
     case Cmp::SoftBodyData:
@@ -148,6 +153,9 @@ void emplaceDefault(entt::registry& reg, entt::entity e, Cmp c) {
         break;
     case Cmp::Camera:
         reg.emplace<Camera>(e);
+        break;
+    case Cmp::Environment:
+        reg.emplace<Environment>(e);
         break;
     case Cmp::PointLight:
         reg.emplace<PointLight>(e);
@@ -213,6 +221,9 @@ void removeC(entt::registry& reg, entt::entity e, Cmp c) {
         break;
     case Cmp::Camera:
         reg.remove<Camera>(e);
+        break;
+    case Cmp::Environment:
+        reg.remove<Environment>(e);
         break;
     case Cmp::PointLight:
         reg.remove<PointLight>(e);

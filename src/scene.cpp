@@ -207,7 +207,6 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
     }
 
     try {
-        w.render.envIntensity = j.value("envIntensity", 1.0f);
         const json& objects = j.value("objects", json::array());
 
         const json* camObj = nullptr;
@@ -249,13 +248,6 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
         }
 
         w.gpuSim.build(w.reg);
-        if (j.contains("env")) {
-            const auto env = j["env"].get<std::string>();
-            HdrData hdr;
-            if (!loadHdr(resolveFile("assets/" + env), hdr))
-                fail(p, "cannot load env '" + env + "'");
-            w.renderer.setEnvironment(*w.app, hdr.rgb.data(), (uint32_t)hdr.w, (uint32_t)hdr.h);
-        }
         w.script.buildUi(j);
         return true;
     } catch (const SceneError& e) {
@@ -267,8 +259,16 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
 // upload every Texture to a GPUTexture and repoint materials at the GPU-side entity
 void publishTextures(Engine& w) {
     std::vector<std::pair<entt::entity, entt::entity>> ups;
+    const auto isEnvTex = [&w](entt::entity e) {
+        for (auto [ee, env] : w.reg.view<Environment>().each())
+            if (env.tex == e)
+                return true;
+        return false;
+    };
     for (auto [e, t] : w.reg.view<Texture>().each()) {
         (void)t;
+        if (isEnvTex(e))
+            continue; // publishEnvironments uploads it
         const entt::entity g = w.renderer.uploadTexture(w.reg, e);
         if (g != entt::null)
             ups.emplace_back(e, g);
@@ -282,6 +282,25 @@ void publishTextures(Engine& w) {
     }
 }
 
+// upload each Environment's texture and feed it into the HDRI conversion pipeline
+void publishEnvironments(Engine& w) {
+    for (auto [e, env] : w.reg.view<Environment>().each()) {
+        entt::entity eq = entt::null;
+        if (env.tex != entt::null) {
+            if (w.reg.try_get<GPUTexture>(env.tex))
+                eq = env.tex;
+            else {
+                const entt::entity g = w.renderer.uploadTexture(w.reg, env.tex);
+                if (g != entt::null) {
+                    w.reg.get<Environment>(e).tex = g;
+                    eq = g;
+                }
+            }
+        }
+        w.renderer.buildEnvironment(*w.app, e, eq);
+    }
+}
+
 bool loadScene(Engine& w, const std::string& path) {
     resetScene(w);
     std::string err;
@@ -290,6 +309,7 @@ bool loadScene(Engine& w, const std::string& path) {
         return false;
     }
     publishTextures(w);
+    publishEnvironments(w);
     w.loadError = "";
     w.scenePath = path;
     std::printf("3dsim: scene %s\n", path.c_str());

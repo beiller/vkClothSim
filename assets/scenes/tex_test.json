@@ -1,0 +1,15 @@
+{
+    "name": "tex_test",
+    "objects": [
+        { "name": "env_tex", "components": { "Texture": { "path": "fly-studio-03_1K.exr" } } },
+        { "name": "env", "components": { "Environment": { "intensity": 1.0, "tex": "env_tex" } } },
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 1, 8] },
+                "Camera": { "fovDeg": 50, "active": true }
+            }
+        },
+        { "name": "t", "script": "scenes/tex_test" }
+    ]
+}

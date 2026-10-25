@@ -338,9 +338,15 @@ int Renderer::allocInstance(int geom) {
     return id;
 }
 
-void Renderer::addGpuTexture(entt::entity e, const void* rgba, uint32_t w, uint32_t h) {
+void Renderer::addGpuTexture(entt::entity e, const void* data, uint32_t w, uint32_t h, TexelFormat fmt) {
+    // floats are stored 4-channel (Metal rejects linear tiling for R32G32B32_SFLOAT)
+    const VkFormat vf = fmt == TexelFormat::RGB32F ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+    const size_t bpt = fmt == TexelFormat::RGB32F ? 16 : 4;
     GpuTexture t;
-    vkMakeImage2DMips(m_dev, m_pdev, w, h, rgba, t.img, t.mem, t.view);
+    vkMakeImage2DMips(m_dev, m_pdev, vf, w, h, data, (VkDeviceSize)w * h * bpt, fmt == TexelFormat::RGBA8, t.img, t.mem,
+                      t.view);
+    t.w = w;
+    t.h = h;
     m_texs.push_back(t);
     m_entTex[e] = (int)m_texs.size() - 1;
 }
@@ -348,35 +354,107 @@ void Renderer::addGpuTexture(entt::entity e, const void* rgba, uint32_t w, uint3
 void Renderer::makeGpuTexture(entt::entity e, uint32_t w, uint32_t h) {
     GpuTexture t;
     vkMakeImage2DTarget(m_dev, m_pdev, w, h, t.img, t.mem, t.view);
+    t.w = w;
+    t.h = h;
     m_texs.push_back(t);
     m_entTex[e] = (int)m_texs.size() - 1;
+}
+
+namespace {
+// glTF's sRGB-encoded 8-bit data -> linear (the lighting math is linear)
+void linearizeRgba(std::vector<uint8_t>& rgba) {
+    for (size_t i = 0; i < rgba.size(); i += 4)
+        for (int c = 0; c < 3; ++c) {
+            const float s = rgba[i + c] / 255.0f;
+            rgba[i + c] = (uint8_t)((s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f)) * 255.0f + 0.5f);
+        }
+}
+
+// pack 3-channel float pixels into the 4-channel float storage (alpha = 1)
+void repackRgb32f(std::vector<uint8_t>& d) {
+    const size_t n = d.size() / 12;
+    std::vector<uint8_t> rgba(n * 16);
+    for (size_t i = 0; i < n; ++i) {
+        std::memcpy(&rgba[i * 16], &d[i * 12], 12);
+        rgba[i * 16 + 12] = 0x00;
+        rgba[i * 16 + 13] = 0x00;
+        rgba[i * 16 + 14] = 0x80;
+        rgba[i * 16 + 15] = 0x3f;
+    }
+    d = std::move(rgba);
+}
 }
 
 entt::entity Renderer::uploadTexture(entt::registry& reg, entt::entity texEnt) {
     const auto* t = reg.try_get<Texture>(texEnt);
     if (!t)
         return entt::null;
-    std::vector<uint8_t> rgba = t->rgba;
+    std::vector<uint8_t> data = t->data;
+    auto fmt = t->fmt;
     uint32_t w = t->w, h = t->h;
-    if (rgba.empty()) {
-        TextureData td;
-        bool ok = loadTexture(exeDir() + "/../assets/" + t->path, td);
-        if (!ok)
-            ok = loadTexture("assets/" + t->path, td);
-        if (!ok || td.rgba.empty()) {
+    const bool srgb = t->space == "srgb";
+    const bool isHdr = fmt == TexelFormat::RGB32F ||
+                      (t->path.size() > 4 && std::strcmp(t->path.c_str() + t->path.size() - 4, ".exr") == 0);
+    if (data.empty()) {
+        bool ok = false;
+        for (const std::string& dir : {std::string(exeDir() + "/../assets/"), std::string("assets/")}) {
+            if (isHdr) {
+                HdrData hd;
+                if (loadHdr(std::string(dir) + t->path, hd) && !hd.rgb.empty()) {
+                    data.resize(hd.rgb.size() * 4);
+                    std::memcpy(data.data(), hd.rgb.data(), hd.rgb.size() * 4);
+                    w = hd.w;
+                    h = hd.h;
+                    fmt = TexelFormat::RGB32F;
+                    ok = true;
+                    break;
+                }
+            } else {
+                TextureData td;
+                if (loadTexture(std::string(dir) + t->path, td, true) && !td.rgba.empty()) {
+                    data = std::move(td.rgba);
+                    w = td.w;
+                    h = td.h;
+                    ok = true;
+                    break;
+                }
+            }
+        }
+        if (!ok) {
             if (m_texWarned.insert(texEnt).second)
                 std::fprintf(stderr, "3dsim: texture '%s' not found\n", t->path.c_str());
             return entt::null;
         }
-        rgba = std::move(td.rgba);
-        w = td.w;
-        h = td.h;
     }
+    if (srgb && fmt == TexelFormat::RGBA8)
+        linearizeRgba(data);
+    if (fmt == TexelFormat::RGB32F)
+        repackRgb32f(data);
     const entt::entity ge = reg.create();
-    reg.emplace<GPUTexture>(ge, GPUTexture{w, h});
+    reg.emplace<GPUTexture>(ge, GPUTexture{w, h, fmt});
     reg.emplace<Parent>(ge, texEnt);
-    addGpuTexture(ge, rgba.data(), w, h);
+    addGpuTexture(ge, data.data(), w, h, fmt);
     return ge;
+}
+
+// resolve a texture ref (a Texture or a GPUTexture) to a GPUTexture entity, uploading on first use
+entt::entity Renderer::resolveTex(entt::registry& reg, entt::entity e) {
+    if (e == entt::null)
+        return entt::null;
+    if (reg.try_get<GPUTexture>(e))
+        return e;
+    if (!reg.try_get<Texture>(e))
+        return entt::null;
+    if (const auto it = m_texResolve.find(e); it != m_texResolve.end() && reg.valid(it->second) &&
+        reg.try_get<GPUTexture>(it->second))
+        return it->second;
+    for (auto [c, p] : reg.view<Parent>().each())
+        if (p.e == e && reg.try_get<GPUTexture>(c))
+            return m_texResolve[e] = c;
+    const entt::entity g = uploadTexture(reg, e);
+    if (g != entt::null)
+        m_texResolve[e] = g;
+    return g;
 }
 
 void Renderer::uiEnsureTarget(const entt::registry& reg, entt::entity canvas) {
@@ -448,15 +526,12 @@ int Renderer::textureId(entt::entity e) const {
     return it != m_entTex.end() ? it->second : -1;
 }
 
-int Renderer::textureFor(entt::entity e, const entt::registry& reg) {
-    const int id = textureId(e);
-    if (id >= 0)
-        return id;
-    if (!reg.try_get<GPUTexture>(e)) {
-        if (reg.try_get<Texture>(e) && m_texWarned.insert(e).second)
-            std::fprintf(stderr, "3dsim: material references a Texture; upload it to a GPUTexture first\n");
-    }
-    return -1;
+int Renderer::textureFor(entt::entity e, entt::registry& reg) {
+    const entt::entity r = resolveTex(reg, e);
+    if (r == entt::null && e != entt::null && !reg.try_get<GPUTexture>(e) && !reg.try_get<Texture>(e) &&
+        m_texWarned.insert(e).second)
+        std::fprintf(stderr, "3dsim: texture ref is neither a Texture nor a GPUTexture\n");
+    return r == entt::null ? -1 : textureId(r);
 }
 
 void Renderer::queueFreeInst(int inst) {
@@ -474,6 +549,10 @@ void Renderer::onRenderableDestroyed(entt::registry&, entt::entity e) {
 }
 
 void Renderer::onTextureDestroyed(entt::registry&, entt::entity e) {
+    m_texResolve.erase(e);
+}
+
+void Renderer::onGpuTextureDestroyed(entt::registry&, entt::entity e) {
     const auto it = m_entTex.find(e);
     if (it != m_entTex.end()) {
         m_freeTex.push_back(it->second);
@@ -488,6 +567,7 @@ void Renderer::onGeometryDestroyed(entt::registry&, entt::entity e) {
 void Renderer::watch(entt::registry& reg) {
     reg.on_destroy<Renderable>().connect<&Renderer::onRenderableDestroyed>(this);
     reg.on_destroy<Texture>().connect<&Renderer::onTextureDestroyed>(this);
+    reg.on_destroy<GPUTexture>().connect<&Renderer::onGpuTextureDestroyed>(this);
     reg.on_destroy<Geometry>().connect<&Renderer::onGeometryDestroyed>(this);
     reg.on_destroy<UICanvas>().connect<&Renderer::onUiCanvasDestroyed>(this);
 }
@@ -523,7 +603,7 @@ void Renderer::setTexture(int inst, int channel, int texId) {
     if (im.tex[channel] == texId)
         return;
     im.tex[channel] = texId;
-    const bool hasTex = texId >= 0 && (size_t)texId < m_texs.size();
+    const bool hasTex = texId >= 0 && (size_t)texId < m_texs.size() && m_texs[texId].img != VK_NULL_HANDLE;
     const GpuTexture& t = hasTex ? m_texs[texId] : (channel == 2 ? m_neutralNrm : m_white);
     const VkDescriptorImageInfo ii{m_texSampler, t.view, VK_IMAGE_LAYOUT_GENERAL};
     WriteDescs w;
@@ -546,6 +626,7 @@ void Renderer::reset() {
     m_texs.clear();
     m_freeTex.clear();
     m_entTex.clear();
+    m_texResolve.clear();
     for (auto& g : m_geoms) {
         vkFreeBuffer(m_dev, g.pos, g.posMem);
         vkFreeBuffer(m_dev, g.nrm, g.nrmMem);
@@ -568,6 +649,19 @@ void Renderer::setViewProj(const CameraView& cv) {
     m_camView = cv;
 }
 
+float Renderer::envIntensity(const entt::registry& reg) const {
+    if (m_envEnt != entt::null)
+        if (const auto* e = reg.try_get<Environment>(m_envEnt))
+            return e->intensity;
+    return 1.0f;
+}
+
+// keep the environment in sync with its resolved texture; a no-op unless the texture changed
+void Renderer::syncEnvironments(VkApp& app, entt::registry& reg) {
+    for (auto [e, env] : reg.view<Environment>().each())
+        buildEnvironment(app, e, resolveTex(reg, env.tex));
+}
+
 void Renderer::writeViewUbo(const CameraView& cv, float envIntensity, VkExtent2D ext) {
     ViewUbo u{};
     std::memcpy(u.viewProj, cv.viewProj.m, 64);
@@ -588,7 +682,7 @@ void Renderer::writeViewUbo(const CameraView& cv, float envIntensity, VkExtent2D
     vkWriteBuffer(m_dev, m_vpMem, &u, sizeof(ViewUbo));
 }
 
-void Renderer::prepBuffers(const entt::registry& reg) {
+void Renderer::prepBuffers(entt::registry& reg) {
     writeLights(reg);
     m_hasSss = false;
     m_hasGlass = false;
@@ -1064,10 +1158,11 @@ void Renderer::rebuildTonemapSet(VkApp& app) {
     m_tmSrcView = app.hdrView();
 }
 
-void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs) {
+void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry& reg, const RenderSettings& rs) {
     m_exposure = rs.exposure;
     const VkExtent2D ext = app.extent();
-    writeViewUbo(m_camView, rs.envIntensity, ext);
+    syncEnvironments(app, reg);
+    writeViewUbo(m_camView, envIntensity(reg), ext);
     prepBuffers(reg);
     ensureSceneSamplers(app);
     const auto tUi = std::chrono::steady_clock::now();
@@ -1136,7 +1231,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::re
             for (uint32_t face = 0; face < 6; ++face) {
             vkImgBarrier(cmd, m_envPre.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                          VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT, 1,
-                         VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, (uint32_t)face);
+                         VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 6);
             VkBufferImageCopy bic{};
             bic.bufferOffset = (uint64_t)28 * ext.width * ext.height + (uint64_t)face * 256 * 256 * 8;
             bic.bufferImageHeight = 1;
@@ -1147,8 +1242,8 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::re
         }
         if (m_envReady) {
             const size_t eqOff = (size_t)28 * ext.width * ext.height + 6 * 256 * 256 * 8;
-            vkImgBarrier(cmd, m_envEq.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT, 1,
+            vkImgBarrier(cmd, m_envEqImg, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL,
+                         VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_READ_BIT, 1,
                          VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
             VkBufferImageCopy bic{};
             bic.bufferOffset = eqOff;
@@ -1156,7 +1251,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::re
             bic.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
             bic.imageOffset = {0, 0, 0};
             bic.imageExtent = {m_envEqW, m_envEqH, 1};
-            vkCmdCopyImageToBuffer(cmd, m_envEq.img, VK_IMAGE_LAYOUT_GENERAL, m_dbgBuf, 1, &bic);
+            vkCmdCopyImageToBuffer(cmd, m_envEqImg, VK_IMAGE_LAYOUT_GENERAL, m_dbgBuf, 1, &bic);
         }
     }
     vkCmdEndRenderPass(cmd);
@@ -1299,9 +1394,10 @@ void Renderer::ensureNoClearFbs(VkApp& app) {
     m_noClearExt = ext;
 }
 
-void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::registry& reg, const RenderSettings& rs,
+void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry& reg, const RenderSettings& rs,
                       entt::entity cam, const uint32_t* xrImg, int nXr) {
     m_exposure = rs.exposure;
+    syncEnvironments(app, reg);
     prepBuffers(reg);
     const VkExtent2D ext = app.extent();
     ensureSceneSamplers(app);
@@ -1323,7 +1419,7 @@ void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const entt::
         cv.tanD = v.tanD;
         cv.zNear = 0.1f;
         cv.zFar = 300.0f;
-        writeViewUbo(cv, rs.envIntensity, ext);
+        writeViewUbo(cv, envIntensity(reg), ext);
         renderSceneBuffers(cmd, app, rs.bgColor, cv);
         hdrBarrier(cmd, app);
         if (app.hdrView() != m_tmSrcView)
@@ -1437,7 +1533,6 @@ void Renderer::releaseEnv() {
         if (p.pipe)
             vkDestroyPipeline(m_dev, p.pipe, nullptr);
     }
-    vkFreeImage2D(m_dev, m_envEq.img, m_envEq.mem, m_envEq.view);
     vkFreeImage2D(m_dev, m_envPre.img, m_envPre.mem, m_envPre.view);
     vkFreeImage2D(m_dev, m_envIrr.img, m_envIrr.mem, m_envIrr.view);
     for (VkImageView v : m_envPreMips)

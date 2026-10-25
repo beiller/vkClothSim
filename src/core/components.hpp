@@ -154,6 +154,11 @@ struct SoftBodyData {
     std::vector<float> cons;
 };
 
+struct Environment {
+    float intensity = 1.0f;
+    entt::entity tex = entt::null; // Ref -> Texture (its GPU-side entity after publish)
+};
+
 struct PointLight {
     V3 color{1.0f, 0.97f, 0.92f};
     float intensity = 25.0f;
@@ -171,7 +176,6 @@ struct PointLight {
 struct RenderSettings {
     float bgColor[3] = {0.10f, 0.11f, 0.15f};
     float exposure = 1.0f;
-    float envIntensity = 1.0f;
 };
 
 struct Camera {
@@ -183,10 +187,20 @@ struct Camera {
     View views[2];
 };
 
+enum class TexelFormat {
+    RGBA8,
+    RGB32F,
+};
+
+inline int bytesPerTexel(TexelFormat f) {
+    return f == TexelFormat::RGB32F ? 12 : 4;
+}
+
 // GPU-side texture: uploaded from a Texture (Renderer::uploadTexture) or produced by a
 // render target; the only component Material texture fields may reference
 struct GPUTexture {
     uint32_t w = 0, h = 0;
+    TexelFormat fmt = TexelFormat::RGBA8;
 };
 
 // UI canvas: one ImGui context + one GPU texture + one quad; its Transform is the canvas pose
@@ -243,7 +257,9 @@ struct Skeleton {
 
 struct Texture {
     std::string path;
-    std::vector<uint8_t> rgba;
+    TexelFormat fmt = TexelFormat::RGBA8;
+    std::string space = "linear"; // "srgb" = data is sRGB encoded; the upload decodes it
+    std::vector<uint8_t> data;    // packed: w*h*bytesPerTexel(fmt)
     uint32_t w = 0, h = 0;
 };
 

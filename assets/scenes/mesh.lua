@@ -182,6 +182,7 @@ function m.box(p)
         { { 0, 0, 1 }, { { -hx, -hy, hz }, { hx, -hy, hz }, { hx, hy, hz }, { -hx, hy, hz } } },
         { { 0, 0, -1 }, { { hx, -hy, -hz }, { -hx, -hy, -hz }, { hx, hy, -hz }, { -hx, hy, -hz } } },
     }
+    local uvq = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } }
     local v0 = -1
     for _, f in ipairs(faces) do
         local n, corners = f[1], f[2]
@@ -190,7 +191,7 @@ function m.box(p)
             v0 = v0 + 1
             pos[3 * v0 + 1], pos[3 * v0 + 2], pos[3 * v0 + 3] = c[1], c[2], c[3]
             nrm[3 * v0 + 1], nrm[3 * v0 + 2], nrm[3 * v0 + 3] = n[1], n[2], n[3]
-            uv[2 * v0 + 1], uv[2 * v0 + 2] = 0, 0
+            uv[2 * v0 + 1], uv[2 * v0 + 2] = uvq[i][1], uvq[i][2]
         end
         local base = #idx
         local a, b, c, d = v0 - 3, v0 - 2, v0 - 1, v0

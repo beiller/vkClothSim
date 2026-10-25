@@ -1,8 +1,10 @@
 {
     "name": "hdri",
-    "env": "fly-studio-03_1K.exr",
-    "envIntensity": 1.0,
+
+
     "objects": [
+        { "name": "env_tex", "components": { "Texture": { "path": "fly-studio-03_1K.exr" } } },
+        { "name": "env", "components": { "Environment": { "intensity": 1.0, "tex": "env_tex" } } },
         {
             "name": "cam",
             "components": {
@@ -15,12 +17,12 @@
             "name": "light",
             "components": {
                 "Transform": { "pos": [2, 2, 3] },
-                "PointLight": { "color": [1, 1, 1], "intensity": 20, "radius": 0.15 }
+                "PointLight": { "on": 0, "color": [1, 1, 1], "intensity": 20, "radius": 0.15 }
             }
         },
         {
             "name": "mat_sphere",
-            "components": { "Material": { "baseColor": [0.25, 0.25, 0.25], "roughness": 1.0 } }
+            "components": { "Material": { "baseColor": [0.05, 0.05, 0.05], "roughness": 0.05 } }
         },
         { "name": "hdri", "script": "scenes/hdri" },
         { "name": "vr", "script": "scenes/vr_controller" }
@@ -45,7 +47,7 @@
                 "label": "tone",
                 "children": [
                     { "type": "slider-f", "label": "exposure", "bind": "render.exposure" },
-                    { "type": "slider-f", "label": "hdri intensity", "bind": "render.envIntensity" }
+                    { "type": "slider-f", "label": "hdri intensity", "bind": "env.Environment.intensity" }
                 ]
             },
             {
