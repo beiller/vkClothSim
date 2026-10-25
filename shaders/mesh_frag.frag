@@ -93,8 +93,8 @@ const vec2 POISSON[16] = {
     vec2(0.5, -0.4)
 };
 
-float pcfShadow(vec3 N, vec3 L, float dist, float bias, float radius, int idx) {
-    vec3 t = shadowTangent(N, L);
+float pcfShadow(vec3 Ngeo, vec3 L, float dist, float bias, float radius, int idx) {
+    vec3 t = shadowTangent(Ngeo, L);
     vec3 b = cross(L, t);
     float texel = PI / (2.0 * ubo.shadowTexels);
     float sum = 0.0;
@@ -105,11 +105,14 @@ float pcfShadow(vec3 N, vec3 L, float dist, float bias, float radius, int idx) {
     return sum / 16.0;
 }
 
-float pcssShadow(vec3 N, vec3 L, float NoL, float dist, Light li, int idx) {
+float pcssShadow(vec3 Ngeo, vec3 L, float dist, Light li, int idx) {
     if (dist > li.onNearFar.z || dist < li.onNearFar.y)
         return 1.0;
+    // the geometric normal drives the bias + sample basis: the shadow map renders the
+    // geometric surface, and normal-map detail must not modulate acne/leakage
+    float NoL = max(dot(Ngeo, L), 0.0);
     float bias = li.biasParams.x + li.biasParams.y * (1.0 - NoL);
-    vec3 t = shadowTangent(N, L);
+    vec3 t = shadowTangent(Ngeo, L);
     vec3 b = cross(L, t);
     float texel = PI / (2.0 * ubo.shadowTexels);
     float sum = 0.0;
@@ -128,7 +131,7 @@ float pcssShadow(vec3 N, vec3 L, float NoL, float dist, Light li, int idx) {
     float penumbra = (li.colorRadius.w * (dist - avg) / max(avg * dist, 1e-4)) / texel;
     float scale = ubo.shadowTexels / 256.0;
     float radius = clamp(penumbra, (1.0 + li.colorRadius.w * 3.0) * scale, li.biasParams.w * scale);
-    return pcfShadow(N, L, dist, bias, radius, idx);
+    return pcfShadow(Ngeo, L, dist, bias, radius, idx);
 }
 
 // the depth copy uses the engine's GL-convention depth (the perspective matrix maps
@@ -148,35 +151,56 @@ vec3 clipToView(vec2 clip, float dist) {
 
 // perturb N by the normal map; the 8-bit neutral texel (128,128,255) is not exactly (0,0,1)
 void applyNormalMap(inout vec3 N, vec2 uv, vec3 worldPos) {
+    // derivatives before any early-out: in a 2x2 quad where a neighbor takes the
+    // neutral-texel path, data-dependent dFdx/dFdy would be undefined here
+    vec3 dpdx = dFdx(worldPos);
+    vec3 dpdy = dFdy(worldPos);
+    vec2 dudx = dFdx(uv);
+    vec2 dudy = dFdy(uv);
     vec3 nT = texture(normalTex, uv).rgb * 2.0 - 1.0;
     const float neu = 0.004; // 128/255 * 2 - 1
     if (abs(nT.x) <= neu && abs(nT.y) <= neu && abs(nT.z - 1.0) <= neu)
         return;
     nT.xy *= modelU.normalScale; // gltf normalTexture.scale (0 = normal map off)
     // derivative-based TBN (no tangent attribute in the geometry)
-    vec3 dpdx = dFdx(worldPos);
-    vec3 dpdy = dFdy(worldPos);
-    vec2 dudx = dFdx(uv);
-    vec2 dudy = dFdy(uv);
     // relative degeneracy: the position*uv product's magnitude scales with distance, so only
     // the uv derivatives' own scale is a valid threshold
     float uvdet = dudx.x * dudy.y - dudy.x * dudx.y;
     if (uvdet * uvdet < 1e-12 * max(dot(dudx, dudx) * dot(dudy, dudy), 1e-30))
         return; // degenerate uv on this pixel: keep the analytic normal
+    // guarded normalizes: a zero/parallel T gives a NaN normal, and a NaN N kills every
+    // light and the IBL lookup (dark pixel)
     vec3 T = dpdx * dudy.y - dpdy * dudx.y;
-    vec3 B = -(dpdx * dudy.x - dpdy * dudx.x);
-    T = normalize(T - N * dot(T, N));
-    B = cross(N, T);
-    N = normalize(T * nT.x + B * nT.y + N * nT.z);
+    float tl = dot(T, T);
+    if (tl < 1e-20)
+        return;
+    T = T * inversesqrt(tl);
+    T = T - N * dot(T, N);
+    tl = dot(T, T);
+    if (tl < 1e-12)
+        return;
+    T = T * inversesqrt(tl);
+    vec3 B = cross(N, T);
+    vec3 n = T * nT.x + B * nT.y + N * nT.z;
+    tl = dot(n, n);
+    if (tl < 1e-12)
+        return;
+    N = n * inversesqrt(tl);
 }
 
 void main() {
     vec3 N = normalize(vN);
     if (!gl_FrontFacing)
         N = -N; // two-sided: light the back face as front-facing
+    vec3 Ngeo = N; // shadow bias/basis use the geometric normal (the shadow map renders it)
     vec3 V = normalize(ubo.camPos - vWorldPos);
     applyNormalMap(N, vUv, vWorldPos);
-    float NoV = max(dot(N, V), 0.0) + 1e-4;
+    // view-side: a bump tilted away from the viewer (dot(N,V) < 0) falls back to the
+    // geometric normal for Fresnel + reflection, so the terminator stays soft and the
+    // reflection never samples into the surface
+    float nV = dot(N, V);
+    float NoV = nV > 0.0 ? nV : max(dot(Ngeo, V), 1e-4);
+    vec3 Nv = nV > 0.0 ? N : Ngeo;
 
     vec4 mr = texture(mrTex, vUv);
     vec4 alb = texture(albedoTex, vUv);
@@ -189,8 +213,8 @@ void main() {
     float a = max(rough * rough, 0.002); // glTF perceptual roughness -> GGX alpha; the floor keeps the D peak (1/(PI*a^2)) bounded
     vec3 F0 = mix(vec3(0.04), albedo, metal);
 
-    vec3 R = reflect(-V, N);
-    vec3 irr = texture(envIrradiance, N).rgb;
+    vec3 R = reflect(-V, Nv);
+    vec3 irr = texture(envIrradiance, Nv).rgb;
     vec3 prefilt = textureLod(envPrefilter, R, rough * 4.0).rgb;
     vec3 specF = fSchlick(F0, NoV);
     vec3 indirectDiffuse = irr * albedo * (1.0 - metal) * ubo.envIntensity / PI;
@@ -209,9 +233,11 @@ void main() {
         float d2 = dot(Ld, Ld);
         float dist = sqrt(d2);
         vec3 L = Ld / max(dist, 1e-4);
-        float NoL = max(dot(N, L), 0.0);
-        if (NoL <= 0.0)
+        // terminator: hard-gate on the geometric normal; a bump tilted away from the
+        // light fades to the soft floor instead of a hard dark speck
+        if (dot(Ngeo, L) <= 0.0)
             continue;
+        float NoL = max(dot(N, L), 1e-4);
         vec3 H = normalize(V + L);
         float NoH = max(dot(N, H), 0.0);
         float VoH = max(dot(V, H), 0.0);
@@ -222,7 +248,7 @@ void main() {
         vec3 spec = dGGX(NoH, a) * vSmith(NoV, NoL, a) * F;
         vec3 kd = (1.0 - F) * (1.0 - metal);
         vec3 diff = kd * albedo / PI;
-        float shadow = pcssShadow(N, L, NoL, dist, li, i);
+        float shadow = pcssShadow(Ngeo, L, dist, li, i);
         vec3 radiance = li.colorRadius.xyz * li.posIntensity.w / max(d2, 0.01);
         diffSum += radiance * NoL * diff * shadow;
         specSum += radiance * NoL * spec * shadow;
