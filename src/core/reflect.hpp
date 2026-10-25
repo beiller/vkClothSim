@@ -68,6 +68,9 @@ static const FieldDesc kMaterial[] = {
 static const FieldDesc kMaterialRef[] = {
     {"material", 0, FieldKind::Ref},
 };
+static const FieldDesc kParent[] = {
+    {"e", OFF(Parent, e), FieldKind::Ref},
+};
 static const FieldDesc kCamera[] = {
     {"fovDeg", OFF(Camera, fovDeg), FieldKind::SliderF, 10.0f, 120.0f},
     {"nearP", OFF(Camera, nearP), FieldKind::SliderF, 0.01f, 5.0f},
@@ -217,6 +220,7 @@ static const TypeDesc kTypes[] = {
     {"Transform", kTransform},
     {"Material", kMaterial},
     {"MaterialRef", kMaterialRef},
+    {"Parent", kParent},
     {"Camera", kCamera},
     {"PointLight", kPointLight},
     {"SoftBodyData", kSoftBodyData},
@@ -264,6 +268,7 @@ inline std::vector<std::pair<const TypeDesc*, std::function<const void*(void)>>>
     if (reg.try_get<Transform>(e)) add("Transform", liveRef<Transform>(reg, e));
     if (reg.try_get<Material>(e)) add("Material", liveRef<Material>(reg, e));
     if (reg.try_get<MaterialRef>(e)) add("MaterialRef", liveRef<MaterialRef>(reg, e));
+    if (reg.try_get<Parent>(e)) add("Parent", liveRef<Parent>(reg, e));
     if (reg.try_get<Camera>(e)) add("Camera", liveRef<Camera>(reg, e));
     if (reg.try_get<PointLight>(e)) add("PointLight", liveRef<PointLight>(reg, e));
     if (reg.try_get<SoftBodyData>(e)) add("SoftBodyData", liveRef<SoftBodyData>(reg, e));

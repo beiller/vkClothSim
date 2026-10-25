@@ -26,6 +26,7 @@ enum class Cmp {
     Geometry,
     Joint,
     SixDofJoint,
+    Parent,
     None,
 };
 
@@ -69,6 +70,8 @@ const char* cmpName(Cmp c) {
         return "Joint";
     case Cmp::SixDofJoint:
         return "SixDofJoint";
+    case Cmp::Parent:
+        return "Parent";
     }
     return nullptr;
 }
@@ -122,6 +125,8 @@ void* base(const entt::registry& reg, entt::entity e, Cmp c) {
         return const_cast<Joint*>(reg.try_get<Joint>(e));
     case Cmp::SixDofJoint:
         return const_cast<SixDofJoint*>(reg.try_get<SixDofJoint>(e));
+    case Cmp::Parent:
+        return const_cast<Parent*>(reg.try_get<Parent>(e));
     }
     return nullptr;
 }
@@ -188,6 +193,10 @@ void emplaceDefault(entt::registry& reg, entt::entity e, Cmp c) {
         break;
     case Cmp::SixDofJoint:
         reg.emplace<SixDofJoint>(e);
+        break;
+    case Cmp::Parent:
+        reg.emplace<Parent>(e);
+        break;
     }
 }
 
@@ -249,6 +258,9 @@ void removeC(entt::registry& reg, entt::entity e, Cmp c) {
         break;
     case Cmp::SixDofJoint:
         reg.remove<SixDofJoint>(e);
+        break;
+    case Cmp::Parent:
+        reg.remove<Parent>(e);
         break;
     }
 }
