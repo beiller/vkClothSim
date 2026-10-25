@@ -269,9 +269,11 @@ int main(int argc, char** argv) {
                               (y * 0.5f + 0.5f) * (cv.tanU - cv.tanD) + cv.tanD, -1.0f};
                 const float* m = cv.view.m;
                 const V3 o = cv.pos;
-                const V3 d = vNormalize({cd.x * m[0] + cd.y * m[4] + cd.z * m[8],
-                                       cd.x * m[1] + cd.y * m[5] + cd.z * m[9],
-                                       cd.x * m[2] + cd.y * m[6] + cd.z * m[10]});
+                // the view matrix rows are the camera's world basis; world dir = camera-space dir expressed in that basis
+                const V3 right{m[0], m[4], m[8]};
+                const V3 up{m[1], m[5], m[9]};
+                const V3 back{m[2], m[6], m[10]};
+                const V3 d = vNormalize(vAdd(vAdd(vScale(right, cd.x), vScale(up, cd.y)), vScale(back, cd.z)));
                 f.down = glfwGetMouseButton(app.glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
                 tryRay(c, o, d, f);
             }
