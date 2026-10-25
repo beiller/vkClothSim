@@ -1,13 +1,15 @@
 -- VR controller (right hand): the stick walks the "vr root" anchor in the VR head's ("vr cam")
--- frame; the trigger grabs/releases a capsule via a Jolt point joint. The grab anchor is a
--- kinematic capsule this script drives from the aim pose - the rigid step pulls kinematic
--- poses from the ECS before each step, so a pose written in _physics is live for that step.
+-- frame; the trigger grabs/releases: a Jolt point joint for dynamic bodies, an in-place
+-- parent (and restore) to the hand anchor for kinematic ones. The grab anchor is a kinematic
+-- capsule this script drives from the aim pose - the rigid step pulls kinematic poses from
+-- the ECS before each step, so a pose written in _physics is live for that step.
 -- Always runs - without a headset the controller is simply inactive and nothing moves.
 local M = {}
 
 local ctrlH, ctrlL, rootH, headH
 local handAnchor = nil -- kinematic grab anchor (right hand); created on the first physics step
 local joint = nil
+local kinGrab = nil -- { body, origParent, origPos, origQuat } for a parented kinematic grab
 local marker = nil
 local markerMat = nil
 local laserMatR = nil
@@ -41,9 +43,14 @@ local function material(name, baseColor, metallic, roughness, emissive)
     return e
 end
 
--- grabbable bodies are RigidBody (all rigid bodies are dynamic)
+-- grabbable bodies are RigidBody (all rigid bodies are dynamic) or KinematicBody
+-- (grabbed by parenting in place - the parent chain drives the kinematic pose)
 local function isDynamic(e)
     return scene.component(e, "RigidBody") ~= nil
+end
+
+local function isKinematic(e)
+    return scene.component(e, "KinematicBody") ~= nil
 end
 
 function M._on_ready(self)
@@ -78,6 +85,26 @@ local function release()
     if joint then
         scene.destroy(joint)
         joint = nil
+    end
+    if kinGrab then
+        -- unparent, keeping the body's current world pose:
+        -- with an original parent: keepWorld re-expresses it in the parent's frame
+        -- without: the local is in the anchor frame, so convert it to world first
+        -- (the detached body then freezes in the air where it was let go)
+        if kinGrab.origParent then
+            scene.add_child(kinGrab.origParent, kinGrab.body, { keepWorld = true })
+        else
+            local at = scene.component(handAnchor, "Transform")
+            local rt = scene.component(rootH, "Transform")
+            local bt = scene.component(kinGrab.body, "Transform")
+            scene.replace(kinGrab.body, "Transform", {
+                pos = scene.vadd(scene.vadd(rt.pos, scene.qrot(rt.quat, at.pos)),
+                               scene.qrot(scene.qmul(rt.quat, at.quat), bt.pos)),
+                quat = scene.qmul(scene.qmul(rt.quat, at.quat), bt.quat),
+            })
+            scene.remove(kinGrab.body, "Parent")
+        end
+        kinGrab = nil
     end
     if marker then
         scene.destroy(marker)
@@ -136,7 +163,7 @@ local function grab()
         release()
         return
     end
-    if joint then
+    if joint or kinGrab then
         if trig < 0.5 then
             release()
         end
@@ -159,6 +186,19 @@ local function grab()
             scene.replace(j, "Joint", { bodyA = handAnchor, bodyB = hit.entity, type = 0, grabPos = hit.pos })
             scene.add_child(handAnchor, j)
             joint = j
+            spawnMarker(hit.entity, hit.pos)
+        elseif hit and hit.entity and isKinematic(hit.entity) then
+            -- parent in place: the local pose is frozen relative to the anchor, so the
+            -- body follows the hand as the anchor moves (kinematic pose = parent chain)
+            local ct = scene.component(hit.entity, "Transform")
+            local pp = scene.component(hit.entity, "Parent")
+            kinGrab = {
+                body = hit.entity,
+                origParent = pp and pp.e or nil,
+                origPos = ct.pos,
+                origQuat = ct.quat,
+            }
+            scene.add_child(handAnchor, hit.entity, { keepWorld = true })
             spawnMarker(hit.entity, hit.pos)
         end
     end

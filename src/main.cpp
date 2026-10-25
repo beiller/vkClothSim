@@ -253,7 +253,7 @@ int main(int argc, char** argv) {
                         continue;
                     const V3 o = vAdd(rootPos, ctl.aimPos); // the aim pose is in the vr-root (locomotion) frame
                     const V3 d = quatRotate(ctl.aimQuat, V3{0, 0, -1});
-                    f.down = ctl.triggers[0] > 0.3f; // button state live; hover below
+                    f.down = ctl.buttons[0]; // A = click; hover below
                     f.wheel = -ctl.axis[1];
                     if (tryRay(c, o, d, f))
                         break;
