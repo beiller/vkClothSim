@@ -34,14 +34,14 @@ function M._on_ready(self)
         scene.replace(g, "Geometry", mesh.box({ 55, 1, 55 }))
         return g
     end)() })
-    scene.replace(ground, "MaterialRef", { material = scene.find("mat_ground") })
+    scene.replace(ground, "MaterialRef", { material = scene.get_entity("mat_ground") })
     local gShape = scene.entity()
     scene.replace(gShape, "BoxShape", { half = { 40, 1, 40 } })
     local gCol = scene.entity()
     scene.replace(gCol, "Collider", { shape = gShape })
     scene.replace(ground, "KinematicBody", { colliders = { gCol } })
 
-    welded = boxBody("weld", 0, 1.0, 0, scene.find("mat_red"))
+    welded = boxBody("weld", 0, 1.0, 0, scene.get_entity("mat_red"))
     local jw = scene.entity()
     scene.replace(jw, "SixDofJoint", {
         bodyA = welded, grabPos = { 0, 1.0, 0 },
@@ -49,7 +49,7 @@ function M._on_ready(self)
         limTransMin = { 0, 0, 0 }, limTransMax = { 0, 0, 0 },
         limAngMin = { 0, 0, 0 }, limAngMax = { 0, 0, 0 } })
 
-    slider = boxBody("slide", 2, 1.0, 0, scene.find("mat_blue"))
+    slider = boxBody("slide", 2, 1.0, 0, scene.get_entity("mat_blue"))
     local js = scene.entity()
     scene.replace(js, "SixDofJoint", {
         bodyA = slider, grabPos = { 2, 1.0, 0 },
@@ -57,10 +57,10 @@ function M._on_ready(self)
         limTransMin = { -kFree, 0, -kFree }, limTransMax = { kFree, 0, kFree },
         limAngMin = { -kFree, -kFree, -kFree }, limAngMax = { kFree, kFree, kFree } })
 
-    control = boxBody("free", -2, 1.0, 0, scene.find("mat_ground"))
+    control = boxBody("free", -2, 1.0, 0, scene.get_entity("mat_ground"))
 
     -- finite Y limit only (no motor): must hold the box at y = 1.0
-    lim = boxBody("lim", 6, 1.0, 0, scene.find("mat_blue"))
+    lim = boxBody("lim", 6, 1.0, 0, scene.get_entity("mat_blue"))
     local jl = scene.entity()
     scene.replace(jl, "SixDofJoint", {
         bodyA = lim, grabPos = { 6, 1.0, 0 },
@@ -69,7 +69,7 @@ function M._on_ready(self)
         limAngMin = { -kFree, -kFree, -kFree }, limAngMax = { kFree, kFree, kFree } })
 
     -- position motor on TranslationY drives the box to y = 1.0 + 0.5
-    motored = boxBody("motor", 4, 1.0, 0, scene.find("mat_orange"))
+    motored = boxBody("motor", 4, 1.0, 0, scene.get_entity("mat_orange"))
     local jm = scene.entity()
     scene.replace(jm, "SixDofJoint", {
         bodyA = motored, grabPos = { 4, 1.0, 0 },

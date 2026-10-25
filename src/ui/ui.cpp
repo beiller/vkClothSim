@@ -330,6 +330,16 @@ void spawnFieldWidget(entt::registry& reg, int& seq, entt::entity parent, const 
             return *(const std::string*)p;
         }});
         break;
+    case FieldKind::StrArr:
+        spawnWidget(reg, seq, parent, UIText{label, [pv] {
+            char* p = pv();
+            if (!p)
+                return std::string("<gone>");
+            char buf[32];
+            std::snprintf(buf, sizeof buf, "%zu elems", ((const std::vector<std::string>*)p)->size());
+            return std::string(buf);
+        }});
+        break;
     case FieldKind::FloatArr:
         spawnWidget(reg, seq, parent, UIText{label, [pv] {
             char* p = pv();

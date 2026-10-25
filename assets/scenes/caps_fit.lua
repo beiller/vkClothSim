@@ -421,8 +421,8 @@ function M._on_ready(self)
     local ground = scene.entity("ground")
     scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
     scene.replace(ground, "Renderable", { geom = geom(mesh.box({ 55, 1, 55 })) })
-    scene.replace(ground, "MaterialRef", { material = scene.find("mat_ground") })
-    local mat = scene.find("mat_caps")
+    scene.replace(ground, "MaterialRef", { material = scene.get_entity("mat_ground") })
+    local mat = scene.get_entity("mat_caps")
     local n = 0
     for _, f in ipairs(kFits) do
         for c, cap in ipairs(f.caps) do

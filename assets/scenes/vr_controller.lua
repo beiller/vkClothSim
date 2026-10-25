@@ -240,16 +240,16 @@ end
 -- per render frame: locomotion (the visual anchor steps at render rate) + laser tracking
 function M._animate(self, dt)
     if not ctrlH then
-        ctrlH = scene.find("controller R")
+        ctrlH = scene.get_entity("controller R")
     end
     if not ctrlL then
-        ctrlL = scene.find("controller L")
+        ctrlL = scene.get_entity("controller L")
     end
     if not rootH then
-        rootH = scene.find("vr root")
+        rootH = scene.get_entity("vr root")
     end
     if not headH then
-        headH = scene.find("vr cam")
+        headH = scene.get_entity("vr cam")
     end
     if ctrlH and rootH and headH then
         walk(dt)

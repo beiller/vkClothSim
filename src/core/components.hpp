@@ -359,6 +359,8 @@ struct CompField {
     std::vector<float> arr;
     bool isStr = false;
     std::string str;
+    bool isStrArr = false;
+    std::vector<std::string> strArr;
     bool hasEnt = false;
     entt::entity ent = entt::null;
 };
@@ -369,4 +371,5 @@ bool compEmplace(entt::registry& reg, entt::entity e, const std::string& type, c
 bool compReplace(entt::registry& reg, entt::entity e, const std::string& type, const CompFields& fields,
                  std::string& err);
 bool compGet(const entt::registry& reg, entt::entity e, const std::string& type, CompFields& out);
+bool hasComponentByName(const entt::registry& reg, entt::entity e, const std::string& name);
 bool compRemove(entt::registry& reg, entt::entity e, const std::string& type, std::string& err);

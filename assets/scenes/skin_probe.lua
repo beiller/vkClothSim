@@ -2,8 +2,11 @@
 local M = {}
 
 function M._on_ready()
-    local skel = scene.skeleton("probe_skel", { "armA", "armB", "hand" })
-    print("skin probe: skeleton = " .. tostring(skel ~= nil))
+    local skel = scene.entity("probe_skel")
+    scene.replace(skel, "Skeleton", { boneNames = { "armA", "armB", "hand" } })
+    local comp = scene.component(skel, "Skeleton")
+    local nb = comp and comp.boneNames and #comp.boneNames or -1
+    print("skin probe: skeleton = " .. tostring(skel ~= nil) .. " boneNames readback = " .. tostring(nb) .. " (expect 3)")
     local g = scene.entity()
     local ok, err = pcall(scene.replace, g, "Geometry", {
         pos = { 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1 },

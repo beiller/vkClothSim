@@ -26,7 +26,8 @@ function M._on_ready(self)
     scene.replace(matJoint, "Material", { baseColor = {1, 0.15, 0.15}, metallic = 0, roughness = 0.4,
                                           emissive = {1, 0.15, 0.15} })
     local g = geom(mesh.sphere({ subdiv = 2, radius = 0.015 }))
-    for _, j in ipairs(scene.joints(ch)) do
+    local skel = scene.find_components("Skeleton", ch)[1]
+    for _, j in ipairs(scene.component(skel, "Skeleton").joints) do
         local m = scene.entity()
         scene.replace(m, "Transform", {})
         scene.replace(m, "Renderable", { geom = g, noShadow = true })

@@ -25,6 +25,7 @@ enum class Cmp {
     Renderable,
     Texture,
     Geometry,
+    Skeleton,
     Joint,
     SixDofJoint,
     Parent,
@@ -69,6 +70,8 @@ const char* cmpName(Cmp c) {
         return "Texture";
     case Cmp::Geometry:
         return "Geometry";
+    case Cmp::Skeleton:
+        return "Skeleton";
     case Cmp::Joint:
         return "Joint";
     case Cmp::SixDofJoint:
@@ -126,6 +129,8 @@ void* base(const entt::registry& reg, entt::entity e, Cmp c) {
         return const_cast<Texture*>(reg.try_get<Texture>(e));
     case Cmp::Geometry:
         return const_cast<Geometry*>(reg.try_get<Geometry>(e));
+    case Cmp::Skeleton:
+        return const_cast<Skeleton*>(reg.try_get<Skeleton>(e));
     case Cmp::Joint:
         return const_cast<Joint*>(reg.try_get<Joint>(e));
     case Cmp::SixDofJoint:
@@ -196,6 +201,9 @@ void emplaceDefault(entt::registry& reg, entt::entity e, Cmp c) {
     case Cmp::Geometry:
         reg.emplace<Geometry>(e);
         break;
+    case Cmp::Skeleton:
+        reg.emplace<Skeleton>(e);
+        break;
     case Cmp::Joint:
         reg.emplace<Joint>(e);
         break;
@@ -263,6 +271,9 @@ void removeC(entt::registry& reg, entt::entity e, Cmp c) {
         break;
     case Cmp::Geometry:
         reg.remove<Geometry>(e);
+        break;
+    case Cmp::Skeleton:
+        reg.remove<Skeleton>(e);
         break;
     case Cmp::Joint:
         reg.remove<Joint>(e);
@@ -372,6 +383,14 @@ bool writeField(const TypeDesc* t, void* b, const CompField& f, std::string& err
         *(std::string*)dst = f.str;
         return true;
     }
+    case FieldKind::StrArr: {
+        if (!f.isStrArr) {
+            err = "field '" + f.name + "' expects an array of strings";
+            return false;
+        }
+        *(std::vector<std::string>*)dst = f.strArr;
+        return true;
+    }
     case FieldKind::FloatArr: {
         if (!f.isArr) {
             err = "field '" + f.name + "' expects an array of numbers";
@@ -446,6 +465,26 @@ bool validateGeometry(entt::registry& reg, entt::entity e, std::string& err) {
     return true;
 }
 
+// re-snapshot the bind pose on every Skeleton write: invBinds = the inverse of
+// each joint's current world transform (re-writing the component re-binds)
+bool bindSkeleton(entt::registry& reg, entt::entity e, std::string& err) {
+    auto& s = reg.get<Skeleton>(e);
+    if (!s.joints.empty() && s.joints.size() != s.boneNames.size()) {
+        err = "Skeleton: joints and boneNames must have the same count";
+        return false;
+    }
+    s.invBinds.clear();
+    for (size_t i = 0; i < s.joints.size(); ++i) {
+        const entt::entity j = s.joints[i];
+        if (!reg.valid(j) || !reg.try_get<Transform>(j)) {
+            err = "Skeleton: joint " + std::to_string(i + 1) + " has no Transform";
+            return false;
+        }
+        s.invBinds.push_back(mat4InvertAffine(worldTransform(reg, j).toMat4()));
+    }
+    return true;
+}
+
 bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typeName, const CompFields& fields,
                      bool strict, std::string& err) {
     const Cmp c = cmpFor(typeName);
@@ -481,6 +520,8 @@ bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typ
     }
     if (c == Cmp::Geometry && !validateGeometry(reg, e, err))
         return false;
+    if (c == Cmp::Skeleton && !bindSkeleton(reg, e, err))
+        return false;
     if (c == Cmp::TaperedCapsule) {
         const auto& tc = reg.get<TaperedCapsule>(e);
         if (tc.bottomRadius <= 0.0f || tc.topRadius <= 0.0f || tc.halfHeight < 0.0f) {
@@ -491,6 +532,10 @@ bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typ
     return true;
 }
 
+}
+
+bool hasComponentByName(const entt::registry& reg, entt::entity e, const std::string& name) {
+    return hasComp(reg, e, cmpFor(name));
 }
 
 bool compEmplace(entt::registry& reg, entt::entity e, const std::string& type, const CompFields& fields,
@@ -546,6 +591,12 @@ bool compGet(const entt::registry& reg, entt::entity e, const std::string& type,
             f.isStr = true;
             f.str = *(const std::string*)src;
             break;
+        case FieldKind::StrArr: {
+            f.isStrArr = true;
+            f.strArr = *(const std::vector<std::string>*)src;
+            f.n = (int)f.strArr.size();
+            break;
+        }
         case FieldKind::FloatArr:
             f.isArr = true;
             f.arr = *(const std::vector<float>*)src;

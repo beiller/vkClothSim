@@ -7,7 +7,7 @@ local function put(geom, matName, pos)
     local e = scene.entity()
     scene.replace(e, "Transform", { pos = pos })
     scene.replace(e, "Renderable", { geom = g })
-    scene.replace(e, "MaterialRef", { material = scene.find(matName) })
+    scene.replace(e, "MaterialRef", { material = scene.get_entity(matName) })
 end
 
 local function mat(name, comp)
@@ -30,7 +30,7 @@ function M._on_ready(self)
     local e = scene.entity("sphere")
     scene.replace(e, "Transform", {})
     scene.replace(e, "Renderable", { geom = g })
-    scene.replace(e, "MaterialRef", { material = scene.find("mat_glass") })
+    scene.replace(e, "MaterialRef", { material = scene.get_entity("mat_glass") })
 end
 
 return M

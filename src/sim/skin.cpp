@@ -13,39 +13,6 @@ const float kIdentity4[4][4] = {{1, 0, 0, 0},
                                 {0, 0, 1, 0},
                                 {0, 0, 0, 1}};
 
-Mat4 invertAffine(const Mat4& M) {
-    const float* m = M.m;
-    float r[9];
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            r[i * 3 + j] = m[j * 4 + i];
-    const float a = r[0], b = r[1], c = r[2], d = r[3], e = r[4], f = r[5], g = r[6], h = r[7], k = r[8];
-    float det = a * (e * k - f * h) - b * (d * k - f * g) + c * (d * h - e * g);
-    if (det == 0.0f)
-        det = 1.0f; // degenerate: avoid divide-by-zero
-    const float idet = 1.0f / det;
-    float invr[9];
-    invr[0] = (e * k - f * h) * idet;
-    invr[1] = (c * h - b * k) * idet;
-    invr[2] = (b * f - c * e) * idet;
-    invr[3] = (f * g - d * k) * idet;
-    invr[4] = (a * k - c * g) * idet;
-    invr[5] = (c * d - a * f) * idet;
-    invr[6] = (d * h - e * g) * idet;
-    invr[7] = (g * b - a * h) * idet;
-    invr[8] = (a * e - b * d) * idet;
-    Mat4 inv{};
-    const float tx = m[12], ty = m[13], tz = m[14];
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            inv.m[j * 4 + i] = invr[i * 3 + j];
-    inv.m[12] = -(invr[0] * tx + invr[1] * ty + invr[2] * tz);
-    inv.m[13] = -(invr[3] * tx + invr[4] * ty + invr[5] * tz);
-    inv.m[14] = -(invr[6] * tx + invr[7] * ty + invr[8] * tz);
-    inv.m[15] = 1.0f;
-    return inv;
-}
-
 std::vector<VkDescriptorSetLayoutBinding> skelBinds() {
     std::vector<VkDescriptorSetLayoutBinding> b(9);
     for (uint32_t i = 0; i < b.size(); ++i) {
@@ -255,9 +222,10 @@ void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
                 return wt->toMat4();
         return mat4Identity();
     };
-    const Mat4 invPlace = invertAffine(worldOf(s.placement));
+    const Mat4 invPlace = mat4InvertAffine(worldOf(s.placement));
     for (size_t k = 0; k < s.joints.size(); ++k) {
-        const Mat4 M = mul4(mul4(invPlace, worldOf(s.joints[k])), s.invBinds[k]);
+        const Mat4 ib = k < s.invBinds.size() ? s.invBinds[k] : mat4Identity();
+        const Mat4 M = mul4(mul4(invPlace, worldOf(s.joints[k])), ib);
         float mm[4][4];
         for (int col = 0; col < 4; ++col)
             for (int row = 0; row < 4; ++row)

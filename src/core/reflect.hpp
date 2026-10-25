@@ -16,6 +16,7 @@ enum class FieldKind {
     DragV3,
     Ref,
     Str,
+    StrArr,
     Quat,
     FloatArr,
     UIntArr,
@@ -211,6 +212,15 @@ static const FieldDesc kGeometry[] = {
     {"joints", OFF(Geometry, mesh.joints), FieldKind::UIntArr},
     {"weights", OFF(Geometry, mesh.weights), FieldKind::FloatArr},
 };
+// invBinds is not a field: it is derived (the inverse of each joint's world
+// transform) whenever the component is written through createOrReplace
+static const FieldDesc kSkeleton[] = {
+    {"name", OFF(Skeleton, name), FieldKind::Str},
+    {"boneNames", OFF(Skeleton, boneNames), FieldKind::StrArr},
+    {"joints", OFF(Skeleton, joints), FieldKind::EntArr},
+    {"placement", OFF(Skeleton, placement), FieldKind::Ref},
+    {"meshes", OFF(Skeleton, meshes), FieldKind::EntArr},
+};
 static const FieldDesc kRenderSettings[] = {
     {"bgColor", OFF(RenderSettings, bgColor), FieldKind::Color},
     {"exposure", OFF(RenderSettings, exposure), FieldKind::SliderF, 0.1f, 3.0f},
@@ -242,6 +252,7 @@ static const TypeDesc kTypes[] = {
     {"Renderable", kRenderable},
     {"Texture", kTexture},
     {"Geometry", kGeometry},
+    {"Skeleton", kSkeleton},
     {"RenderSettings", kRenderSettings},
     {"RigidScene", kRigidScene},
 };

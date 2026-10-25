@@ -12,11 +12,11 @@ function M._on_ready(self)
     local ground = scene.entity("ground")
     scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
     scene.replace(ground, "Renderable", { geom = geom(mesh.box({ 40, 1, 40 })) })
-    scene.replace(ground, "MaterialRef", { material = scene.find("white") })
+    scene.replace(ground, "MaterialRef", { material = scene.get_entity("white") })
     local ball = scene.entity("ball")
     scene.replace(ball, "Transform", { pos = { 0, 3, 0 } })
     scene.replace(ball, "Renderable", { geom = geom(mesh.sphere({ subdiv = 4, radius = 2 })) })
-    scene.replace(ball, "MaterialRef", { material = scene.find("plaid") })
+    scene.replace(ball, "MaterialRef", { material = scene.get_entity("plaid") })
 end
 
 return M

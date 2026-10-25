@@ -5,6 +5,7 @@
 #include <cstring>
 #include <map>
 #include <ranges>
+#include <set>
 
 namespace {
 
@@ -20,27 +21,48 @@ entt::entity entityOrName(const Engine& w, lua_State* L, int idx) {
     return findNamedEntity(w.reg, luaL_checkstring(L, idx));
 }
 
-// the nearest ancestor (or self) carrying a Skeleton component
-entt::entity skelEntity(const Engine& w, entt::entity e) {
-    if (e == entt::null)
-        return entt::null;
-    auto& reg = w.reg;
-    if (reg.try_get<Skeleton>(e))
-        return e;
+// every entity in root's subtree (root + descendants) carrying `comp`; when root is null,
+// walks from every top-level entity (one that isn't a child of anyone)
+std::vector<entt::entity> findComponentEntities(const Engine& w, entt::entity root, const std::string& comp) {
+    const auto& reg = w.reg;
+    std::vector<entt::entity> out;
     std::map<unsigned, std::vector<entt::entity>> children;
-    for (auto [c, p] : reg.view<Parent>().each())
+    std::set<unsigned> isChild, queued;
+    for (auto [c, p] : reg.view<Parent>().each()) {
         children[entt::to_integral(p.e)].push_back(c);
-    std::vector<entt::entity> stack{e};
+        isChild.insert(entt::to_integral(c));
+    }
+    std::vector<entt::entity> stack;
+    const auto enqueue = [&](entt::entity e) {
+        if (e != entt::null && queued.insert(entt::to_integral(e)).second)
+            stack.push_back(e);
+    };
+    if (root != entt::null) {
+        enqueue(root);
+    } else {
+        for (auto [e, p] : reg.view<Parent>().each())
+            if (isChild.find(entt::to_integral(p.e)) == isChild.end())
+                enqueue(p.e);
+        for (auto [e, n] : reg.view<Name>().each())
+            if (isChild.find(entt::to_integral(e)) == isChild.end())
+                enqueue(e);
+    }
     while (!stack.empty()) {
         const entt::entity cur = stack.back();
         stack.pop_back();
-        if (reg.try_get<Skeleton>(cur))
-            return cur;
-        if (auto it = children.find(entt::to_integral(cur)); it != children.end())
-            for (entt::entity c : it->second)
-                stack.push_back(c);
+        if (hasComponentByName(reg, cur, comp))
+            out.push_back(cur);
+        if (const auto it = children.find(entt::to_integral(cur)); it != children.end())
+            for (const entt::entity c : it->second)
+                enqueue(c);
     }
-    return entt::null;
+    return out;
+}
+
+// the first entity in e's subtree carrying a Skeleton (or null)
+entt::entity skelEntity(const Engine& w, entt::entity e) {
+    const auto v = findComponentEntities(w, e, "Skeleton");
+    return v.empty() ? entt::null : v.front();
 }
 
 bool readCompFields(lua_State* L, int idx, CompFields& out, std::string& err, const char* skipField) {
@@ -68,28 +90,39 @@ bool readCompFields(lua_State* L, int idx, CompFields& out, std::string& err, co
             f.str = lua_tostring(L, -1);
         } else if (lua_istable(L, -1)) {
             const int t = lua_absindex(L, -1);
-            f.isArr = true;
+            bool anyNum = false;
             for (int i = 1;; ++i) {
                 lua_geti(L, t, i);
                 if (lua_isnoneornil(L, -1)) {
                     lua_pop(L, 1);
                     break;
                 }
-                if (!lua_isnumber(L, -1)) {
+                if (lua_isnumber(L, -1)) {
+                    f.arr.push_back((float)lua_tonumber(L, -1));
+                    anyNum = true;
+                } else if (lua_isstring(L, -1)) {
+                    f.strArr.push_back(lua_tostring(L, -1));
+                } else {
                     lua_pop(L, 1);
-                    err = "field '" + std::string(name) + "' must be an array of numbers";
+                    err = "field '" + std::string(name) + "' must be an array of numbers or strings";
                     lua_pop(L, 1);
                     return false;
                 }
-                f.arr.push_back((float)lua_tonumber(L, -1));
                 lua_pop(L, 1);
                 f.n = i;
             }
             if (f.n == 0) {
-                err = "field '" + std::string(name) + "' must be a non-empty array of numbers";
+                err = "field '" + std::string(name) + "' must be a non-empty array of numbers or strings";
                 lua_pop(L, 1);
                 return false;
             }
+            if (anyNum && !f.strArr.empty()) {
+                err = "field '" + std::string(name) + "' mixes numbers and strings";
+                lua_pop(L, 1);
+                return false;
+            }
+            f.isArr = anyNum;
+            f.isStrArr = !anyNum;
         } else {
             lua_pop(L, 1);
             err = "field '" + std::string(name) + "' must be a number, boolean, string, or array";
@@ -223,6 +256,12 @@ int lComponent(lua_State* L) {
     for (const auto& f : out) {
         if (f.isStr) {
             lua_pushstring(L, f.str.c_str());
+        } else if (f.isStrArr) {
+            lua_createtable(L, f.n, 0);
+            for (int i = 0; i < f.n; ++i) {
+                lua_pushstring(L, f.strArr[i].c_str());
+                lua_seti(L, -2, i + 1);
+            }
         } else if (f.hasEnt) {
             luaPushEnt(L, f.ent);
         } else if (!f.isArr && f.n == 1) {
@@ -336,48 +375,6 @@ int lLinkMesh(lua_State* L) {
     return 0;
 }
 
-int lJoints(lua_State* L) {
-    const Engine& w = SceneScript::sSelf(L)->w();
-    const entt::entity skel = skelEntity(w, entityOrName(w, L, 1));
-    if (skel == entt::null)
-        return luaL_error(L, "scene.joints: not a skinned character");
-    const auto& js = w.reg.get<Skeleton>(skel).joints;
-    lua_createtable(L, (int)js.size(), 0);
-    for (size_t i = 0; i < js.size(); ++i) {
-        luaPushEnt(L, js[i]);
-        lua_seti(L, -2, (int)i + 1);
-    }
-    return 1;
-}
-
-int lSkeleton(lua_State* L) {
-    Engine& w = SceneScript::sSelf(L)->w();
-    const std::string name = luaL_checkstring(L, 1);
-    if (!lua_istable(L, 2))
-        return luaL_error(L, "scene.skeleton: second arg must be a table of bone names");
-    Skeleton skel;
-    skel.name = name;
-    for (int i = 1;; ++i) {
-        lua_geti(L, 2, i);
-        if (lua_isnoneornil(L, -1)) {
-            lua_pop(L, 1);
-            break;
-        }
-        if (!lua_isstring(L, -1)) {
-            lua_pop(L, 1);
-            return luaL_error(L, "scene.skeleton: bone names must be strings");
-        }
-        skel.boneNames.push_back(lua_tostring(L, -1));
-        skel.invBinds.push_back(mat4Identity());
-        lua_pop(L, 1);
-    }
-    const entt::entity e = w.reg.create();
-    w.reg.emplace<Name>(e, name);
-    w.reg.emplace<Skeleton>(e, std::move(skel));
-    luaPushEnt(L, e);
-    return 1;
-}
-
 int lFind(lua_State* L) {
     const std::string name = luaL_checkstring(L, 1);
     const entt::entity e = findNamedEntity(SceneScript::sSelf(L)->w().reg, name);
@@ -386,6 +383,21 @@ int lFind(lua_State* L) {
         return 1;
     }
     luaPushEnt(L, e);
+    return 1;
+}
+
+// find_components(component, root?) -> every entity carrying `component`, walked from
+// root's subtree (or from every top-level entity when root is omitted)
+int lFindComponents(lua_State* L) {
+    const Engine& w = SceneScript::sSelf(L)->w();
+    const std::string comp = luaL_checkstring(L, 1);
+    const entt::entity root = lua_isnumber(L, 2) ? luaReadEnt(L, 2) : entt::null;
+    const auto found = findComponentEntities(w, root, comp);
+    lua_createtable(L, (int)found.size(), 0);
+    for (size_t i = 0; i < found.size(); ++i) {
+        luaPushEnt(L, found[i]);
+        lua_seti(L, -2, (int)i + 1);
+    }
     return 1;
 }
 
@@ -482,9 +494,8 @@ void luaRegisterComponents(lua_State* L, SceneScript* host) {
     reg(L, host, "set_morph", lSetMorph);
     reg(L, host, "shapes", lShapes);
     reg(L, host, "link_mesh", lLinkMesh);
-    reg(L, host, "joints", lJoints);
-    reg(L, host, "skeleton", lSkeleton);
-    reg(L, host, "find", lFind);
+    reg(L, host, "get_entity", lFind);
+    reg(L, host, "find_components", lFindComponents);
     reg(L, host, "key_down", lKeyDown);
     reg(L, host, "attach_script", lAttachScript);
     reg(L, host, "destroy", lDestroy);

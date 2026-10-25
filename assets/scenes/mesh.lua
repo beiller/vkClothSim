@@ -180,7 +180,7 @@ function m.box(p)
         { { 0, 1, 0 }, { { -hx, hy, -hz }, { -hx, hy, hz }, { hx, hy, hz }, { hx, hy, -hz } } },
         { { 0, -1, 0 }, { { -hx, -hy, hz }, { -hx, -hy, -hz }, { hx, -hy, -hz }, { hx, -hy, hz } } },
         { { 0, 0, 1 }, { { -hx, -hy, hz }, { hx, -hy, hz }, { hx, hy, hz }, { -hx, hy, hz } } },
-        { { 0, 0, -1 }, { { hx, -hy, -hz }, { -hx, -hy, -hz }, { hx, hy, -hz }, { -hx, hy, -hz } } },
+        { { 0, 0, -1 }, { { hx, -hy, -hz }, { -hx, -hy, -hz }, { -hx, hy, -hz }, { hx, hy, -hz } } },
     }
     local uvq = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } }
     local v0 = -1

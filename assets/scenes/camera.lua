@@ -16,7 +16,7 @@ end
 
 function M._physics(self, dt)
     if not kbH then
-        kbH = scene.find("keyboard")
+        kbH = scene.get_entity("keyboard")
     end
     local t = scene.component(camH, "Transform")
     local pos, q = t.pos, t.quat
@@ -35,7 +35,7 @@ function M._physics(self, dt)
         pos = {pos[1] + d[1], pos[2] + d[2], pos[3] + d[3]}
     end
     if not mouseH then
-        mouseH = scene.find("mouse")
+        mouseH = scene.get_entity("mouse")
     end
     if mouseH then
         local mx = scene.get(mouseH, "MouseInput.x")

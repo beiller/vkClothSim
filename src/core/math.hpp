@@ -141,6 +141,40 @@ inline Mat4 mul4(const Mat4& a, const Mat4& b) {
     return r;
 }
 
+// inverse of an affine (linear + translation) transform
+inline Mat4 mat4InvertAffine(const Mat4& M) {
+    const float* m = M.m;
+    float r[9];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            r[i * 3 + j] = m[j * 4 + i];
+    const float a = r[0], b = r[1], c = r[2], d = r[3], e = r[4], f = r[5], g = r[6], h = r[7], k = r[8];
+    float det = a * (e * k - f * h) - b * (d * k - f * g) + c * (d * h - e * g);
+    if (det == 0.0f)
+        det = 1.0f;
+    const float idet = 1.0f / det;
+    float invr[9];
+    invr[0] = (e * k - f * h) * idet;
+    invr[1] = (c * h - b * k) * idet;
+    invr[2] = (b * f - c * e) * idet;
+    invr[3] = (f * g - d * h) * idet;
+    invr[4] = (a * k - c * g) * idet;
+    invr[5] = (c * d - a * f) * idet;
+    invr[6] = (d * h - e * g) * idet;
+    invr[7] = (g * b - a * h) * idet;
+    invr[8] = (a * e - b * d) * idet;
+    Mat4 inv{};
+    const float tx = m[12], ty = m[13], tz = m[14];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            inv.m[j * 4 + i] = invr[i * 3 + j];
+    inv.m[12] = -(invr[0] * tx + invr[1] * ty + invr[2] * tz);
+    inv.m[13] = -(invr[3] * tx + invr[4] * ty + invr[5] * tz);
+    inv.m[14] = -(invr[6] * tx + invr[7] * ty + invr[8] * tz);
+    inv.m[15] = 1.0f;
+    return inv;
+}
+
 inline Mat4 perspective(float fovyDeg, float aspect, float nearP, float farP) {
     Mat4 r{};
     float f = 1.0f / std::tan(fovyDeg * 0.5f * kPi / 180.0f);

@@ -44,14 +44,14 @@ function M._on_ready(self)
         scene.replace(g, "Geometry", mesh.box({ 55, 1, 55 }))
         return g
     end)() })
-    scene.replace(ground, "MaterialRef", { material = scene.find("mat_ground") })
+    scene.replace(ground, "MaterialRef", { material = scene.get_entity("mat_ground") })
     local gShape = scene.entity()
     scene.replace(gShape, "BoxShape", { half = { 40, 1, 40 } })
     local gCol = scene.entity()
     scene.replace(gCol, "Collider", { shape = gShape })
     scene.replace(ground, "KinematicBody", { colliders = { gCol } })
 
-    local mat = { scene.find("mat_red"), scene.find("mat_blue"), scene.find("mat_orange") }
+    local mat = { scene.get_entity("mat_red"), scene.get_entity("mat_blue"), scene.get_entity("mat_orange") }
     for i = 1, kN do
         links[i] = link(i, mat[i % 3 + 1])
     end

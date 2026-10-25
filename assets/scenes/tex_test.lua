@@ -18,7 +18,7 @@ function M._on_ready(self)
     makeCube("cube_rt", { 3, 1, 0 }, scene.render_texture(256, 256, "rt"))
     local tmp = scene.load_texture("cloth_albedo.png")
     scene.destroy(tmp)
-    scene.replace(scene.find("env"), "Environment", { tex = scene.load_texture("fly-studio-03_1K.exr", "env2") })
+    scene.replace(scene.get_entity("env"), "Environment", { tex = scene.load_texture("fly-studio-03_1K.exr", "env2") })
 end
 
 return M

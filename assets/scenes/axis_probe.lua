@@ -45,7 +45,8 @@ function M._on_ready(self)
                                          emissive = {0, 1, 0.4} })
     local shaft = geom(mesh.box({ 0.004, 0.07, 0.004 }))
     local tip = geom(mesh.sphere({ subdiv = 1, radius = 0.008 }))
-    for _, j in ipairs(scene.joints(ch)) do
+    local skel = scene.find_components("Skeleton", ch)[1]
+    for _, j in ipairs(scene.component(skel, "Skeleton").joints) do
         local s = scene.entity()
         scene.replace(s, "Transform", { pos = { 0, 0.035, 0 } })
         scene.replace(s, "Renderable", { geom = shaft, noShadow = true })

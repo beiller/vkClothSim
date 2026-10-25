@@ -80,7 +80,7 @@ local function addBranch(parent, parentWQ, parentWPos, parentDir, depth)
     local e = scene.entity()
     scene.replace(e, "Transform", { pos = localPos, quat = localQuat })
     scene.replace(e, "Renderable", { geom = capGeom[depth] })
-    scene.replace(e, "MaterialRef", { material = scene.find("mat_d" .. depth) })
+    scene.replace(e, "MaterialRef", { material = scene.get_entity("mat_d" .. depth) })
     if parent then
         scene.add_child(parent, e)
     end
@@ -98,7 +98,7 @@ function M._on_ready(self)
     local ground = scene.entity("ground")
     scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
     scene.replace(ground, "Renderable", { geom = geom(mesh.box({ 28, 1, 28 })) })
-    scene.replace(ground, "MaterialRef", { material = scene.find("mat_ground") })
+    scene.replace(ground, "MaterialRef", { material = scene.get_entity("mat_ground") })
 
     for d = 0, kMaxDepth do
         local m = scene.entity("mat_d" .. d)
