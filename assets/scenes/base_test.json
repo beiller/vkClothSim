@@ -31,13 +31,17 @@
                 "type": "section",
                 "label": "Mats",
                 "children": [
-                    { "type": "slider-f", "label": "basegen8/Cornea.refraction", "bind": "basegen8/Cornea.refraction" },
-                    { "type": "slider-f", "label": "basegen8/Cornea.ior", "bind": "basegen8/Cornea.ior" },
-                    { "type": "slider-f", "label": "basegen8/Cornea.roughness", "bind": "basegen8/Cornea.roughness" },
-                    { "type": "slider-f", "label": "basegen8/EyeMoisture.refraction", "bind": "basegen8/EyeMoisture.refraction" },
-                    { "type": "slider-f", "label": "basegen8/EyeMoisture.ior", "bind": "basegen8/EyeMoisture.ior" },
-                    { "type": "slider-f", "label": "basegen8/EyeMoisture.roughness", "bind": "basegen8/EyeMoisture.roughness" },
-                    { "type": "slider-f", "label": "basegen8/Face.ssssWeight", "bind": "basegen8/Face.ssssWeight" }
+                    { "type": "slider-f", "label": "basegen8/Cornea.Material.refraction", "bind": "basegen8/Cornea.Material.refraction" },
+                    { "type": "slider-f", "label": "basegen8/Cornea.Material.ior", "bind": "basegen8/Cornea.Material.ior" },
+                    { "type": "slider-f", "label": "basegen8/Cornea.Material.roughness", "bind": "basegen8/Cornea.Material.roughness" },
+                    { "type": "slider-f", "label": "basegen8/EyeMoisture.Material.refraction", "bind": "basegen8/EyeMoisture.Material.refraction" },
+                    { "type": "slider-f", "label": "basegen8/EyeMoisture.Material.ior", "bind": "basegen8/EyeMoisture.Material.ior" },
+                    { "type": "slider-f", "label": "basegen8/EyeMoisture.Material.roughness", "bind": "basegen8/EyeMoisture.Material.roughness" },
+                    { "type": "slider-f", "label": "basegen8/EyeMoisture.1.Material.refraction", "bind": "basegen8/EyeMoisture.1.Material.refraction" },
+                    { "type": "slider-f", "label": "basegen8/EyeMoisture.1.Material.ior", "bind": "basegen8/EyeMoisture.1.Material.ior" },
+                    { "type": "slider-f", "label": "basegen8/EyeMoisture.1.Material.roughness", "bind": "basegen8/EyeMoisture.1.Material.roughness" },
+                    { "type": "slider-f", "label": "basegen8/Face.Material.ssssWeight", "bind": "basegen8/Face.Material.ssssWeight" },
+                    { "type": "slider-f", "label": "key light.PointLight.radius", "bind": "key light.PointLight.radius" }
                 ]
             },
             {

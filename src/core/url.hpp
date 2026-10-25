@@ -9,7 +9,8 @@ struct UrlRef {
     void* base = nullptr;
 };
 
-// "name.field" / "render.field" / "rigid.field" resolution; roots = the non-entity
+// "name.Component.field" / "render.field" / "rigid.field" resolution; entity names may
+// contain dots (the last two dot segments are Component.field); roots = the non-entity
 // reflection roots (type + address), supplied by the caller so this stays Engine-free
 bool resolveUrl(const entt::registry& reg, const std::vector<refl::RootRef>& roots, const std::string& url, UrlRef& out,
                 std::string& err);

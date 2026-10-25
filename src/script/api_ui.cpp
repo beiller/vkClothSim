@@ -14,7 +14,7 @@ void reg(lua_State* L, SceneScript* host, const char* name, lua_CFunction fn) {
     lua_setfield(L, -2, name);
 }
 
-// resolves a "type.field" bind to a live component address (ui sliders bind into components)
+// resolves a "name.Component.field" bind to a live component address (ui sliders bind into components)
 const UrlRef bindRef(Engine& w, lua_State* L, int idx) {
     const char* bind = luaL_checkstring(L, idx);
     UrlRef r;

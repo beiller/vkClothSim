@@ -49,26 +49,26 @@
                 "type": "section",
                 "label": "cloth",
                 "children": [
-                    { "type": "slider-f", "label": "mass", "bind": "cloth.params.mass" },
-                    { "type": "slider-f", "label": "damping", "bind": "cloth.params.damping", "fmt": "%.3f" },
-                    { "type": "slider-i", "label": "passes", "bind": "cloth.params.passes" },
-                    { "type": "slider-f", "label": "stiffness", "bind": "cloth.params.stiffness" },
-                    { "type": "slider-f", "label": "tension", "bind": "cloth.params.tension" },
-                    { "type": "slider-f", "label": "friction", "bind": "cloth.params.friction" },
-                    { "type": "slider-i", "label": "steps", "bind": "cloth.steps" }
+                    { "type": "slider-f", "label": "mass", "bind": "cloth.SoftBodyData.params.mass" },
+                    { "type": "slider-f", "label": "damping", "bind": "cloth.SoftBodyData.params.damping", "fmt": "%.3f" },
+                    { "type": "slider-i", "label": "passes", "bind": "cloth.SoftBodyData.params.passes" },
+                    { "type": "slider-f", "label": "stiffness", "bind": "cloth.SoftBodyData.params.stiffness" },
+                    { "type": "slider-f", "label": "tension", "bind": "cloth.SoftBodyData.params.tension" },
+                    { "type": "slider-f", "label": "friction", "bind": "cloth.SoftBodyData.params.friction" },
+                    { "type": "slider-i", "label": "steps", "bind": "cloth.SoftBodyData.steps" }
                 ]
             },
             {
                 "type": "section",
                 "label": "ball",
                 "children": [
-                    { "type": "slider-f", "label": "mass", "bind": "ball.params.mass" },
-                    { "type": "slider-f", "label": "damping", "bind": "ball.params.damping", "fmt": "%.3f" },
-                    { "type": "slider-i", "label": "passes", "bind": "ball.params.passes" },
-                    { "type": "slider-f", "label": "stiffness", "bind": "ball.params.stiffness" },
-                    { "type": "slider-f", "label": "tension", "bind": "ball.params.tension" },
-                    { "type": "slider-f", "label": "friction", "bind": "ball.params.friction" },
-                    { "type": "slider-i", "label": "steps", "bind": "ball.steps" }
+                    { "type": "slider-f", "label": "mass", "bind": "ball.SoftBodyData.params.mass" },
+                    { "type": "slider-f", "label": "damping", "bind": "ball.SoftBodyData.params.damping", "fmt": "%.3f" },
+                    { "type": "slider-i", "label": "passes", "bind": "ball.SoftBodyData.params.passes" },
+                    { "type": "slider-f", "label": "stiffness", "bind": "ball.SoftBodyData.params.stiffness" },
+                    { "type": "slider-f", "label": "tension", "bind": "ball.SoftBodyData.params.tension" },
+                    { "type": "slider-f", "label": "friction", "bind": "ball.SoftBodyData.params.friction" },
+                    { "type": "slider-i", "label": "steps", "bind": "ball.SoftBodyData.steps" }
                 ]
             },
             {
@@ -84,9 +84,9 @@
                 "label": "camera",
                 "collapsible": false,
                 "children": [
-                    { "type": "slider-f", "label": "fov", "bind": "cam.fovDeg", "fmt": "%.0f" },
-                    { "type": "slider-f", "label": "near", "bind": "cam.nearP", "fmt": "%.3f" },
-                    { "type": "slider-f", "label": "far", "bind": "cam.farP", "fmt": "%.0f" }
+                    { "type": "slider-f", "label": "fov", "bind": "cam.Camera.fovDeg", "fmt": "%.0f" },
+                    { "type": "slider-f", "label": "near", "bind": "cam.Camera.nearP", "fmt": "%.3f" },
+                    { "type": "slider-f", "label": "far", "bind": "cam.Camera.farP", "fmt": "%.0f" }
                 ]
             },
             {
@@ -106,20 +106,20 @@
                         "type": "section",
                         "label": "key light",
                         "children": [
-                            { "type": "slider-f", "label": "on", "bind": "key light.on", "lo": 0, "hi": 1, "fmt": "%.0f" },
-                            { "type": "drag-v3", "label": "pos", "bind": "key light.pos" },
-                            { "type": "color", "label": "color", "bind": "key light.color" },
-                            { "type": "slider-f", "label": "intensity", "bind": "key light.intensity", "lo": 0, "hi": 1000, "fmt": "%.0f" },
-                            { "type": "slider-f", "label": "radius", "bind": "key light.radius" },
+                            { "type": "slider-f", "label": "on", "bind": "key light.PointLight.on", "lo": 0, "hi": 1, "fmt": "%.0f" },
+                            { "type": "drag-v3", "label": "pos", "bind": "key light.Transform.pos" },
+                            { "type": "color", "label": "color", "bind": "key light.PointLight.color" },
+                            { "type": "slider-f", "label": "intensity", "bind": "key light.PointLight.intensity", "lo": 0, "hi": 1000, "fmt": "%.0f" },
+                            { "type": "slider-f", "label": "radius", "bind": "key light.PointLight.radius" },
                             {
                                 "type": "section",
                                 "label": "shadow bias",
                                 "children": [
-                                    { "type": "slider-f", "label": "normal", "bind": "key light.shadowNormalBias" },
-                                    { "type": "slider-f", "label": "base", "bind": "key light.shadowBiasBase" },
-                                    { "type": "slider-f", "label": "slope", "bind": "key light.shadowBiasSlope" },
-                                    { "type": "slider-f", "label": "search", "bind": "key light.shadowSearchScale" },
-                                    { "type": "slider-f", "label": "max radius", "bind": "key light.shadowMaxRadius", "fmt": "%.1f" }
+                                    { "type": "slider-f", "label": "normal", "bind": "key light.PointLight.shadowNormalBias" },
+                                    { "type": "slider-f", "label": "base", "bind": "key light.PointLight.shadowBiasBase" },
+                                    { "type": "slider-f", "label": "slope", "bind": "key light.PointLight.shadowBiasSlope" },
+                                    { "type": "slider-f", "label": "search", "bind": "key light.PointLight.shadowSearchScale" },
+                                    { "type": "slider-f", "label": "max radius", "bind": "key light.PointLight.shadowMaxRadius", "fmt": "%.1f" }
                                 ]
                             }
                         ]
@@ -128,11 +128,11 @@
                         "type": "section",
                         "label": "rim light",
                         "children": [
-                            { "type": "slider-f", "label": "on", "bind": "rim light.on", "lo": 0, "hi": 1, "fmt": "%.0f" },
-                            { "type": "drag-v3", "label": "pos", "bind": "rim light.pos" },
-                            { "type": "color", "label": "color", "bind": "rim light.color" },
-                            { "type": "slider-f", "label": "intensity", "bind": "rim light.intensity", "lo": 0, "hi": 1000, "fmt": "%.0f" },
-                            { "type": "slider-f", "label": "radius", "bind": "rim light.radius" }
+                            { "type": "slider-f", "label": "on", "bind": "rim light.PointLight.on", "lo": 0, "hi": 1, "fmt": "%.0f" },
+                            { "type": "drag-v3", "label": "pos", "bind": "rim light.Transform.pos" },
+                            { "type": "color", "label": "color", "bind": "rim light.PointLight.color" },
+                            { "type": "slider-f", "label": "intensity", "bind": "rim light.PointLight.intensity", "lo": 0, "hi": 1000, "fmt": "%.0f" },
+                            { "type": "slider-f", "label": "radius", "bind": "rim light.PointLight.radius" }
                         ]
                     }
                 ]
@@ -146,36 +146,36 @@
                         "type": "section",
                         "label": "ground",
                         "children": [
-                            { "type": "color", "label": "base color", "bind": "mat_ground.baseColor" },
-                            { "type": "slider-f", "label": "metallic", "bind": "mat_ground.metallic" },
-                            { "type": "slider-f", "label": "roughness", "bind": "mat_ground.roughness" }
+                            { "type": "color", "label": "base color", "bind": "mat_ground.Material.baseColor" },
+                            { "type": "slider-f", "label": "metallic", "bind": "mat_ground.Material.metallic" },
+                            { "type": "slider-f", "label": "roughness", "bind": "mat_ground.Material.roughness" }
                         ]
                     },
                     {
                         "type": "section",
                         "label": "capsule",
                         "children": [
-                            { "type": "color", "label": "base color", "bind": "mat_capsule.baseColor" },
-                            { "type": "slider-f", "label": "metallic", "bind": "mat_capsule.metallic" },
-                            { "type": "slider-f", "label": "roughness", "bind": "mat_capsule.roughness" }
+                            { "type": "color", "label": "base color", "bind": "mat_capsule.Material.baseColor" },
+                            { "type": "slider-f", "label": "metallic", "bind": "mat_capsule.Material.metallic" },
+                            { "type": "slider-f", "label": "roughness", "bind": "mat_capsule.Material.roughness" }
                         ]
                     },
                     {
                         "type": "section",
                         "label": "cloth",
                         "children": [
-                            { "type": "color", "label": "base color", "bind": "mat_cloth.baseColor" },
-                            { "type": "slider-f", "label": "metallic", "bind": "mat_cloth.metallic" },
-                            { "type": "slider-f", "label": "roughness", "bind": "mat_cloth.roughness" }
+                            { "type": "color", "label": "base color", "bind": "mat_cloth.Material.baseColor" },
+                            { "type": "slider-f", "label": "metallic", "bind": "mat_cloth.Material.metallic" },
+                            { "type": "slider-f", "label": "roughness", "bind": "mat_cloth.Material.roughness" }
                         ]
                     },
                     {
                         "type": "section",
                         "label": "ball",
                         "children": [
-                            { "type": "color", "label": "base color", "bind": "mat_ball.baseColor" },
-                            { "type": "slider-f", "label": "metallic", "bind": "mat_ball.metallic" },
-                            { "type": "slider-f", "label": "roughness", "bind": "mat_ball.roughness" }
+                            { "type": "color", "label": "base color", "bind": "mat_ball.Material.baseColor" },
+                            { "type": "slider-f", "label": "metallic", "bind": "mat_ball.Material.metallic" },
+                            { "type": "slider-f", "label": "roughness", "bind": "mat_ball.Material.roughness" }
                         ]
                     }
                 ]

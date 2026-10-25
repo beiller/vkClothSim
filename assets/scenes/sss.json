@@ -33,7 +33,7 @@
                 "type": "section",
                 "label": "sss",
                 "children": [
-                    { "type": "slider-f", "label": "ssss weight", "bind": "sphere.ssssWeight" }
+                    { "type": "slider-f", "label": "ssss weight", "bind": "mat_sss.Material.ssssWeight" }
                 ]
             },
             {

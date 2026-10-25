@@ -28,7 +28,7 @@
         { "name": "vr", "script": "scenes/vr_controller" }
     ],
     "set": {
-        "ball.roughness": 0.35
+        "plaid.Material.roughness": 0.35
     },
     "ui": {
         "title": "shadow test",
@@ -38,7 +38,7 @@
                 "type": "section",
                 "label": "camera",
                 "children": [
-                    { "type": "slider-f", "label": "fov", "bind": "cam.fovDeg", "fmt": "%.0f" }
+                    { "type": "slider-f", "label": "fov", "bind": "cam.Camera.fovDeg", "fmt": "%.0f" }
                 ]
             },
             {
@@ -53,19 +53,19 @@
                 "type": "section",
                 "label": "key light",
                 "children": [
-                    { "type": "drag-v3", "label": "pos", "bind": "key light.pos" },
-                    { "type": "color", "label": "color", "bind": "key light.color" },
-                    { "type": "slider-f", "label": "intensity", "bind": "key light.intensity", "lo": 0, "hi": 1000, "fmt": "%.0f" },
-                    { "type": "slider-f", "label": "radius", "bind": "key light.radius" },
+                    { "type": "drag-v3", "label": "pos", "bind": "key light.Transform.pos" },
+                    { "type": "color", "label": "color", "bind": "key light.PointLight.color" },
+                    { "type": "slider-f", "label": "intensity", "bind": "key light.PointLight.intensity", "lo": 0, "hi": 1000, "fmt": "%.0f" },
+                    { "type": "slider-f", "label": "radius", "bind": "key light.PointLight.radius" },
                     {
                         "type": "section",
                         "label": "shadow bias",
                         "children": [
-                            { "type": "slider-f", "label": "normal", "bind": "key light.shadowNormalBias" },
-                            { "type": "slider-f", "label": "base", "bind": "key light.shadowBiasBase" },
-                            { "type": "slider-f", "label": "slope", "bind": "key light.shadowBiasSlope" },
-                            { "type": "slider-f", "label": "search", "bind": "key light.shadowSearchScale" },
-                            { "type": "slider-f", "label": "max radius", "bind": "key light.shadowMaxRadius", "fmt": "%.1f" }
+                            { "type": "slider-f", "label": "normal", "bind": "key light.PointLight.shadowNormalBias" },
+                            { "type": "slider-f", "label": "base", "bind": "key light.PointLight.shadowBiasBase" },
+                            { "type": "slider-f", "label": "slope", "bind": "key light.PointLight.shadowBiasSlope" },
+                            { "type": "slider-f", "label": "search", "bind": "key light.PointLight.shadowSearchScale" },
+                            { "type": "slider-f", "label": "max radius", "bind": "key light.PointLight.shadowMaxRadius", "fmt": "%.1f" }
                         ]
                     }
                 ]
@@ -74,10 +74,10 @@
                 "type": "section",
                 "label": "materials",
                 "children": [
-                    { "type": "color", "label": "ground color", "bind": "ground.baseColor" },
-                    { "type": "slider-f", "label": "ground roughness", "bind": "ground.roughness" },
-                    { "type": "color", "label": "ball color", "bind": "ball.baseColor" },
-                    { "type": "slider-f", "label": "ball roughness", "bind": "ball.roughness" }
+                    { "type": "color", "label": "ground color", "bind": "white.Material.baseColor" },
+                    { "type": "slider-f", "label": "ground roughness", "bind": "white.Material.roughness" },
+                    { "type": "color", "label": "ball color", "bind": "plaid.Material.baseColor" },
+                    { "type": "slider-f", "label": "ball roughness", "bind": "plaid.Material.roughness" }
                 ]
             }
         ]

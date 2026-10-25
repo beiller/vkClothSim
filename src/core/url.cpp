@@ -12,66 +12,44 @@ static const FieldDesc* findField(const TypeDesc* t, const std::string& name) {
 
 bool resolveEntityField(const entt::registry& reg, entt::entity ent, const std::string& field, const std::string& label,
                         UrlRef& out, std::string& err) {
-    auto comps = refl::entityFields(reg, ent);
-    if (comps.empty()) {
-        err = "entity '" + label + "' has no reflectable components";
+    const size_t dot = field.rfind('.');
+    if (dot == std::string::npos) {
+        err = "field must be 'Component.field'";
         return false;
     }
-
-    const TypeDesc* qual = nullptr;
-    size_t dot = field.find('.');
-    if (dot != std::string::npos)
-        for (auto& [t, b] : comps)
-            if (field.substr(0, dot) == t->name)
-                qual = t;
-    const std::string fn = qual ? field.substr(dot + 1) : field;
-
-    const FieldDesc* match = nullptr;
-    void* matchBase = nullptr;
-    int matches = 0;
-    for (auto& [t, b] : comps) {
-        if (qual && t != qual)
+    const std::string cn = field.substr(0, dot);
+    const std::string fn = field.substr(dot + 1);
+    for (auto& [t, b] : refl::entityFields(reg, ent)) {
+        if (t->name != cn)
             continue;
-        if (const FieldDesc* f = findField(t, fn))
-            if (const void* bp = b()) {
-                match = f;
-                matchBase = (char*)bp + f->offset;
-                ++matches;
-            }
+        const FieldDesc* f = findField(t, fn);
+        if (!f) {
+            err = "no field '" + fn + "' in " + cn;
+            return false;
+        }
+        const void* bp = b();
+        if (!bp) {
+            err = "entity '" + label + "' has no " + cn;
+            return false;
+        }
+        out = {f, (char*)bp + f->offset};
+        return true;
     }
-    if (matches == 0 && !qual)
-        if (const auto* ref = reg.try_get<MaterialRef>(ent))
-            for (auto& [t, b] : refl::entityFields(reg, ref->mat)) {
-                if (const FieldDesc* f = findField(t, fn))
-                    if (const void* bp = b()) {
-                        match = f;
-                        matchBase = (char*)bp + f->offset;
-                        ++matches;
-                    }
-            }
-    if (matches == 0) {
-        err = "no field '" + field + "' on '" + label + "'";
-        return false;
-    }
-    if (matches > 1) {
-        err = "field '" + field + "' on '" + label + "' is ambiguous; use <Component>." + field;
-        return false;
-    }
-    out = {match, matchBase};
-    return true;
+    err = "no component '" + cn + "' on '" + label + "'";
+    return false;
 }
 
 bool resolveUrl(const entt::registry& reg, const std::vector<refl::RootRef>& roots, const std::string& url, UrlRef& out,
                 std::string& err) {
     const auto dot = url.find('.');
     if (dot == std::string::npos) {
-        err = "expected 'name.field'";
+        err = "expected 'name.Component.field'";
         return false;
     }
     const std::string head = url.substr(0, dot);
-    const std::string rest = url.substr(dot + 1);
 
     if (head == "render" || head == "rigid") {
+        const std::string rest = url.substr(dot + 1);
         const TypeDesc* want = refl::findType(head == "render" ? "RenderSettings" : "RigidScene");
         for (const auto& root : roots) {
             if (root.type != want)
@@ -88,24 +66,34 @@ bool resolveUrl(const entt::registry& reg, const std::vector<refl::RootRef>& roo
         return false;
     }
 
+    // entity names may contain dots: the last two dot segments are Component.field
+    const auto lastDot = url.rfind('.');
+    const auto splitDot = url.rfind('.', lastDot - 1);
+    if (lastDot == std::string::npos || splitDot == std::string::npos) {
+        err = "expected 'name.Component.field'";
+        return false;
+    }
+    const std::string name = url.substr(0, splitDot);
+    const std::string rest = url.substr(splitDot + 1);
+
     entt::entity ent = entt::null;
     int found = 0;
     for (auto [e, n] : reg.view<Name>().each()) {
-        if (n.id == head) {
+        if (n.id == name) {
             ent = e;
             ++found;
         }
         if (found > 1) {
-            err = "entity name '" + head + "' is not unique";
+            err = "entity name '" + name + "' is not unique";
             return false;
         }
     }
     if (found == 0) {
-        err = "unknown entity '" + head + "'";
+        err = "unknown entity '" + name + "'";
         return false;
     }
 
-    return resolveEntityField(reg, ent, rest, head, out, err);
+    return resolveEntityField(reg, ent, rest, name, out, err);
 }
 
 static bool applySet(const UrlRef& r, const float* vals, int n, std::string& err) {

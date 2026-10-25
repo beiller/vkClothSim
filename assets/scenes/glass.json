@@ -33,10 +33,10 @@
                 "type": "section",
                 "label": "glass",
                 "children": [
-                    { "type": "slider-f", "label": "refraction", "bind": "sphere.refraction" },
-                    { "type": "slider-f", "label": "ior", "bind": "sphere.ior" },
-                    { "type": "slider-f", "label": "roughness", "bind": "sphere.roughness" },
-                    { "type": "slider-f", "label": "ssss", "bind": "sphere.ssssWeight" }
+                    { "type": "slider-f", "label": "refraction", "bind": "mat_glass.Material.refraction" },
+                    { "type": "slider-f", "label": "ior", "bind": "mat_glass.Material.ior" },
+                    { "type": "slider-f", "label": "roughness", "bind": "mat_glass.Material.roughness" },
+                    { "type": "slider-f", "label": "ssss", "bind": "mat_glass.Material.ssssWeight" }
                 ]
             },
             {

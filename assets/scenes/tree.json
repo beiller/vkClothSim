@@ -41,20 +41,20 @@
                 "type": "section",
                 "label": "sun",
                 "children": [
-                    { "type": "slider-f", "label": "on", "bind": "sun.on", "lo": 0, "hi": 1, "fmt": "%.0f" },
-                    { "type": "drag-v3", "label": "pos", "bind": "sun.pos" },
-                    { "type": "color", "label": "color", "bind": "sun.color" },
-                    { "type": "slider-f", "label": "intensity", "bind": "sun.intensity", "lo": 0, "hi": 1000, "fmt": "%.0f" },
-                    { "type": "slider-f", "label": "radius", "bind": "sun.radius" },
+                    { "type": "slider-f", "label": "on", "bind": "sun.PointLight.on", "lo": 0, "hi": 1, "fmt": "%.0f" },
+                    { "type": "drag-v3", "label": "pos", "bind": "sun.Transform.pos" },
+                    { "type": "color", "label": "color", "bind": "sun.PointLight.color" },
+                    { "type": "slider-f", "label": "intensity", "bind": "sun.PointLight.intensity", "lo": 0, "hi": 1000, "fmt": "%.0f" },
+                    { "type": "slider-f", "label": "radius", "bind": "sun.PointLight.radius" },
                     {
                         "type": "section",
                         "label": "shadow bias",
                         "children": [
-                            { "type": "slider-f", "label": "normal", "bind": "sun.shadowNormalBias" },
-                            { "type": "slider-f", "label": "base", "bind": "sun.shadowBiasBase" },
-                            { "type": "slider-f", "label": "slope", "bind": "sun.shadowBiasSlope" },
-                            { "type": "slider-f", "label": "search", "bind": "sun.shadowSearchScale" },
-                            { "type": "slider-f", "label": "max radius", "bind": "sun.shadowMaxRadius", "fmt": "%.1f" }
+                            { "type": "slider-f", "label": "normal", "bind": "sun.PointLight.shadowNormalBias" },
+                            { "type": "slider-f", "label": "base", "bind": "sun.PointLight.shadowBiasBase" },
+                            { "type": "slider-f", "label": "slope", "bind": "sun.PointLight.shadowBiasSlope" },
+                            { "type": "slider-f", "label": "search", "bind": "sun.PointLight.shadowSearchScale" },
+                            { "type": "slider-f", "label": "max radius", "bind": "sun.PointLight.shadowMaxRadius", "fmt": "%.1f" }
                         ]
                     }
                 ]

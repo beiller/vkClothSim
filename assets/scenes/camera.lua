@@ -38,9 +38,9 @@ function M._physics(self, dt)
         mouseH = scene.find("mouse")
     end
     if mouseH then
-        local mx = scene.get(mouseH, "x")
-        local my = scene.get(mouseH, "y")
-        if scene.get(mouseH, "button_0") > 0.5 then
+        local mx = scene.get(mouseH, "MouseInput.x")
+        local my = scene.get(mouseH, "MouseInput.y")
+        if scene.get(mouseH, "MouseInput.button_0") > 0.5 then
             local dqy = scene.qaxis({0, 1, 0}, -(mx - prevMX) * kSens)
             local dqx = scene.qaxis({1, 0, 0}, -(my - prevMY) * kSens)
             q = scene.qmul(dqy, scene.qmul(q, dqx))

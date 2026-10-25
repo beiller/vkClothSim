@@ -116,7 +116,7 @@ end
 -- NOT _physics): the root is the visual locomotion anchor - stepping it at the physics rate
 -- makes the in-hand view (head + hand parented under it) alias against the render and jitter
 local function walk(dt)
-    local sx, sy = scene.get(ctrlH, "axis_0"), scene.get(ctrlH, "axis_1")
+    local sx, sy = scene.get(ctrlH, "ControllerInput.axis_0"), scene.get(ctrlH, "ControllerInput.axis_1")
     if sx * sx + sy * sy < kDead * kDead then
         return
     end
@@ -147,18 +147,18 @@ end
 
 -- per step: drive the anchor from the right hand's aim pose (inactive: it stays put)
 local function poseAnchor()
-    if scene.get(ctrlH, "active") < 0.5 then
+    if scene.get(ctrlH, "ControllerInput.active") < 0.5 then
         return
     end
-    local ap = scene.get(ctrlH, "aim_pos")
-    local aq = {scene.get(ctrlH, "aim_qx"), scene.get(ctrlH, "aim_qy"),
-                scene.get(ctrlH, "aim_qz"), scene.get(ctrlH, "aim_qw")}
+    local ap = scene.get(ctrlH, "ControllerInput.aim_pos")
+    local aq = {scene.get(ctrlH, "ControllerInput.aim_qx"), scene.get(ctrlH, "ControllerInput.aim_qy"),
+                scene.get(ctrlH, "ControllerInput.aim_qz"), scene.get(ctrlH, "ControllerInput.aim_qw")}
     scene.replace(handAnchor, "Transform", { pos = ap, quat = aq })
 end
 
 local function grab()
-    local trig = scene.get(ctrlH, "trigger_0")
-    local active = scene.get(ctrlH, "active")
+    local trig = scene.get(ctrlH, "ControllerInput.trigger_0")
+    local active = scene.get(ctrlH, "ControllerInput.active")
     if active < 0.5 then
         release()
         return
@@ -171,11 +171,11 @@ local function grab()
     end
     if trig > 0.5 then
         local rootPos = scene.component(rootH, "Transform").pos
-        local aimPos = scene.get(ctrlH, "aim_pos")
+        local aimPos = scene.get(ctrlH, "ControllerInput.aim_pos")
         local aimWorld = {rootPos[1] + aimPos[1], rootPos[2] + aimPos[2], rootPos[3] + aimPos[3]}
         local aq = {
-            scene.get(ctrlH, "aim_qx"), scene.get(ctrlH, "aim_qy"),
-            scene.get(ctrlH, "aim_qz"), scene.get(ctrlH, "aim_qw"),
+            scene.get(ctrlH, "ControllerInput.aim_qx"), scene.get(ctrlH, "ControllerInput.aim_qy"),
+            scene.get(ctrlH, "ControllerInput.aim_qz"), scene.get(ctrlH, "ControllerInput.aim_qw"),
         }
         local fwd = scene.qrot(aq, {0, 0, -1})
         -- exclude the kinematic anchor: the ray starts at its center and a convex self-hit
@@ -209,16 +209,16 @@ end
 local function laserPoseInGrip(ctrl)
     local grip = scene.component(ctrl, "Transform")
     local gripInv = scene.qinv(grip.quat)
-    local aimPos = scene.get(ctrl, "aim_pos")
-    local aimQ = {scene.get(ctrl, "aim_qx"), scene.get(ctrl, "aim_qy"), scene.get(ctrl, "aim_qz"),
-                  scene.get(ctrl, "aim_qw")}
+    local aimPos = scene.get(ctrl, "ControllerInput.aim_pos")
+    local aimQ = {scene.get(ctrl, "ControllerInput.aim_qx"), scene.get(ctrl, "ControllerInput.aim_qy"), scene.get(ctrl, "ControllerInput.aim_qz"),
+                  scene.get(ctrl, "ControllerInput.aim_qw")}
     local fwd = scene.qrot(aimQ, {0, 0, -1})
     local center = scene.vadd(aimPos, scene.vscale(fwd, kLaserLen / 2))
     return scene.qrot(gripInv, scene.vsub(center, grip.pos)), scene.qmul(gripInv, aimQ)
 end
 
 local function updateLaser(hand, ctrl, matEnt)
-    if not ctrl or scene.get(ctrl, "active") < 0.5 then
+    if not ctrl or scene.get(ctrl, "ControllerInput.active") < 0.5 then
         if lasers[hand] then
             scene.destroy(lasers[hand])
             lasers[hand] = nil
