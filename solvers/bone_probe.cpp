@@ -1,7 +1,7 @@
 // GPU-free probe: ECS + GLTF loader + collision shape solver. Fits a compound of tapered
 // capsules (k-means 3D clusters, one capsule chain each, normal-aware when normals are
 // present) to the rest vertex cloud of each named bone (weight > threshold on any slot)
-// and prints a paste-ready kFits lua table (see assets/scenes/caps_fit.lua).
+// and prints paste-ready kFits + kJoints lua tables (see assets/scenes/caps_fit.lua).
 #include "ecs.hpp"
 #include "gltf.hpp"
 
@@ -154,6 +154,36 @@ int main(int argc, char** argv) {
             std::printf(" } }");
         }
         std::printf("\n    } },\n");
+    }
+    std::printf("}\n\n");
+
+    // kJoints: every joint in the skeleton, with its parent bone + rest-pose world transform
+    std::printf("local kJoints = {\n");
+    const auto jointIndex = [&](entt::entity e) {
+        for (size_t i = 0; i < s.joints.size(); ++i)
+            if (s.joints[i] == e)
+                return (int)i;
+        return -1;
+    };
+    for (size_t i = 0; i < s.joints.size(); ++i) {
+        const entt::entity j = s.joints[i];
+        if (j == entt::null)
+            continue;
+        // nearest ancestor that is itself a joint = parent bone
+        std::string parent;
+        const auto* p = reg.try_get<Parent>(j);
+        while (p) {
+            const int pi = jointIndex(p->e);
+            if (pi >= 0) {
+                parent = s.boneNames[pi];
+                break;
+            }
+            p = reg.try_get<Parent>(p->e);
+        }
+        const Transform wt = worldTransform(reg, j);
+        std::printf("    { name = \"%s\", parent = \"%s\", pos = { %.4f, %.4f, %.4f }, quat = { %.4f, %.4f, %.4f, %.4f } },\n",
+                    s.boneNames[i].c_str(), parent.c_str(),
+                    wt.pos.x, wt.pos.y, wt.pos.z, wt.quat.x, wt.quat.y, wt.quat.z, wt.quat.w);
     }
     std::printf("}\n");
     return missing ? 1 : 0;

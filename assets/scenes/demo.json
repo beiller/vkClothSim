@@ -48,7 +48,6 @@
             }
         },
         { "name": "mat_tetra", "components": { "Material": { "baseColor": [0, 0, 0], "emissive": [10, 9.5, 9] } } },
-        { "name": "mat_tetra2", "components": { "Material": { "baseColor": [0, 0, 0], "emissive": [4, 6, 10] } } },
         {
             "name": "tetra",
             "components": {
@@ -58,6 +57,7 @@
                 "Parent": { "e": "key light grabber" }
             }
         },
+        { "name": "mat_tetra2", "components": { "Material": { "baseColor": [0, 0, 0], "emissive": [4, 6, 10] } } },
         {
             "name": "rim light grabber",
             "components": {
