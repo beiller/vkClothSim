@@ -38,24 +38,24 @@ void luaRegisterMath(lua_State* L, SceneScript* host) {
         return 1;
     });
     reg("qmul", [](lua_State* L) {
-        luaPushV4(L, v4From(quatFrom(luaReadQuat(L, 1)) * quatFrom(luaReadQuat(L, 2))));
+        luaPushQuat(L, luaReadQuat(L, 1) * luaReadQuat(L, 2));
         return 1;
     });
     reg("qinv", [](lua_State* L) {
-        luaPushV4(L, v4From(glm::inverse(quatFrom(luaReadQuat(L, 1)))));
+        luaPushQuat(L, glm::inverse(luaReadQuat(L, 1)));
         return 1;
     });
     reg("qaxis", [](lua_State* L) {
         const V3 axis = glm::normalize(luaReadV3(L, 1)); // the axis-angle form expects a unit axis
-        luaPushV4(L, v4From(glm::angleAxis((float)luaL_checknumber(L, 2), axis)));
+        luaPushQuat(L, glm::angleAxis((float)luaL_checknumber(L, 2), axis));
         return 1;
     });
     reg("qrot", [](lua_State* L) {
-        luaPushV3(L, quatFrom(luaReadQuat(L, 1)) * luaReadV3(L, 2));
+        luaPushV3(L, luaReadQuat(L, 1) * luaReadV3(L, 2));
         return 1;
     });
     reg("qfromto", [](lua_State* L) {
-        luaPushV4(L, quatFromTo(luaReadV3(L, 1), luaReadV3(L, 2)));
+        luaPushQuat(L, Quat(luaReadV3(L, 1), luaReadV3(L, 2))); // GLM 2-vector ctor: the from->to rotation
         return 1;
     });
 }

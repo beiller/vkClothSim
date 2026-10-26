@@ -118,12 +118,12 @@ void Soft::project(const entt::registry& reg) {
         if (reg.try_get<Transform>(e))
             t = worldTransform(reg, e);
         for (int i = 0; i < nv; ++i) {
-            const V3 v = quatFrom(t.quat) * V3{m.pos[3 * i], m.pos[3 * i + 1], m.pos[3 * i + 2]} + t.pos;
+            const V3 v = t.quat * V3{m.pos[3 * i], m.pos[3 * i + 1], m.pos[3 * i + 2]} + t.pos;
             m.pos[3 * i] = v.x;
             m.pos[3 * i + 1] = v.y;
             m.pos[3 * i + 2] = v.z;
             if (m.nrm.size() == m.pos.size()) {
-                const V3 n = quatFrom(t.quat) * V3{m.nrm[3 * i], m.nrm[3 * i + 1], m.nrm[3 * i + 2]};
+                const V3 n = t.quat * V3{m.nrm[3 * i], m.nrm[3 * i + 1], m.nrm[3 * i + 2]};
                 m.nrm[3 * i] = n.x;
                 m.nrm[3 * i + 1] = n.y;
                 m.nrm[3 * i + 2] = n.z;
@@ -140,6 +140,7 @@ void Soft::project(const entt::registry& reg) {
 
 void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw) {
     GpuBody b;
+    b.ent = e;
     b.soft.init(mesh, cons);
     const auto vn = (VkDeviceSize)b.soft.n;
     b.pos = rw.pos.buffer;
@@ -285,20 +286,6 @@ void Soft::recordBody(VkCommandBuffer cmd, const GpuBody& b, int iters, int pinn
     recordMode(cmd, b, 2, n, 0);
 }
 
-void Soft::setPinned(entt::entity e, int pinned) {
-    const auto it = m_ent.find(e);
-    if (it != m_ent.end())
-        m_body[(size_t)it->second].pinned = pinned;
-}
-
-void Soft::setParams(entt::entity e, const SimParams& params, int steps) {
-    const auto it = m_ent.find(e);
-    if (it == m_ent.end())
-        return;
-    m_body[(size_t)it->second].params = params;
-    m_body[(size_t)it->second].steps = steps;
-}
-
 void Soft::onBodyDestroyed(entt::registry&, entt::entity e) {
     const auto it = m_ent.find(e);
     if (it == m_ent.end())
@@ -320,19 +307,22 @@ void Soft::flushFrees() {
     m_free.clear();
 }
 
-void Soft::record(VkCommandBuffer cmd) {
-    for (GpuBody& b : m_body) {
+void Soft::record(VkCommandBuffer cmd, const entt::registry& reg) {
+    for (const GpuBody& b : m_body) {
         if (b.dead)
+            continue;
+        const SoftBodyData* sb = reg.try_get<SoftBodyData>(b.ent);
+        if (!sb)
             continue;
         PhysParams phys{};
         phys.nCaps = m_nCaps;
-        phys.dt = kSoftDt / (float)b.steps; // one record spans kSoftDt (1/kSoftHz), split over b.steps substeps
-        phys.damping = std::pow(b.params.damping, 1.0f / (float)b.steps);
-        phys.gravity = sim::kGravity * b.params.mass;
-        phys.friction = b.params.friction;
+        phys.dt = kSoftDt / (float)sb->steps; // one record spans kSoftDt (1/kSoftHz), split over sb->steps substeps
+        phys.damping = std::pow(sb->damping, 1.0f / (float)sb->steps);
+        phys.gravity = sim::kGravity * sb->mass;
+        phys.friction = sb->friction;
         phys.skin = kSkin;
-        phys.tension = b.params.tension;
-        phys.stiff = b.params.stiffness;
+        phys.tension = sb->tension;
+        phys.stiff = sb->stiffness;
         phys.maxStep = kSoftMaxStep;
         phys.floorY = m_floorY;
         vkWriteBuffer(m_dev, b.paramsMem, &phys, 40);
@@ -346,13 +336,23 @@ void Soft::record(VkCommandBuffer cmd) {
     stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, first.data(),
                  (uint32_t)first.size());
 
-    for (const GpuBody& b : m_body)
-        if (!b.dead)
-            for (int s = 0; s < b.steps; ++s)
-                recordBody(cmd, b, b.params.passes, b.pinned);
-    for (const GpuBody& b : m_body)
-        if (!b.dead && !b.pinned)
-            recordMode(cmd, b, 3, b.soft.n, 0);
+    for (const GpuBody& b : m_body) {
+        if (b.dead)
+            continue;
+        const SoftBodyData* sb = reg.try_get<SoftBodyData>(b.ent);
+        if (!sb)
+            continue;
+        for (int s = 0; s < sb->steps; ++s)
+            recordBody(cmd, b, sb->passes, sb->pinned);
+    }
+    for (const GpuBody& b : m_body) {
+        if (b.dead)
+            continue;
+        const SoftBodyData* sb = reg.try_get<SoftBodyData>(b.ent);
+        if (!sb || sb->pinned)
+            continue;
+        recordMode(cmd, b, 3, b.soft.n, 0);
+    }
 
     for (const GpuBody& b : m_body)
         if (!b.dead) {

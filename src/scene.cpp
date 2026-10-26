@@ -44,20 +44,31 @@ void addComponents(entt::registry& reg, entt::entity e, const json& cj, const st
                     f.ent = (entt::entity)fv.get<int64_t>();
                 }
             } else if (fv.is_array()) {
-                f.isArr = true;
-                if (fv.size() <= 4)
-                    for (size_t i = 0; i < fv.size(); ++i) {
-                        if (!fv[i].is_number())
-                            fail(p, what + " field '" + fn + "': values must be numbers");
-                        f.v[i] = fv[i].get<float>();
-                    }
-                else
-                    for (size_t i = 0; i < fv.size(); ++i) {
-                        if (!fv[i].is_number())
-                            fail(p, what + " field '" + fn + "': values must be numbers");
-                        f.arr.push_back(fv[i].get<float>());
-                    }
                 f.n = (int)fv.size();
+                bool anyStr = false, anyNum = false;
+                for (const auto& el : fv) {
+                    if (el.is_string())
+                        anyStr = true;
+                    else if (el.is_number())
+                        anyNum = true;
+                    else
+                        fail(p, what + " field '" + fn + "': values must be numbers or entity-name strings");
+                }
+                if (anyStr && anyNum)
+                    fail(p, what + " field '" + fn + "': cannot mix numbers and entity-name strings");
+                if (anyStr) {
+                    f.isStrArr = true;
+                    for (const auto& el : fv)
+                        f.strArr.push_back(el.get<std::string>());
+                } else if (fv.size() <= 4) {
+                    f.isArr = true;
+                    for (size_t i = 0; i < fv.size(); ++i)
+                        f.v[i] = fv[i].get<float>();
+                } else {
+                    f.isArr = true;
+                    for (size_t i = 0; i < fv.size(); ++i)
+                        f.arr.push_back(fv[i].get<float>());
+                }
             } else if (fv.is_string()) {
                 f.isStr = true;
                 f.str = fv.get<std::string>();

@@ -9,11 +9,11 @@
 
 struct Transform {
     V3 pos{0, 0, 0};
-    V4 quat{0, 0, 0, 1};
+    Quat quat{1, 0, 0, 0};
     V3 scale{1, 1, 1};
 
     Mat4 toMat4() const {
-        Mat4 m = mat4_cast(quatFrom(quat));
+        Mat4 m = mat4_cast(quat);
         m[0] *= scale.x;
         m[1] *= scale.y;
         m[2] *= scale.z;
@@ -30,17 +30,17 @@ struct Parent {
 
 inline Transform transformCompose(const Transform& parent, const Transform& local) {
     Transform r;
-    r.quat = v4From(quatFrom(parent.quat) * quatFrom(local.quat));
+    r.quat = parent.quat * local.quat;
     r.scale = parent.scale * local.scale;
-    r.pos = parent.pos + quatFrom(parent.quat) * (local.pos * parent.scale);
+    r.pos = parent.pos + parent.quat * (local.pos * parent.scale);
     return r;
 }
 
 inline Transform transformInvert(const Transform& t) {
-    const Quat qi = glm::inverse(quatFrom(t.quat));
+    const Quat qi = glm::inverse(t.quat);
     const V3 r = qi * t.pos;
     return {{-r.x / t.scale.x, -r.y / t.scale.y, -r.z / t.scale.z},
-            v4From(qi),
+            qi,
             {1.0f / t.scale.x, 1.0f / t.scale.y, 1.0f / t.scale.z}};
 }
 
@@ -80,6 +80,10 @@ struct TaperedCapsule {
     float topRadius = 0.0f;
 };
 
+struct SphereShape {
+    float radius = 0.0f;
+};
+
 struct Collider {
     entt::entity shape = entt::null;
 };
@@ -109,7 +113,7 @@ struct SixDofJoint {
     entt::entity bodyB = entt::null; // null = fixed-to-world anchor
     V3 grabPos{};
     bool worldSpace = false; // anchor + frames in world space (default: baked body-local)
-    V4 relQuat{0, 0, 0, 1}; // bodyB frame orientation relative to bodyA (identity = coincident)
+    Quat relQuat{1, 0, 0, 0}; // bodyB frame orientation relative to bodyA (identity = coincident)
     // limits, relative to the creation pose (0 = body A at the anchor, in its +axis direction).
     // limOn = false -> all axes free; min > max on an axis fixes it at 0.
     bool limOn = false;
@@ -127,7 +131,7 @@ struct SixDofJoint {
     V3 motorForceMin{}, motorForceMax{}; // translation-motor force limits (N); all-zero = unlimited
     V3 motorTorqueMin{}, motorTorqueMax{}; // rotation-motor torque limits (N m); all-zero = unlimited
     V3 motorTargetPos{}, motorTargetVel{}, motorTargetAngVel{}; // body A displacement / velocity in its +axis direction (0 = creation pose)
-    V4 motorTargetQuat{0, 0, 0, 1}; // body A orientation target (identity = creation orientation)
+    Quat motorTargetQuat{1, 0, 0, 0}; // body A orientation target (identity = creation orientation)
     int priority = 0; // solver priority; higher = solved first
     int velSteps = 0; // solver velocity iterations; 0 = global default
     int posSteps = 0; // solver position iterations; 0 = global default
@@ -136,7 +140,12 @@ struct SixDofJoint {
 
 struct SoftBodyData {
     int pinned = 0;
-    SimParams params;
+    float mass = 1.0f;
+    float damping = 0.96f;
+    int passes = 8;
+    float stiffness = 1.0f;
+    float tension = 1.0f;
+    float friction = 2.0f;
     int steps = kDefaultSteps;
     std::vector<float> cons;
 };
@@ -201,7 +210,7 @@ struct ControllerInput {
     float axis[2] = {};
     bool buttons[2] = {};   // 0 = A, 1 = B (pressed)
     V3 aimPos{};
-    V4 aimQuat{0, 0, 0, 1};
+    Quat aimQuat{1, 0, 0, 0};
     bool active = false;
 };
 

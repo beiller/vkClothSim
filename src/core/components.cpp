@@ -19,6 +19,7 @@ enum class Cmp {
     CapsuleShape,
     BoxShape,
     TaperedCapsule,
+    SphereShape,
     Collider,
     ControllerInput,
     MouseInput,
@@ -58,6 +59,8 @@ const char* cmpName(Cmp c) {
         return "BoxShape";
     case Cmp::TaperedCapsule:
         return "TaperedCapsule";
+    case Cmp::SphereShape:
+        return "SphereShape";
     case Cmp::Collider:
         return "Collider";
     case Cmp::ControllerInput:
@@ -117,6 +120,8 @@ void* base(const entt::registry& reg, entt::entity e, Cmp c) {
         return const_cast<BoxShape*>(reg.try_get<BoxShape>(e));
     case Cmp::TaperedCapsule:
         return const_cast<TaperedCapsule*>(reg.try_get<TaperedCapsule>(e));
+    case Cmp::SphereShape:
+        return const_cast<SphereShape*>(reg.try_get<SphereShape>(e));
     case Cmp::Collider:
         return const_cast<Collider*>(reg.try_get<Collider>(e));
     case Cmp::ControllerInput:
@@ -182,6 +187,9 @@ void emplaceDefault(entt::registry& reg, entt::entity e, Cmp c) {
         break;
     case Cmp::TaperedCapsule:
         reg.emplace<TaperedCapsule>(e);
+        break;
+    case Cmp::SphereShape:
+        reg.emplace<SphereShape>(e);
         break;
     case Cmp::Collider:
         reg.emplace<Collider>(e);
@@ -253,6 +261,9 @@ void removeC(entt::registry& reg, entt::entity e, Cmp c) {
         break;
     case Cmp::TaperedCapsule:
         reg.remove<TaperedCapsule>(e);
+        break;
+    case Cmp::SphereShape:
+        reg.remove<SphereShape>(e);
         break;
     case Cmp::Collider:
         reg.remove<Collider>(e);
@@ -503,18 +514,31 @@ bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typ
         emplaceDefault(reg, e, c);
     void* b = base(reg, e, c);
     for (auto f : fields) {
-        if (f.isStr)
-            if (const FieldDesc* d = findField(t, f.name))
-                if (d->kind == FieldKind::Ref) {
-                    const entt::entity r = findNamedEntity(reg, f.str);
+        if (const FieldDesc* d = findField(t, f.name)) {
+            if (f.isStr && d->kind == FieldKind::Ref) {
+                const entt::entity r = findNamedEntity(reg, f.str);
+                if (r == entt::null) {
+                    err = "field '" + f.name + "': unknown entity '" + f.str + "' (define it before use)";
+                    return false;
+                }
+                f.isStr = false;
+                f.hasEnt = true;
+                f.ent = r;
+            }
+            if (f.isStrArr && d->kind == FieldKind::EntArr) {
+                f.arr.clear();
+                for (const std::string& s : f.strArr) {
+                    const entt::entity r = findNamedEntity(reg, s);
                     if (r == entt::null) {
-                        err = "field '" + f.name + "': unknown entity '" + f.str + "' (define it before use)";
+                        err = "field '" + f.name + "': unknown entity '" + s + "' (define it before use)";
                         return false;
                     }
-                    f.isStr = false;
-                    f.hasEnt = true;
-                    f.ent = r;
+                    f.arr.push_back((float)r);
                 }
+                f.isStrArr = false;
+                f.isArr = true;
+            }
+        }
         if (!writeField(t, b, f, err))
             return false;
     }
@@ -526,6 +550,12 @@ bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typ
         const auto& tc = reg.get<TaperedCapsule>(e);
         if (tc.bottomRadius <= 0.0f || tc.topRadius <= 0.0f || tc.halfHeight < 0.0f) {
             err = "TaperedCapsule: radii must be > 0 and halfHeight >= 0";
+            return false;
+        }
+    }
+    if (c == Cmp::SphereShape) {
+        if (reg.get<SphereShape>(e).radius <= 0.0f) {
+            err = "SphereShape: radius must be > 0";
             return false;
         }
     }

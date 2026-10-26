@@ -438,7 +438,8 @@ int lDestroy(lua_State* L) {
     const entt::entity e = luaReadEnt(L, 1);
     if (!w.reg.valid(e))
         return 0;
-    if (w.reg.try_get<CapsuleShape>(e) || w.reg.try_get<BoxShape>(e) || w.reg.try_get<TaperedCapsule>(e))
+    if (w.reg.try_get<CapsuleShape>(e) || w.reg.try_get<BoxShape>(e) || w.reg.try_get<TaperedCapsule>(e) ||
+        w.reg.try_get<SphereShape>(e))
         for (auto [c, col] : w.reg.view<Collider>().each())
             if (col.shape == e)
                 return luaL_error(L, "scene.destroy: shape is referenced by a collider");

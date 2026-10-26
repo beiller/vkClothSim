@@ -58,8 +58,8 @@ void stepXr(entt::registry& reg, const XrFrame& fr) {
     } else {
         const Transform wt = worldTransform(reg, active);
         const V3 head = wt.pos;
-        const V4 q = wt.quat;
-        const V3 right = quatFrom(q) * V3{1, 0, 0};
+        const Quat q = wt.quat;
+        const V3 right = q * V3{1, 0, 0};
         c.nViews = 2;
         for (int i = 0; i < 2; ++i)
             c.views[i] = View{head + right * (i == 0 ? -0.032f : 0.032f), q,
@@ -74,11 +74,11 @@ static V3 restPose(int hand) {
 
 entt::entity spawnVrRoot(entt::registry& reg) {
     entt::entity root = reg.create();
-    reg.emplace<Transform>(root, V3{0, 0, 0}, V4{0, 0, 0, 1});
+    reg.emplace<Transform>(root, V3{0, 0, 0}, Quat{1, 0, 0, 0});
     reg.emplace<VrRoot>(root);
     reg.emplace<Name>(root, "vr root");
     entt::entity head = reg.create();
-    reg.emplace<Transform>(head, V3{0, 0, 0}, V4{0, 0, 0, 1});
+    reg.emplace<Transform>(head, V3{0, 0, 0}, Quat{1, 0, 0, 0});
     reg.emplace<Camera>(head, Camera{90.0f, 0.01f, 300.0f, false});
     reg.emplace<VrCamera>(head);
     reg.emplace<Parent>(head, root);
@@ -96,7 +96,7 @@ void spawnControllers(Engine& w) {
     const entt::entity gripMat = spawnMaterial(w.reg, V3{0.9f, 0.75f, 0.2f}, 0.0f, 0.4f, V3{0.0f, 0.0f, 0.0f});
     for (int h = 0; h < 2; ++h) {
         entt::entity e = w.reg.create();
-        w.reg.emplace<Transform>(e, V3{0, 0, 0}, V4{0, 0, 0, 1});
+        w.reg.emplace<Transform>(e, V3{0, 0, 0}, Quat{1, 0, 0, 0});
         if (const entt::entity root = findMarker<VrRoot>(w.reg); root != entt::null)
             w.reg.emplace<Parent>(e, root);
         w.reg.emplace<ControllerInput>(e, ControllerInput{h});
@@ -134,7 +134,7 @@ void stepControllers(entt::registry& reg, const XrFrame& fr) {
         if (on)
             t = Transform{c.pos, c.quat};
         else if (cam != entt::null)
-            t = transformCompose(headLocal, Transform{restPose(ci.hand), V4{0, 0, 0, 1}});
+            t = transformCompose(headLocal, Transform{restPose(ci.hand), Quat{1, 0, 0, 0}});
     });
 }
 
@@ -256,11 +256,7 @@ void resolveWorldTransforms(entt::registry& reg) {
 void stepSoft(Engine& w, VkCommandBuffer cmd) {
     w.gpuSim.soft.syncCapsules(w.reg);
     w.gpuSim.soft.project(w.reg);
-    for (auto [entity, sb] : w.reg.view<SoftBodyData>().each()) {
-        w.gpuSim.soft.setPinned(entity, sb.pinned);
-        w.gpuSim.soft.setParams(entity, sb.params, sb.steps);
-    }
-    w.gpuSim.soft.record(cmd);
+    w.gpuSim.soft.record(cmd, w.reg);
 }
 
 
@@ -269,8 +265,8 @@ bool uiPanelUv(const entt::registry& reg, entt::entity canvas, const V3& hitPos,
         return false;
     const Transform& t = reg.get<Transform>(canvas);
     const V2 ws = reg.get<UICanvas>(canvas).worldSize;
-    const V3 xh = quatFrom(t.quat) * V3{1, 0, 0};
-    const V3 yh = quatFrom(t.quat) * V3{0, 1, 0};
+    const V3 xh = t.quat * V3{1, 0, 0};
+    const V3 yh = t.quat * V3{0, 1, 0};
     const float u = 0.5f + glm::dot(hitPos - t.pos, xh) / ws.x;
     const float v = 0.5f + glm::dot(hitPos - t.pos, yh) / ws.y;
     if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f)

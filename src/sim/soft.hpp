@@ -5,7 +5,6 @@
 #include "components.hpp"
 #include "gpuverts.hpp"
 #include "mesh.hpp"
-#include "params.hpp"
 #include "sim/phys.hpp"
 #include "sim/sim.hpp"
 #include <functional>
@@ -29,17 +28,13 @@ public:
     void build();
     void reset();
     void shutdown();
-    void setPinned(entt::entity e, int pinned);
-    void setParams(entt::entity e, const SimParams& params, int steps);
-    void record(VkCommandBuffer cmd);
+    void record(VkCommandBuffer cmd, const entt::registry& reg);
     void watch(entt::registry& reg);
     void flushFrees();
 
 private:
     struct GpuBody {
-        int pinned = 0;
-        SimParams params;
-        int steps = kDefaultSteps;
+        entt::entity ent{};
         bool dead = false;
         bool freed = false;
         sim::SoftBody soft;

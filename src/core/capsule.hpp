@@ -8,7 +8,7 @@ struct CapsuleGPU {
 };
 static_assert(sizeof(CapsuleGPU) == 48);
 
-inline void fillCapsule(CapsuleGPU& c, const V3& pos, const V4& quat, float halfLen, float radius) {
+inline void fillCapsule(CapsuleGPU& c, const V3& pos, const Quat& quat, float halfLen, float radius) {
     c.centerRadius[0] = pos.x;
     c.centerRadius[1] = pos.y;
     c.centerRadius[2] = pos.z;

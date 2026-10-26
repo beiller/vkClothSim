@@ -480,7 +480,7 @@ XrFrame Xr::poll() {
         const XrView& v = m_views[i];
         View& e = fr.eye[i];
         e.pos = {v.pose.position.x, v.pose.position.y, v.pose.position.z};
-        e.quat = {v.pose.orientation.x, v.pose.orientation.y, v.pose.orientation.z, v.pose.orientation.w};
+        e.quat = {v.pose.orientation.w, v.pose.orientation.x, v.pose.orientation.y, v.pose.orientation.z};
         e.tanL = std::tan(v.fov.angleLeft);
         e.tanR = std::tan(v.fov.angleRight);
         e.tanU = std::tan(v.fov.angleUp);
@@ -532,7 +532,7 @@ void Xr::pollControllers(XrFrame& fr) {
         gi.action = m_buttonB;
         if (XR_SUCCEEDED(m_loader.xrGetActionStateBoolean(m_session, &gi, &bf)) && bf.isActive)
             c.buttons[1] = bf.currentState;
-        auto poseOf = [&](XrAction action, XrSpace* space, const char* name, V3& outP, V4& outQ) -> bool {
+        auto poseOf = [&](XrAction action, XrSpace* space, const char* name, V3& outP, Quat& outQ) -> bool {
             if (*space == XR_NULL_HANDLE) {
                 XrActionSpaceCreateInfo asi{};
                 asi.type = XR_TYPE_ACTION_SPACE_CREATE_INFO;
@@ -557,7 +557,7 @@ void Xr::pollControllers(XrFrame& fr) {
             if (!ok)
                 return false;
             outP = {loc.pose.position.x, loc.pose.position.y, loc.pose.position.z};
-            outQ = {loc.pose.orientation.x, loc.pose.orientation.y, loc.pose.orientation.z, loc.pose.orientation.w};
+            outQ = Quat(loc.pose.orientation.w, loc.pose.orientation.x, loc.pose.orientation.y, loc.pose.orientation.z);
             return true;
         };
         const bool g = poseOf(m_gripPose, &m_gripSpace[h], "grip", c.pos, c.quat);

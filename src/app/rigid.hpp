@@ -31,7 +31,7 @@ public:
     void reset();
     void removeBody(entt::entity e);
     bool hasBody(entt::entity e) const;
-    void setKinematicPose(entt::entity e, const V3& pos, const V4& quat);
+    void setKinematicPose(entt::entity e, const V3& pos, const Quat& quat);
     void project(const entt::registry& reg);
     void step();
     Transform pose(entt::entity e) const;

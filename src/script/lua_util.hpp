@@ -28,10 +28,15 @@ inline V3 luaReadV3(lua_State* L, int idx, const V3& def = {0, 0, 0}) {
     return {luaReadNum(L, idx, 1, def.x), luaReadNum(L, idx, 2, def.y), luaReadNum(L, idx, 3, def.z)};
 }
 
-inline V4 luaReadQuat(lua_State* L, int idx) {
+inline Quat luaReadQuat(lua_State* L, int idx) {
     if (!lua_istable(L, idx))
-        return {0, 0, 0, 1};
-    return {luaReadNum(L, idx, 1, 0), luaReadNum(L, idx, 2, 0), luaReadNum(L, idx, 3, 0), luaReadNum(L, idx, 4, 1)};
+        return Quat(1.0f, 0.0f, 0.0f, 0.0f); // identity (w first)
+    // table is [x, y, z, w]; the Quat constructor is (w, x, y, z)
+    const float x = luaReadNum(L, idx, 1, 0);
+    const float y = luaReadNum(L, idx, 2, 0);
+    const float z = luaReadNum(L, idx, 3, 0);
+    const float w = luaReadNum(L, idx, 4, 1);
+    return Quat(w, x, y, z);
 }
 
 inline void luaPushV3(lua_State* L, V3 v) {
@@ -54,6 +59,11 @@ inline void luaPushV4(lua_State* L, V4 q) {
     lua_seti(L, -2, 3);
     lua_pushnumber(L, q.w);
     lua_seti(L, -2, 4);
+}
+
+// pushes a quat as an [x, y, z, w] table (the Quat ctor order is w-first, but the table is not)
+inline void luaPushQuat(lua_State* L, Quat q) {
+    luaPushV4(L, V4(q.x, q.y, q.z, q.w));
 }
 
 template <class T>

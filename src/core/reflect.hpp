@@ -38,7 +38,6 @@ struct TypeDesc {
 namespace refl {
 
 #define OFF(T, f) offsetof(T, f)
-#define OFF2(T, a, b) (offsetof(T, a) + offsetof(std::remove_cv_t<decltype(std::declval<T&>().a)>, b))
 
 static const FieldDesc kTransform[] = {
     {"pos", OFF(Transform, pos), FieldKind::DragV3},
@@ -98,12 +97,12 @@ static const FieldDesc kPointLight[] = {
 static const FieldDesc kSoftBodyData[] = {
     {"pinned", OFF(SoftBodyData, pinned), FieldKind::SliderI, 0.0f, 2.0f},
     {"steps", OFF(SoftBodyData, steps), FieldKind::SliderI, 1.0f, 32.0f},
-    {"params.mass", OFF2(SoftBodyData, params, mass), FieldKind::SliderF, 0.1f, 10.0f},
-    {"params.damping", OFF2(SoftBodyData, params, damping), FieldKind::SliderF, 0.9f, 1.0f},
-    {"params.passes", OFF2(SoftBodyData, params, passes), FieldKind::SliderI, 1.0f, 16.0f},
-    {"params.stiffness", OFF2(SoftBodyData, params, stiffness), FieldKind::SliderF, 0.0f, 1.0f},
-    {"params.tension", OFF2(SoftBodyData, params, tension), FieldKind::SliderF, 0.5f, 1.5f},
-    {"params.friction", OFF2(SoftBodyData, params, friction), FieldKind::SliderF, 0.0f, 50.0f},
+    {"mass", OFF(SoftBodyData, mass), FieldKind::SliderF, 0.1f, 10.0f},
+    {"damping", OFF(SoftBodyData, damping), FieldKind::SliderF, 0.9f, 1.0f},
+    {"passes", OFF(SoftBodyData, passes), FieldKind::SliderI, 1.0f, 16.0f},
+    {"stiffness", OFF(SoftBodyData, stiffness), FieldKind::SliderF, 0.0f, 1.0f},
+    {"tension", OFF(SoftBodyData, tension), FieldKind::SliderF, 0.5f, 1.5f},
+    {"friction", OFF(SoftBodyData, friction), FieldKind::SliderF, 0.0f, 50.0f},
     {"cons", OFF(SoftBodyData, cons), FieldKind::FloatArr},
 };
 static const FieldDesc kRigidBody[] = {
@@ -130,6 +129,10 @@ static const FieldDesc kTaperedCapsule[] = {
     {"halfHeight", OFF(TaperedCapsule, halfHeight), FieldKind::SliderF, 0.0f, 10.0f},
     {"bottomRadius", OFF(TaperedCapsule, bottomRadius), FieldKind::SliderF, 0.0f, 5.0f},
     {"topRadius", OFF(TaperedCapsule, topRadius), FieldKind::SliderF, 0.0f, 5.0f},
+};
+
+static const FieldDesc kSphereShape[] = {
+    {"radius", OFF(SphereShape, radius), FieldKind::SliderF, 0.0f, 10.0f},
 };
 static const FieldDesc kCollider[] = {
     {"shape", OFF(Collider, shape), FieldKind::Ref},
@@ -244,6 +247,7 @@ static const TypeDesc kTypes[] = {
     {"CapsuleShape", kCapsuleShape},
     {"BoxShape", kBoxShape},
     {"TaperedCapsule", kTaperedCapsule},
+    {"SphereShape", kSphereShape},
     {"Collider", kCollider},
     {"Joint", kJoint},
     {"SixDofJoint", kSixDofJoint},
@@ -293,6 +297,7 @@ inline std::vector<std::pair<const TypeDesc*, std::function<const void*(void)>>>
     if (reg.try_get<CapsuleShape>(e)) add("CapsuleShape", liveRef<CapsuleShape>(reg, e));
     if (reg.try_get<BoxShape>(e)) add("BoxShape", liveRef<BoxShape>(reg, e));
     if (reg.try_get<TaperedCapsule>(e)) add("TaperedCapsule", liveRef<TaperedCapsule>(reg, e));
+    if (reg.try_get<SphereShape>(e)) add("SphereShape", liveRef<SphereShape>(reg, e));
     if (reg.try_get<Collider>(e)) add("Collider", liveRef<Collider>(reg, e));
     if (reg.try_get<Joint>(e)) add("Joint", liveRef<Joint>(reg, e));
     if (reg.try_get<SixDofJoint>(e)) add("SixDofJoint", liveRef<SixDofJoint>(reg, e));

@@ -343,33 +343,33 @@ bool packPrimitive(const tg3_model& m, const tg3_mesh& gm, const tg3_primitive& 
     return true;
 }
 
-V4 mat3ToQuat(const V3& r0, const V3& r1, const V3& r2) {
+Quat mat3ToQuat(const V3& r0, const V3& r1, const V3& r2) {
     const float m00 = r0.x, m01 = r0.y, m02 = r0.z;
     const float m10 = r1.x, m11 = r1.y, m12 = r1.z;
     const float m20 = r2.x, m21 = r2.y, m22 = r2.z;
     const float tr = m00 + m11 + m22;
-    V4 q;
+    Quat q;
     if (tr > 0.0f) {
         const float s = 0.5f / std::sqrt(tr + 1.0f);
-        q = {(m21 - m12) * s, (m02 - m20) * s, (m10 - m01) * s, 0.25f / s};
+        q = Quat{0.25f / s, (m21 - m12) * s, (m02 - m20) * s, (m10 - m01) * s};
     } else if (m00 > m11 && m00 > m22) {
         const float s = 2.0f * std::sqrt(1.0f + m00 - m11 - m22);
-        q = {0.25f * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s};
+        q = Quat{(m21 - m12) / s, 0.25f * s, (m01 + m10) / s, (m02 + m20) / s};
     } else if (m11 > m22) {
         const float s = 2.0f * std::sqrt(1.0f + m11 - m00 - m22);
-        q = {(m01 + m10) / s, 0.25f * s, (m12 + m21) / s, (m02 - m20) / s};
+        q = Quat{(m02 - m20) / s, (m01 + m10) / s, 0.25f * s, (m12 + m21) / s};
     } else {
         const float s = 2.0f * std::sqrt(1.0f + m22 - m00 - m11);
-        q = {(m02 + m20) / s, (m12 + m21) / s, 0.25f * s, (m10 - m01) / s};
+        q = Quat{(m10 - m01) / s, (m02 + m20) / s, (m12 + m21) / s, 0.25f * s};
     }
     const float l = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-    return {q.x / l, q.y / l, q.z / l, q.w / l};
+    return Quat{q.w / l, q.x / l, q.y / l, q.z / l};
 }
 
 bool nodePose(const tg3_node& n, Transform& out) {
     if (!n.has_matrix) {
         out = {{(float)n.translation[0], (float)n.translation[1], (float)n.translation[2]},
-               {(float)n.rotation[0], (float)n.rotation[1], (float)n.rotation[2], (float)n.rotation[3]},
+               Quat((float)n.rotation[3], (float)n.rotation[0], (float)n.rotation[1], (float)n.rotation[2]),
                {(float)n.scale[0], (float)n.scale[1], (float)n.scale[2]}};
         if (out.scale.x < 1e-9f || out.scale.y < 1e-9f || out.scale.z < 1e-9f)
             return false;

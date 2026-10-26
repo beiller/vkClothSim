@@ -7,6 +7,7 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
@@ -25,10 +26,10 @@ namespace {
 constexpr float kMaxKinematicStep = 0.25f;
 
 // normalize at the Jolt boundary: Jolt asserts on non-unit quats (e.g. user-script values)
-JPH::Quat jQuat(V4 q) {
+JPH::Quat jQuat(Quat q) {
     const float l = glm::length(q);
     if (l < 1e-8f)
-        q = {0.0f, 0.0f, 0.0f, 1.0f};
+        q = Quat{1.0f, 0.0f, 0.0f, 0.0f};
     else
         q /= l;
     return {q.x, q.y, q.z, q.w};
@@ -186,6 +187,8 @@ const JPH::Shape* RigidScene::shape(const entt::registry& reg, entt::entity e) {
             return nullptr;
         s = r.Get();
     }
+    else if (const auto* ss = reg.try_get<SphereShape>(e))
+        s = JPH::ShapeRefC(new JPH::SphereShape(ss->radius));
     if (!s.GetPtr())
         return nullptr;
     const JPH::Shape* ptr = s.GetPtr();
@@ -209,9 +212,10 @@ void RigidScene::watch(entt::registry& reg) {
     reg.on_destroy<CapsuleShape>().connect<&RigidScene::onShapeDestroyed>(this);
     reg.on_destroy<BoxShape>().connect<&RigidScene::onShapeDestroyed>(this);
     reg.on_destroy<TaperedCapsule>().connect<&RigidScene::onShapeDestroyed>(this);
+    reg.on_destroy<SphereShape>().connect<&RigidScene::onShapeDestroyed>(this);
 }
 
-void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const V4& quat) {
+void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const Quat& quat) {
     const auto it = m_body.find(e);
     if (it == m_body.end())
         return;
@@ -389,6 +393,8 @@ uint64_t RigidScene::shapeFingerprint(const entt::registry& reg, const std::vect
             mix(bs, sizeof(BoxShape));
         else if (const auto* tc = reg.try_get<TaperedCapsule>(col->shape))
             mix(tc, sizeof(TaperedCapsule));
+        else if (const auto* ss = reg.try_get<SphereShape>(col->shape))
+            mix(ss, sizeof(SphereShape));
         const Transform t = reg.try_get<Transform>(c) ? reg.get<Transform>(c) : Transform{};
         mix(&t, sizeof(Transform));
     }
@@ -581,7 +587,7 @@ Transform RigidScene::pose(entt::entity e) const {
     const JPH::Body& b = lock.GetBody();
     const JPH::Vec3 p = b.GetPosition();
     const JPH::Quat q = b.GetRotation();
-    return {{p.GetX(), p.GetY(), p.GetZ()}, {q.GetX(), q.GetY(), q.GetZ(), q.GetW()}};
+    return {{p.GetX(), p.GetY(), p.GetZ()}, {q.GetW(), q.GetX(), q.GetY(), q.GetZ()}};
 }
 
 RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist,

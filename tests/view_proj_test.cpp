@@ -6,7 +6,7 @@
 // expected NDC, using the lua_skin camera (pos 1.25,0.5,3; fov 50deg; identity quat)
 int main() {
     const V3 camPos{1.25f, 0.5f, 3.0f};
-    const V4 camQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    const Quat camQuat{1.0f, 0.0f, 0.0f, 0.0f};
     const float tanU = std::tan(50.0f * 0.5f * kPi / 180.0f);
     const float tanR = tanU; // square window, aspect 1
     const View v{camPos, camQuat, -tanR, tanR, tanU, -tanU};
@@ -40,7 +40,7 @@ int main() {
     // rotated camera (90deg X): camera pos must map to origin in camera space, and the
     // forward point (pos + Q*(0,0,-1)*d) must map to (0,0,-d)
     {
-        const V4 rq{0.70710678f, 0.0f, 0.0f, 0.70710678f};
+        const Quat rq{0.70710678f, 0.70710678f, 0.0f, 0.0f}; // 90 deg about X (w, x)
         const V3 rp{1.0f, 2.0f, 3.0f};
         const Mat4 rv = poseView(rp, rq);
         const V3 fwd{0.0f, 1.0f, 0.0f}; // Q * (0,0,-1) for 90deg X

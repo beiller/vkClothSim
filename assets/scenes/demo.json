@@ -13,18 +13,73 @@
             },
             "script": "scenes/camera"
         },
+        { "name": "grabberShape", "components": { "SphereShape": { "radius": 0.4 } } },
+        { 
+            "name": "grabberCol",   
+            "components": { 
+                "Collider": { "shape": "grabberShape" } 
+            } 
+        },
+        {
+            "name": "key light grabber",
+            "components": {
+                "Transform": { "pos": [0, 2, 0] },
+                "KinematicBody": { "colliders": [ "grabberCol" ] }
+            }
+        },
         {
             "name": "key light",
             "components": {
-                "Transform": { "pos": [0, 12, 0] },
-                "PointLight": { "color": [1, 0.95, 0.9], "intensity": 120, "radius": 0.5 }
+                "Transform": { "pos": [0, 0, 0] },
+                "PointLight": { "color": [1, 0.95, 0.9], "intensity": 2, "radius": 0.15 },
+                "Parent": { "e": "key light grabber" }
+            }
+        },
+        {
+            "name": "tetrahedron",
+            "components": {
+                "Geometry": {
+                    "pos": [ 0.0866, 0.0866, 0.0866,  0.0866, -0.0866, -0.0866,
+                           -0.0866, 0.0866, -0.0866,  -0.0866, -0.0866, 0.0866 ],
+                    "nrm": [ 0.5774, 0.5774, 0.5774,  0.5774, -0.5774, -0.5774,
+                           -0.5774, 0.5774, -0.5774,  -0.5774, -0.5774, 0.5774 ],
+                    "idx": [ 0, 1, 2,  0, 3, 1,  0, 2, 3,  1, 3, 2 ]
+                }
+            }
+        },
+        { "name": "mat_tetra", "components": { "Material": { "baseColor": [0, 0, 0], "emissive": [10, 9.5, 9] } } },
+        { "name": "mat_tetra2", "components": { "Material": { "baseColor": [0, 0, 0], "emissive": [4, 6, 10] } } },
+        {
+            "name": "tetra",
+            "components": {
+                "Transform": { "pos": [0, 0, 0] },
+                "Renderable": { "geom": "tetrahedron", "noShadow": true },
+                "MaterialRef": { "material": "mat_tetra" },
+                "Parent": { "e": "key light grabber" }
+            }
+        },
+        {
+            "name": "rim light grabber",
+            "components": {
+                "Transform": { "pos": [-9, 6, -7] },
+                "KinematicBody": { "colliders": [ "grabberCol" ] }
+            }
+        },
+        {
+            "name": "tetra2",
+            "components": {
+                "Transform": { "pos": [0, 0, 0] },
+                "Renderable": { "geom": "tetrahedron", "noShadow": true },
+                "MaterialRef": { "material": "mat_tetra2" },
+                "Parent": { "e": "rim light grabber" }
             }
         },
         {
             "name": "rim light",
             "components": {
-                "Transform": { "pos": [-9, 6, -7] },
-                "PointLight": { "color": [0.4, 0.6, 1], "intensity": 60, "radius": 0.5 }
+                "Transform": { "pos": [0, 0, 0] },
+                "PointLight": { "color": [0.4, 0.6, 1], "intensity": 60, "radius": 0.5 },
+                "Parent": { "e": "rim light grabber" }
             }
         },
         { "name": "mat_ground", "components": { "Material": { "baseColor": [0.19, 0.21, 0.17], "roughness": 0.85 } } },
@@ -51,12 +106,12 @@
                 "type": "section",
                 "label": "cloth",
                 "children": [
-                    { "type": "slider-f", "label": "mass", "bind": "cloth.SoftBodyData.params.mass" },
-                    { "type": "slider-f", "label": "damping", "bind": "cloth.SoftBodyData.params.damping", "fmt": "%.3f" },
-                    { "type": "slider-i", "label": "passes", "bind": "cloth.SoftBodyData.params.passes" },
-                    { "type": "slider-f", "label": "stiffness", "bind": "cloth.SoftBodyData.params.stiffness" },
-                    { "type": "slider-f", "label": "tension", "bind": "cloth.SoftBodyData.params.tension" },
-                    { "type": "slider-f", "label": "friction", "bind": "cloth.SoftBodyData.params.friction" },
+                    { "type": "slider-f", "label": "mass", "bind": "cloth.SoftBodyData.mass" },
+                    { "type": "slider-f", "label": "damping", "bind": "cloth.SoftBodyData.damping", "fmt": "%.3f" },
+                    { "type": "slider-i", "label": "passes", "bind": "cloth.SoftBodyData.passes" },
+                    { "type": "slider-f", "label": "stiffness", "bind": "cloth.SoftBodyData.stiffness" },
+                    { "type": "slider-f", "label": "tension", "bind": "cloth.SoftBodyData.tension" },
+                    { "type": "slider-f", "label": "friction", "bind": "cloth.SoftBodyData.friction" },
                     { "type": "slider-i", "label": "steps", "bind": "cloth.SoftBodyData.steps" }
                 ]
             },
@@ -64,12 +119,12 @@
                 "type": "section",
                 "label": "ball",
                 "children": [
-                    { "type": "slider-f", "label": "mass", "bind": "ball.SoftBodyData.params.mass" },
-                    { "type": "slider-f", "label": "damping", "bind": "ball.SoftBodyData.params.damping", "fmt": "%.3f" },
-                    { "type": "slider-i", "label": "passes", "bind": "ball.SoftBodyData.params.passes" },
-                    { "type": "slider-f", "label": "stiffness", "bind": "ball.SoftBodyData.params.stiffness" },
-                    { "type": "slider-f", "label": "tension", "bind": "ball.SoftBodyData.params.tension" },
-                    { "type": "slider-f", "label": "friction", "bind": "ball.SoftBodyData.params.friction" },
+                    { "type": "slider-f", "label": "mass", "bind": "ball.SoftBodyData.mass" },
+                    { "type": "slider-f", "label": "damping", "bind": "ball.SoftBodyData.damping", "fmt": "%.3f" },
+                    { "type": "slider-i", "label": "passes", "bind": "ball.SoftBodyData.passes" },
+                    { "type": "slider-f", "label": "stiffness", "bind": "ball.SoftBodyData.stiffness" },
+                    { "type": "slider-f", "label": "tension", "bind": "ball.SoftBodyData.tension" },
+                    { "type": "slider-f", "label": "friction", "bind": "ball.SoftBodyData.friction" },
                     { "type": "slider-i", "label": "steps", "bind": "ball.SoftBodyData.steps" }
                 ]
             },

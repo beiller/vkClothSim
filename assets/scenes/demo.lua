@@ -64,24 +64,24 @@ function M._on_ready(self)
     scene.replace(clothH, "MaterialRef", { material = scene.get_entity("mat_cloth") })
     scene.replace(clothH, "SoftBodyData",
                   { cons = mesh.planeCons({ cw = clothDim, ch = clothDim, span = clothSpan }),
-                    pinned = 1, ["params.mass"] = 1.0 })
+                    pinned = 1, mass = 1.0 })
 
     local ballT = mesh.sphere({ subdiv = 3, radius = 1.5 * world_scale })
     local ball = scene.entity("ball")
     scene.replace(ball, "Transform", { pos = {0, 12, 0} })
     scene.replace(ball, "Renderable", { geom = geom(ballT) })
     scene.replace(ball, "MaterialRef", { material = scene.get_entity("mat_ball") })
-    scene.replace(ball, "SoftBodyData", { cons = mesh.ballCons(ballT), ["params.mass"] = 2.0 })
+    scene.replace(ball, "SoftBodyData", { cons = mesh.ballCons(ballT), mass = 2.0 })
 
-    -- SimParams{} / kDefaultSteps defaults, as the JSON "reset-params" button expects
+    -- struct defaults, as the JSON "reset-params" button expects
     scene.button("reset-params", function()
         for _, h in ipairs({ clothH, ball }) do
-            scene.set(h, "SoftBodyData.params.mass", 1.0)
-            scene.set(h, "SoftBodyData.params.damping", 0.96)
-            scene.set(h, "SoftBodyData.params.passes", 8)
-            scene.set(h, "SoftBodyData.params.stiffness", 1.0)
-            scene.set(h, "SoftBodyData.params.tension", 1.0)
-            scene.set(h, "SoftBodyData.params.friction", 2.0)
+            scene.set(h, "SoftBodyData.mass", 1.0)
+            scene.set(h, "SoftBodyData.damping", 0.96)
+            scene.set(h, "SoftBodyData.passes", 8)
+            scene.set(h, "SoftBodyData.stiffness", 1.0)
+            scene.set(h, "SoftBodyData.tension", 1.0)
+            scene.set(h, "SoftBodyData.friction", 2.0)
             scene.set(h, "SoftBodyData.steps", 3)
         end
     end)
