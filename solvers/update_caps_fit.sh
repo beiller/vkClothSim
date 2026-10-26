@@ -12,19 +12,21 @@ LUA=assets/scenes/caps_fit.lua
 BIN=build/bone_probe
 
 BONES=(
-    lShin rShin lThighBend rThighBend lThighTwist rThighTwist
-    lShldrBend lShldrTwist lForearmBend lForearmTwist
-    rShldrBend rShldrTwist rForearmBend rForearmTwist
-    lHand lThumb1 lThumb2 lThumb3 lCarpal1 lCarpal2 lCarpal3 lCarpal4
-    lIndex1 lIndex2 lIndex3 lMid1 lMid2 lMid3 lRing1 lRing2 lRing3
-    lPinky1 lPinky2 lPinky3
-    rHand rThumb1 rThumb2 rThumb3 rCarpal1 rCarpal2 rCarpal3 rCarpal4
-    rIndex1 rIndex2 rIndex3 rMid1 rMid2 rMid3 rRing1 rRing2 rRing3
-    rPinky1 rPinky2 rPinky3
-    #lFoot lMetatarsals lToe lBigToe lBigToe_2
+    pelvis abdomenLower abdomenUpper chestLower chestUpper lCollar rCollar neckLower neckUpper head
+    lShin lThighBend lThighTwist lFoot lMetatarsals
+    rShin rThighBend rThighTwist rFoot rMetatarsals
+    lShldrBend lShldrTwist lForearmBend lForearmTwist lHand
+    rShldrBend rShldrTwist rForearmBend rForearmTwist rHand
+    #lThumb1 lThumb2 lThumb3 lCarpal1 lCarpal2 lCarpal3 lCarpal4
+    #lIndex1 lIndex2 lIndex3 lMid1 lMid2 lMid3 lRing1 lRing2 lRing3
+    #lPinky1 lPinky2 lPinky3
+    #rThumb1 rThumb2 rThumb3 rCarpal1 rCarpal2 rCarpal3 rCarpal4
+    #rIndex1 rIndex2 rIndex3 rMid1 rMid2 rMid3 rRing1 rRing2 rRing3
+    #rPinky1 rPinky2 rPinky3
+    #lToe lBigToe lBigToe_2
     #lSmallToe1 lSmallToe1_2 lSmallToe2 lSmallToe2_2 lSmallToe3 lSmallToe3_2
     #lSmallToe4 lSmallToe4_2
-    #rFoot rMetatarsals rToe rBigToe rBigToe_2
+    #rToe rBigToe rBigToe_2
     #rSmallToe1 rSmallToe1_2 rSmallToe2 rSmallToe2_2 rSmallToe3 rSmallToe3_2
     #rSmallToe4 rSmallToe4_2
 )

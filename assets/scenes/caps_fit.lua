@@ -15,6 +15,56 @@ end
 
 -- BEGIN GENERATED (solvers/update_caps_fit.sh) -- do not hand-edit
 local kFits = {
+-- bbox: (-0.1765, 0.8566, -0.1248) - (0.1765, 1.1043, 0.1195)
+-- bone 'pelvis' (joint 1, weight > 0.30): 11072 vertices + normals, 1 capsules, underfit 0.040, overhang 0.041
+    { name = "pelvis", caps = {
+      { origin = {-0.000, 1.031, 0.001}, axis = {1.000, -0.000, -0.000}, seg = {{0.000, 0.000, 0.123, 0.123} } }
+    } },
+-- bbox: (-0.1502, 1.0233, -0.0825) - (0.1502, 1.1874, 0.1199)
+-- bone 'abdomenLower' (joint 34, weight > 0.30): 6608 vertices + normals, 1 capsules, underfit 0.040, overhang 0.031
+    { name = "abdomenLower", caps = {
+      { origin = {-0.000, 1.141, 0.036}, axis = {-0.000, 0.982, 0.191}, seg = {{0.000, 0.000, 0.093, 0.093} } }
+    } },
+-- bbox: (-0.1316, 1.1464, -0.0831) - (0.1316, 1.2823, 0.1187)
+-- bone 'abdomenUpper' (joint 35, weight > 0.30): 5328 vertices + normals, 1 capsules, underfit 0.015, overhang 0.031
+    { name = "abdomenUpper", caps = {
+      { origin = {-0.000, 1.227, 0.028}, axis = {-0.000, 0.998, -0.063}, seg = {{0.000, 0.000, 0.098, 0.098} } }
+    } },
+-- bbox: (-0.1510, 1.2224, -0.1242) - (0.1510, 1.4302, 0.1335)
+-- bone 'chestLower' (joint 36, weight > 0.30): 10032 vertices + normals, 1 capsules, underfit 0.031, overhang 0.034
+    { name = "chestLower", caps = {
+      { origin = {-0.000, 1.307, 0.005}, axis = {0.000, -0.986, 0.168}, seg = {{0.000, 0.000, 0.110, 0.110} } }
+    } },
+-- bbox: (-0.0945, 1.3773, -0.1242) - (0.0945, 1.5646, 0.0655)
+-- bone 'chestUpper' (joint 37, weight > 0.30): 6400 vertices + normals, 1 capsules, underfit 0.052, overhang 0.011
+    { name = "chestUpper", caps = {
+      { origin = {0.000, 1.482, -0.048}, axis = {0.000, -0.992, 0.125}, seg = {{0.000, 0.000, 0.060, 0.060} } }
+    } },
+-- bbox: (0.0419, 1.3418, -0.1242) - (0.1994, 1.5294, 0.0463)
+-- bone 'lCollar' (joint 38, weight > 0.30): 3680 vertices + normals, 1 capsules, underfit 0.029, overhang 0.011
+    { name = "lCollar", caps = {
+      { origin = {0.097, 1.446, -0.055}, axis = {0.940, 0.243, -0.241}, seg = {{0.000, 0.000, 0.062, 0.062} } }
+    } },
+-- bbox: (-0.1994, 1.3418, -0.1242) - (-0.0419, 1.5294, 0.0463)
+-- bone 'rCollar' (joint 63, weight > 0.30): 3680 vertices + normals, 1 capsules, underfit 0.029, overhang 0.009
+    { name = "rCollar", caps = {
+      { origin = {-0.097, 1.446, -0.055}, axis = {0.940, -0.243, 0.241}, seg = {{0.000, 0.000, 0.062, 0.062} } }
+    } },
+-- bbox: (-0.0626, 1.5168, -0.0844) - (0.0626, 1.5584, 0.0133)
+-- bone 'neckLower' (joint 88, weight > 0.30): 1504 vertices + normals, 1 capsules, underfit 0.005, overhang 0.007
+    { name = "neckLower", caps = {
+      { origin = {0.000, 1.520, -0.045}, axis = {0.000, 0.972, 0.233}, seg = {{0.000, 0.000, 0.047, 0.047} } }
+    } },
+-- bbox: (-0.0533, 1.5331, -0.0819) - (0.0533, 1.6240, 0.0351)
+-- bone 'neckUpper' (joint 89, weight > 0.30): 2640 vertices + normals, 1 capsules, underfit 0.013, overhang 0.000
+    { name = "neckUpper", caps = {
+      { origin = {0.000, 1.592, -0.024}, axis = {0.000, -0.969, -0.247}, seg = {{0.000, 0.000, 0.042, 0.042} } }
+    } },
+-- bbox: (-0.0889, 1.5983, -0.1127) - (0.0889, 1.8003, 0.1023)
+-- bone 'head' (joint 90, weight > 0.30): 25936 vertices + normals, 1 capsules, underfit 0.018, overhang 0.023
+    { name = "head", caps = {
+      { origin = {-0.000, 1.689, 0.019}, axis = {0.000, 0.811, -0.585}, seg = {{0.000, 0.000, 0.082, 0.082} } }
+    } },
 -- bbox: (0.0836, 0.0720, -0.1184) - (0.2365, 0.5750, 0.0501)
 -- bone 'lShin' (joint 4, weight > 0.30): 9280 vertices + normals, 1 capsules, underfit 0.002, overhang 0.031
     { name = "lShin", caps = {
@@ -90,200 +140,30 @@ local kFits = {
     { name = "lHand", caps = {
       { origin = {0.512, 1.083, 0.022}, axis = {-0.642, 0.762, -0.089}, seg = {{0.000, 0.000, 0.024, 0.024} } }
     } },
--- bbox: (0.4980, 1.0314, 0.0309) - (0.5423, 1.0777, 0.0827)
--- bone 'lThumb1' (joint 44, weight > 0.30): 1712 vertices + normals, 1 capsules, underfit 0.008, overhang 0.003
-    { name = "lThumb1", caps = {
-      { origin = {0.522, 1.060, 0.052}, axis = {-0.451, 0.677, -0.582}, seg = {{0.000, 0.000, 0.019, 0.019} } }
-    } },
--- bbox: (0.5142, 1.0153, 0.0608) - (0.5417, 1.0522, 0.0943)
--- bone 'lThumb2' (joint 45, weight > 0.30): 1456 vertices + normals, 1 capsules, underfit 0.014, overhang 0.001
-    { name = "lThumb2", caps = {
-      { origin = {0.525, 1.043, 0.074}, axis = {-0.252, 0.772, -0.584}, seg = {{0.000, 0.000, 0.009, 0.009} } }
-    } },
--- bbox: (0.5228, 1.0011, 0.0790) - (0.5476, 1.0287, 0.1074)
--- bone 'lThumb3' (joint 46, weight > 0.30): 2864 vertices + normals, 1 capsules, underfit 0.003, overhang 0.003
-    { name = "lThumb3", caps = {
-      { origin = {0.542, 1.002, 0.104}, axis = {-0.318, 0.777, -0.544}, seg = {{0.000, 0.030, 0.005, 0.008} } }
-    } },
--- bbox: (0.5333, 1.0126, 0.0367) - (0.5778, 1.0781, 0.0679)
--- bone 'lCarpal1' (joint 47, weight > 0.30): 1440 vertices + normals, 1 capsules, underfit 0.026, overhang 0.000
-    { name = "lCarpal1", caps = {
-      { origin = {0.561, 1.032, 0.053}, axis = {-0.661, 0.732, -0.164}, seg = {{0.000, 0.000, 0.012, 0.012} } }
-    } },
--- bbox: (0.5343, 1.0126, 0.0200) - (0.5802, 1.0788, 0.0442)
--- bone 'lCarpal2' (joint 51, weight > 0.30): 1056 vertices + normals, 1 capsules, underfit 0.025, overhang 0.000
-    { name = "lCarpal2", caps = {
-      { origin = {0.562, 1.033, 0.032}, axis = {-0.662, 0.739, -0.124}, seg = {{0.000, 0.000, 0.013, 0.013} } }
-    } },
--- bbox: (0.5264, 1.0140, -0.0009) - (0.5774, 1.0784, 0.0218)
--- bone 'lCarpal3' (joint 55, weight > 0.30): 1024 vertices + normals, 1 capsules, underfit 0.019, overhang 0.000
-    { name = "lCarpal3", caps = {
-      { origin = {0.556, 1.037, 0.015}, axis = {-0.652, 0.758, 0.007}, seg = {{0.000, 0.000, 0.013, 0.013} } }
-    } },
--- bbox: (0.5317, 1.0193, -0.0156) - (0.5686, 1.0755, 0.0052)
--- bone 'lCarpal4' (joint 59, weight > 0.30): 1104 vertices + normals, 1 capsules, underfit 0.019, overhang 0.000
-    { name = "lCarpal4", caps = {
-      { origin = {0.551, 1.037, -0.002}, axis = {-0.603, 0.788, 0.127}, seg = {{0.000, 0.000, 0.011, 0.011} } }
-    } },
--- bbox: (0.5559, 0.9921, 0.0439) - (0.5962, 1.0354, 0.0683)
--- bone 'lIndex1' (joint 48, weight > 0.30): 1424 vertices + normals, 1 capsules, underfit 0.020, overhang 0.002
-    { name = "lIndex1", caps = {
-      { origin = {0.569, 1.022, 0.056}, axis = {-0.681, 0.718, -0.145}, seg = {{0.000, 0.000, 0.010, 0.010} } }
-    } },
--- bbox: (0.5821, 0.9797, 0.0490) - (0.6077, 1.0062, 0.0687)
--- bone 'lIndex2' (joint 49, weight > 0.30): 1088 vertices + normals, 1 capsules, underfit 0.007, overhang 0.001
-    { name = "lIndex2", caps = {
-      { origin = {0.593, 0.995, 0.059}, axis = {-0.617, 0.784, -0.073}, seg = {{0.000, 0.000, 0.008, 0.008} } }
-    } },
--- bbox: (0.5965, 0.9669, 0.0523) - (0.6189, 0.9885, 0.0689)
--- bone 'lIndex3' (joint 50, weight > 0.30): 2784 vertices + normals, 1 capsules, underfit 0.002, overhang 0.002
-    { name = "lIndex3", caps = {
-      { origin = {0.617, 0.968, 0.062}, axis = {-0.624, 0.779, -0.057}, seg = {{0.000, 0.022, 0.004, 0.007} } }
-    } },
--- bbox: (0.5575, 0.9913, 0.0219) - (0.6043, 1.0337, 0.0447)
--- bone 'lMid1' (joint 52, weight > 0.30): 1328 vertices + normals, 1 capsules, underfit 0.025, overhang 0.000
-    { name = "lMid1", caps = {
-      { origin = {0.571, 1.023, 0.033}, axis = {-0.692, 0.721, -0.040}, seg = {{0.000, 0.000, 0.011, 0.011} } }
-    } },
--- bbox: (0.5899, 0.9724, 0.0256) - (0.6183, 1.0016, 0.0446)
--- bone 'lMid2' (joint 53, weight > 0.30): 1088 vertices + normals, 1 capsules, underfit 0.008, overhang 0.000
-    { name = "lMid2", caps = {
-      { origin = {0.603, 0.989, 0.036}, axis = {-0.619, 0.784, -0.051}, seg = {{0.000, 0.000, 0.007, 0.007} } }
-    } },
--- bbox: (0.6072, 0.9590, 0.0285) - (0.6308, 0.9813, 0.0451)
--- bone 'lMid3' (joint 54, weight > 0.30): 2784 vertices + normals, 1 capsules, underfit 0.002, overhang 0.002
-    { name = "lMid3", caps = {
-      { origin = {0.629, 0.960, 0.037}, axis = {-0.657, 0.753, -0.031}, seg = {{0.000, 0.024, 0.004, 0.007} } }
-    } },
--- bbox: (0.5549, 0.9959, 0.0022) - (0.5972, 1.0339, 0.0229)
--- bone 'lRing1' (joint 56, weight > 0.30): 1296 vertices + normals, 1 capsules, underfit 0.021, overhang 0.000
-    { name = "lRing1", caps = {
-      { origin = {0.569, 1.023, 0.013}, axis = {-0.695, 0.716, 0.064}, seg = {{0.000, 0.000, 0.010, 0.010} } }
-    } },
--- bbox: (0.5848, 0.9801, 0.0027) - (0.6097, 1.0053, 0.0202)
--- bone 'lRing2' (joint 57, weight > 0.30): 1088 vertices + normals, 1 capsules, underfit 0.007, overhang 0.000
-    { name = "lRing2", caps = {
-      { origin = {0.599, 0.991, 0.011}, axis = {-0.626, 0.779, 0.039}, seg = {{0.000, 0.000, 0.006, 0.006} } }
-    } },
--- bbox: (0.5989, 0.9670, 0.0024) - (0.6218, 0.9883, 0.0185)
--- bone 'lRing3' (joint 58, weight > 0.30): 2784 vertices + normals, 1 capsules, underfit 0.002, overhang 0.002
-    { name = "lRing3", caps = {
-      { origin = {0.620, 0.968, 0.010}, axis = {-0.641, 0.766, 0.045}, seg = {{0.000, 0.022, 0.003, 0.007} } }
-    } },
--- bbox: (0.5488, 1.0063, -0.0169) - (0.5807, 1.0338, 0.0027)
--- bone 'lPinky1' (joint 60, weight > 0.30): 1296 vertices + normals, 1 capsules, underfit 0.015, overhang 0.001
-    { name = "lPinky1", caps = {
-      { origin = {0.558, 1.028, -0.006}, axis = {-0.682, 0.695, 0.229}, seg = {{0.000, 0.000, 0.009, 0.009} } }
-    } },
--- bbox: (0.5701, 0.9944, -0.0183) - (0.5908, 1.0152, -0.0022)
--- bone 'lPinky2' (joint 61, weight > 0.30): 1104 vertices + normals, 1 capsules, underfit 0.006, overhang 0.000
-    { name = "lPinky2", caps = {
-      { origin = {0.579, 1.006, -0.010}, axis = {-0.656, 0.745, 0.126}, seg = {{0.000, 0.000, 0.006, 0.006} } }
-    } },
--- bbox: (0.5822, 0.9848, -0.0189) - (0.6005, 1.0021, -0.0051)
--- bone 'lPinky3' (joint 62, weight > 0.30): 2784 vertices + normals, 1 capsules, underfit 0.001, overhang 0.002
-    { name = "lPinky3", caps = {
-      { origin = {0.599, 0.986, -0.014}, axis = {-0.661, 0.741, 0.120}, seg = {{0.000, 0.018, 0.003, 0.006} } }
-    } },
 -- bbox: (-0.5510, 1.0393, -0.0136) - (-0.4936, 1.0989, 0.0694)
 -- bone 'rHand' (joint 68, weight > 0.30): 2480 vertices + normals, 1 capsules, underfit 0.026, overhang 0.006
     { name = "rHand", caps = {
       { origin = {-0.512, 1.083, 0.022}, axis = {0.642, 0.762, -0.089}, seg = {{0.000, 0.000, 0.024, 0.024} } }
     } },
--- bbox: (-0.5423, 1.0314, 0.0309) - (-0.4980, 1.0777, 0.0827)
--- bone 'rThumb1' (joint 69, weight > 0.30): 1712 vertices + normals, 1 capsules, underfit 0.008, overhang 0.003
-    { name = "rThumb1", caps = {
-      { origin = {-0.522, 1.060, 0.052}, axis = {0.451, 0.677, -0.582}, seg = {{0.000, 0.000, 0.019, 0.019} } }
+-- bbox: (0.1697, 0.0090, -0.1079) - (0.2624, 0.1067, 0.0140)
+-- bone 'lFoot' (joint 5, weight > 0.30): 3040 vertices + normals, 1 capsules, underfit 0.016, overhang 0.013
+    { name = "lFoot", caps = {
+      { origin = {0.210, 0.049, -0.056}, axis = {-0.312, 0.464, -0.829}, seg = {{0.000, 0.000, 0.041, 0.041} } }
     } },
--- bbox: (-0.5417, 1.0153, 0.0608) - (-0.5142, 1.0522, 0.0943)
--- bone 'rThumb2' (joint 70, weight > 0.30): 1456 vertices + normals, 1 capsules, underfit 0.014, overhang 0.001
-    { name = "rThumb2", caps = {
-      { origin = {-0.525, 1.043, 0.074}, axis = {0.252, 0.772, -0.584}, seg = {{0.000, 0.000, 0.009, 0.009} } }
+-- bbox: (0.1828, 0.0073, -0.0548) - (0.2837, 0.0982, 0.0887)
+-- bone 'lMetatarsals' (joint 6, weight > 0.30): 3568 vertices + normals, 1 capsules, underfit 0.030, overhang 0.010
+    { name = "lMetatarsals", caps = {
+      { origin = {0.230, 0.042, 0.012}, axis = {-0.239, 0.200, -0.950}, seg = {{0.000, 0.000, 0.035, 0.035} } }
     } },
--- bbox: (-0.5476, 1.0011, 0.0790) - (-0.5228, 1.0287, 0.1074)
--- bone 'rThumb3' (joint 71, weight > 0.30): 2864 vertices + normals, 1 capsules, underfit 0.003, overhang 0.003
-    { name = "rThumb3", caps = {
-      { origin = {-0.542, 1.002, 0.104}, axis = {0.318, 0.777, -0.544}, seg = {{0.000, 0.030, 0.005, 0.008} } }
+-- bbox: (-0.2624, 0.0090, -0.1079) - (-0.1697, 0.1067, 0.0140)
+-- bone 'rFoot' (joint 21, weight > 0.30): 3040 vertices + normals, 1 capsules, underfit 0.016, overhang 0.013
+    { name = "rFoot", caps = {
+      { origin = {-0.210, 0.049, -0.056}, axis = {0.312, 0.464, -0.829}, seg = {{0.000, 0.000, 0.041, 0.041} } }
     } },
--- bbox: (-0.5778, 1.0126, 0.0367) - (-0.5333, 1.0781, 0.0679)
--- bone 'rCarpal1' (joint 72, weight > 0.30): 1440 vertices + normals, 1 capsules, underfit 0.026, overhang 0.000
-    { name = "rCarpal1", caps = {
-      { origin = {-0.561, 1.032, 0.053}, axis = {0.661, 0.732, -0.164}, seg = {{0.000, 0.000, 0.012, 0.012} } }
-    } },
--- bbox: (-0.5802, 1.0126, 0.0200) - (-0.5343, 1.0788, 0.0442)
--- bone 'rCarpal2' (joint 76, weight > 0.30): 1056 vertices + normals, 1 capsules, underfit 0.025, overhang 0.000
-    { name = "rCarpal2", caps = {
-      { origin = {-0.562, 1.033, 0.032}, axis = {0.662, 0.739, -0.124}, seg = {{0.000, 0.000, 0.013, 0.013} } }
-    } },
--- bbox: (-0.5774, 1.0140, -0.0009) - (-0.5264, 1.0784, 0.0218)
--- bone 'rCarpal3' (joint 80, weight > 0.30): 1024 vertices + normals, 1 capsules, underfit 0.019, overhang 0.000
-    { name = "rCarpal3", caps = {
-      { origin = {-0.556, 1.037, 0.015}, axis = {0.652, 0.758, 0.007}, seg = {{0.000, 0.000, 0.013, 0.013} } }
-    } },
--- bbox: (-0.5686, 1.0193, -0.0156) - (-0.5317, 1.0755, 0.0052)
--- bone 'rCarpal4' (joint 84, weight > 0.30): 1104 vertices + normals, 1 capsules, underfit 0.019, overhang 0.000
-    { name = "rCarpal4", caps = {
-      { origin = {-0.551, 1.037, -0.002}, axis = {0.603, 0.788, 0.127}, seg = {{0.000, 0.000, 0.011, 0.011} } }
-    } },
--- bbox: (-0.5962, 0.9921, 0.0439) - (-0.5559, 1.0354, 0.0683)
--- bone 'rIndex1' (joint 73, weight > 0.30): 1424 vertices + normals, 1 capsules, underfit 0.020, overhang 0.001
-    { name = "rIndex1", caps = {
-      { origin = {-0.569, 1.022, 0.056}, axis = {0.681, 0.718, -0.145}, seg = {{0.000, 0.000, 0.010, 0.010} } }
-    } },
--- bbox: (-0.6077, 0.9797, 0.0490) - (-0.5821, 1.0062, 0.0687)
--- bone 'rIndex2' (joint 74, weight > 0.30): 1088 vertices + normals, 1 capsules, underfit 0.007, overhang 0.000
-    { name = "rIndex2", caps = {
-      { origin = {-0.593, 0.995, 0.059}, axis = {0.617, 0.784, -0.073}, seg = {{0.000, 0.000, 0.008, 0.008} } }
-    } },
--- bbox: (-0.6189, 0.9669, 0.0523) - (-0.5965, 0.9885, 0.0689)
--- bone 'rIndex3' (joint 75, weight > 0.30): 2784 vertices + normals, 1 capsules, underfit 0.002, overhang 0.002
-    { name = "rIndex3", caps = {
-      { origin = {-0.617, 0.968, 0.062}, axis = {0.624, 0.779, -0.057}, seg = {{0.000, 0.022, 0.004, 0.007} } }
-    } },
--- bbox: (-0.6043, 0.9913, 0.0219) - (-0.5575, 1.0337, 0.0447)
--- bone 'rMid1' (joint 77, weight > 0.30): 1328 vertices + normals, 1 capsules, underfit 0.025, overhang 0.000
-    { name = "rMid1", caps = {
-      { origin = {-0.571, 1.023, 0.033}, axis = {0.692, 0.721, -0.040}, seg = {{0.000, 0.000, 0.011, 0.011} } }
-    } },
--- bbox: (-0.6183, 0.9724, 0.0256) - (-0.5899, 1.0016, 0.0446)
--- bone 'rMid2' (joint 78, weight > 0.30): 1088 vertices + normals, 1 capsules, underfit 0.008, overhang 0.000
-    { name = "rMid2", caps = {
-      { origin = {-0.603, 0.989, 0.036}, axis = {0.619, 0.784, -0.051}, seg = {{0.000, 0.000, 0.007, 0.007} } }
-    } },
--- bbox: (-0.6308, 0.9590, 0.0285) - (-0.6072, 0.9813, 0.0451)
--- bone 'rMid3' (joint 79, weight > 0.30): 2784 vertices + normals, 1 capsules, underfit 0.002, overhang 0.002
-    { name = "rMid3", caps = {
-      { origin = {-0.629, 0.960, 0.037}, axis = {0.657, 0.753, -0.031}, seg = {{0.000, 0.024, 0.004, 0.007} } }
-    } },
--- bbox: (-0.5972, 0.9959, 0.0022) - (-0.5549, 1.0339, 0.0229)
--- bone 'rRing1' (joint 81, weight > 0.30): 1296 vertices + normals, 1 capsules, underfit 0.021, overhang 0.000
-    { name = "rRing1", caps = {
-      { origin = {-0.569, 1.023, 0.013}, axis = {0.695, 0.716, 0.064}, seg = {{0.000, 0.000, 0.010, 0.010} } }
-    } },
--- bbox: (-0.6097, 0.9801, 0.0027) - (-0.5848, 1.0053, 0.0202)
--- bone 'rRing2' (joint 82, weight > 0.30): 1088 vertices + normals, 1 capsules, underfit 0.007, overhang 0.000
-    { name = "rRing2", caps = {
-      { origin = {-0.599, 0.991, 0.011}, axis = {0.626, 0.779, 0.039}, seg = {{0.000, 0.000, 0.006, 0.006} } }
-    } },
--- bbox: (-0.6218, 0.9670, 0.0024) - (-0.5989, 0.9883, 0.0185)
--- bone 'rRing3' (joint 83, weight > 0.30): 2784 vertices + normals, 1 capsules, underfit 0.002, overhang 0.002
-    { name = "rRing3", caps = {
-      { origin = {-0.620, 0.968, 0.010}, axis = {0.641, 0.766, 0.045}, seg = {{0.000, 0.022, 0.003, 0.007} } }
-    } },
--- bbox: (-0.5807, 1.0063, -0.0169) - (-0.5488, 1.0338, 0.0027)
--- bone 'rPinky1' (joint 85, weight > 0.30): 1296 vertices + normals, 1 capsules, underfit 0.015, overhang 0.001
-    { name = "rPinky1", caps = {
-      { origin = {-0.558, 1.028, -0.006}, axis = {0.682, 0.695, 0.229}, seg = {{0.000, 0.000, 0.009, 0.009} } }
-    } },
--- bbox: (-0.5908, 0.9944, -0.0183) - (-0.5701, 1.0152, -0.0022)
--- bone 'rPinky2' (joint 86, weight > 0.30): 1104 vertices + normals, 1 capsules, underfit 0.006, overhang 0.000
-    { name = "rPinky2", caps = {
-      { origin = {-0.579, 1.006, -0.010}, axis = {0.656, 0.745, 0.126}, seg = {{0.000, 0.000, 0.006, 0.006} } }
-    } },
--- bbox: (-0.6005, 0.9848, -0.0189) - (-0.5822, 1.0021, -0.0051)
--- bone 'rPinky3' (joint 87, weight > 0.30): 2784 vertices + normals, 1 capsules, underfit 0.001, overhang 0.002
-    { name = "rPinky3", caps = {
-      { origin = {-0.599, 0.986, -0.014}, axis = {0.661, 0.741, 0.120}, seg = {{0.000, 0.018, 0.003, 0.006} } }
+-- bbox: (-0.2837, 0.0073, -0.0548) - (-0.1828, 0.0982, 0.0887)
+-- bone 'rMetatarsals' (joint 22, weight > 0.30): 3568 vertices + normals, 1 capsules, underfit 0.030, overhang 0.009
+    { name = "rMetatarsals", caps = {
+      { origin = {-0.230, 0.042, 0.012}, axis = {0.239, 0.200, -0.950}, seg = {{0.000, 0.000, 0.035, 0.035} } }
     } },
 }
 
@@ -496,9 +376,9 @@ function M._on_ready(self)
                 local e = scene.entity(f.name .. "_" .. c .. "_" .. i)
                 scene.replace(e, "Transform", { pos = off, quat = q })
                 scene.replace(e, "Parent", { e = bone })
-                scene.replace(e, "Renderable", { geom = geom(mesh.taperedCapsule({
-                    halfHeight = (s[2] - s[1]) * 0.5, bottomRadius = s[3], topRadius = s[4] })) })
-                scene.replace(e, "MaterialRef", { material = mat })
+                --scene.replace(e, "Renderable", { geom = geom(mesh.taperedCapsule({
+                --    halfHeight = (s[2] - s[1]) * 0.5, bottomRadius = s[3], topRadius = s[4] })) })
+                --scene.replace(e, "MaterialRef", { material = mat })
                 -- collision segment; local offset from the bone origin
                 local shape = scene.entity()
                 scene.replace(shape, "TaperedCapsule", { halfHeight = (s[2] - s[1]) * 0.5,
@@ -506,6 +386,12 @@ function M._on_ready(self)
                 local col = scene.entity()
                 scene.replace(col, "Transform", { pos = off, quat = q })
                 scene.replace(col, "Collider", { shape = shape })
+
+                -- reparent the bone
+                --scene.replace(scene.get_entity("basegen8/" .. f.name), "Parent", { e =  })
+                local parent = e
+                local child = scene.get_entity("basegen8/" .. f.name)
+                scene.add_child(parent, child, { keepWorld = true })
                 cols[#cols + 1] = col
             end
         end
@@ -526,12 +412,24 @@ function M._on_ready(self)
                 bodyA = bone,
                 bodyB = parent,
                 grabPos = j.pos,
+                excludeCollision = 1,
                 limOn = 1,
                 limTransMin = { 0, 0, 0 }, limTransMax = { 0, 0, 0 },
                 limAngMin = { 0, 0, 0 }, limAngMax = { 0, 0, 0 } })
             nj = nj + 1
         end
     end
+
+    local w = scene.entity()
+    scene.replace(w, "SixDofJoint", {
+        bodyA = boneEnt["pelvis"],
+        bodyB = boneEnt["abdomenLower"],
+        grabPos = jointBy["hip"].pos,
+        excludeCollision = 1,
+        limOn = 1,
+        limTransMin = { 0, 0, 0 }, limTransMax = { 0, 0, 0 },
+        limAngMin = { 0, 0, 0 }, limAngMax = { 0, 0, 0 } })
+
     print("caps_fit: " .. n .. " capsule segments in " .. #kFits .. " bone bodies, " .. nj .. " stiff joints")
 end
 

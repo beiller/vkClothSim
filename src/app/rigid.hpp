@@ -13,6 +13,7 @@
 #include "ecs.hpp"
 #include "math.hpp"
 #include <unordered_map>
+#include <unordered_set>
 
 struct RayHit {
     bool hit = false;
@@ -74,7 +75,23 @@ private:
         entt::entity ent = entt::null;
         JPH::Ref<JPH::Constraint> constraint;
         bool alive = false;
+        entt::entity a = entt::null;
+        entt::entity b = entt::null;
+        bool exclude = false;
     };
+    // GroupFilter can't see bodies, so the entity id is smuggled through the group id
+    struct ExcludeFilter final : public JPH::GroupFilter {
+        RigidScene* s = nullptr;
+        bool CanCollide(const JPH::CollisionGroup& a, const JPH::CollisionGroup& b) const override {
+            const entt::entity ea = static_cast<entt::entity>(a.GetGroupID());
+            const entt::entity eb = static_cast<entt::entity>(b.GetGroupID());
+            return !s->excludes(ea, eb) && !s->excludes(eb, ea);
+        }
+    };
+    bool excludes(entt::entity a, entt::entity b) const;
+    void setExcludes(entt::entity a, entt::entity b, bool on);
+    void syncExcludes(entt::entity e);
+    void syncJointExclusion(JointEntry& en, bool on);
 
     JPH::PhysicsSettings m_settings;
     JPH::PhysicsSystem* m_phys = nullptr;
@@ -89,4 +106,6 @@ private:
     std::unordered_map<entt::entity, JPH::ShapeRefC> m_shape;
     std::unordered_map<entt::entity, JPH::RVec3> m_kinTarget;
     std::unordered_map<entt::entity, Applied> m_applied;
+    JPH::Ref<ExcludeFilter> m_excludeFilter;
+    std::unordered_map<entt::entity, std::unordered_set<entt::entity>> m_excludes;
 };

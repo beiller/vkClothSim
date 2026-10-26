@@ -106,6 +106,7 @@ struct Joint {
     entt::entity bodyB = entt::null;
     int type = 0;
     V3 grabPos{};
+    bool excludeCollision = false; // suppress collision between the two joined bodies
 };
 
 struct SixDofJoint {
@@ -136,6 +137,7 @@ struct SixDofJoint {
     int velSteps = 0; // solver velocity iterations; 0 = global default
     int posSteps = 0; // solver position iterations; 0 = global default
     bool enabled = true;
+    bool excludeCollision = false; // suppress collision between the two joined bodies
 };
 
 struct SoftBodyData {

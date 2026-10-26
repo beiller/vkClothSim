@@ -142,6 +142,7 @@ static const FieldDesc kJoint[] = {
     {"bodyB", OFF(Joint, bodyB), FieldKind::Ref},
     {"type", OFF(Joint, type), FieldKind::SliderI, 0.0f, 1.0f},
     {"grabPos", OFF(Joint, grabPos), FieldKind::DragV3},
+    {"excludeCollision", OFF(Joint, excludeCollision), FieldKind::Checkbox},
 };
 static const FieldDesc kSixDofJoint[] = {
     {"bodyA", OFF(SixDofJoint, bodyA), FieldKind::Ref},
@@ -175,6 +176,7 @@ static const FieldDesc kSixDofJoint[] = {
     {"velSteps", OFF(SixDofJoint, velSteps), FieldKind::SliderI, 0.0f, 64.0f},
     {"posSteps", OFF(SixDofJoint, posSteps), FieldKind::SliderI, 0.0f, 64.0f},
     {"enabled", OFF(SixDofJoint, enabled), FieldKind::Checkbox},
+    {"excludeCollision", OFF(SixDofJoint, excludeCollision), FieldKind::Checkbox},
 };
 static const FieldDesc kControllerInput[] = {
     {"trigger_0", OFF(ControllerInput, triggers), FieldKind::SliderF, 0.0f, 1.0f},

@@ -66,6 +66,8 @@ void RigidScene::init() {
 
     m_phys = new JPH::PhysicsSystem();
     m_phys->Init(1024, 0, 1024, 2048, *m_bpl, *m_ovb, *m_pair);
+    m_excludeFilter = new ExcludeFilter();
+    m_excludeFilter->s = this;
 }
 
 void RigidScene::reset() {
@@ -77,6 +79,7 @@ void RigidScene::reset() {
     m_shape.clear();
     m_kinTarget.clear();
     m_applied.clear();
+    m_excludes.clear();
     for (int i = (int)m_joints.size() - 1; i >= 0; --i)
         releaseJoint(i);
     m_joints.clear();
@@ -157,6 +160,13 @@ void RigidScene::removeBody(entt::entity e) {
             releaseJoint((int)i);
         }
     }
+    // drop collision exclusions involving e; surviving partners get re-synced
+    if (const auto ex = m_excludes.find(e); ex != m_excludes.end())
+        for (entt::entity other : ex->second) {
+            m_excludes[other].erase(e);
+            syncExcludes(other);
+        }
+    m_excludes.erase(e);
 }
 
 bool RigidScene::hasBody(entt::entity e) const {
@@ -273,7 +283,9 @@ bool RigidScene::makeJoint(entt::entity e, const Joint& j) {
     cs.mPoint2 = bodyB->GetRotation().InverseRotate(grab - bodyB->GetPosition());
     JPH::TwoBodyConstraint* constraint = cs.Create(*bodyA, *bodyB);
     m_phys->AddConstraint(constraint);
-    m_joints.push_back({e, constraint, true});
+    m_joints.push_back({e, constraint, true, j.bodyA, j.bodyB, j.excludeCollision});
+    if (j.excludeCollision)
+        setExcludes(j.bodyA, j.bodyB, true);
     return true;
 }
 
@@ -357,7 +369,9 @@ bool RigidScene::makeSixDofJoint(entt::entity e, const SixDofJoint& j) {
     six->SetTargetOrientationCS(JPH::Quat(j.motorTargetQuat.x, j.motorTargetQuat.y, j.motorTargetQuat.z,
                                         j.motorTargetQuat.w).Conjugated());
     m_phys->AddConstraint(constraint);
-    m_joints.push_back({e, constraint, true});
+    m_joints.push_back({e, constraint, true, j.bodyA, j.bodyB, j.excludeCollision});
+    if (j.excludeCollision)
+        setExcludes(j.bodyA, j.bodyB, true);
     return true;
 }
 
@@ -540,15 +554,21 @@ void RigidScene::project(const entt::registry& reg) {
         m_applied[e] = appliedFor(rec, sh, true);
     }
     for (auto [e, j] : reg.view<Joint>().each()) {
-        if (m_jointIdx.count(e))
+        const auto it = m_jointIdx.find(e);
+        if (it != m_jointIdx.end()) {
+            syncJointExclusion(m_joints[it->second], j.excludeCollision);
             continue;
+        }
         if (!makeJoint(e, j))
             continue;
         m_jointIdx[e] = (int)m_joints.size() - 1;
     }
     for (auto [e, j] : reg.view<SixDofJoint>().each()) {
-        if (m_jointIdx.count(e))
+        const auto it = m_jointIdx.find(e);
+        if (it != m_jointIdx.end()) {
+            syncJointExclusion(m_joints[it->second], j.excludeCollision);
             continue;
+        }
         if (!makeSixDofJoint(e, j))
             continue;
         m_jointIdx[e] = (int)m_joints.size() - 1;
@@ -612,6 +632,56 @@ void RigidScene::onJointDestroyed(entt::registry&, entt::entity e) {
     const auto it = m_jointIdx.find(e);
     if (it == m_jointIdx.end())
         return;
+    const JointEntry en = m_joints[it->second];
     releaseJoint(it->second);
     m_jointIdx.erase(it);
+    if (en.exclude)
+        setExcludes(en.a, en.b, false);
+}
+
+bool RigidScene::excludes(entt::entity a, entt::entity b) const {
+    const auto it = m_excludes.find(a);
+    return it != m_excludes.end() && it->second.count(b) > 0;
+}
+
+void RigidScene::syncExcludes(entt::entity e) {
+    const auto it = m_body.find(e);
+    if (it == m_body.end())
+        return;
+    JPH::Body* body = m_phys->GetBodyLockInterface().TryGetBody(it->second);
+    if (!body)
+        return;
+    const auto ex = m_excludes.find(e);
+    const bool has = ex != m_excludes.end() && !ex->second.empty();
+    JPH::CollisionGroup& g = body->GetCollisionGroup();
+    if (has) {
+        g.SetGroupFilter(m_excludeFilter.GetPtr());
+        g.SetGroupID(entt::to_integral(e));
+        g.SetSubGroupID(0);
+    } else {
+        g.SetGroupFilter(nullptr);
+        g.SetGroupID(JPH::CollisionGroup::cInvalidGroup);
+        g.SetSubGroupID(JPH::CollisionGroup::cInvalidSubGroup);
+    }
+}
+
+void RigidScene::setExcludes(entt::entity a, entt::entity b, bool on) {
+    if (a == entt::null || b == entt::null)
+        return;
+    if (on) {
+        m_excludes[a].insert(b);
+        m_excludes[b].insert(a);
+    } else {
+        m_excludes[a].erase(b);
+        m_excludes[b].erase(a);
+    }
+    syncExcludes(a);
+    syncExcludes(b);
+}
+
+void RigidScene::syncJointExclusion(JointEntry& en, bool on) {
+    if (en.exclude == on || en.a == entt::null || en.b == entt::null)
+        return;
+    en.exclude = on;
+    setExcludes(en.a, en.b, on);
 }

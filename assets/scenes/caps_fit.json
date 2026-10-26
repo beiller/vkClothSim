@@ -65,5 +65,9 @@
         { "name": "char" },
         { "name": "caps", "script": "scenes/caps_fit" },
         { "name": "vr", "script": "scenes/vr_controller" }
-    ]
+    ],
+    "ui": {
+        "title": "bones vis",
+        "size": [320, 800]
+    }
 }
