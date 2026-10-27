@@ -93,8 +93,11 @@ struct RigidBody {
     float restitution = 0.05f;
     float damping = 0.05f;
     float mass = 0.0f; // kg; 0 = auto (shape volume x 1000 kg/m^3)
+    bool forceSleep = false; // true = keep the body asleep (welds disabled, re-slept every frame);
+                             // false = release it (woken once, welds re-enabled, Jolt owns the state)
     std::vector<entt::entity> colliders;
 
+    // forceSleep is a command, not synced state: excluded on purpose
     bool operator==(const RigidBody& o) const {
         return friction == o.friction && restitution == o.restitution && damping == o.damping &&
                mass == o.mass && colliders == o.colliders;

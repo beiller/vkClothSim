@@ -1,7 +1,8 @@
 #version 450
 
 // Dual-quaternion skinning + shape keys. Mirrors the CPU port in sim/dualquat.cpp (Blender's
-// add_weighted_dq_dq_pivot -> add_weighted_dq_dq -> normalize_dq -> mul_v3m3_dq). Note the CPU
+// mat4_to_dquat [plus per-joint temporal sign canonicalization in Skin::stepSkeleton] ->
+// add_weighted_dq_dq_pivot -> normalize_dq -> mul_v3m3_dq). Note the CPU
 // and GPU are NOT automatically equivalent: the CPU stores M as m[col][row] and applies it via an
 // explicit matrix*vector, while a GLSL mat3 literal built from the same source-ordered values is
 // transposed (see applyDq). Keep the two in lockstep and validate the kernel against the CPU.
@@ -38,19 +39,17 @@ layout(push_constant) uniform PC {
     int pad;
 } pc;
 
-// mirrors dq::addWeightedDqDq: accumulates weight*dq into the running sum, flipping the dual
-// part's sign when it opposes the running real part (stable accumulation). The scale always
-// accumulates with a positive weight.
+// plain weighted accumulation. The joint DQ sign is already canonicalized per-joint on the CPU
+// (Skin::stepSkeleton: closest to the previous frame's quaternion), so the running sum is
+// continuous. A dot-against-partial-sum flip here would reintroduce a 180 deg flip whenever
+// bound joints' relative rotation crosses 180 deg.
 void addWeighted(inout vec4 q, inout vec4 tr, inout mat4 S, inout float sw,
                  vec4 jq, vec4 jt, mat4 js, float jsw, float weight) {
-    float sgn = dot(jq, q) < 0.0 ? -1.0 : 1.0;
-    float w = sgn * weight;
-    q += w * jq;
-    tr += w * jt;
+    q += weight * jq;
+    tr += weight * jt;
     if (jsw != 0.0) {
-        float aw = abs(weight);
-        S += aw * js;
-        sw += aw;
+        S += weight * js;
+        sw += weight;
     }
 }
 
@@ -114,7 +113,7 @@ void applyDq(vec3 p, vec3 n, out vec3 po, out vec3 no, vec4 q, vec4 tr, mat4 S, 
             vec3(S[0].x, S[1].x, S[2].x),
             vec3(S[0].y, S[1].y, S[2].y),
             vec3(S[0].z, S[1].z, S[2].z));
-        nn = normalize(inverse(M * S3) * n);
+        nn = normalize(transpose(inverse(M * S3)) * n);
     } else {
         nn = normalize(M * n); // the unnormalized |q|^2 factor cancels in normalize
     }

@@ -50,6 +50,7 @@ private:
         RigidBody body; // last-applied RigidBody; for kinematic, body.colliders is the collider list
         uint64_t shapeHash = 0;
         bool kinematic = false;
+        int sleep = -1; // last-applied sleep command: -1 unknown (new body, active), 0 awake, 1 asleep
     };
     std::vector<ColliderDesc> colliderDescs(const entt::registry& reg,
                                             const std::vector<entt::entity>& cols);
@@ -106,6 +107,7 @@ private:
     std::unordered_map<entt::entity, JPH::ShapeRefC> m_shape;
     std::unordered_map<entt::entity, JPH::RVec3> m_kinTarget;
     std::unordered_map<entt::entity, Applied> m_applied;
+    std::unordered_set<entt::entity> m_forceSleep;
     JPH::Ref<ExcludeFilter> m_excludeFilter;
     std::unordered_map<entt::entity, std::unordered_set<entt::entity>> m_excludes;
 };

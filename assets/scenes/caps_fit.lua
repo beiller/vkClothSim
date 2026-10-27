@@ -395,7 +395,7 @@ function M._on_ready(self)
                 cols[#cols + 1] = col
             end
         end
-        scene.replace(bone, "RigidBody", { colliders = cols })
+        scene.replace(bone, "RigidBody", { colliders = cols, forceSleep = true })
     end
     -- perfectly stiff 6DOF weld: each shaped bone is joined to its shaped parent at the
     -- bone's joint world position (kJoints); zero limits hold the rest-pose relative pose

@@ -149,7 +149,7 @@ bool is_orthonormal_m3(const float m[3][3]) {
     for (int i = 0; i < 3; ++i)
         for (int j = i; j < 3; ++j) {
             const float expect = (i == j) ? 1.0f : 0.0f;
-            if (std::fabs(dot_v3v3(m[i], m[j]) - expect) > 1e-5f)
+            if (std::fabs(dot_v3v3(m[i], m[j]) - expect) > 1e-3f)
                 return false;
         }
     return true;

@@ -79,6 +79,7 @@ void RigidScene::reset() {
     m_shape.clear();
     m_kinTarget.clear();
     m_applied.clear();
+    m_forceSleep.clear();
     m_excludes.clear();
     for (int i = (int)m_joints.size() - 1; i >= 0; --i)
         releaseJoint(i);
@@ -150,6 +151,7 @@ void RigidScene::removeBody(entt::entity e) {
     m_body.erase(it);
     m_kinTarget.erase(e);
     m_applied.erase(e);
+    m_forceSleep.erase(e);
     m_phys->GetBodyInterface().RemoveBody(id);
     for (size_t i = 0; i < m_joints.size(); ++i) {
         if (!m_joints[i].alive)
@@ -535,7 +537,33 @@ void RigidScene::project(const entt::registry& reg) {
             m_applied[e] = appliedFor(rb, sh, false);
         } else if (a->second.body != rb) {
             syncScalars(e, rb);
-            m_applied[e] = appliedFor(rb, sh, false);
+            Applied up = appliedFor(rb, sh, false);
+            up.sleep = a->second.sleep; // the body persists; keep the last-applied sleep command
+            m_applied[e] = up;
+        }
+        // forceSleep: true = keep the body asleep - re-deactivate it every frame and disable its
+        // welds (an enabled weld's island build re-activates its bodies, and the drag loop below
+        // would wake it); false = one-shot release on the true -> false edge: wake the body,
+        // re-enable its welds, then Jolt owns the state (it can sleep naturally again)
+        const auto bt = m_body.find(e);
+        if (rb.forceSleep) {
+            m_forceSleep.insert(e);
+            m_applied[e].sleep = 1;
+            if (bt != m_body.end() && m_phys->GetBodyInterface().IsActive(bt->second))
+                m_phys->GetBodyInterface().DeactivateBody(bt->second);
+            for (auto& j : m_joints)
+                if (j.alive && (j.a == e || j.b == e))
+                    j.constraint->SetEnabled(false);
+        } else {
+            m_forceSleep.erase(e);
+            if (m_applied[e].sleep == 1) {
+                m_applied[e].sleep = 0;
+                if (bt != m_body.end())
+                    m_phys->GetBodyInterface().ActivateBody(bt->second);
+                for (auto& j : m_joints)
+                    if (j.alive && (j.a == e || j.b == e))
+                        j.constraint->SetEnabled(true);
+            }
         }
     }
     for (auto [e, kb] : reg.view<KinematicBody>().each()) {
@@ -583,8 +611,8 @@ void RigidScene::step() {
     // so a chain dragged by a moving body would leave its asleep tail behind
     auto& bi = m_phys->GetBodyInterface();
     for (auto& j : m_joints) {
-        if (!j.alive)
-            continue;
+        if (!j.alive || !j.constraint->GetEnabled())
+            continue; // disabled by a forceSleep body: nothing to drag across it
         auto* two = static_cast<JPH::TwoBodyConstraint*>(j.constraint.GetPtr());
         JPH::Body* a = two->GetBody1();
         JPH::Body* b = two->GetBody2();

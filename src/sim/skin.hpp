@@ -58,6 +58,7 @@ private:
         std::vector<int> states;
         Buf jointDQ;
         std::vector<DualQuat> dqStaging;
+        std::vector<float> prevQuat; // 4 per joint; sign reference (prev frame) for the joint DQ
     };
 
     void adoptState(const entt::registry& reg, const Skeleton& s, entt::entity mesh, int skelGpu);
