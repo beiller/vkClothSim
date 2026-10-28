@@ -89,6 +89,7 @@ int main(int argc, char** argv) {
 
     uiInit({app.instance(), app.pdev(), app.device(), app.queueFamily(), app.queue(), (int)app.imageCount(),
             [&engine](entt::entity c) -> VkImage { return engine.renderer.gpuTextureImage(c); }});
+    uiSetButtonHook([&engine](const std::string& a) { engine.script.button(a); });
 
     std::printf("3dsim: vulkan+imgui | GPU soft-body sim | startup scene select (or --scene file.json) | "
                 "VR auto-detected, --no-vr for plain window | esc/close to quit\n");
@@ -142,6 +143,26 @@ int main(int argc, char** argv) {
             fpsFrames = 0;
         }
         engine.fps = fps;
+
+        for (auto [e, n, t] : engine.reg.view<Name, UIText>().each())
+            if (n.id == "fps") {
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), "%.1f fps  %.1f ms\n"
+                                              "poll  %6.1f\n"
+                                              "cpu   %6.1f\n"
+                                              "jolt  %6.1f\n"
+                                              "skel  %6.1f\n"
+                                              "sim   %6.1f\n"
+                                              "rend  %6.1f\n"
+                                              "xrend %6.1f\n"
+                                              "idle  %6.1f",
+                                              engine.fps, 1000.0f / (engine.fps > 1.0f ? engine.fps : 1.0f),
+                                              engine.phase.poll, engine.phase.cpu, engine.phase.jolt,
+                                              engine.phase.skel, engine.phase.sim, engine.phase.render,
+                                              engine.phase.xrEnd, engine.phase.idle);
+                t.text = buf;
+                break;
+            }
 
         float wait = 0.0f;
         app.pollEvents();
@@ -268,10 +289,12 @@ int main(int argc, char** argv) {
                 const V3 cd = {(x * 0.5f + 0.5f) * (cv.tanR - cv.tanL) + cv.tanL,
                               (y * 0.5f + 0.5f) * (cv.tanU - cv.tanD) + cv.tanD, -1.0f};
                 const V3 o = cv.pos;
-                // the view matrix columns are the camera's world basis; world dir = camera-space dir expressed in that basis
-                const V3 right = cv.view[0];
-                const V3 up = cv.view[1];
-                const V3 back = cv.view[2];
+                // cv.view is world-to-camera (R^T); its columns are R's rows. The camera's
+                // world basis is the rows of R^T, i.e. the columns of the transposed rotation.
+                const Mat4 c2w = glm::transpose(cv.view);
+                const V3 right = c2w[0];
+                const V3 up = c2w[1];
+                const V3 back = c2w[2];
                 const V3 d = glm::normalize(right * cd.x + up * cd.y + back * cd.z);
                 f.down = glfwGetMouseButton(app.glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
                 tryRay(c, o, d, f);
@@ -282,7 +305,9 @@ int main(int argc, char** argv) {
             feeds[0].demo = true;
         for (entt::entity c : canvases)
             uiEnsureContext(engine.reg, c, engine.renderer.uiTargetPass(c), engine.renderer.uiTargetFb(c));
-        uiFrame(engine.reg, feeds);
+        const auto roots = engineRoots(engine);
+        uiFrame(engine.reg, feeds, roots);
+        stepBinds(engine.reg, roots);
 
         uiAccum += msBetween(tSim, std::chrono::steady_clock::now());
         const auto tAcq = std::chrono::steady_clock::now();

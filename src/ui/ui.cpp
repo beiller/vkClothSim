@@ -2,7 +2,9 @@
 
 #include <cstdio>
 #include "reflect.hpp"
+#include "url.hpp"
 #include <algorithm>
+#include <cstring>
 #include <imgui_impl_vulkan.h>
 #include <unordered_map>
 
@@ -16,6 +18,7 @@ struct UiCtx {
 
 UiHandles g_h;
 std::unordered_map<entt::entity, UiCtx> g_ctxs;
+std::function<void(const std::string&)> g_buttonHook;
 bool g_demoOpen = false;
 
 entt::entity canvasWindow(const entt::registry& reg, entt::entity canvas) {
@@ -24,7 +27,87 @@ entt::entity canvasWindow(const entt::registry& reg, entt::entity canvas) {
             return e;
     return entt::null;
 }
+
+struct BindLink {
+    UrlRef r;
+    bool live = false;
+    bool write = false;
+    bool disabled = false;
+};
+
+bool bindResolve(const entt::registry& reg, const std::vector<refl::RootRef>& roots, const Bind* b,
+                 BindLink& l) {
+    if (!b)
+        return true;
+    std::string err;
+    if (!resolveUrl(reg, roots, b->url, l.r, err))
+        return false;
+    l.live = b->dir != BindDir::Write;
+    l.write = b->dir != BindDir::Read;
+    l.disabled = b->dir == BindDir::Read;
+    return true;
+}
+
+void bindSyncIn(const BindLink& l, void* value, std::size_t bytes) {
+    if (l.live)
+        std::memcpy(value, l.r.base, bytes);
+}
+
+void bindWriteBack(const BindLink& l, const void* value, bool changed, std::size_t bytes) {
+    if (l.write && changed)
+        std::memcpy(l.r.base, value, bytes);
+}
+
+void drawBoundText(const entt::registry& reg, const UrlRef& r) {
+    const char* p = (const char*)r.base;
+    char buf[32];
+    switch (r.field->kind) {
+    case FieldKind::Ref: {
+        const entt::entity target = *(const entt::entity*)p;
+        const auto* n = reg.try_get<Name>(target);
+        ImGui::TextUnformatted(n ? n->id.c_str() : "<none>");
+        return;
+    }
+    case FieldKind::Str:
+        ImGui::TextUnformatted(((const std::string*)p)->c_str());
+        return;
+    case FieldKind::StrArr:
+        std::snprintf(buf, sizeof buf, "%zu elems", ((const std::vector<std::string>*)p)->size());
+        break;
+    case FieldKind::FloatArr:
+        std::snprintf(buf, sizeof buf, "%zu elems", ((const std::vector<float>*)p)->size());
+        break;
+    case FieldKind::UIntArr:
+        std::snprintf(buf, sizeof buf, "%zu elems", ((const std::vector<uint32_t>*)p)->size());
+        break;
+    case FieldKind::EntArr:
+        std::snprintf(buf, sizeof buf, "%zu elems", ((const std::vector<entt::entity>*)p)->size());
+        break;
+    case FieldKind::SliderF:
+        std::snprintf(buf, sizeof buf, "%.2f", *(const float*)p);
+        break;
+    case FieldKind::SliderI:
+        std::snprintf(buf, sizeof buf, "%d", *(const int*)p);
+        break;
+    case FieldKind::Checkbox:
+        std::snprintf(buf, sizeof buf, "%s", *(const bool*)p ? "on" : "off");
+        break;
+    case FieldKind::Color:
+    case FieldKind::DragV3: {
+        const float* v = (const float*)p;
+        std::snprintf(buf, sizeof buf, "%.2f %.2f %.2f", v[0], v[1], v[2]);
+        break;
+    }
+    case FieldKind::Quat:
+        return;
+    }
+    ImGui::TextUnformatted(buf);
+}
 } // namespace
+
+void uiSetButtonHook(std::function<void(const std::string&)> fn) {
+    g_buttonHook = std::move(fn);
+}
 
 void uiInit(const UiHandles& h) {
     g_h = h;
@@ -73,7 +156,7 @@ void uiEnsureContext(const entt::registry& reg, entt::entity canvas, VkRenderPas
     ImGui_ImplVulkan_Init(&ii);
 }
 
-void uiFrame(const entt::registry& reg, const std::vector<UiFeed>& feeds) {
+void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds, const std::vector<refl::RootRef>& roots) {
     std::unordered_map<entt::entity, std::vector<entt::entity>> kids;
     for (auto [c, wg, p] : reg.view<UIWidget, Parent>().each()) {
         (void)wg;
@@ -93,31 +176,66 @@ void uiFrame(const entt::registry& reg, const std::vector<UiFeed>& feeds) {
     std::function<void(entt::entity)> drawKids;
     drawWidget = [&](entt::entity e) {
         ImGui::PushID((int)e);
-        if (const auto* s = reg.try_get<UISliderF>(e))
-            ImGui::SliderFloat(s->label.c_str(), s->value(), s->lo, s->hi, s->fmt.c_str());
-        else if (const auto* s = reg.try_get<UISliderI>(e))
-            ImGui::SliderInt(s->label.c_str(), s->value(), s->lo, s->hi);
-        else if (const auto* c = reg.try_get<UICheckbox>(e))
-            ImGui::Checkbox(c->label.c_str(), c->value());
-        else if (const auto* c = reg.try_get<UIColorEdit>(e))
-            ImGui::ColorEdit3(c->label.c_str(), c->value());
-        else if (const auto* d = reg.try_get<UIDragV3>(e))
-            ImGui::DragFloat3(d->label.c_str(), d->value(), d->speed);
-        else if (const auto* t = reg.try_get<UIText>(e)) {
-            if (t->text)
-                ImGui::TextUnformatted(t->text().c_str());
-            else
-                ImGui::TextUnformatted(t->label.c_str());
-        } else if (const auto* b = reg.try_get<UIButton>(e)) {
-            if (ImGui::Button(b->label.c_str()))
-                b->on();
-        } else if (const auto* sec = reg.try_get<UISection>(e)) {
-            if (sec->collapsible) {
-                if (ImGui::CollapsingHeader(sec->label.c_str()))
+        BindLink l;
+        const bool draw = bindResolve(reg, roots, reg.try_get<Bind>(e), l);
+        if (draw) {
+            if (auto* s = reg.try_get<UISliderF>(e)) {
+                bindSyncIn(l, &s->value, sizeof s->value);
+                if (l.disabled)
+                    ImGui::BeginDisabled();
+                const bool changed = ImGui::SliderFloat(s->label.c_str(), &s->value, s->lo, s->hi, s->fmt.c_str());
+                if (l.disabled)
+                    ImGui::EndDisabled();
+                bindWriteBack(l, &s->value, changed, sizeof s->value);
+            } else if (auto* s = reg.try_get<UISliderI>(e)) {
+                bindSyncIn(l, &s->value, sizeof s->value);
+                if (l.disabled)
+                    ImGui::BeginDisabled();
+                const bool changed = ImGui::SliderInt(s->label.c_str(), &s->value, s->lo, s->hi);
+                if (l.disabled)
+                    ImGui::EndDisabled();
+                bindWriteBack(l, &s->value, changed, sizeof s->value);
+            } else if (auto* c = reg.try_get<UICheckbox>(e)) {
+                bindSyncIn(l, &c->value, sizeof c->value);
+                if (l.disabled)
+                    ImGui::BeginDisabled();
+                const bool changed = ImGui::Checkbox(c->label.c_str(), &c->value);
+                if (l.disabled)
+                    ImGui::EndDisabled();
+                bindWriteBack(l, &c->value, changed, sizeof c->value);
+            } else if (auto* c = reg.try_get<UIColorEdit>(e)) {
+                bindSyncIn(l, c->value, sizeof c->value);
+                if (l.disabled)
+                    ImGui::BeginDisabled();
+                const bool changed = ImGui::ColorEdit3(c->label.c_str(), c->value);
+                if (l.disabled)
+                    ImGui::EndDisabled();
+                bindWriteBack(l, c->value, changed, sizeof c->value);
+            } else if (auto* d = reg.try_get<UIDragV3>(e)) {
+                bindSyncIn(l, d->value, sizeof d->value);
+                if (l.disabled)
+                    ImGui::BeginDisabled();
+                const bool changed = ImGui::DragFloat3(d->label.c_str(), d->value, d->speed);
+                if (l.disabled)
+                    ImGui::EndDisabled();
+                bindWriteBack(l, d->value, changed, sizeof d->value);
+            } else if (auto* t = reg.try_get<UIText>(e)) {
+                if (reg.try_get<Bind>(e))
+                    drawBoundText(reg, l.r);
+                else
+                    ImGui::TextUnformatted(t->text.c_str());
+            } else if (auto* b = reg.try_get<UIButton>(e)) {
+                if (ImGui::Button(b->label.c_str()) && g_buttonHook)
+                    g_buttonHook(b->action);
+                reg.get<UIButton>(e).pressed = ImGui::IsItemActive();
+            } else if (auto* sec = reg.try_get<UISection>(e)) {
+                if (sec->collapsible) {
+                    if (ImGui::CollapsingHeader(sec->label.c_str()))
+                        drawKids(e);
+                } else {
+                    ImGui::SeparatorText(sec->label.c_str());
                     drawKids(e);
-            } else {
-                ImGui::SeparatorText(sec->label.c_str());
-                drawKids(e);
+                }
             }
         }
         ImGui::PopID();
@@ -263,112 +381,42 @@ entt::entity spawnUiWindow(entt::registry& reg, int& seq, const std::string& tit
                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
 }
 
-void spawnFpsHud(entt::registry& reg, int& seq, std::function<std::string()> text, const V3& pos, const V2& px) {
+void spawnFpsHud(entt::registry& reg, int& seq, const V3& pos, const V2& px) {
     const int flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                       ImGuiWindowFlags_NoBringToFrontOnFocus;
     const entt::entity win = spawnUiCanvas(reg, seq, "##fps", px, pos, flags);
-    spawnWidget(reg, seq, win, UIText{"", std::move(text)});
+    const entt::entity e = spawnWidget(reg, seq, win, UIText{});
+    reg.emplace<Name>(e, Name{"fps"});
 }
 
-// harmless fallback when the live component is gone (removed): writes land here, display reads zero
-char s_dead[32];
-
-void spawnFieldWidget(entt::registry& reg, int& seq, entt::entity parent, const char* label, const FieldDesc* f, const std::function<const void*(void)>& baseFn) {
-    // re-resolved on every draw: entt component storage can move (pool reallocation) after capture
-    auto pv = [baseFn, off = f->offset] {
-        const void* b = baseFn();
-        return b ? (char*)b + off : nullptr;
+void spawnFieldWidget(entt::registry& reg, int& seq, entt::entity parent, const char* label, const FieldDesc* f,
+                      const std::string& url) {
+    auto withBind = [&reg, &url](entt::entity e, BindDir dir = BindDir::Both) {
+        reg.emplace<Bind>(e, Bind{url, "", dir});
     };
     switch (f->kind) {
     case FieldKind::SliderF:
-        spawnWidget(reg, seq, parent, UISliderF{label, f->lo, f->hi, "%.2f", [pv] {
-            char* p = pv();
-            return (float*)(p ? p : s_dead);
-        }});
+        withBind(spawnWidget(reg, seq, parent, UISliderF{label, 0.0f, f->lo, f->hi}));
         break;
     case FieldKind::SliderI:
-        spawnWidget(reg, seq, parent, UISliderI{label, (int)f->lo, (int)f->hi, [pv] {
-            char* p = pv();
-            return (int*)(p ? p : s_dead);
-        }});
+        withBind(spawnWidget(reg, seq, parent, UISliderI{label, 0, (int)f->lo, (int)f->hi}));
         break;
     case FieldKind::Checkbox:
-        spawnWidget(reg, seq, parent, UICheckbox{label, [pv] {
-            char* p = pv();
-            return (bool*)(p ? p : s_dead);
-        }});
+        withBind(spawnWidget(reg, seq, parent, UICheckbox{label, false}));
         break;
     case FieldKind::Color:
-        spawnWidget(reg, seq, parent, UIColorEdit{label, [pv] {
-            char* p = pv();
-            return (float*)(p ? p : s_dead);
-        }});
+        withBind(spawnWidget(reg, seq, parent, UIColorEdit{label}));
         break;
     case FieldKind::DragV3:
-        spawnWidget(reg, seq, parent, UIDragV3{label, 0.1f, [pv] {
-            char* p = pv();
-            return (float*)(p ? p : s_dead);
-        }});
+        withBind(spawnWidget(reg, seq, parent, UIDragV3{label}));
         break;
-    case FieldKind::Ref: {
-        const entt::registry* rp = &reg;
-        spawnWidget(reg, seq, parent, UIText{label, [rp, pv] {
-            char* p = pv();
-            if (!p)
-                return std::string("<gone>");
-            const entt::entity target = *(const entt::entity*)p;
-            const auto* n = rp->try_get<Name>(target);
-            return n ? n->id : "<none>";
-        }});
-        break;
-    }
+    case FieldKind::Ref:
     case FieldKind::Str:
-        spawnWidget(reg, seq, parent, UIText{label, [pv] {
-            char* p = pv();
-            if (!p)
-                return std::string("<gone>");
-            return *(const std::string*)p;
-        }});
-        break;
     case FieldKind::StrArr:
-        spawnWidget(reg, seq, parent, UIText{label, [pv] {
-            char* p = pv();
-            if (!p)
-                return std::string("<gone>");
-            char buf[32];
-            std::snprintf(buf, sizeof buf, "%zu elems", ((const std::vector<std::string>*)p)->size());
-            return std::string(buf);
-        }});
-        break;
     case FieldKind::FloatArr:
-        spawnWidget(reg, seq, parent, UIText{label, [pv] {
-            char* p = pv();
-            if (!p)
-                return std::string("<gone>");
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), "%zu elems", ((const std::vector<float>*)p)->size());
-            return std::string(buf);
-        }});
-        break;
     case FieldKind::UIntArr:
-        spawnWidget(reg, seq, parent, UIText{label, [pv] {
-            char* p = pv();
-            if (!p)
-                return std::string("<gone>");
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), "%zu elems", ((const std::vector<uint32_t>*)p)->size());
-            return std::string(buf);
-        }});
-        break;
     case FieldKind::EntArr:
-        spawnWidget(reg, seq, parent, UIText{label, [pv] {
-            char* p = pv();
-            if (!p)
-                return std::string("<gone>");
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), "%zu elems", ((const std::vector<entt::entity>*)p)->size());
-            return std::string(buf);
-        }});
+        withBind(spawnWidget(reg, seq, parent, UIText{}), BindDir::Read);
         break;
     case FieldKind::Quat:
         break;

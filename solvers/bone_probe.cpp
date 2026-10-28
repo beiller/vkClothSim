@@ -108,6 +108,8 @@ int main(int argc, char** argv) {
             continue;
 
         float minx = 1e30f, miny = 1e30f, minz = 1e30f, maxx = -1e30f, maxy = -1e30f, maxz = -1e30f;
+        float comX = 0.f, comY = 0.f, comZ = 0.f;
+        const float vertexCount = (float)(cloud.size() / 3);
         for (size_t i = 0; i < cloud.size(); i += 3) {
             minx = std::min(minx, cloud[i]);
             maxx = std::max(maxx, cloud[i]);
@@ -115,7 +117,13 @@ int main(int argc, char** argv) {
             maxy = std::max(maxy, cloud[i + 1]);
             minz = std::min(minz, cloud[i + 2]);
             maxz = std::max(maxz, cloud[i + 2]);
+            comX += cloud[i];
+            comY += cloud[i + 1];
+            comZ += cloud[i + 2];
         }
+        comX /= vertexCount;
+        comY /= vertexCount;
+        comZ /= vertexCount;
         std::printf("-- bbox: (%.4f, %.4f, %.4f) - (%.4f, %.4f, %.4f)\n", minx, miny, minz, maxx, maxy, maxz);
 
         css::FitOptions options;
@@ -140,7 +148,7 @@ int main(int argc, char** argv) {
             std::printf("-- %s: fit failed\n", bone.c_str());
             continue;
         }
-        std::printf("    { name = \"%s\", caps = {", bone.c_str());
+        std::printf("    { name = \"%s\", com = { %.3f, %.3f, %.3f }, caps = {", bone.c_str(), comX, comY, comZ);
         for (size_t c = 0; c < fit.parts.size(); ++c) {
             const css::CapsuleFit& part = fit.parts[c];
             char o[96], a[96];

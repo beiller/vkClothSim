@@ -11,10 +11,12 @@ mesh generators.
 
 ## Code Style
 
-Push if statements towards the top of functions. For loops are below.
-Make function names and parameters fully descriptive
-Keep functions as short as possible.
-Use a functional style where possible.
+- minimal comments, do not document history of changes etc. USE COMMENTS SPARINGLY!
+  - Basically use almost NO comments unless it is a magic constant value that needs documenting!
+- Push if statements towards the top of functions. For loops are below.
+- Make function names and parameters fully descriptive
+- Keep functions as short as possible.
+- Use a functional style where possible.
 
 ## Layers (keep loosely coupled)
 
@@ -51,7 +53,6 @@ UBOs cause lots of problems in the past - ensure they are aligned correctly!
 
 ## Conventions
 
-- minimal comments, do not document history of changes etc. USE COMMENTS SPARINGLY!
 - descriptive function /variable names, concise output
 - reconfigure CMake after shader edits (SPIR-V is baked at configure time)
 - sim runs at a fixed timestep, decoupled from the render rate

@@ -11,6 +11,7 @@
 #include "vk/vkapp.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -107,6 +108,10 @@ entt::entity buildObject(Engine& w, const json& o, const std::string& p, bool al
     } else if (!o.contains("gltf") && !w.reg.try_get<Transform>(e)) {
         w.reg.emplace<Transform>(e);
     }
+    if (o.contains("bind")) {
+        const auto& b = o["bind"];
+        w.reg.emplace<Bind>(e, Bind{b["src"].get<std::string>(), b["dst"].get<std::string>()});
+    }
     return e;
 }
 
@@ -122,20 +127,25 @@ void spawnEditorUi(Engine& w, entt::entity tab) {
         if (comps.empty())
             continue;
         entt::entity sec = spawnWidget(w.reg, w.uiSeq, tab, UISection{name, true});
-        for (auto& [t, b] : comps)
+        for (const auto& c : comps) {
+            const TypeDesc* t = c.first;
             for (const auto& f : t->fields) {
                 char label[128];
                 if (comps.size() > 1)
                     std::snprintf(label, sizeof label, "%s.%s", t->name, f.name);
                 else
                     std::snprintf(label, sizeof label, "%s", f.name);
-                spawnFieldWidget(w.reg, w.uiSeq, sec, label, &f, b);
+                spawnFieldWidget(w.reg, w.uiSeq, sec, label, &f, name + "." + t->name + "." + f.name);
             }
+        }
     }
     for (const auto& r : engineRoots(w)) {
+        if (!r.type)
+            continue;
+        const char* head = std::strcmp(r.type->name, "RigidScene") == 0 ? "rigid" : "render";
         entt::entity sec = spawnWidget(w.reg, w.uiSeq, tab, UISection{r.type->name, true});
         for (const auto& f : r.type->fields)
-            spawnFieldWidget(w.reg, w.uiSeq, sec, f.name, &f, [b = r.base] { return (const void*)b; });
+            spawnFieldWidget(w.reg, w.uiSeq, sec, f.name, &f, std::string(head) + "." + f.name);
     }
 }
 
@@ -178,23 +188,7 @@ void resetScene(Engine& w) {
     w.uiSeq = 0;
     w.showDemo = false;
     w.render = {};
-    spawnFpsHud(w.reg, w.uiSeq, [&w] {
-        char buf[256];
-        std::snprintf(buf, sizeof(buf), "%.1f fps  %.1f ms\n"
-                                      "poll  %6.1f\n"
-                                      "cpu   %6.1f\n"
-                                      "jolt  %6.1f\n"
-                                      "skel  %6.1f\n"
-                                      "sim   %6.1f\n"
-                                      "rend  %6.1f\n"
-                                      "xrend %6.1f\n"
-                                      "idle  %6.1f",
-                                      w.fps, 1000.0f / (w.fps > 1.0f ? w.fps : 1.0f), w.phase.poll, w.phase.cpu,
-                                      w.phase.jolt, w.phase.skel, w.phase.sim, w.phase.render,
-                                      w.phase.xrEnd, w.phase.idle);
-        return std::string(buf);
-    },
-               V3{0.45f, 1.72f, 2.8f}, V2{160.0f, 180.0f});
+    spawnFpsHud(w.reg, w.uiSeq, V3{0.45f, 1.72f, 2.8f}, V2{160.0f, 180.0f});
     spawnInputEntities(w);
     if (w.xr && w.xrSession) {
         spawnVrRoot(w.reg);

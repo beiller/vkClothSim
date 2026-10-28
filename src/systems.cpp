@@ -1,10 +1,13 @@
 #include "systems.hpp"
 
+#include "url.hpp"
+
 #include "assets.hpp"
 #include "ecs_ops.hpp"
 #include "vk/vkapp.hpp"
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <unordered_map>
 
@@ -273,4 +276,39 @@ bool uiPanelUv(const entt::registry& reg, entt::entity canvas, const V3& hitPos,
         return false;
     uv = {u, v}; // v up-positive (1 = panel top), as the ImGui feed expects
     return true;
+}
+
+static int fieldBytes(FieldKind k) {
+    switch (k) {
+    case FieldKind::SliderF:
+    case FieldKind::SliderI:
+        return 4;
+    case FieldKind::Checkbox:
+        return 1;
+    case FieldKind::Color:
+    case FieldKind::DragV3:
+        return 12;
+    case FieldKind::Quat:
+        return 16;
+    case FieldKind::Ref:
+        return 8;
+    default:
+        return 0;
+    }
+}
+
+void stepBinds(entt::registry& reg, const std::vector<refl::RootRef>& roots) {
+    for (auto [e, b] : reg.view<Bind>().each()) {
+        if (b.target.empty())
+            continue;
+        std::string err;
+        UrlRef s, d;
+        if (!resolveUrl(reg, roots, b.url, s, err))
+            continue;
+        if (!resolveEntityField(reg, e, b.target, "", d, err))
+            continue;
+        const int n = fieldBytes(d.field->kind);
+        if (n > 0)
+            std::memcpy(d.base, s.base, (size_t)n);
+    }
 }

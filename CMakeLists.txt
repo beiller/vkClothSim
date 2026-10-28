@@ -185,7 +185,7 @@ target_link_libraries(vksim PRIVATE
 # default; run ./build/dualquat_test (no GPU needed).
 add_executable(dualquat_test tests/dualquat_test.cpp src/sim/dualquat.cpp)
 target_compile_features(dualquat_test PRIVATE cxx_std_23)
-target_include_directories(dualquat_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/core)
+target_include_directories(dualquat_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/core ${CMAKE_SOURCE_DIR}/lib/glm)
 
 # CPU self-test: the eyeVP (projFov * poseView) pipeline maps known points to expected NDC.
 add_executable(view_proj_test tests/view_proj_test.cpp)

@@ -50,9 +50,9 @@ bool resolveUrl(const entt::registry& reg, const std::vector<refl::RootRef>& roo
 
     if (head == "render" || head == "rigid") {
         const std::string rest = url.substr(dot + 1);
-        const TypeDesc* want = refl::findType(head == "render" ? "RenderSettings" : "RigidScene");
+        const char* wantName = head == "render" ? "RenderSettings" : "RigidScene";
         for (const auto& root : roots) {
-            if (root.type != want)
+            if (std::strcmp(root.type->name, wantName) != 0)
                 continue;
             const FieldDesc* f = findField(root.type, rest);
             if (!f) {

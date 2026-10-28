@@ -32,3 +32,5 @@ bool uiPanelUv(const entt::registry& reg, entt::entity canvas, const V3& hitPos,
 void stepMouse(Engine& w);
 void stepKeyboard(Engine& w);
 void spawnInputEntities(Engine& w);
+
+void stepBinds(entt::registry& reg, const std::vector<refl::RootRef>& roots);

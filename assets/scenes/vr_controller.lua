@@ -64,16 +64,16 @@ function M._on_ready(self)
     scene.replace(anchorShape, "CapsuleShape", { halfLen = 0.06, radius = 0.03 })
 end
 
--- place a small sphere on the grabbed capsule, at the joint anchor (Parent system)
+-- place a small sphere on the grabbed body, at the joint anchor; the marker is a child of
+-- the body, at the body's local offset of the world hitPos (world_pose, not the local
+-- Transform, which differs for a parented kinematic body)
 local function spawnMarker(capEnt, hitPos)
     if marker then
         scene.destroy(marker)
         marker = nil
     end
-    local ct = scene.component(capEnt, "Transform")
-    local capPos, capQ = ct.pos, ct.quat
-    -- joint anchor (world hitPos) in the capsule's local frame
-    local localPos = scene.qrot(scene.qinv(capQ), scene.vsub(hitPos, capPos))
+    local wt = scene.world_pose(capEnt)
+    local localPos = scene.qrot(scene.qinv(wt.quat), scene.vsub(hitPos, wt.pos))
     marker = scene.entity()
     scene.replace(marker, "Transform", { pos = localPos })
     scene.replace(marker, "Renderable", { geom = markerGeom })

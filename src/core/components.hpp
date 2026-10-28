@@ -3,7 +3,6 @@
 #include "math.hpp"
 #include "params.hpp"
 #include <entt/entt.hpp>
-#include <functional>
 #include <string>
 #include <vector>
 
@@ -305,41 +304,48 @@ struct UIWidget {
 
 struct UISliderF {
     std::string label;
-    float lo, hi;
+    float value = 0.0f;
+    float lo = 0.0f, hi = 1.0f;
     std::string fmt = "%.2f";
-    std::function<float*()> value;
 };
 
 struct UISliderI {
     std::string label;
-    int lo, hi;
-    std::function<int*()> value;
+    int value = 0;
+    int lo = 0, hi = 1;
 };
 
 struct UICheckbox {
     std::string label;
-    std::function<bool*()> value;
+    bool value = false;
 };
 
 struct UIColorEdit {
     std::string label;
-    std::function<float*()> value;
+    float value[3] = {0.0f, 0.0f, 0.0f};
 };
 
 struct UIDragV3 {
     std::string label;
+    float value[3] = {0.0f, 0.0f, 0.0f};
     float speed = 0.1f;
-    std::function<float*()> value;
 };
 
 struct UIText {
-    std::string label;
-    std::function<std::string()> text;
+    std::string text;
+};
+
+enum class BindDir : uint8_t { Both, Read, Write };
+struct Bind {
+    std::string url;
+    std::string target; // "Component.field" on this entity; empty = the widget value field (the UI draw path)
+    BindDir dir = BindDir::Both;
 };
 
 struct UIButton {
     std::string label;
-    std::function<void()> on;
+    std::string action;
+    bool pressed = false;
 };
 
 struct UISection {

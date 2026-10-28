@@ -328,6 +328,36 @@ int lGetPose(lua_State* L) {
     return 1;
 }
 
+// world-space pose of e (the live Transform+Parent walk; always current, unlike the
+// WorldTransform component which is a per-substep snapshot resolved after the _physics hook)
+int lWorldPose(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    const entt::entity e = entityOrName(w, L, 1);
+    if (e == entt::null || !w.reg.try_get<Transform>(e))
+        return luaL_error(L, "scene.world_pose: no such entity with a Transform");
+    const Transform t = worldTransform(w.reg, e);
+    lua_createtable(L, 0, 2);
+    lua_createtable(L, 0, 3);
+    lua_pushnumber(L, t.pos.x);
+    lua_seti(L, -2, 1);
+    lua_pushnumber(L, t.pos.y);
+    lua_seti(L, -2, 2);
+    lua_pushnumber(L, t.pos.z);
+    lua_seti(L, -2, 3);
+    lua_setfield(L, -2, "pos");
+    lua_createtable(L, 0, 4);
+    lua_pushnumber(L, t.quat.x);
+    lua_seti(L, -2, 1);
+    lua_pushnumber(L, t.quat.y);
+    lua_seti(L, -2, 2);
+    lua_pushnumber(L, t.quat.z);
+    lua_seti(L, -2, 3);
+    lua_pushnumber(L, t.quat.w);
+    lua_seti(L, -2, 4);
+    lua_setfield(L, -2, "quat");
+    return 1;
+}
+
 int lSetMorph(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = entityOrName(w, L, 1);
@@ -492,6 +522,7 @@ void luaRegisterComponents(lua_State* L, SceneScript* host) {
     reg(L, host, "remove", lCompRemove);
     reg(L, host, "set_pose", lSetPose);
     reg(L, host, "get_pose", lGetPose);
+    reg(L, host, "world_pose", lWorldPose);
     reg(L, host, "set_morph", lSetMorph);
     reg(L, host, "shapes", lShapes);
     reg(L, host, "link_mesh", lLinkMesh);

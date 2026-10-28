@@ -1,0 +1,13 @@
+{
+    "name": "pick_test",
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 1.5, 4], "quat": [0, 0.7071, 0, 0.7071] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/pick_test"
+        }
+    ]
+}

@@ -3,6 +3,8 @@
 
 #include "engine.hpp"
 #include "ui.hpp"
+
+#include <cstring>
 #include "scene.hpp"
 #include "url.hpp"
 
@@ -14,7 +16,6 @@ void reg(lua_State* L, SceneScript* host, const char* name, lua_CFunction fn) {
     lua_setfield(L, -2, name);
 }
 
-// resolves a "name.Component.field" bind to a live component address (ui sliders bind into components)
 const UrlRef bindRef(Engine& w, lua_State* L, int idx) {
     const char* bind = luaL_checkstring(L, idx);
     UrlRef r;
@@ -53,7 +54,7 @@ int lUiButton(lua_State* L) {
     const int ref = self->newRef(L, 3);
     const std::string action = "ui" + std::to_string(self->nextActionSeq());
     self->addButton(action, ref);
-    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, parent, UIButton{label, [self, action] { self->button(action); }}));
+    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, parent, UIButton{label, action}));
     return 1;
 }
 
@@ -73,46 +74,58 @@ int lUiSection(lua_State* L) {
 int lUiSliderF(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
-    auto* p = (float*)r.base;
-    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1),
-                             UISliderF{luaL_checkstring(L, 2), (float)luaL_optnumber(L, 4, r.field->lo),
-                                      (float)luaL_optnumber(L, 5, r.field->hi),
-                                      luaL_optstring(L, 6, "%.2f"), [p] { return p; }}));
+    const entt::entity e = spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1),
+                                      UISliderF{luaL_checkstring(L, 2), *(float*)r.base,
+                                                (float)luaL_optnumber(L, 4, r.field->lo),
+                                                (float)luaL_optnumber(L, 5, r.field->hi),
+                                                luaL_optstring(L, 6, "%.2f")});
+    self->w().reg.emplace<Bind>(e, Bind{luaL_checkstring(L, 3)});
+    luaPushEnt(L, e);
     return 1;
 }
 
 int lUiSliderI(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
-    auto* p = (int*)r.base;
-    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1),
-                             UISliderI{luaL_checkstring(L, 2), (int)luaL_optnumber(L, 4, r.field->lo),
-                                      (int)luaL_optnumber(L, 5, r.field->hi), [p] { return p; }}));
+    const entt::entity e = spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1),
+                                      UISliderI{luaL_checkstring(L, 2), *(int*)r.base,
+                                                (int)luaL_optnumber(L, 4, r.field->lo),
+                                                (int)luaL_optnumber(L, 5, r.field->hi)});
+    self->w().reg.emplace<Bind>(e, Bind{luaL_checkstring(L, 3)});
+    luaPushEnt(L, e);
     return 1;
 }
 
 int lUiCheckbox(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
-    auto* p = (bool*)r.base;
-    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1), UICheckbox{luaL_checkstring(L, 2), [p] { return p; }}));
+    const entt::entity e = spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1),
+                                      UICheckbox{luaL_checkstring(L, 2), *(bool*)r.base});
+    self->w().reg.emplace<Bind>(e, Bind{luaL_checkstring(L, 3)});
+    luaPushEnt(L, e);
     return 1;
 }
 
 int lUiColor(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
-    auto* p = (float*)r.base;
-    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1), UIColorEdit{luaL_checkstring(L, 2), [p] { return p; }}));
+    const entt::entity e = spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1),
+                                      UIColorEdit{luaL_checkstring(L, 2)});
+    std::memcpy(self->w().reg.get<UIColorEdit>(e).value, r.base, 12);
+    self->w().reg.emplace<Bind>(e, Bind{luaL_checkstring(L, 3)});
+    luaPushEnt(L, e);
     return 1;
 }
 
 int lUiDragV3(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
-    auto* p = (float*)r.base;
-    luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1),
-                             UIDragV3{luaL_checkstring(L, 2), (float)luaL_optnumber(L, 4, 0.1f), [p] { return p; }}));
+    const entt::entity e = spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1),
+                                      UIDragV3{luaL_checkstring(L, 2)});
+    std::memcpy(self->w().reg.get<UIDragV3>(e).value, r.base, 12);
+    self->w().reg.get<UIDragV3>(e).speed = (float)luaL_optnumber(L, 4, 0.1f);
+    self->w().reg.emplace<Bind>(e, Bind{luaL_checkstring(L, 3)});
+    luaPushEnt(L, e);
     return 1;
 }
 
