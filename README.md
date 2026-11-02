@@ -4,6 +4,35 @@ A data-driven 3D engine: ENTT ECS scene graph, Jolt rigid-body physics, GPU soft
 
 ![3dsim](screenshot1.jpg)
 
+## Features
+
+### GPU soft-body cloth simulation
+Cloth and soft bodies run entirely on the GPU as position-based-dynamics compute shaders (`shaders/softbody.comp`). Each body is a mesh plus flat constraint quads `{a, b, rest, k}` solved in substeps with per-body gravity, damping, friction, tension and stiffness, against a floor and up to `kMaxCapsules` dynamic capsule colliders. 
+
+### Dual-quaternion skeleton skinning
+Meshes deform on the GPU with dual-quaternion skinning plus shape keys
+
+### PBR renderer
+Forward Vulkan renderer implements metallic-roughness PBR with glTF texture conventions (G = roughness, B = metallic), emissive, normal scaling, opaque/transparent passes with alpha cutoff/blend modes, and **glass refraction**: a `refraction`/`ior` pair re-samples the blurred scene color and depth buffers for refracted views. A dedicated subsurface-scattering pass weighted per color channel.
+
+### Image-based lighting and shadow mapping
+Environment maps are generated on the GPU from equirectangular textures with PCF-style texel filtering; light falloff is inverse-square with a hard front-facing gate.
+
+### Jolt rigid-body physics
+`PhysicsServer` wraps the Jolt engine on the CPU with its own fixed-step accumulator at 120 Hz — it steps independently of frame rate and exposes per-step hooks (`_physics` Lua callbacks) for data-driven behaviour. Scenes declare dynamic, kinematic and static bodies with box/capsule colliders and joints; `collision_shape_solver_test` covers shape fitting (capsules to arbitrary meshes).
+
+### OpenXR / VR
+Full stereo OpenXR path: per-eye views from the runtime pose, controller tracking, and a clean camera hand-off — while an XR pose exists all scene cameras are deactivated and the VR camera drives rendering.
+
+### Data-driven scenes and URL binding
+Everything is ECS data: scenes are JSON (objects → named entities with components), settings are components on a marker entity, and any field of any component is addressable by URL (`name.Component.field`). UI widgets, scene `Bind` entries and script variables all read/write through the same resolver — so a slider can drive `Material.metallic`, a `Transform.pos`, or a Lua script variable with identical code.
+
+### Lua scripting
+Scenes attach behaviour via `"script": "scenes/<name>"` (or `scene.attach_script(e, file, params)`). Scripts get lifecycle hooks (`_on_ready`, `_animate`, `_physics`), a `self.vars` table whose entries are bindable by URL (`name.LuaScript.var` — floats, bools, strings, vec3/quat tables with dotted sub-paths), and seven API tables: `scene` (entity/component CRUD, poses, glTF, textures), `math` (vec/quaternion ops on top of the Lua stdlib), `physics` (raycast), `soft`, `graphics`, `ui`, and `input`. A `mesh` standard library generates capsule/sphere/box/plane geometry. The full reference is generated from source annotations: [docs/LUA_API.md](docs/LUA_API.md).
+
+### Immersive UI and scene editor
+A PBR-lit UI: windows, tabs, text, sliders (f/i) and buttons are ECS widgets (entities with components) rendered via an ImGui Vulkan backend onto a lit canvas quad — so they respond to the scene's lights. Sliders bind to any URL (component field or script variable). `ui.editor` embeds a full scene editor tab for inspecting and editing entities at runtime.
+
 ## Hello World Scene
 
 [assets/scenes/hello_world.lua](assets/scenes/hello_world.lua)
@@ -96,10 +125,6 @@ cmake --build build -j
 Flags: `--scene <path>`, `--no-vr`, `--no-graphics` (CPU physics only), `--headless` (GPU compute, no window), `--frames <n>` (exit after n frames).
 
 Re-run the `cmake -S .` step after editing a shader — SPIR-V is baked in at configure time.
-
-## Lua scripting
-
-Scenes are JSON + Lua: objects in JSON, behaviour attached via `"script": "scenes/<name>"` or `scene.attach_script(e, file, params)`.
 
 ## Dependencies
 
