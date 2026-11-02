@@ -1,4 +1,4 @@
-#include "sim/skin.hpp"
+#include "gpu_sim/skin.hpp"
 
 #include "ecs.hpp"
 #include "skeleton_spv.hpp"

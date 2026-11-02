@@ -1,4 +1,4 @@
-#include "app/rigid.hpp"
+#include "physics/rigid.hpp"
 
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>

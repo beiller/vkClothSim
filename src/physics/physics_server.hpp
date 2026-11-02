@@ -2,7 +2,7 @@
 #include <entt/entt.hpp>
 #include <functional>
 
-#include "app/rigid.hpp"
+#include "physics/rigid.hpp"
 
 // CPU rigid-body server (Jolt). Owns the 120 Hz fixed-step accumulator; per internal
 // step: fixed-step hook (Lua _physics) -> project -> kinematic poses -> Jolt step -> pose writeback.

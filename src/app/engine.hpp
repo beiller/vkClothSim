@@ -2,7 +2,7 @@
 #include "physics/physics_server.hpp"
 #include "script/scene_script.hpp"
 #include "vk/graphics_server.hpp"
-#include "xr_backend.hpp"
+#include "xr/xr_backend.hpp"
 #include <entt/entt.hpp>
 #include <memory>
 #include <string>

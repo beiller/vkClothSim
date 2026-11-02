@@ -3,7 +3,7 @@
 
 #include "assets.hpp"
 #include "scene.hpp"
-#include "engine.hpp"
+#include "app/engine.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>

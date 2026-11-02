@@ -14,7 +14,7 @@ source of truth; servers read/write components and never talk to each other dire
             v                               v
 +-----------------------+      +------------------------+
 | PhysicsServer         |      | GraphicsServer         |
-| (src/physics/, Jolt)  |      | (src/vk/ + src/sim/)   |
+| (src/physics/, Jolt)  |      | (src/vk/ + src/gpu_sim/)   |
 | CPU rigid bodies      |      | Vulkan renderer        |
 | update(reg, dt):      |      | GPU soft PBD sim       |
 |  120 Hz accumulator   |      | GPU DQ skinning        |

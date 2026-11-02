@@ -2,8 +2,8 @@
 #include <entt/entt.hpp>
 #include <vulkan/vulkan.h>
 
-#include "sim/skin.hpp"
-#include "sim/soft.hpp"
+#include "gpu_sim/skin.hpp"
+#include "gpu_sim/soft.hpp"
 #include "vk/renderer.hpp"
 
 class VkApp;

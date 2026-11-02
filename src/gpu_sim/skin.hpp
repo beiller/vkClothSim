@@ -2,9 +2,9 @@
 #include <vulkan/vulkan.h>
 
 #include "ecs.hpp"
-#include "gpuverts.hpp"
+#include "gpu_sim/gpuverts.hpp"
 #include "math.hpp"
-#include "sim/dualquat.hpp"
+#include "gpu_sim/dualquat.hpp"
 #include <entt/entt.hpp>
 #include <functional>
 #include <string>

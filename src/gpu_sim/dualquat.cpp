@@ -1,4 +1,4 @@
-#include "sim/dualquat.hpp"
+#include "gpu_sim/dualquat.hpp"
 
 #include <cmath>
 #include <cstring>

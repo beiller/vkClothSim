@@ -126,7 +126,7 @@ target_compile_features(3dsim_solvers PRIVATE cxx_std_23)
 target_include_directories(3dsim_solvers PUBLIC ${CMAKE_SOURCE_DIR}/solvers)
 
 add_library(3dsim_physics STATIC
-    src/app/rigid.cpp
+    src/physics/rigid.cpp
     src/physics/physics_server.cpp)
 target_compile_features(3dsim_physics PRIVATE cxx_std_23)
 target_include_directories(3dsim_physics PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -151,9 +151,9 @@ add_library(3dsim_graphics STATIC
     src/vk/renderer_env.cpp
     src/vk/renderer_shadow.cpp
     src/vk/graphics_server.cpp
-    src/sim/soft.cpp
-    src/sim/dualquat.cpp
-    src/sim/skin.cpp)
+    src/gpu_sim/soft.cpp
+    src/gpu_sim/dualquat.cpp
+    src/gpu_sim/skin.cpp)
 target_compile_features(3dsim_graphics PRIVATE cxx_std_23)
 target_include_directories(3dsim_graphics PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/io ${CMAKE_SOURCE_DIR}/src/ui ${GEN_DIR})
 target_link_libraries(3dsim_graphics PUBLIC 3dsim_core 3dsim_ui PRIVATE glfw Vulkan::Vulkan)
@@ -174,14 +174,14 @@ add_executable(vksim
     src/systems.cpp
     src/scene.cpp)
 target_compile_features(vksim PRIVATE cxx_std_23)
-target_include_directories(vksim PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/sim ${CMAKE_SOURCE_DIR}/src/ui ${XR_INCLUDES} ${GEN_DIR})
+target_include_directories(vksim PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/gpu_sim ${CMAKE_SOURCE_DIR}/src/ui ${XR_INCLUDES} ${GEN_DIR})
 target_link_libraries(vksim PRIVATE
     3dsim_script 3dsim_physics 3dsim_graphics 3dsim_xr 3dsim_io
     glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB dl ${LUA_LIBRARY})
 
 # CPU self-test for the ported dual-quaternion math (Blender ground truth). Build with -Dvksim's
 # default; run ./build/dualquat_test (no GPU needed).
-add_executable(dualquat_test tests/dualquat_test.cpp src/sim/dualquat.cpp)
+add_executable(dualquat_test tests/dualquat_test.cpp src/gpu_sim/dualquat.cpp)
 target_compile_features(dualquat_test PRIVATE cxx_std_23)
 target_include_directories(dualquat_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/core ${CMAKE_SOURCE_DIR}/lib/glm)
 

@@ -1,4 +1,4 @@
-#include "sim/soft.hpp"
+#include "gpu_sim/soft.hpp"
 
 #include "ecs.hpp"
 #include "softbody_spv.hpp"

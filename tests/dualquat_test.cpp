@@ -12,7 +12,7 @@
 //
 // Exit 0 on pass, 1 on failure. Run: ./build/dualquat_test
 
-#include "sim/dualquat.hpp"
+#include "gpu_sim/dualquat.hpp"
 
 #include <cmath>
 #include <cstdio>

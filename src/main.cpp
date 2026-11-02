@@ -5,7 +5,7 @@
 #include "scene.hpp"
 #include "systems.hpp"
 #include "vk/vkapp.hpp"
-#include "engine.hpp"
+#include "app/engine.hpp"
 #include "xr/xr.hpp"
 #include <chrono>
 #include <cstdio>

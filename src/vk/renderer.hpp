@@ -2,10 +2,10 @@
 #include <vulkan/vulkan.h>
 
 #include "components.hpp"
-#include "gpuverts.hpp"
+#include "gpu_sim/gpuverts.hpp"
 #include "math.hpp"
 #include "mesh.hpp"
-#include "xr_frame.hpp"
+#include "xr/xr_frame.hpp"
 #include <entt/entt.hpp>
 #include <functional>
 #include <imgui.h>

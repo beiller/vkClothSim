@@ -3,10 +3,10 @@
 
 #include "capsule.hpp"
 #include "components.hpp"
-#include "gpuverts.hpp"
+#include "gpu_sim/gpuverts.hpp"
 #include "mesh.hpp"
-#include "sim/phys.hpp"
-#include "sim/sim.hpp"
+#include "gpu_sim/phys.hpp"
+#include "gpu_sim/sim.hpp"
 #include <functional>
 #include <limits>
 #include <unordered_map>
