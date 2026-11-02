@@ -6,6 +6,9 @@ A data-driven 3D engine: ENTT ECS scene graph, Jolt rigid-body physics, GPU soft
 
 ## Features
 
+### Full GLTF support
+Load GLTF files with full support for skeleton, shape keys, object higherachy, full shader support including SSS + refraction.
+
 ### GPU soft-body cloth simulation
 Cloth and soft bodies run entirely on the GPU as position-based-dynamics compute shaders (`shaders/softbody.comp`). Each body is a mesh plus flat constraint quads `{a, b, rest, k}` solved in substeps with per-body gravity, damping, friction, tension and stiffness, against a floor and up to `kMaxCapsules` dynamic capsule colliders. 
 
