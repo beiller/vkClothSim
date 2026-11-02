@@ -36,6 +36,10 @@ function M._on_ready(self)
     local tab = ui.tab(win, "scene")
     ui.text(tab, "a spinning cube - everything created in lua")
     ui.slider_f(tab, "spin speed (rad/s)", "hello.LuaScript.spin_speed", 0, 10.0, "%.2f")
+    ui.slider_f(tab, "cube metallic", "mat_cube.Material.metallic", 0, 1.0, "%.2f")
+    ui.slider_f(tab, "cube refraction", "mat_cube.Material.refraction", 0, 1.0, "%.2f")
+    ui.slider_f(tab, "cube ior", "mat_cube.Material.ior", 1.0, 3.0, "%.2f")
+    ui.slider_f(tab, "cube roughness", "mat_cube.Material.roughness", 0, 1.0, "%.2f")
     ui.editor(ui.tab(win, "editor"))
 end
 
