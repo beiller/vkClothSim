@@ -41,9 +41,9 @@ bool bindResolve(const entt::registry& reg, const Bind* b, BindLink& l) {
     std::string err;
     if (!resolveUrl(reg, b->url, l.r, err))
         return false;
-    l.live = b->dir != BindDir::Write;
-    l.write = b->dir != BindDir::Read;
-    l.disabled = b->dir == BindDir::Read;
+    l.live = static_cast<BindDir>(b->dir) != BindDir::Write;
+    l.write = static_cast<BindDir>(b->dir) != BindDir::Read;
+    l.disabled = static_cast<BindDir>(b->dir) == BindDir::Read;
     return true;
 }
 
@@ -391,7 +391,7 @@ void spawnFpsHud(entt::registry& reg, int& seq, const V3& pos, const V2& px) {
 void spawnFieldWidget(entt::registry& reg, int& seq, entt::entity parent, const char* label, const FieldDesc* f,
                       const std::string& url) {
     auto withBind = [&reg, &url](entt::entity e, BindDir dir = BindDir::Both) {
-        reg.emplace<Bind>(e, Bind{url, "", dir});
+        reg.emplace<Bind>(e, Bind{url, "", static_cast<int>(dir)});
     };
     switch (f->kind) {
     case FieldKind::SliderF:

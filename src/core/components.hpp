@@ -355,7 +355,7 @@ enum class BindDir : uint8_t { Both, Read, Write };
 struct Bind {
     std::string url;
     std::string target; // "Component.field" on this entity; empty = the widget value field (the UI draw path)
-    BindDir dir = BindDir::Both;
+    int dir = static_cast<int>(BindDir::Both); // 0=Both 1=Read 2=Write (int so SliderI can write it safely)
 };
 
 struct UIButton {

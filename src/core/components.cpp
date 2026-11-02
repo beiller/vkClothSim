@@ -30,6 +30,7 @@ enum class Cmp {
     Joint,
     SixDofJoint,
     Parent,
+    Bind,
     None,
 };
 
@@ -81,6 +82,8 @@ const char* cmpName(Cmp c) {
         return "SixDofJoint";
     case Cmp::Parent:
         return "Parent";
+    case Cmp::Bind:
+        return "Bind";
     }
     return nullptr;
 }
@@ -142,6 +145,8 @@ void* base(const entt::registry& reg, entt::entity e, Cmp c) {
         return const_cast<SixDofJoint*>(reg.try_get<SixDofJoint>(e));
     case Cmp::Parent:
         return const_cast<Parent*>(reg.try_get<Parent>(e));
+    case Cmp::Bind:
+        return const_cast<Bind*>(reg.try_get<Bind>(e));
     }
     return nullptr;
 }
@@ -221,6 +226,9 @@ void emplaceDefault(entt::registry& reg, entt::entity e, Cmp c) {
     case Cmp::Parent:
         reg.emplace<Parent>(e);
         break;
+    case Cmp::Bind:
+        reg.emplace<Bind>(e);
+        break;
     }
 }
 
@@ -294,6 +302,9 @@ void removeC(entt::registry& reg, entt::entity e, Cmp c) {
         break;
     case Cmp::Parent:
         reg.remove<Parent>(e);
+        break;
+    case Cmp::Bind:
+        reg.remove<Bind>(e);
         break;
     }
 }

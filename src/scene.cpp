@@ -108,10 +108,6 @@ entt::entity buildObject(Engine& w, const json& o, const std::string& p, bool al
     } else if (!o.contains("gltf") && !w.reg.try_get<Transform>(e)) {
         w.reg.emplace<Transform>(e);
     }
-    if (o.contains("bind")) {
-        const auto& b = o["bind"];
-        w.reg.emplace<Bind>(e, Bind{b["src"].get<std::string>(), b["dst"].get<std::string>()});
-    }
     return e;
 }
 

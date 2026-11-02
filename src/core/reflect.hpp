@@ -261,8 +261,16 @@ static const FieldDesc kPhysicsSettings[] = {
     {"positionSteps", OFF(PhysicsSettings, positionSteps), FieldKind::SliderI, 1.0f, 64.0f},
 };
 
+/// Bind | per-frame URL copy: source `url` -> `target` field (empty = widget value); `dir` 0=Both 1=Read 2=Write
+static const FieldDesc kBind[] = {
+    {"url", OFF(Bind, url), FieldKind::Str},
+    {"target", OFF(Bind, target), FieldKind::Str},
+    {"dir", OFF(Bind, dir), FieldKind::SliderI, 0.0f, 2.0f},
+};
+
 static const TypeDesc kTypes[] = {
     {"Transform", kTransform},
+    {"Bind", kBind},
     {"Material", kMaterial},
     {"MaterialRef", kMaterialRef},
     {"Parent", kParent},
@@ -335,6 +343,7 @@ inline std::vector<std::pair<const TypeDesc*, std::function<const void*(void)>>>
     if (reg.try_get<MouseInput>(e)) add("MouseInput", liveRef<MouseInput>(reg, e));
     if (reg.try_get<RenderSettings>(e)) add("RenderSettings", liveRef<RenderSettings>(reg, e));
     if (reg.try_get<PhysicsSettings>(e)) add("PhysicsSettings", liveRef<PhysicsSettings>(reg, e));
+    if (reg.try_get<Bind>(e)) add("Bind", liveRef<Bind>(reg, e));
     return out;
 }
 

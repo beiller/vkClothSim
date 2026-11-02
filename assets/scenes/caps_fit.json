@@ -45,8 +45,10 @@
         },
         {
             "name": "mat_tetra",
-            "components": { "Material": { "baseColor": [0, 0, 0], "emissive": [10, 9.5, 9] } },
-            "bind": { "src": "key light.PointLight.color", "dst": "Material.emissive" }
+            "components": {
+                "Material": { "baseColor": [0, 0, 0], "emissive": [10, 9.5, 9] },
+                "Bind": { "url": "key light.PointLight.color", "target": "Material.emissive" }
+            }
         },
         {
             "name": "tetra",

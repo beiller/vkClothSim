@@ -68,6 +68,7 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [`input.key_down(kb: entity, code: number) -> bool`](#inputkeydownkb-entity-code-number---bool)
 - [components (emplace / replace)](#components-emplace--replace)
   - [Transform](#transform)
+  - [Bind](#bind)
   - [Material](#material)
   - [MaterialRef](#materialref)
   - [Parent](#parent)
@@ -343,6 +344,16 @@ position/scale/rotation of an entity; `quat` is {x,y,z,w} and may also be writte
 | qy | number |  |
 | qz | number |  |
 | qw | number |  |
+
+### Bind
+
+per-frame URL copy: source `url` -> `target` field (empty = widget value); `dir` 0=Both 1=Read 2=Write
+
+| field | type | range |
+|---|---|---|
+| url | string |  |
+| target | string |  |
+| dir | int | [0.0, 2.0] |
 
 ### Material
 
