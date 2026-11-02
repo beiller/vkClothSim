@@ -1,13 +1,20 @@
--- hello world: the scene json is nearly blank (one camera object + one object with this
--- script attached); the light, textured spinning cube and UI are all created here in lua.
+-- hello world: the scene json is blank (one object with this script attached); the camera,
+-- light, textured spinning cube and UI are all created here in lua.
 local M = {}
 
-function M._on_ready(self)
-    -- ui state holder: a Material on a dummy entity gives the slider a reflected float to bind
-    local state = scene.entity("ui_state")
-    scene.emplace(state, "Material", { metallic = 1.0 })
+-- script variables, bindable via "hello.LuaScript.<var>"
+M.vars = { 
+    spin_speed = 1.0 
+}
 
-    -- one point light so the pbr material has something to reflect
+-- executed once, when the script is ready
+function M._on_ready(self)
+    -- the fly camera: active=true is what makes it THE camera
+    local camera = scene.entity("cam")
+    scene.emplace(camera, "Transform", { pos = { 0, 1.2, 4 } })
+    scene.emplace(camera, "Camera", { fovDeg = 50, active = true })
+    scene.attach_script(camera, "scenes/camera") -- attaches the "fly camera movement" script which gives "look" and "wasd + qe" kb movement
+
     local light = scene.entity("light")
     scene.emplace(light, "Transform", { pos = { 0, 3, 4 } })
     scene.emplace(light, "PointLight", { color = { 1, 1, 1 }, intensity = 60, radius = 0.5 })
@@ -28,14 +35,20 @@ function M._on_ready(self)
     local win = ui.window("hello world", 320, 200)
     local tab = ui.tab(win, "scene")
     ui.text(tab, "a spinning cube - everything created in lua")
-    ui.slider_f(tab, "spin speed (rad/s)", "ui_state.Material.metallic", 0, 6.28, "%.2f")
+    ui.slider_f(tab, "spin speed (rad/s)", "hello.LuaScript.spin_speed", 0, 10.0, "%.2f")
     ui.editor(ui.tab(win, "editor"))
 end
 
+-- runs every graphics frame
 function M._animate(self, dt)
-    local speed = scene.get("ui_state.Material.metallic")
+    local speed = self.vars.spin_speed
     local pose = scene.get_pose(self.cube)
-    scene.set_pose(self.cube, pose.pos, math.qmul(math.qaxis({ 0, 1, 0 }, speed * dt), pose.quat))
+    scene.set_pose(self.cube, pose.pos, math.qmul(math.qaxis({ 0.5, 0.5, 0 }, speed * dt), pose.quat))
+end
+
+-- runs every physics step
+function M._physics(self, dt)
+    
 end
 
 return M

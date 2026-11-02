@@ -39,6 +39,7 @@ namespace refl {
 
 #define OFF(T, f) offsetof(T, f)
 
+/// Transform | position/scale/rotation of an entity; `quat` is {x,y,z,w} and may also be written via qx..qw
 static const FieldDesc kTransform[] = {
     {"pos", OFF(Transform, pos), FieldKind::DragV3},
     {"scale", OFF(Transform, scale), FieldKind::DragV3},
@@ -48,6 +49,7 @@ static const FieldDesc kTransform[] = {
     {"qz", OFF(Transform, quat) + 8, FieldKind::SliderF, -1.0f, 1.0f},
     {"qw", OFF(Transform, quat) + 12, FieldKind::SliderF, -1.0f, 1.0f},
 };
+/// Material | PBR material: baseColor/emissive (vec3), metallic/roughness [0,1], up to 4 texture refs (tex/texMR/texNormal/texEmissive), alphaMode 0=opaque 1=mask 2=blend, SSS and refraction
 static const FieldDesc kMaterial[] = {
     {"baseColor", OFF(Material, baseColor), FieldKind::Color},
     {"metallic", OFF(Material, metallic), FieldKind::SliderF, 0.0f, 1.0f},
@@ -65,22 +67,27 @@ static const FieldDesc kMaterial[] = {
     {"ior", OFF(Material, ior), FieldKind::SliderF, 1.0f, 1.8f},
     {"normalScale", OFF(Material, normalScale), FieldKind::SliderF, 0.0f, 3.0f},
 };
+/// MaterialRef | points an entity at the Material entity used for its rendering (`material` = material entity)
 static const FieldDesc kMaterialRef[] = {
     {"material", 0, FieldKind::Ref},
 };
+/// Parent | scene hierarchy: `e` = parent entity
 static const FieldDesc kParent[] = {
     {"e", OFF(Parent, e), FieldKind::Ref},
 };
+/// Camera | camera: fovDeg/nearP/farP; `active=true` makes it THE camera (first active wins); XR hand-off deactivates all non-VR cameras while the headset has a pose
 static const FieldDesc kCamera[] = {
     {"fovDeg", OFF(Camera, fovDeg), FieldKind::SliderF, 10.0f, 120.0f},
     {"nearP", OFF(Camera, nearP), FieldKind::SliderF, 0.01f, 5.0f},
     {"farP", OFF(Camera, farP), FieldKind::SliderF, 10.0f, 1000.0f},
     {"active", OFF(Camera, active), FieldKind::Checkbox},
 };
+/// Environment | environment lighting: intensity + environment texture ref (`tex`)
 static const FieldDesc kEnvironment[] = {
     {"intensity", OFF(Environment, intensity), FieldKind::SliderF, 0.0f, 10.0f},
     {"tex", OFF(Environment, tex), FieldKind::Ref},
 };
+/// PointLight | point light: color (vec3), intensity, radius (falloff), on 0/1, shadow tuning fields
 static const FieldDesc kPointLight[] = {
     {"on", OFF(PointLight, on), FieldKind::SliderF, 0.0f, 1.0f},
     {"color", OFF(PointLight, color), FieldKind::Color},
@@ -94,6 +101,7 @@ static const FieldDesc kPointLight[] = {
     {"shadowSearchScale", OFF(PointLight, shadowSearchScale), FieldKind::SliderF, 0.5f, 16.0f},
     {"shadowMaxRadius", OFF(PointLight, shadowMaxRadius), FieldKind::SliderF, 1.0f, 64.0f},
 };
+/// SoftBodyData | GPU PBD soft-body params: pinned (0=free, >0=pinned), solver steps/passes, mass/damping/stiffness/tension/friction, cons = constraint param array
 static const FieldDesc kSoftBodyData[] = {
     {"pinned", OFF(SoftBodyData, pinned), FieldKind::SliderI, 0.0f, 2.0f},
     {"steps", OFF(SoftBodyData, steps), FieldKind::SliderI, 1.0f, 32.0f},
@@ -105,6 +113,7 @@ static const FieldDesc kSoftBodyData[] = {
     {"friction", OFF(SoftBodyData, friction), FieldKind::SliderF, 0.0f, 50.0f},
     {"cons", OFF(SoftBodyData, cons), FieldKind::FloatArr},
 };
+/// RigidBody | Jolt dynamic body: friction/restitution/damping/mass, forceSleep, `colliders` = collider entities
 static const FieldDesc kRigidBody[] = {
     {"friction", OFF(RigidBody, friction), FieldKind::SliderF, 0.0f, 1.0f},
     {"restitution", OFF(RigidBody, restitution), FieldKind::SliderF, 0.0f, 1.0f},
@@ -113,31 +122,38 @@ static const FieldDesc kRigidBody[] = {
     {"forceSleep", OFF(RigidBody, forceSleep), FieldKind::Checkbox},
     {"colliders", OFF(RigidBody, colliders), FieldKind::EntArr},
 };
+/// KinematicBody | Jolt kinematic (script-driven) body: `colliders` = collider entities
 static const FieldDesc kKinematicBody[] = {
     {"colliders", OFF(KinematicBody, colliders), FieldKind::EntArr},
 };
+/// CapsuleShape | capsule collider shape: halfLen + radius
 static const FieldDesc kCapsuleShape[] = {
     {"halfLen", OFF(CapsuleShape, halfLen), FieldKind::SliderF, 0.0f, 10.0f},
     {"radius", OFF(CapsuleShape, radius), FieldKind::SliderF, 0.0f, 5.0f},
 };
+/// BoxShape | box collider shape: `half` = {hx,hy,hz}, may also be written via hx..hz
 static const FieldDesc kBoxShape[] = {
     {"half", OFF(BoxShape, half), FieldKind::DragV3}, // 3-value array (the editor uses hx..hz)
     {"hx", OFF(BoxShape, half), FieldKind::SliderF, 0.0f, 100.0f},
     {"hy", OFF(BoxShape, half) + 4, FieldKind::SliderF, 0.0f, 100.0f},
     {"hz", OFF(BoxShape, half) + 8, FieldKind::SliderF, 0.0f, 100.0f},
 };
+/// TaperedCapsule | tapered-capsule collider shape: halfHeight + bottom/top radius
 static const FieldDesc kTaperedCapsule[] = {
     {"halfHeight", OFF(TaperedCapsule, halfHeight), FieldKind::SliderF, 0.0f, 10.0f},
     {"bottomRadius", OFF(TaperedCapsule, bottomRadius), FieldKind::SliderF, 0.0f, 5.0f},
     {"topRadius", OFF(TaperedCapsule, topRadius), FieldKind::SliderF, 0.0f, 5.0f},
 };
 
+/// SphereShape | sphere collider shape: radius
 static const FieldDesc kSphereShape[] = {
     {"radius", OFF(SphereShape, radius), FieldKind::SliderF, 0.0f, 10.0f},
 };
+/// Collider | links a shape entity to a body: `shape` = shape entity ref
 static const FieldDesc kCollider[] = {
     {"shape", OFF(Collider, shape), FieldKind::Ref},
 };
+/// Joint | physics joint between two bodies (bodyA/bodyB refs); type (only 0 = point is supported); grabPos; excludeCollision suppresses collision between the joined bodies
 static const FieldDesc kJoint[] = {
     {"bodyA", OFF(Joint, bodyA), FieldKind::Ref},
     {"bodyB", OFF(Joint, bodyB), FieldKind::Ref},
@@ -145,6 +161,7 @@ static const FieldDesc kJoint[] = {
     {"grabPos", OFF(Joint, grabPos), FieldKind::DragV3},
     {"excludeCollision", OFF(Joint, excludeCollision), FieldKind::Checkbox},
 };
+/// SixDofJoint | 6-DOF joint: bodyA/bodyB refs (null bodyB = fixed to world), translation/angle limits (lim*), soft limits, per-axis motors (motor*), priority/solver steps, enabled
 static const FieldDesc kSixDofJoint[] = {
     {"bodyA", OFF(SixDofJoint, bodyA), FieldKind::Ref},
     {"bodyB", OFF(SixDofJoint, bodyB), FieldKind::Ref},
@@ -179,6 +196,7 @@ static const FieldDesc kSixDofJoint[] = {
     {"enabled", OFF(SixDofJoint, enabled), FieldKind::Checkbox},
     {"excludeCollision", OFF(SixDofJoint, excludeCollision), FieldKind::Checkbox},
 };
+/// ControllerInput | XR controller state: trigger_0/1, axis_0/1, button_0/1, active, aim pose (aim_pos + aim_qx..qw)
 static const FieldDesc kControllerInput[] = {
     {"trigger_0", OFF(ControllerInput, triggers), FieldKind::SliderF, 0.0f, 1.0f},
     {"trigger_1", OFF(ControllerInput, triggers) + 4, FieldKind::SliderF, 0.0f, 1.0f},
@@ -193,6 +211,7 @@ static const FieldDesc kControllerInput[] = {
     {"aim_qz", OFF(ControllerInput, aimQuat) + 8, FieldKind::SliderF, -1.0f, 1.0f},
     {"aim_qw", OFF(ControllerInput, aimQuat) + 12, FieldKind::SliderF, -1.0f, 1.0f},
 };
+/// MouseInput | mouse state: x/y position, button_0..3
 static const FieldDesc kMouseInput[] = {
     {"x", OFF(MouseInput, x), FieldKind::SliderF, 0.0f, 3840.0f},
     {"y", OFF(MouseInput, y), FieldKind::SliderF, 0.0f, 2160.0f},
@@ -201,15 +220,18 @@ static const FieldDesc kMouseInput[] = {
     {"button_2", OFF(MouseInput, buttons) + 2, FieldKind::Checkbox},
     {"button_3", OFF(MouseInput, buttons) + 3, FieldKind::Checkbox},
 };
+/// Renderable | makes an entity renderable: `geom` = geometry entity ref, noShadow, visible
 static const FieldDesc kRenderable[] = {
     {"geom", 0, FieldKind::Ref},
     {"noShadow", OFF(Renderable, noShadow), FieldKind::Checkbox},
     {"visible", OFF(Renderable, visible), FieldKind::Checkbox},
 };
+/// Texture | texture from a file: `path`, `space` = "linear" or "srgb" (sRGB data is decoded on upload)
 static const FieldDesc kTexture[] = {
     {"path", OFF(Texture, path), FieldKind::Str},
     {"space", OFF(Texture, space), FieldKind::Str},
 };
+/// Geometry | mesh data: pos/nrm/uv float arrays, idx/joints int arrays, weights float array (per-vertex skin weights)
 static const FieldDesc kGeometry[] = {
     {"pos", OFF(Geometry, mesh.pos), FieldKind::FloatArr},
     {"nrm", OFF(Geometry, mesh.nrm), FieldKind::FloatArr},
@@ -220,6 +242,7 @@ static const FieldDesc kGeometry[] = {
 };
 // invBinds is not a field: it is derived (the inverse of each joint's world
 // transform) whenever the component is written through createOrReplace
+/// Skeleton | skinning skeleton: name, boneNames string array, joints entity array, placement ref, meshes entity array; invBinds is derived on write
 static const FieldDesc kSkeleton[] = {
     {"name", OFF(Skeleton, name), FieldKind::Str},
     {"boneNames", OFF(Skeleton, boneNames), FieldKind::StrArr},
@@ -227,10 +250,12 @@ static const FieldDesc kSkeleton[] = {
     {"placement", OFF(Skeleton, placement), FieldKind::Ref},
     {"meshes", OFF(Skeleton, meshes), FieldKind::EntArr},
 };
+/// RenderSettings | global render settings (emplace on a marker entity): bgColor (vec3), exposure
 static const FieldDesc kRenderSettings[] = {
     {"bgColor", OFF(RenderSettings, bgColor), FieldKind::Color},
     {"exposure", OFF(RenderSettings, exposure), FieldKind::SliderF, 0.1f, 3.0f},
 };
+/// PhysicsSettings | global physics solver steps (emplace on a marker entity): velocitySteps/positionSteps
 static const FieldDesc kPhysicsSettings[] = {
     {"velocitySteps", OFF(PhysicsSettings, velocitySteps), FieldKind::SliderI, 1.0f, 64.0f},
     {"positionSteps", OFF(PhysicsSettings, positionSteps), FieldKind::SliderI, 1.0f, 64.0f},

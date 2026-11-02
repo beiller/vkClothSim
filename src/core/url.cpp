@@ -10,6 +10,82 @@ static const FieldDesc* findField(const TypeDesc* t, const std::string& name) {
     return nullptr;
 }
 
+// "LuaScript.var" -> a slot in the script's vars mirror. The var path may be nested
+// ("pos.x"); subvars of 3/4-number table slots resolve to member views into the
+// contiguous vec storage. Numbers are float, plus bool/vec3/quat; string vars are not
+// bindable (read/write them with scene.get/scene.set).
+template <typename M>
+static M& varMap(const M& m) {
+    // the registry view is const-only in interface; the storage is mutable
+    return const_cast<M&>(m);
+}
+
+static bool resolveVar(const entt::registry& reg, entt::entity ent, const std::string& path, const std::string& label,
+                       UrlRef& out, std::string& err) {
+    const auto* ls = reg.try_get<LuaScript>(ent);
+    if (!ls || ls->inst < 0) {
+        err = "entity '" + label + "' has no script";
+        return false;
+    }
+    static const FieldDesc fF{"var", 0, FieldKind::SliderF};
+    static const FieldDesc fB{"var", 0, FieldKind::Checkbox};
+    static const FieldDesc fV3{"var", 0, FieldKind::DragV3};
+    static const FieldDesc fQ{"var", 0, FieldKind::Quat};
+
+    // "head.tail" where head is a vec slot: view into its members (no separate storage)
+    const size_t dot = path.rfind('.');
+    if (dot != std::string::npos) {
+        const std::string head = path.substr(0, dot);
+        const std::string tail = path.substr(dot + 1);
+        if (auto it = varMap(ls->varsV3).find(head); it != varMap(ls->varsV3).end()) {
+            float* m = nullptr;
+            if (tail == "x")
+                m = &it->second.x;
+            else if (tail == "y")
+                m = &it->second.y;
+            else if (tail == "z")
+                m = &it->second.z;
+            if (m) {
+                out = {&fF, m};
+                return true;
+            }
+        }
+        if (auto it = varMap(ls->varsQ).find(head); it != varMap(ls->varsQ).end()) {
+            float* m = nullptr;
+            if (tail == "x")
+                m = &it->second.x;
+            else if (tail == "y")
+                m = &it->second.y;
+            else if (tail == "z")
+                m = &it->second.z;
+            else if (tail == "w")
+                m = &it->second.w;
+            if (m) {
+                out = {&fF, m};
+                return true;
+            }
+        }
+    }
+    if (auto it = varMap(ls->varsV3).find(path); it != varMap(ls->varsV3).end()) {
+        out = {&fV3, &it->second};
+        return true;
+    }
+    if (auto it = varMap(ls->varsQ).find(path); it != varMap(ls->varsQ).end()) {
+        out = {&fQ, &it->second};
+        return true;
+    }
+    if (auto it = varMap(ls->varsF).find(path); it != varMap(ls->varsF).end()) {
+        out = {&fF, &it->second};
+        return true;
+    }
+    if (auto it = varMap(ls->varsB).find(path); it != varMap(ls->varsB).end()) {
+        out = {&fB, &it->second};
+        return true;
+    }
+    err = "no var '" + path + "' in script of '" + label + "'";
+    return false;
+}
+
 bool resolveEntityField(const entt::registry& reg, entt::entity ent, const std::string& field, const std::string& label,
                         UrlRef& out, std::string& err) {
     const size_t dot = field.rfind('.');
@@ -19,6 +95,8 @@ bool resolveEntityField(const entt::registry& reg, entt::entity ent, const std::
     }
     const std::string cn = field.substr(0, dot);
     const std::string fn = field.substr(dot + 1);
+    if (cn == "LuaScript")
+        return resolveVar(reg, ent, fn, label, out, err);
     for (auto& [t, b] : refl::entityFields(reg, ent)) {
         if (t->name != cn)
             continue;
@@ -59,6 +137,30 @@ bool resolveUrl(const entt::registry& reg, const std::string& url, UrlRef& out, 
         }
         const std::string cf = (head == "render" ? "RenderSettings." : "PhysicsSettings.") + url.substr(dot + 1);
         return resolveEntityField(reg, settings, cf, head, out, err);
+    }
+
+    // "name.LuaScript.varpath": the marker anchors the split even when the entity name
+    // contains dots; on a miss, fall through to the generic split (an entity may be
+    // literally named "X.LuaScript.Y").
+    const size_t marker = url.rfind(".LuaScript.");
+    if (marker != std::string::npos && marker > 0 && marker + 11 < url.size()) {
+        const std::string mname = url.substr(0, marker);
+        entt::entity ment = entt::null;
+        int mfound = 0;
+        for (auto [e, n] : reg.view<Name>().each())
+            if (n.id == mname) {
+                ment = e;
+                ++mfound;
+            }
+        if (mfound > 1) {
+            err = "entity name '" + mname + "' is not unique";
+            return false;
+        }
+        if (mfound == 1) {
+            std::string verr;
+            if (resolveVar(reg, ment, url.substr(marker + 11), mname, out, verr))
+                return true;
+        }
     }
 
     // entity names may contain dots: the last two dot segments are Component.field

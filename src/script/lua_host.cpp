@@ -312,6 +312,84 @@ void SceneScript::destroyScript(int inst, int params, int onReady, int animate, 
             dropRef(ref);
 }
 
+// parse "name.LuaScript.varpath" (last marker occurrence; entity names may contain dots)
+static bool parseVarUrl(const std::string& url, std::string& name, std::string& path) {
+    const size_t m = url.rfind(".LuaScript.");
+    if (m == std::string::npos || m == 0 || m + 11 >= url.size())
+        return false;
+    name = url.substr(0, m);
+    path = url.substr(m + 11);
+    return true;
+}
+
+static void setDotted(lua_State* L, int baseIdx, const std::string& key, int valAbs);
+
+static const LuaScript* findVarScript(const entt::registry& reg, const std::string& name, std::string& err) {
+    entt::entity ent = entt::null;
+    int found = 0;
+    for (auto [e, n] : reg.view<Name>().each()) {
+        if (n.id == name) {
+            ent = e;
+            ++found;
+        }
+        if (found > 1) {
+            err = "entity name '" + name + "' is not unique";
+            return nullptr;
+        }
+    }
+    if (found == 0) {
+        err = "unknown entity '" + name + "'";
+        return nullptr;
+    }
+    auto* ls = reg.try_get<LuaScript>(ent);
+    if (!ls || ls->inst < 0) {
+        err = "entity '" + name + "' has no script";
+        return nullptr;
+    }
+    return ls;
+}
+
+bool SceneScript::varStr(const entt::registry& reg, const std::string& url, std::string& out, std::string& err) {
+    std::string name, path;
+    if (!parseVarUrl(url, name, path)) {
+        err = "expected 'name.LuaScript.var'";
+        return false;
+    }
+    auto* ls = findVarScript(reg, name, err);
+    if (!ls)
+        return false;
+    auto it = ls->varsS.find(path);
+    if (it == ls->varsS.end()) {
+        err = "no var '" + path + "' in script of '" + name + "'";
+        return false;
+    }
+    out = it->second;
+    return true;
+}
+
+void SceneScript::setVarStr(const entt::registry& reg, const std::string& url, const std::string& val, std::string& err) {
+    std::string name, path;
+    if (!parseVarUrl(url, name, path)) {
+        err = "expected 'name.LuaScript.var'";
+        return;
+    }
+    auto* ls = const_cast<LuaScript*>(findVarScript(reg, name, err));  // storage is mutable
+    if (!ls)
+        return;
+    // write the lua table now (a mirror-only write would be clobbered by the next pull)
+    if (L) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ls->inst);
+        lua_getfield(L, -1, "vars");
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, val.c_str());
+            setDotted(L, lua_gettop(L) - 1, path, lua_gettop(L));
+            lua_pop(L, 1);  // setDotted copied the value; drop the original
+        }
+        lua_pop(L, 2);
+    }
+    ls->varsS[path] = val;
+}
+
 void SceneScript::onScriptDestroy(entt::registry& reg, entt::entity e) {
     if (const auto* ls = reg.try_get<LuaScript>(e))
         destroyScript(ls->inst, ls->params, ls->onReady, ls->animate, ls->physics);
@@ -376,7 +454,6 @@ void SceneScript::activateScripts() {
             grab("_animate", animateRef);
             grab("_physics", physicsRef);
             lua_pop(L, 2);
-            const bool ok = (onReadyRef <= 0) || callOnReady(onReadyRef, instRef);
             auto* ls = w().reg.try_get<LuaScript>(e);
             if (!ls) {
                 dropRef(instRef);
@@ -385,6 +462,11 @@ void SceneScript::activateScripts() {
                 dropRef(physicsRef);
                 continue;
             }
+            // inst is set before _on_ready so "name.LuaScript.var" binds resolve while it runs;
+            // the pull fills the vars mirror from (module-level) inst.vars defaults first.
+            ls->inst = instRef;
+            syncVars(w().reg, false);
+            const bool ok = (onReadyRef <= 0) || callOnReady(onReadyRef, instRef);
             if (!ok) {
                 dropRef(instRef);
                 dropRef(paramsRef);
@@ -393,13 +475,153 @@ void SceneScript::activateScripts() {
                 dropRef(physicsRef);
                 ls->inst = ls->params = ls->onReady = ls->animate = ls->physics = -1;
             } else {
-                ls->inst = instRef;
+                syncVars(w().reg, false);  // pick up vars (re)assigned inside _on_ready
                 ls->onReady = onReadyRef;
                 ls->animate = animateRef;
                 ls->physics = physicsRef;
             }
             ls->ready = true;
         }
+    }
+}
+
+/// script-instance | vars: a module-level `M.vars` table provides defaults (visible via __index); each instance's `self.vars` is mirrored into typed C++ maps every frame — pulled after every hook pass, pushed back before — and is bindable through `name.LuaScript.var` URLs; numbers map to float, booleans and strings stay typed, 3/4-number tables become vec3/quat slots, and dotted sub-paths address members (`hello.LuaScript.pos.x`)
+// pull one lua value (at idx) into the mirror under dotted `key`. 3/4-number tables
+// become contiguous vec slots; other tables recurse with dotted keys. Stack-balanced.
+static void pullValue(lua_State* L, int idx, const std::string& key, LuaScript& ls) {
+    if (lua_isnumber(L, idx)) {
+        ls.varsF[key] = (float)lua_tonumber(L, idx);
+        return;
+    }
+    if (lua_isboolean(L, idx)) {
+        ls.varsB[key] = lua_toboolean(L, idx);
+        return;
+    }
+    if (lua_isstring(L, idx)) {
+        ls.varsS[key] = lua_tostring(L, idx);
+        return;
+    }
+    if (!lua_istable(L, idx))
+        return;
+
+    float vals[4]{};
+    int n = 0, nums = 0;
+    const int tAbs = lua_absindex(L, idx);
+    lua_pushnil(L);
+    while (lua_next(L, tAbs) != 0) {
+        ++n;
+        if (lua_isnumber(L, -1) && nums < 4)
+            vals[nums++] = (float)lua_tonumber(L, -1);
+        lua_pop(L, 1);
+    }
+    if (n == 3 && nums == 3) {
+        ls.varsV3[key] = V3(vals[0], vals[1], vals[2]);
+        return;
+    }
+    if (n == 4 && nums == 4) {
+        ls.varsQ[key] = Quat(vals[0], vals[1], vals[2], vals[3]);
+        return;
+    }
+
+    const std::string prefix = key.empty() ? "" : key + ".";
+    lua_pushnil(L);
+    while (lua_next(L, tAbs) != 0) {
+        if (const char* k = lua_tostring(L, -2))
+            pullValue(L, -1, prefix + k, ls);
+        lua_pop(L, 1);
+    }
+}
+
+// store the value at absolute index valAbs into the table at absolute index baseIdx under
+// dotted `key`, creating intermediate tables. Stack-balanced (pops its own intermediates).
+static void setDotted(lua_State* L, int baseIdx, const std::string& key, int valAbs) {
+    int cur = baseIdx;
+    int pushed = 0;
+    size_t start = 0;
+    for (;;) {
+        const size_t dot = key.find('.', start);
+        const bool last = dot == std::string::npos;
+        const std::string seg = key.substr(start, last ? std::string::npos : dot - start);
+        if (last) {
+            lua_pushstring(L, seg.c_str());  // settable wants key on top, value below
+            lua_pushvalue(L, valAbs);
+            lua_settable(L, cur);
+            break;
+        }
+        lua_getfield(L, cur, seg.c_str());
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L);
+            lua_pushstring(L, seg.c_str());
+            lua_settable(L, cur);
+            lua_getfield(L, cur, seg.c_str());
+        }
+        ++pushed;
+        cur = -1;
+        start = dot + 1;
+    }
+    for (int i = 0; i < pushed; ++i)
+        lua_pop(L, 1);
+}
+
+// sync the vars mirror with each script's inst.vars table: pushToLua copies mirror -> table
+// (so hooks see widget writes), otherwise table -> mirror (so widgets/scene.get see hook
+// writes). The pull never erases mirror entries, keeping bound UrlRef slots stable.
+void SceneScript::syncVars(entt::registry& reg, bool pushToLua) {
+    if (!L)
+        return;
+    for (auto [e, ls] : reg.view<LuaScript>().each()) {
+        if (ls.inst <= 0)
+            continue;
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ls.inst);
+        lua_getfield(L, -1, "vars");
+        const bool hasTable = lua_istable(L, -1);
+        if (hasTable) {
+            const int varsAbs = lua_gettop(L);
+            if (pushToLua) {
+                for (const auto& [k, v] : ls.varsF) {
+                    lua_pushnumber(L, v);
+                    setDotted(L, varsAbs, k, lua_gettop(L));
+                    lua_pop(L, 1);  // setDotted copied the value; drop the original
+                }
+                for (const auto& [k, v] : ls.varsB) {
+                    lua_pushboolean(L, v);
+                    setDotted(L, varsAbs, k, lua_gettop(L));
+                    lua_pop(L, 1);
+                }
+                for (const auto& [k, v] : ls.varsS) {
+                    lua_pushstring(L, v.c_str());
+                    setDotted(L, varsAbs, k, lua_gettop(L));
+                    lua_pop(L, 1);
+                }
+                for (const auto& [k, v] : ls.varsV3) {
+                    lua_createtable(L, 3, 0);
+                    for (int i = 0; i < 3; ++i) {
+                        lua_pushnumber(L, v[i]);
+                        lua_rawseti(L, -2, i + 1);
+                    }
+                    setDotted(L, varsAbs, k, lua_gettop(L));
+                    lua_pop(L, 1);
+                }
+                for (const auto& [k, v] : ls.varsQ) {
+                    lua_createtable(L, 4, 0);
+                    for (int i = 0; i < 4; ++i) {
+                        lua_pushnumber(L, v[i]);
+                        lua_rawseti(L, -2, i + 1);
+                    }
+                    setDotted(L, varsAbs, k, lua_gettop(L));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pushnil(L);
+                while (lua_next(L, varsAbs) != 0) {
+                    if (const char* k = lua_tostring(L, -2))
+                        pullValue(L, -1, k, ls);
+                    lua_pop(L, 1);
+                }
+            }
+        }
+        lua_pop(L, 2);
     }
 }
 
@@ -427,13 +649,17 @@ void SceneScript::animateAll(float dt) {
     if (!L)
         return;
     m_time += dt;
+    syncVars(w().reg, true);
     stepHook(dt, &LuaScript::animate);
+    syncVars(w().reg, false);
 }
 
 void SceneScript::physicsAll(float dt) {
     if (!L)
         return;
+    syncVars(w().reg, true);
     stepHook(dt, &LuaScript::physics);
+    syncVars(w().reg, false);
 }
 
 void SceneScript::shutdown() {

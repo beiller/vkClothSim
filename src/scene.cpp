@@ -208,21 +208,22 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
     try {
         const json& objects = j.value("objects", json::array());
 
+        // at most one JSON-declared camera; scripts may create more (active=true selects)
         const json* camObj = nullptr;
         for (const auto& o : objects)
             if (o.contains("components") && o["components"].contains("Camera")) {
                 if (camObj)
-                    fail(p, "scene must declare exactly one camera object (an object with a 'Camera' component)");
+                    fail(p, "scene must declare at most one camera object (an object with a 'Camera' component)");
                 camObj = &o;
             }
-        if (!camObj)
-            fail(p, "scene must declare exactly one camera object (an object with a 'Camera' component)");
-        const entt::entity cam = buildObject(w, *camObj, p, false);
-        w.reg.emplace<SceneCamera>(cam);
 
-        if (w.hasWindow) {
-            const VkExtent2D ext = w.app->extent();
-            w.graphics.setViewProj(cameraView(w.reg, cam, (float)ext.width / (float)ext.height));
+        entt::entity cam = entt::null;
+        if (camObj) {
+            cam = buildObject(w, *camObj, p, false);
+            if (w.hasWindow) {
+                const VkExtent2D ext = w.app->extent();
+                w.graphics.setViewProj(cameraView(w.reg, cam, (float)ext.width / (float)ext.height));
+            }
         }
 
         for (const auto& o : objects)

@@ -10,3 +10,4 @@ Screenshot_2026-10-14_16-50-19.jpg
 workplans/
 build-prof/
 perf/
+*.pyc

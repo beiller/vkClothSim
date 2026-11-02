@@ -74,7 +74,7 @@ DRI_PRIME=1 ./build/vksim      # force AMD iGPU (RADV) instead of the 4090
 `docs/LUA_API.md` is generated — never edit it by hand:
 
 ```sh
-python3 tools/gen_lua_api.py   # re-run after any change to src/script/api_*.cpp or lua_host.cpp
+python3 tools/gen_lua_api.py   # re-run after any change to src/script/api_*.cpp, lua_host.cpp, or reflect.hpp
 ```
 
 Every exposed function MUST carry a one-line doc string directly above its handler (or reg() call):
@@ -92,6 +92,8 @@ The "magic" script-module hooks are documented the same way, in `lua_host.cpp` a
 /// script-instance | <what the inst table is and its fields>
 /// script-hook _on_ready(inst) | <when it is called>
 ```
+
+Emplace-able components are documented with a one-line `/// Type | description` directly above each `FieldDesc` array in `src/core/reflect.hpp`; field names/types/ranges in the generated docs come from the descriptors themselves (single source of truth — they can never drift).
 
 The generator lists hooks from the `grab("_name", ...)` call sites (machine truth) and fails if a looked-up hook has no doc, or warns on a doc for a hook that no longer exists.
 

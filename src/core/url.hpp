@@ -12,6 +12,9 @@ struct UrlRef {
 // "name.Component.field" / "render.field" / "rigid.field" resolution; entity names may
 // contain dots (the last two dot segments are Component.field). "render.*"/"rigid.*"
 // resolve against the settings entity's RenderSettings/PhysicsSettings components.
+// "name.LuaScript.var" resolves to a slot in the script's vars mirror (synced by the
+// script host): numbers as float, booleans, 3/4-number tables as vec3/quat (subvars like
+// "pos.x" are member views); string vars go through scene.get/scene.set instead.
 bool resolveUrl(const entt::registry& reg, const std::string& url, UrlRef& out, std::string& err);
 bool resolveEntityField(const entt::registry& reg, entt::entity ent, const std::string& field, const std::string& label,
                        UrlRef& out, std::string& err);

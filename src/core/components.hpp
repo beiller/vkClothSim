@@ -4,6 +4,7 @@
 #include "params.hpp"
 #include <entt/entt.hpp>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct Transform {
@@ -43,9 +44,6 @@ inline Transform transformInvert(const Transform& t) {
             {1.0f / t.scale.x, 1.0f / t.scale.y, 1.0f / t.scale.z}};
 }
 
-// marker: the scene-declared window camera
-struct SceneCamera {};
-
 // marker: the VR head camera (child of the VR root)
 struct VrCamera {};
 
@@ -60,6 +58,16 @@ struct LuaScript {
     int animate = -1;
     int physics = -1;
     bool ready = false;
+    // C++ mirror of the script's `inst.vars` table: URL bind targets ("name.LuaScript.var").
+    // Numbers are stored as float (dotted keys for nested tables); 3/4-number tables get a
+    // contiguous vec slot (subvars like "pos.x" resolve to member views into it). The
+    // script host syncs these with the lua table each frame; pulls never erase entries,
+    // keeping bound UrlRef slots stable.
+    std::unordered_map<std::string, float> varsF;
+    std::unordered_map<std::string, bool> varsB;
+    std::unordered_map<std::string, std::string> varsS;
+    std::unordered_map<std::string, V3> varsV3;
+    std::unordered_map<std::string, Quat> varsQ;
 };
 
 struct CapsuleShape {

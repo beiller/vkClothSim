@@ -37,6 +37,9 @@ public:
     void buildUi(const nlohmann::json& spec);
     void button(const std::string& name);
     void destroyScript(int inst, int params, int onReady, int animate, int physics);
+    // string script vars (not bindable via UrlRef; scene.get/scene.set only)
+    bool varStr(const entt::registry& reg, const std::string& url, std::string& out, std::string& err);
+    void setVarStr(const entt::registry& reg, const std::string& url, const std::string& val, std::string& err);
 
     // shared access for the API modules
     static SceneScript* sSelf(lua_State* L);
@@ -51,6 +54,7 @@ private:
     bool callOnReady(int fnRef, int instRef);
     bool callHook(int fnRef, int instRef, float dt);
     void stepHook(float dt, int LuaScript::* hook);
+    void syncVars(entt::registry& reg, bool pushToLua);
     void onScriptDestroy(entt::registry& reg, entt::entity e);
     int includeModule(const std::string& relPath, std::string& err);
     Mesh readGeom(lua_State* L, int idx, std::string& err);

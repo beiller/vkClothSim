@@ -17,9 +17,10 @@ void reg(lua_State* L, SceneScript* host, const char* name, lua_CFunction fn) {
     lua_setfield(L, -2, name);
 }
 
-/// scene.set(target: entity|string, field: string, value: number|table) | set a reflected field (URL form "Entity.field" or entity + field name); value is a number or an array of up to 4 numbers
+/// scene.set(target: entity|string, field: string, value: number|table|string) | set a reflected field (URL form "Entity.field" or entity + field name); value is a number, an array of up to 4 numbers, or a string for "name.LuaScript.var" targets
 int lSet(lua_State* L) {
-    Engine& w = SceneScript::sSelf(L)->w();
+    auto* self = SceneScript::sSelf(L);
+    Engine& w = self->w();
     const auto readVals = [L](int idx) {
         std::vector<float> vals;
         if (lua_istable(L, idx)) {
@@ -47,23 +48,39 @@ int lSet(lua_State* L) {
         return 0;
     }
     const std::string url = luaL_checkstring(L, 1);
+    if (lua_isstring(L, 2) && url.find(".LuaScript.") != std::string::npos) {
+        self->setVarStr(w.reg, url, luaL_checkstring(L, 2), err);
+        return 0;
+    }
     const auto vals = readVals(2);
     if (vals.empty() || !sceneSet(w.reg, url, vals.data(), (int)vals.size(), err))
         return luaL_error(L, "scene.set '%s': %s", url.c_str(), err.c_str());
     return 0;
 }
 
-/// scene.get(target: entity|string, field?: string) -> number|vec3|vec4 | read a reflected field (URL form "Entity.field", or entity + field name); returns a scalar, {x,y,z}, or {x,y,z,w} depending on the field's width
+/// scene.get(target: entity|string, field?: string) -> number|vec3|vec4|string | read a reflected field (URL form "Entity.field", or entity + field name); returns a scalar, {x,y,z}, {x,y,z,w}, or a string for "name.LuaScript.var" targets
 int lGet(lua_State* L) {
-    Engine& w = SceneScript::sSelf(L)->w();
+    auto* self = SceneScript::sSelf(L);
+    Engine& w = self->w();
     float vals[4]{};
     int n = 0;
     std::string err;
-    const bool ok = lua_isnumber(L, 1)
-                        ? sceneGetEnt(w.reg, luaReadEnt(L, 1), luaL_checkstring(L, 2), vals, 4, n, err)
-                        : sceneGet(w.reg, luaL_checkstring(L, 1), vals, 4, n, err);
-    if (!ok)
-        return luaL_error(L, "scene.get: %s", err.c_str());
+    if (lua_isnumber(L, 1)) {
+        const entt::entity e = luaReadEnt(L, 1);
+        const std::string field = luaL_checkstring(L, 2);
+        if (!sceneGetEnt(w.reg, e, field, vals, 4, n, err))
+            return luaL_error(L, "scene.get: %s", err.c_str());
+    } else {
+        const std::string url = luaL_checkstring(L, 1);
+        if (!sceneGet(w.reg, url, vals, 4, n, err)) {
+            std::string s;
+            if (url.find(".LuaScript.") != std::string::npos && self->varStr(w.reg, url, s, err)) {
+                lua_pushstring(L, s.c_str());
+                return 1;
+            }
+            return luaL_error(L, "scene.get: %s", err.c_str());
+        }
+    }
     if (n == 1) {
         lua_pushnumber(L, vals[0]);
         return 1;

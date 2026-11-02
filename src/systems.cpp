@@ -11,10 +11,11 @@
 #include <cstdlib>
 #include <unordered_map>
 
+// multiple active cameras are allowed; the first one (by entity creation order) wins
 entt::entity findActiveCamera(const entt::registry& reg) {
     entt::entity cam = entt::null;
     reg.view<Camera>().each([&](entt::entity e, const Camera& c) {
-        if (c.active)
+        if (c.active && cam == entt::null)
             cam = e;
     });
     return cam;
@@ -40,9 +41,25 @@ void stepXr(entt::registry& reg, const XrFrame& fr) {
     const entt::entity vrCam = findMarker<VrCamera>(reg);
     if (vrCam != entt::null)
         reg.get<Camera>(vrCam).active = havePose;
-    const entt::entity cam = findMarker<SceneCamera>(reg);
-    if (cam != entt::null)
-        reg.get<Camera>(cam).active = !havePose;
+    // the active camera is simply any non-VR Camera with active=true. While XR has a
+    // pose, all scene cameras are deactivated; when it goes away (safety), reactivate
+    // any inactive one if none is active.
+    bool anySceneActive = false;
+    entt::entity firstInactive = entt::null;
+    reg.view<Camera>().each([&](entt::entity e, Camera& c) {
+        if (e == vrCam)
+            return;
+        if (havePose)
+            c.active = false;
+        else {
+            if (c.active)
+                anySceneActive = true;
+            else if (firstInactive == entt::null)
+                firstInactive = e;
+        }
+    });
+    if (!havePose && !anySceneActive && firstInactive != entt::null)
+        reg.get<Camera>(firstInactive).active = true;
     const entt::entity active = findActiveCamera(reg);
     if (active == entt::null)
         return;
