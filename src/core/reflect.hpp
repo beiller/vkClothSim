@@ -231,9 +231,9 @@ static const FieldDesc kRenderSettings[] = {
     {"bgColor", OFF(RenderSettings, bgColor), FieldKind::Color},
     {"exposure", OFF(RenderSettings, exposure), FieldKind::SliderF, 0.1f, 3.0f},
 };
-static const FieldDesc kRigidScene[] = {
-    {"velocitySteps", 0, FieldKind::SliderI, 1.0f, 64.0f},
-    {"positionSteps", 4, FieldKind::SliderI, 1.0f, 64.0f},
+static const FieldDesc kPhysicsSettings[] = {
+    {"velocitySteps", OFF(PhysicsSettings, velocitySteps), FieldKind::SliderI, 1.0f, 64.0f},
+    {"positionSteps", OFF(PhysicsSettings, positionSteps), FieldKind::SliderI, 1.0f, 64.0f},
 };
 
 static const TypeDesc kTypes[] = {
@@ -261,7 +261,7 @@ static const TypeDesc kTypes[] = {
     {"Geometry", kGeometry},
     {"Skeleton", kSkeleton},
     {"RenderSettings", kRenderSettings},
-    {"RigidScene", kRigidScene},
+    {"PhysicsSettings", kPhysicsSettings},
 };
 
 inline const TypeDesc* findType(const char* name) {
@@ -308,12 +308,9 @@ inline std::vector<std::pair<const TypeDesc*, std::function<const void*(void)>>>
     if (reg.try_get<Renderable>(e)) add("Renderable", liveRef<Renderable>(reg, e));
     if (reg.try_get<Texture>(e)) add("Texture", liveRef<Texture>(reg, e));
     if (reg.try_get<MouseInput>(e)) add("MouseInput", liveRef<MouseInput>(reg, e));
+    if (reg.try_get<RenderSettings>(e)) add("RenderSettings", liveRef<RenderSettings>(reg, e));
+    if (reg.try_get<PhysicsSettings>(e)) add("PhysicsSettings", liveRef<PhysicsSettings>(reg, e));
     return out;
 }
-
-struct RootRef {
-    const TypeDesc* type;
-    void* base;
-};
 
 }

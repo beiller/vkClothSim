@@ -71,6 +71,7 @@ void luaRegisterMath(lua_State* L, SceneScript* host);
 void luaRegisterComponents(lua_State* L, SceneScript* host);
 void luaRegisterScene(lua_State* L, SceneScript* host);
 void luaRegisterUi(lua_State* L, SceneScript* host);
-void luaRegisterRenderTable(lua_State* L, SceneScript* host);
+void luaRegisterGraphicsTable(lua_State* L, SceneScript* host);
 void luaRegisterPhysicsTable(lua_State* L, SceneScript* host);
 void luaRegisterSoftTable(lua_State* L, SceneScript* host);
+void luaRegisterInputTable(lua_State* L, SceneScript* host);

@@ -21,8 +21,8 @@ function M._animate(self, dt)
     if self.params.isClock then
         windTime = windTime + dt
     end
-    local sway = scene.qaxis(windAxis, self.amp * math.sin(windFreq * windTime + self.phase))
-    scene.replace(self.entity, "Transform", { pos = scene.qrot(sway, self.basePos), quat = scene.qmul(sway, self.baseQuat) })
+    local sway = math.qaxis(windAxis, self.amp * math.sin(windFreq * windTime + self.phase))
+    scene.replace(self.entity, "Transform", { pos = math.qrot(sway, self.basePos), quat = math.qmul(sway, self.baseQuat) })
 end
 
 return M

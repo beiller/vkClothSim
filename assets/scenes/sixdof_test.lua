@@ -20,7 +20,7 @@ local function boxBody(name, px, py, pz, mat)
 end
 
 local function y(e)
-    return scene.get_pose(e)[1][2]
+    return scene.get_pose(e).pos[2]
 end
 
 local welded, slider, control, lim, motored

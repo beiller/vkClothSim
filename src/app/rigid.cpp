@@ -227,7 +227,7 @@ void RigidScene::watch(entt::registry& reg) {
     reg.on_destroy<SphereShape>().connect<&RigidScene::onShapeDestroyed>(this);
 }
 
-void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const Quat& quat) {
+void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const Quat& quat, float dt) {
     const auto it = m_body.find(e);
     if (it == m_body.end())
         return;
@@ -260,7 +260,7 @@ void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const Quat& qua
     // move by the clamped delta, not to p: keeps position and velocity
     // consistent so the constraint doesn't oscillate against a mismatch
     bi.SetPositionAndRotation(id, old + delta, jQuat(quat), JPH::EActivation::Activate);
-    bi.SetLinearVelocity(id, delta / kFrameDt);
+    bi.SetLinearVelocity(id, delta / dt);
 }
 
 bool RigidScene::makeJoint(entt::entity e, const Joint& j) {
@@ -603,9 +603,15 @@ void RigidScene::project(const entt::registry& reg) {
     }
 }
 
-void RigidScene::step() {
-    m_settings.mNumVelocitySteps = (unsigned)velocitySteps;
-    m_settings.mNumPositionSteps = (unsigned)positionSteps;
+void RigidScene::step(const entt::registry& reg, float dt) {
+    int vel = 10, pos = 10;
+    for (auto [e, s] : reg.view<PhysicsSettings>().each()) {
+        vel = s.velocitySteps;
+        pos = s.positionSteps;
+        break;
+    }
+    m_settings.mNumVelocitySteps = (unsigned)vel;
+    m_settings.mNumPositionSteps = (unsigned)pos;
     m_phys->SetPhysicsSettings(m_settings);
     // a constraint never wakes a sleeping body (Jolt only wakes on collision),
     // so a chain dragged by a moving body would leave its asleep tail behind
@@ -624,7 +630,7 @@ void RigidScene::step() {
             continue;
         bi.ActivateConstraint(two);
     }
-    m_phys->Update(kFrameDt, 1, m_temp, m_job);
+    m_phys->Update(dt, 1, m_temp, m_job);
 }
 
 Transform RigidScene::pose(entt::entity e) const {

@@ -346,7 +346,7 @@ local kJoints = {
 function M._on_ready(self)
     local ch = scene.entity("char")
     scene.replace(ch, "Transform", { pos = { 0, 0, 0 } })
-    render.gltf(ch, "local/hashimoto.glb")
+    graphics.gltf(ch, "local/hashimoto.glb")
     local ground = scene.entity("ground")
     scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
     scene.replace(ground, "Renderable", { geom = geom(mesh.box({ 55, 1, 55 })) })
@@ -367,7 +367,7 @@ function M._on_ready(self)
         scene.replace(bone, "Transform", { pos = f.com })
         local cols = {}
         for c, cap in ipairs(f.caps) do
-            local q = scene.qfromto({ 0, 1, 0 }, cap.axis)
+            local q = math.qfromto({ 0, 1, 0 }, cap.axis)
             for i, s in ipairs(cap.seg) do
                 n = n + 1
                 -- cap.origin is world space, the body origin is f.com: convert to bone-local

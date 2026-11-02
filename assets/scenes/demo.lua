@@ -29,7 +29,7 @@ function M._on_ready(self)
     local gCol = scene.entity()
     scene.replace(gCol, "Collider", { shape = gShape })
     scene.replace(ground, "KinematicBody", { colliders = { gCol } })
-    soft.floor(0.0001)
+    soft.set_floor(0.0001)
 
     -- 50 scattered dynamic capsules, all sharing one shape, one material, one geometry
     local cap_length = 0.9 * world_scale
@@ -45,8 +45,8 @@ function M._on_ready(self)
         local px = (math.random() * 2 - 1) * 2 * world_scale
         local py = 4.5 + 3.5 * math.random()
         local pz = (math.random() * 2 - 1) * 2 * world_scale
-        local q = scene.qmul(scene.qaxis({0, 1, 0}, math.random() * 2 * math.pi),
-                              scene.qaxis({1, 0, 0}, (math.random() * 2 - 1) * 0.9))
+        local q = math.qmul(math.qaxis({0, 1, 0}, math.random() * 2 * math.pi),
+                              math.qaxis({1, 0, 0}, (math.random() * 2 - 1) * 0.9))
         local e = scene.entity()
         scene.replace(e, "Transform", { pos = {px, py, pz}, quat = q })
         scene.replace(e, "Renderable", { geom = capGeom })
@@ -89,11 +89,11 @@ function M._on_ready(self)
     -- glft tests
     -- local m = scene.entity("model")
     -- scene.replace(m, "Transform", { pos = { 0, 3, 0 } })
-    -- render.gltf(m, "scenes/models/cube_test.glb")
+    -- graphics.gltf(m, "scenes/models/cube_test.glb")
 
     local ch = scene.entity("hashimoto")
     scene.replace(ch, "Transform", { pos = { -5, 0, 0 } })
-    render.gltf(ch, "local/basegen8.glb")
+    graphics.gltf(ch, "local/basegen8.glb")
 end
 
 function M._physics(self, dt)

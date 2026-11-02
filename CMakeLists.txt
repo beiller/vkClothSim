@@ -125,18 +125,12 @@ add_library(3dsim_solvers STATIC solvers/collision_shape_solver.cpp)
 target_compile_features(3dsim_solvers PRIVATE cxx_std_23)
 target_include_directories(3dsim_solvers PUBLIC ${CMAKE_SOURCE_DIR}/solvers)
 
-add_library(3dsim_sim STATIC
-    src/sim/soft.cpp
-    src/sim/dualquat.cpp
-    src/sim/skin.cpp)
-target_compile_features(3dsim_sim PRIVATE cxx_std_23)
-target_include_directories(3dsim_sim PRIVATE ${CMAKE_SOURCE_DIR}/src/sim ${GEN_DIR})
-target_link_libraries(3dsim_sim PUBLIC 3dsim_core PRIVATE Vulkan::Vulkan)
-
-add_library(3dsim_app STATIC src/app/rigid.cpp)
-target_compile_features(3dsim_app PRIVATE cxx_std_23)
-target_include_directories(3dsim_app PRIVATE ${CMAKE_SOURCE_DIR}/src/app)
-target_link_libraries(3dsim_app PUBLIC 3dsim_core PRIVATE Jolt::Jolt)
+add_library(3dsim_physics STATIC
+    src/app/rigid.cpp
+    src/physics/physics_server.cpp)
+target_compile_features(3dsim_physics PRIVATE cxx_std_23)
+target_include_directories(3dsim_physics PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(3dsim_physics PUBLIC 3dsim_core PRIVATE Jolt::Jolt)
 
 set(XR_SOURCES src/xr/openxr_loader.cpp src/xr/xr.cpp)
 set(XR_INCLUDES ${CMAKE_SOURCE_DIR}/lib/openxr)
@@ -151,14 +145,18 @@ target_compile_features(3dsim_ui PRIVATE cxx_std_23)
 target_include_directories(3dsim_ui PRIVATE ${CMAKE_SOURCE_DIR}/src/ui ${CMAKE_SOURCE_DIR}/src/io ${GEN_DIR})
 target_link_libraries(3dsim_ui PUBLIC 3dsim_core imgui PRIVATE Vulkan::Vulkan glfw)
 
-add_library(3dsim_render STATIC
+add_library(3dsim_graphics STATIC
     src/vk/vkapp.cpp
     src/vk/renderer.cpp
     src/vk/renderer_env.cpp
-    src/vk/renderer_shadow.cpp)
-target_compile_features(3dsim_render PRIVATE cxx_std_23)
-target_include_directories(3dsim_render PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/io ${CMAKE_SOURCE_DIR}/src/ui ${GEN_DIR})
-target_link_libraries(3dsim_render PUBLIC 3dsim_core 3dsim_ui PRIVATE glfw Vulkan::Vulkan Jolt::Jolt)
+    src/vk/renderer_shadow.cpp
+    src/vk/graphics_server.cpp
+    src/sim/soft.cpp
+    src/sim/dualquat.cpp
+    src/sim/skin.cpp)
+target_compile_features(3dsim_graphics PRIVATE cxx_std_23)
+target_include_directories(3dsim_graphics PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/io ${CMAKE_SOURCE_DIR}/src/ui ${GEN_DIR})
+target_link_libraries(3dsim_graphics PUBLIC 3dsim_core 3dsim_ui PRIVATE glfw Vulkan::Vulkan)
 
 add_library(3dsim_script STATIC
     src/script/lua_host.cpp
@@ -168,7 +166,7 @@ add_library(3dsim_script STATIC
     src/script/api_ui.cpp)
 target_compile_features(3dsim_script PRIVATE cxx_std_23)
 target_include_directories(3dsim_script PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/ui ${LUA_INCLUDE_DIR})
-target_link_libraries(3dsim_script PUBLIC 3dsim_core 3dsim_io 3dsim_render 3dsim_ui 3dsim_app 3dsim_sim PRIVATE Jolt::Jolt ${LUA_LIBRARY})
+target_link_libraries(3dsim_script PUBLIC 3dsim_core 3dsim_io 3dsim_graphics 3dsim_ui 3dsim_physics PRIVATE Jolt::Jolt ${LUA_LIBRARY})
 
 # the app: glue (main loop, systems, scene loading) + all subsystems
 add_executable(vksim
@@ -178,7 +176,7 @@ add_executable(vksim
 target_compile_features(vksim PRIVATE cxx_std_23)
 target_include_directories(vksim PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/sim ${CMAKE_SOURCE_DIR}/src/ui ${XR_INCLUDES} ${GEN_DIR})
 target_link_libraries(vksim PRIVATE
-    3dsim_script 3dsim_sim 3dsim_app 3dsim_xr 3dsim_render 3dsim_io
+    3dsim_script 3dsim_physics 3dsim_graphics 3dsim_xr 3dsim_io
     glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB dl ${LUA_LIBRARY})
 
 # CPU self-test for the ported dual-quaternion math (Blender ground truth). Build with -Dvksim's

@@ -139,25 +139,22 @@ void spawnEditorUi(Engine& w, entt::entity tab) {
             }
         }
     }
-    for (const auto& r : engineRoots(w)) {
-        if (!r.type)
-            continue;
-        const char* head = std::strcmp(r.type->name, "RigidScene") == 0 ? "rigid" : "render";
-        entt::entity sec = spawnWidget(w.reg, w.uiSeq, tab, UISection{r.type->name, true});
-        for (const auto& f : r.type->fields)
-            spawnFieldWidget(w.reg, w.uiSeq, sec, f.name, &f, std::string(head) + "." + f.name);
-    }
+}
+
+// the singleton settings entity: RenderSettings + PhysicsSettings as components; short URLs
+// ("render.*"/"rigid.*") and the editor UI resolve against it
+void spawnSettingsEntity(entt::registry& reg) {
+    entt::entity e = reg.create();
+    reg.emplace<Name>(e, "settings");
+    reg.emplace<SettingsRoot>(e);
+    reg.emplace<RenderSettings>(e);
+    reg.emplace<PhysicsSettings>(e);
 }
 
 void initEngine(Engine& w) {
-    w.rigid.init();
-    w.gpuSim.init(w.app->device(), w.app->pdev());
-    const auto requestVerts = [&w](const entt::registry& reg, const Mesh& m, entt::entity key) {
-        return w.renderer.requestVerts(reg, m, key);
-    };
-    w.gpuSim.skin.setRequestVerts(requestVerts);
-    w.gpuSim.soft.setRequestVerts(requestVerts);
-    w.renderer.init(*w.app, 256, Mat4(1.0f));
+    w.physics.init();
+    if (w.hasDevice)
+        w.graphics.init(*w.app, w.hasWindow);
     w.script.init(w);
     std::string err;
     if (!w.script.loadMeshStdlib(err)) {
@@ -165,21 +162,19 @@ void initEngine(Engine& w) {
         std::exit(1);
     }
     w.script.watch(w.reg);
-    w.renderer.watch(w.reg);
-    w.rigid.watch(w.reg);
-    w.gpuSim.soft.watch(w.reg);
-    w.gpuSim.skin.watch(w.reg);
+    if (w.hasDevice)
+        w.graphics.watch(w.reg);
+    w.physics.watch(w.reg);
 }
 
 void resetScene(Engine& w) {
-    w.renderer.flushFrees();
-    w.gpuSim.soft.flushFrees();
-    w.gpuSim.skin.flushFrees();
+    if (w.hasDevice)
+        w.graphics.flushFrees();
     w.reg.clear();
-    w.rigid.reset();
-    w.renderer.reset();
-    w.gpuSim.soft.reset();
-    w.gpuSim.skin.reset();
+    spawnSettingsEntity(w.reg);
+    w.physics.reset();
+    if (w.hasDevice)
+        w.graphics.reset();
     w.script.shutdown();
     w.script.init(w);
     std::string err;
@@ -187,7 +182,6 @@ void resetScene(Engine& w) {
         std::fprintf(stderr, "3dsim: geometry stdlib: %s\n", err.c_str());
     w.uiSeq = 0;
     w.showDemo = false;
-    w.render = {};
     spawnFpsHud(w.reg, w.uiSeq, V3{0.45f, 1.72f, 2.8f}, V2{160.0f, 180.0f});
     spawnInputEntities(w);
     if (w.xr && w.xrSession) {
@@ -226,8 +220,10 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
         const entt::entity cam = buildObject(w, *camObj, p, false);
         w.reg.emplace<SceneCamera>(cam);
 
-        const VkExtent2D ext = w.app->extent();
-        w.renderer.setViewProj(cameraView(w.reg, cam, (float)ext.width / (float)ext.height));
+        if (w.hasWindow) {
+            const VkExtent2D ext = w.app->extent();
+            w.graphics.setViewProj(cameraView(w.reg, cam, (float)ext.width / (float)ext.height));
+        }
 
         for (const auto& o : objects)
             if (&o != camObj)
@@ -247,13 +243,15 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
                 else
                     vals[0] = v.get<float>();
                 std::string err;
-                if (!sceneSet(w.reg, engineRoots(w), k, vals, n, err))
+                if (!sceneSet(w.reg, k, vals, n, err))
                     fail(p, "set '" + k + "': " + err);
             }
         }
 
-        w.gpuSim.build(w.reg);
-        w.script.buildUi(j);
+        if (w.hasDevice)
+            w.graphics.build(w.reg);
+        if (w.hasWindow)
+            w.script.buildUi(j);
         return true;
     } catch (const SceneError& e) {
         err = e.what();
@@ -274,7 +272,7 @@ void publishTextures(Engine& w) {
         (void)t;
         if (isEnvTex(e))
             continue; // publishEnvironments uploads it
-        const entt::entity g = w.renderer.uploadTexture(w.reg, e);
+        const entt::entity g = w.graphics.uploadTexture(w.reg, e);
         if (g != entt::null)
             ups.emplace_back(e, g);
     }
@@ -295,14 +293,14 @@ void publishEnvironments(Engine& w) {
             if (w.reg.try_get<GPUTexture>(env.tex))
                 eq = env.tex;
             else {
-                const entt::entity g = w.renderer.uploadTexture(w.reg, env.tex);
+                const entt::entity g = w.graphics.uploadTexture(w.reg, env.tex);
                 if (g != entt::null) {
                     w.reg.get<Environment>(e).tex = g;
                     eq = g;
                 }
             }
         }
-        w.renderer.buildEnvironment(*w.app, e, eq);
+        w.graphics.buildEnvironment(*w.app, e, eq);
     }
 }
 
@@ -313,8 +311,10 @@ bool loadScene(Engine& w, const std::string& path) {
         w.loadError = err;
         return false;
     }
-    publishTextures(w);
-    publishEnvironments(w);
+    if (w.hasWindow) {
+        publishTextures(w);
+        publishEnvironments(w);
+    }
     w.loadError = "";
     w.scenePath = path;
     std::printf("3dsim: scene %s\n", path.c_str());

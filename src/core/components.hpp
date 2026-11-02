@@ -173,9 +173,17 @@ struct PointLight {
     float shadowMaxRadius = 16.0f;
 };
 
+// marker: the singleton settings entity (RenderSettings + PhysicsSettings components)
+struct SettingsRoot {};
+
 struct RenderSettings {
     float bgColor[3] = {0.10f, 0.11f, 0.15f};
     float exposure = 1.0f;
+};
+
+struct PhysicsSettings {
+    int velocitySteps = 10;
+    int positionSteps = 10;
 };
 
 struct Camera {

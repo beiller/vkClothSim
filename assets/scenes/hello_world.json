@@ -1,0 +1,13 @@
+{
+    "name": "hello world",
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 1.2, 4] },
+                "Camera": { "fovDeg": 50, "active": true }
+            }
+        },
+        { "name": "hello", "script": "scenes/hello_world" }
+    ]
+}

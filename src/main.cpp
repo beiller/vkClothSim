@@ -48,26 +48,41 @@ int main(int argc, char** argv) {
             winH = h;
         }
     }
-    if (!app.initInstance(winW, winH, "3dsim"))
-        return 1;
-
-    Engine engine;
-    engine.app = &app;
-    bool wantNoVr = false;
+    bool wantNoVr = false, noGraphics = false, headless = false;
+    int maxFrames = -1;
     std::string scenePath;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--no-vr") == 0)
             wantNoVr = true;
+        else if (std::strcmp(argv[i], "--no-graphics") == 0)
+            noGraphics = true;
+        else if (std::strcmp(argv[i], "--headless") == 0)
+            headless = true;
+        else if (std::strcmp(argv[i], "--frames") == 0)
+            maxFrames = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--scene") == 0)
             scenePath = argv[++i];
     }
-    if (!wantNoVr) {
+    if (noGraphics && headless) {
+        std::fprintf(stderr, "3dsim: --no-graphics and --headless conflict\n");
+        return 1;
+    }
+    if (!noGraphics && (headless ? !app.initHeadless() : !app.initInstance(winW, winH, "3dsim")))
+        return 1;
+
+    Engine engine;
+    engine.app = noGraphics ? nullptr : &app;
+    engine.hasDevice = !noGraphics;
+    engine.hasWindow = !noGraphics && !headless;
+    if (engine.hasWindow && !wantNoVr) {
         engine.xr = std::make_unique<Xr>();
         if (!engine.xr->createDevice(app))
             engine.xr.reset();
     }
-    app.initDevice(engine.xr ? engine.xr->device() : app.makeDevice());
+    if (engine.hasWindow)
+        app.initDevice(engine.xr ? engine.xr->device() : app.makeDevice());
     initEngine(engine);
+    engine.physics.setFixedStepHook([&engine](float sdt) { engine.script.physicsAll(sdt); });
     if (engine.xr) {
         engine.xrSession = engine.xr->init(app);
         if (engine.xrSession) {
@@ -78,7 +93,7 @@ int main(int argc, char** argv) {
                 if (i < engine.xr->eyeCount())
                     imgs[i] = engine.xr->images(i);
             }
-            engine.renderer.initXrTarget(app, engine.xr->format(), engine.xr->eyeCount(), imgs, exts);
+            engine.graphics.initXrTarget(app, engine.xr->format(), engine.xr->eyeCount(), imgs, exts);
             spawnVrRoot(engine.reg);
             spawnControllers(engine);
         } else
@@ -87,12 +102,18 @@ int main(int argc, char** argv) {
     }
     spawnInputEntities(engine);
 
-    uiInit({app.instance(), app.pdev(), app.device(), app.queueFamily(), app.queue(), (int)app.imageCount(),
-            [&engine](entt::entity c) -> VkImage { return engine.renderer.gpuTextureImage(c); }});
+    if (engine.hasWindow)
+        uiInit({app.instance(), app.pdev(), app.device(), app.queueFamily(), app.queue(), (int)app.imageCount(),
+                [&engine](entt::entity c) -> VkImage { return engine.graphics.canvasImage(c); }});
     uiSetButtonHook([&engine](const std::string& a) { engine.script.button(a); });
 
-    std::printf("3dsim: vulkan+imgui | GPU soft-body sim | startup scene select (or --scene file.json) | "
-                "VR auto-detected, --no-vr for plain window | esc/close to quit\n");
+    if (noGraphics)
+        std::printf("3dsim: CPU-only run (no graphics) | physics + scripts | --frames N to exit\n");
+    else if (headless)
+        std::printf("3dsim: headless GPU compute (no window) | physics + soft/skin | --frames N to exit\n");
+    else
+        std::printf("3dsim: vulkan+imgui | GPU soft-body sim | startup scene select (or --scene file.json) | "
+                    "VR auto-detected, --no-vr for plain window | esc/close to quit\n");
 
     const std::string kMenuPath = "assets/scenes/menu.json";
     int rc = 0;
@@ -105,18 +126,22 @@ int main(int argc, char** argv) {
     float fpsAccum = 0.0f;
     int fpsFrames = 0;
     float fps = 0.0f;
-    float simAccum = 0.0f;
-    int softTick = 0;
     const bool uncapped = std::getenv("NO_VSYNC") != nullptr;
     const bool prof = std::getenv("VKSIM_PROFILE") != nullptr;
-    if (prof)
-        engine.renderer.profOn = true;
+    if (prof && engine.hasDevice)
+        engine.graphics.profOn() = true;
     float uiAccum = 0.0f, acqAccum = 0.0f, drawAccum = 0.0f;
     PhaseWatch phaseMs;
     PaceWatch pace;
-    while (rc == 0 && !app.windowShouldClose()) {
+    int frameCount = 0;
+    while (rc == 0) {
+        if (maxFrames >= 0 && ++frameCount > maxFrames)
+            break;
+        if (engine.hasWindow && app.windowShouldClose())
+            break;
         const auto nowFrame = std::chrono::steady_clock::now();
-        const float dt = std::chrono::duration<float>(nowFrame - lastFrame).count();
+        // windowed: real frame dt (vsync-paced); serverless/headless: fixed step for determinism
+        const float dt = engine.hasWindow ? std::chrono::duration<float>(nowFrame - lastFrame).count() : kFrameDt;
         lastFrame = nowFrame;
         fpsAccum += dt;
         ++fpsFrames;
@@ -127,7 +152,7 @@ int main(int argc, char** argv) {
                        phaseMs.rend / fpsFrames, phaseMs.xend / fpsFrames,
                        (phaseMs.wait + phaseMs.tail) / fpsFrames};
             if (prof) {
-                auto& p = engine.renderer.prof;
+                auto& p = engine.graphics.prof();
                 std::printf("prof: %5.1ffps poll %5.2f cpu %5.2f jolt %5.2f skel %5.2f sim %5.2f "
                            "ui %5.2f acq %5.2f draw %5.2f (ui %5.2f shadow %5.2f scene %5.2f tonemap %5.2f) "
                            "idle %5.2f\n",
@@ -165,8 +190,10 @@ int main(int argc, char** argv) {
             }
 
         float wait = 0.0f;
-        app.pollEvents();
-        app.resizeBuffers();
+        if (engine.hasWindow) {
+            app.pollEvents();
+            app.resizeBuffers();
+        }
         XrFrame fr;
         if (engine.xr) {
             const auto tWait = std::chrono::steady_clock::now();
@@ -174,9 +201,8 @@ int main(int argc, char** argv) {
             wait = msBetween(tWait, std::chrono::steady_clock::now());
             fr = engine.xr->poll();
         }
-        engine.renderer.flushFrees();
-        engine.gpuSim.soft.flushFrees();
-        engine.gpuSim.skin.flushFrees();
+        if (engine.hasDevice)
+            engine.graphics.flushFrees();
         if (!engine.pendingScene.empty()) {
             std::string p;
             std::swap(p, engine.pendingScene);
@@ -184,8 +210,10 @@ int main(int argc, char** argv) {
                 loadScene(engine, kMenuPath);
         }
         const auto tPoll = std::chrono::steady_clock::now();
-        stepMouse(engine);
-        stepKeyboard(engine);
+        if (engine.hasWindow) {
+            stepMouse(engine);
+            stepKeyboard(engine);
+        }
         engine.script.activateScripts();
         engine.script.animateAll(dt);
         if (engine.xr) {
@@ -194,44 +222,30 @@ int main(int argc, char** argv) {
         }
 
         float frameJolt = 0.0f, frameSkel = 0.0f, frameSoft = 0.0f, frameAcq = 0.0f;
-        simAccum += dt;
-        if (simAccum > 0.4f)
-            simAccum = 0.4f;
-        while (simAccum >= kFrameDt) {
-            engine.script.physicsAll(kFrameDt);
-            const auto tJ = std::chrono::steady_clock::now();
-            stepRigid(engine.rigid, engine.reg);
-            frameJolt += msBetween(tJ, std::chrono::steady_clock::now());
-            resolveWorldTransforms(engine.reg);
-            // skel: skin CPU + its own blocking submit, so the GPU skin time is its own bucket
-            const auto tS = std::chrono::steady_clock::now();
-            {
-                VkCommandBuffer skelCmd = app.beginCommands();
-                engine.gpuSim.skin.step(engine.reg, skelCmd);
-                app.submit(skelCmd);
-            }
-            frameSkel += msBetween(tS, std::chrono::steady_clock::now());
-            // sim: cloth only, its own submit, gated to kSoftHz (not the full rigid rate)
-            if ((softTick++ % kSoftSubdiv) == 0) {
-                const auto tC = std::chrono::steady_clock::now();
-                VkCommandBuffer softCmd = app.beginCommands();
-                stepSoft(engine, softCmd);
-                app.submit(softCmd);
-                frameSoft += msBetween(tC, std::chrono::steady_clock::now());
-            }
-            simAccum -= kFrameDt;
-        }
-        // Pace the loop to the sim rate when uncapped (NO_VSYNC): otherwise the
-        // render spins at full speed and the sim runs at kRigidHz only in the
-        // average sense. Under vsync (default) this is a no-op — vsync paces it.
-        if (uncapped && simAccum < kFrameDt)
-            std::this_thread::sleep_for(std::chrono::duration<double>(kFrameDt - simAccum));
+        engine.physics.update(engine.reg, dt);
         resolveWorldTransforms(engine.reg);
+        if (engine.hasDevice) {
+            engine.graphics.updateSim(engine.reg, dt);
+            frameSkel = engine.graphics.simProf.skel;
+            frameSoft = engine.graphics.simProf.soft;
+            engine.graphics.simProf.reset();
+        }
+        frameJolt = engine.physics.takeJoltMs();
+        // Pace the loop to the sim rate when uncapped (NO_VSYNC): otherwise the
+        // render spins at full speed. The sim catch-up now happens inside the
+        // servers' accumulators, so this is pure render pacing. Under vsync
+        // (default) this is a no-op — vsync paces it.
+        if (engine.hasWindow && uncapped && dt < kFrameDt)
+            std::this_thread::sleep_for(std::chrono::duration<double>(kFrameDt - dt));
         const auto tSim = std::chrono::steady_clock::now();
 
-        const entt::entity cam = findActiveCamera(engine.reg);
-        if (cam != entt::null)
-            engine.renderer.setViewProj(cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height));
+        entt::entity cam = entt::null;
+        if (engine.hasWindow) {
+        const auto foundCam = findActiveCamera(engine.reg);
+        if (foundCam != entt::null) {
+            cam = foundCam;
+            engine.graphics.setViewProj(cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height));
+        }
         // UI pointer: world-space ray (VR: controller aim; window: camera through cursor)
         // -> rigid-body raycast against each canvas collider -> uv of the hit point
         std::vector<entt::entity> canvases;
@@ -251,8 +265,8 @@ int main(int argc, char** argv) {
                 if (std::strstr(n.id.c_str(), "hand") || std::strstr(n.id.c_str(), "controller"))
                     excl.push_back(e);
             });
-            const RayHit h = engine.rigid.raycast(o, d, 30.0f, excl);
-            if (!h.hit || engine.rigid.entityFor(h.body) != canvas)
+            const RayHit h = engine.physics.raycast(o, d, 30.0f, excl);
+            if (!h.hit || engine.physics.entityFor(h.body) != canvas)
                 return false;
             V2 uv;
             if (!uiPanelUv(engine.reg, canvas, h.pos, uv))
@@ -263,7 +277,7 @@ int main(int argc, char** argv) {
         };
         std::vector<UiFeed> feeds;
         for (entt::entity c : canvases) {
-            engine.renderer.uiEnsureTarget(engine.reg, c);
+            engine.graphics.uiEnsureTarget(engine.reg, c);
             UiFeed f{c, ImVec2{-1.0f, -1.0f}, false, 0.0f, false};
             if (engine.xr && fr.running && fr.havePose) {
                 const entt::entity root = findMarker<VrRoot>(engine.reg);
@@ -304,39 +318,41 @@ int main(int argc, char** argv) {
         if (!feeds.empty() && engine.showDemo)
             feeds[0].demo = true;
         for (entt::entity c : canvases)
-            uiEnsureContext(engine.reg, c, engine.renderer.uiTargetPass(c), engine.renderer.uiTargetFb(c));
-        const auto roots = engineRoots(engine);
-        uiFrame(engine.reg, feeds, roots);
-        stepBinds(engine.reg, roots);
+            uiEnsureContext(engine.reg, c, engine.graphics.uiTargetPass(c), engine.graphics.uiTargetFb(c));
+        uiFrame(engine.reg, feeds);
+        }
+        stepBinds(engine.reg);
 
         uiAccum += msBetween(tSim, std::chrono::steady_clock::now());
         const auto tAcq = std::chrono::steady_clock::now();
-        const uint32_t idx = app.acquireNextImage();
-        frameAcq += msBetween(tAcq, std::chrono::steady_clock::now());
-        acqAccum += frameAcq;
-        VkCommandBuffer cmd = app.beginCommands();
-        if (engine.xr) {
-            uint32_t imgIdx[2] = {0, 0};
-            if (fr.shouldRender)
-                for (int i = 0; i < engine.xr->eyeCount(); ++i) {
-                    engine.xr->acquireImage(i);
-                    imgIdx[i] = (uint32_t)engine.xr->imageIndex(i);
-                }
-            engine.renderer.drawVr(cmd, app, idx, engine.reg, engine.render, cam,
-                                  fr.shouldRender ? imgIdx : nullptr, fr.shouldRender ? engine.xr->eyeCount() : 0);
-            if (fr.shouldRender)
-                for (int i = 0; i < engine.xr->eyeCount(); ++i)
-                    engine.xr->releaseImage(i);
-        } else {
-            const auto tDraw = std::chrono::steady_clock::now();
-            engine.renderer.draw(cmd, app, idx, engine.reg, engine.render);
-            drawAccum += msBetween(tDraw, std::chrono::steady_clock::now());
+        if (engine.hasWindow) {
+            const uint32_t idx = app.acquireNextImage();
+            frameAcq += msBetween(tAcq, std::chrono::steady_clock::now());
+            acqAccum += frameAcq;
+            VkCommandBuffer cmd = app.beginCommands();
+            if (engine.xr) {
+                uint32_t imgIdx[2] = {0, 0};
+                if (fr.shouldRender)
+                    for (int i = 0; i < engine.xr->eyeCount(); ++i) {
+                        engine.xr->acquireImage(i);
+                        imgIdx[i] = (uint32_t)engine.xr->imageIndex(i);
+                    }
+                engine.graphics.drawVr(cmd, app, idx, engine.reg, cam,
+                                      fr.shouldRender ? imgIdx : nullptr, fr.shouldRender ? engine.xr->eyeCount() : 0);
+                if (fr.shouldRender)
+                    for (int i = 0; i < engine.xr->eyeCount(); ++i)
+                        engine.xr->releaseImage(i);
+            } else {
+                const auto tDraw = std::chrono::steady_clock::now();
+                engine.graphics.draw(cmd, app, idx, engine.reg);
+                drawAccum += msBetween(tDraw, std::chrono::steady_clock::now());
+            }
+            if (engine.xr)
+                engine.xr->endFrame(fr.shouldRender);
+            app.present(idx, !engine.xr);
         }
         const auto tRender = std::chrono::steady_clock::now();
-        if (engine.xr)
-            engine.xr->endFrame(fr.shouldRender);
-        const auto tXrEnd = std::chrono::steady_clock::now();
-        app.present(idx, !engine.xr);
+        const auto tXrEnd = tRender;
         phaseMs.poll += msBetween(nowFrame, tPoll);
         phaseMs.wait += wait;
         phaseMs.cpu += msBetween(tPoll, tSim) - frameJolt - frameSkel - frameSoft;
@@ -351,12 +367,14 @@ int main(int argc, char** argv) {
             pace.add(msBetween(nowFrame, tXrEnd) - wait);
     }
 
-    uiShutdown();
-    engine.gpuSim.shutdown();
+    if (engine.hasWindow)
+        uiShutdown();
+    if (engine.hasDevice)
+        engine.graphics.shutdown();
     engine.script.shutdown();
-    engine.renderer.shutdown();
     if (engine.xr)
         engine.xr->shutdown();
-    app.shutdown();
+    if (!noGraphics)
+        app.shutdown();
     return rc;
 }

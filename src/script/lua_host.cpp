@@ -85,15 +85,18 @@ void SceneScript::init(Engine& w) {
         lua_setglobal(L, lib);
     }
     lua_newtable(L);
-    luaRegisterMath(L, this);
     luaRegisterComponents(L, this);
     luaRegisterScene(L, this);
-    luaRegisterUi(L, this);
     lua_setglobal(L, "scene");
 
+    // extend the standard math library (sqrt/sin/... stay available) with vector/quaternion helpers
+    lua_getglobal(L, "math");
+    luaRegisterMath(L, this);
+    lua_settop(L, -1);
+
     lua_newtable(L);
-    luaRegisterRenderTable(L, this);
-    lua_setglobal(L, "render");
+    luaRegisterGraphicsTable(L, this);
+    lua_setglobal(L, "graphics");
 
     lua_newtable(L);
     luaRegisterPhysicsTable(L, this);
@@ -102,6 +105,14 @@ void SceneScript::init(Engine& w) {
     lua_newtable(L);
     luaRegisterSoftTable(L, this);
     lua_setglobal(L, "soft");
+
+    lua_newtable(L);
+    luaRegisterUi(L, this);
+    lua_setglobal(L, "ui");
+
+    lua_newtable(L);
+    luaRegisterInputTable(L, this);
+    lua_setglobal(L, "input");
     m_time = 0.0f;
 }
 
@@ -306,6 +317,12 @@ void SceneScript::onScriptDestroy(entt::registry& reg, entt::entity e) {
         destroyScript(ls->inst, ls->params, ls->onReady, ls->animate, ls->physics);
 }
 
+// script module contract: a .lua file attached via scene.attach_script must return a table (the module).
+// The engine builds a per-attach instance table and calls the module's hooks with it as `self`.
+/// script-instance | per-attach instance table passed as self to every hook; fields: entity (the attached entity), params (the table passed to scene.attach_script, when given); its __index metatable is the module, so module functions act as methods and inst fields hold per-instance state
+/// script-hook _on_ready(inst) | called once when the attached module has loaded
+/// script-hook _animate(inst, dt) | called every frame with the frame delta time in seconds
+/// script-hook _physics(inst, dt) | called every fixed physics step (120 Hz) before the Jolt step; the place to write kinematic poses
 void SceneScript::activateScripts() {
     if (!L)
         return;

@@ -12,7 +12,7 @@ local bind = {}
 local function bindPose(name)
     if not bind[name] then
         local p = scene.get_pose(name)
-        bind[name] = { p[1], p[2] }
+        bind[name] = { p.pos, p.quat }
     end
     return bind[name]
 end
@@ -22,7 +22,7 @@ local function yaw(name, ang)
     if ang == 0 then
         scene.set_pose(name, b[1], b[2])
     else
-        scene.set_pose(name, b[1], scene.qmul(b[2], scene.qaxis({ 0, 1, 0 }, ang)))
+        scene.set_pose(name, b[1], math.qmul(b[2], math.qaxis({ 0, 1, 0 }, ang)))
     end
 end
 
@@ -43,7 +43,7 @@ function M._on_ready(self)
 
     local ch = scene.entity("char")
     scene.replace(ch, "Transform", { pos = { 0, 0, 0 } })
-    render.gltf(ch, "local/hashimoto.glb")
+    graphics.gltf(ch, "local/hashimoto.glb")
 
     local matAxis = scene.entity("mat_axis")
     scene.replace(matAxis, "Material", { baseColor = {0, 1, 0.4}, metallic = 0, roughness = 0.4,

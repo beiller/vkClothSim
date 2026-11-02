@@ -134,6 +134,112 @@ bool VkApp::initInstance(int width, int height, const char* title) {
     return true;
 }
 
+bool VkApp::initHeadless() {
+    uint32_t ne = 0;
+    vkEnumerateInstanceExtensionProperties(nullptr, &ne, nullptr);
+    std::vector<VkExtensionProperties> iexts(ne);
+    if (ne > 0)
+        vkEnumerateInstanceExtensionProperties(nullptr, &ne, iexts.data());
+    const char* want[] = {"VK_KHR_external_memory_capabilities", "VK_KHR_external_semaphore_capabilities"};
+    std::vector<const char*> exts;
+    for (const char* w : want)
+        if (std::any_of(iexts.begin(), iexts.end(),
+                        [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
+            exts.push_back(w);
+    std::vector<const char*> layers;
+    if (std::getenv("VK_VALIDATE")) {
+        uint32_t nl = 0;
+        vkEnumerateInstanceLayerProperties(&nl, nullptr);
+        std::vector<VkLayerProperties> lprops(nl);
+        vkEnumerateInstanceLayerProperties(&nl, lprops.data());
+        for (const auto& p : lprops)
+            if (std::string_view(p.layerName) == "VK_LAYER_KHRONOS_validation")
+                layers.push_back("VK_LAYER_KHRONOS_validation");
+    }
+    VkApplicationInfo app{};
+    app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    app.pApplicationName = "3dsim";
+    app.apiVersion = VK_API_VERSION_1_1;
+    VkInstanceCreateInfo ic{};
+    ic.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    ic.pApplicationInfo = &app;
+    ic.enabledExtensionCount = (uint32_t)exts.size();
+    ic.ppEnabledExtensionNames = exts.data();
+    ic.enabledLayerCount = (uint32_t)layers.size();
+    ic.ppEnabledLayerNames = layers.data();
+    VK(vkCreateInstance(&ic, nullptr, &m_inst));
+
+    uint32_t nd = 0;
+    vkEnumeratePhysicalDevices(m_inst, &nd, nullptr);
+    std::vector<VkPhysicalDevice> devs(nd);
+    vkEnumeratePhysicalDevices(m_inst, &nd, devs.data());
+    for (auto* d : devs) {
+        uint32_t qc = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(d, &qc, nullptr);
+        std::vector<VkQueueFamilyProperties> qps(qc);
+        vkGetPhysicalDeviceQueueFamilyProperties(d, &qc, qps.data());
+        for (uint32_t i = 0; i < qc; ++i)
+            if (qps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                m_pdev = d;
+                m_qf = i;
+                break;
+            }
+        if (m_pdev)
+            break;
+    }
+    if (!m_pdev) {
+        std::fprintf(stderr, "no graphics device\\n");
+        vkDestroyInstance(m_inst, nullptr);
+        return false;
+    }
+    {
+        VkPhysicalDeviceProperties pp{};
+        vkGetPhysicalDeviceProperties(m_pdev, &pp);
+        std::printf("3dsim: gpu %s (%s)\\n", pp.deviceName,
+                    pp.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "discrete" : "integrated");
+    }
+
+    m_qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    m_qci.queueFamilyIndex = m_qf;
+    m_qci.queueCount = 1;
+    m_qci.pQueuePriorities = &m_qprio;
+
+    uint32_t nde = 0;
+    vkEnumerateDeviceExtensionProperties(m_pdev, nullptr, &nde, nullptr);
+    std::vector<VkExtensionProperties> deexts(nde);
+    if (nde > 0)
+        vkEnumerateDeviceExtensionProperties(m_pdev, nullptr, &nde, deexts.data());
+    const char* dewant[] = {"VK_KHR_external_memory_fd", "VK_KHR_external_semaphore_fd"};
+    for (const char* w : dewant)
+        if (std::any_of(deexts.begin(), deexts.end(),
+                        [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
+            m_devExt.push_back(w);
+
+    m_dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    m_dci.queueCreateInfoCount = 1;
+    m_dci.pQueueCreateInfos = &m_qci;
+    m_dci.enabledExtensionCount = (uint32_t)m_devExt.size();
+    m_dci.ppEnabledExtensionNames = m_devExt.data();
+    makeDevice();
+
+    vkGetDeviceQueue(m_dev, m_qf, 0, &m_queue);
+    VkCommandPoolCreateInfo cpc{};
+    cpc.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    cpc.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    cpc.queueFamilyIndex = m_qf;
+    VK(vkCreateCommandPool(m_dev, &cpc, nullptr, &m_pool));
+    VkCommandBufferAllocateInfo cai{};
+    cai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cai.commandPool = m_pool;
+    cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cai.commandBufferCount = 1;
+    VK(vkAllocateCommandBuffers(m_dev, &cai, &m_cmd));
+    VkFenceCreateInfo fci{};
+    fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    VK(vkCreateFence(m_dev, &fci, nullptr, &m_fence));
+    return true;
+}
+
 VkDevice VkApp::makeDevice() {
     VkPhysicalDeviceFeatures feat{};
     feat.imageCubeArray = VK_TRUE;
@@ -332,9 +438,11 @@ void VkApp::shutdown() {
     vkDestroyFence(m_dev, m_fence, nullptr);
     vkDestroyCommandPool(m_dev, m_pool, nullptr);
     vkDestroyDevice(m_dev, nullptr);
-    vkDestroySurfaceKHR(m_inst, m_surface, nullptr);
+    if (m_surface)
+        vkDestroySurfaceKHR(m_inst, m_surface, nullptr);
     vkDestroyInstance(m_inst, nullptr);
-    glfwDestroyWindow(m_win);
+    if (m_win)
+        glfwDestroyWindow(m_win);
     glfwTerminate();
 }
 

@@ -20,18 +20,18 @@ function M._physics(self, dt)
     end
     local t = scene.component(camH, "Transform")
     local pos, q = t.pos, t.quat
-    local fwd = scene.qrot(q, {0, 0, -1})
-    local rgt = scene.qrot(q, {1, 0, 0})
+    local fwd = math.qrot(q, {0, 0, -1})
+    local rgt = math.qrot(q, {1, 0, 0})
     local mv = {0, 0, 0}
-    if scene.key_down(kbH, W) then mv = scene.vadd(mv, fwd) end
-    if scene.key_down(kbH, S) then mv = scene.vadd(mv, scene.vscale(fwd, -1)) end
-    if scene.key_down(kbH, D) then mv = scene.vadd(mv, rgt) end
-    if scene.key_down(kbH, A) then mv = scene.vadd(mv, scene.vscale(rgt, -1)) end
-    if scene.key_down(kbH, E) then mv[2] = mv[2] + 1 end
-    if scene.key_down(kbH, Q) then mv[2] = mv[2] - 1 end
-    if scene.vlen(mv) > 0 then
-        local speed = (scene.key_down(kbH, SHIFT) and 6.0 or kSpeed) * dt
-        local d = scene.vscale(scene.vnorm(mv), speed)
+    if input.key_down(kbH, W) then mv = math.vadd(mv, fwd) end
+    if input.key_down(kbH, S) then mv = math.vadd(mv, math.vscale(fwd, -1)) end
+    if input.key_down(kbH, D) then mv = math.vadd(mv, rgt) end
+    if input.key_down(kbH, A) then mv = math.vadd(mv, math.vscale(rgt, -1)) end
+    if input.key_down(kbH, E) then mv[2] = mv[2] + 1 end
+    if input.key_down(kbH, Q) then mv[2] = mv[2] - 1 end
+    if math.vlen(mv) > 0 then
+        local speed = (input.key_down(kbH, SHIFT) and 6.0 or kSpeed) * dt
+        local d = math.vscale(math.vnorm(mv), speed)
         pos = {pos[1] + d[1], pos[2] + d[2], pos[3] + d[3]}
     end
     if not mouseH then
@@ -41,9 +41,9 @@ function M._physics(self, dt)
         local mx = scene.get(mouseH, "MouseInput.x")
         local my = scene.get(mouseH, "MouseInput.y")
         if scene.get(mouseH, "MouseInput.button_0") > 0.5 then
-            local dqy = scene.qaxis({0, 1, 0}, -(mx - prevMX) * kSens)
-            local dqx = scene.qaxis({1, 0, 0}, -(my - prevMY) * kSens)
-            q = scene.qmul(dqy, scene.qmul(q, dqx))
+            local dqy = math.qaxis({0, 1, 0}, -(mx - prevMX) * kSens)
+            local dqx = math.qaxis({1, 0, 0}, -(my - prevMY) * kSens)
+            q = math.qmul(dqy, math.qmul(q, dqx))
         end
         prevMX, prevMY = mx, my
     end

@@ -73,7 +73,7 @@ local function spawnMarker(capEnt, hitPos)
         marker = nil
     end
     local wt = scene.world_pose(capEnt)
-    local localPos = scene.qrot(scene.qinv(wt.quat), scene.vsub(hitPos, wt.pos))
+    local localPos = math.qrot(math.qinv(wt.quat), math.vsub(hitPos, wt.pos))
     marker = scene.entity()
     scene.replace(marker, "Transform", { pos = localPos })
     scene.replace(marker, "Renderable", { geom = markerGeom })
@@ -98,9 +98,9 @@ local function release()
             local rt = scene.component(rootH, "Transform")
             local bt = scene.component(kinGrab.body, "Transform")
             scene.replace(kinGrab.body, "Transform", {
-                pos = scene.vadd(scene.vadd(rt.pos, scene.qrot(rt.quat, at.pos)),
-                               scene.qrot(scene.qmul(rt.quat, at.quat), bt.pos)),
-                quat = scene.qmul(scene.qmul(rt.quat, at.quat), bt.quat),
+                pos = math.vadd(math.vadd(rt.pos, math.qrot(rt.quat, at.pos)),
+                               math.qrot(math.qmul(rt.quat, at.quat), bt.pos)),
+                quat = math.qmul(math.qmul(rt.quat, at.quat), bt.quat),
             })
             scene.remove(kinGrab.body, "Parent")
         end
@@ -121,11 +121,11 @@ local function walk(dt)
         return
     end
     local q = scene.component(headH, "Transform").quat
-    local fwd = scene.qrot(q, {0, 0, -1})
-    local rgt = scene.qrot(q, {1, 0, 0})
+    local fwd = math.qrot(q, {0, 0, -1})
+    local rgt = math.qrot(q, {1, 0, 0})
     fwd[2] = 0
     rgt[2] = 0
-    local d = scene.vadd(scene.vscale(scene.vnorm(fwd), sy), scene.vscale(scene.vnorm(rgt), sx))
+    local d = math.vadd(math.vscale(math.vnorm(fwd), sy), math.vscale(math.vnorm(rgt), sx))
     local p = scene.component(rootH, "Transform").pos
     scene.replace(rootH, "Transform", { pos = {p[1] + d[1] * kSpeed * dt, 0, p[3] + d[3] * kSpeed * dt} })
 end
@@ -177,7 +177,7 @@ local function grab()
             scene.get(ctrlH, "ControllerInput.aim_qx"), scene.get(ctrlH, "ControllerInput.aim_qy"),
             scene.get(ctrlH, "ControllerInput.aim_qz"), scene.get(ctrlH, "ControllerInput.aim_qw"),
         }
-        local fwd = scene.qrot(aq, {0, 0, -1})
+        local fwd = math.qrot(aq, {0, 0, -1})
         -- exclude the kinematic anchor: the ray starts at its center and a convex self-hit
         -- would otherwise always win at fraction 0
         local hit = physics.raycast(aimWorld, fwd, kGrabRange, { handAnchor })
@@ -208,13 +208,13 @@ end
 -- share the vr root's frame, so the local transform is grip^-1 * aim
 local function laserPoseInGrip(ctrl)
     local grip = scene.component(ctrl, "Transform")
-    local gripInv = scene.qinv(grip.quat)
+    local gripInv = math.qinv(grip.quat)
     local aimPos = scene.get(ctrl, "ControllerInput.aim_pos")
     local aimQ = {scene.get(ctrl, "ControllerInput.aim_qx"), scene.get(ctrl, "ControllerInput.aim_qy"), scene.get(ctrl, "ControllerInput.aim_qz"),
                   scene.get(ctrl, "ControllerInput.aim_qw")}
-    local fwd = scene.qrot(aimQ, {0, 0, -1})
-    local center = scene.vadd(aimPos, scene.vscale(fwd, kLaserLen / 2))
-    return scene.qrot(gripInv, scene.vsub(center, grip.pos)), scene.qmul(gripInv, aimQ)
+    local fwd = math.qrot(aimQ, {0, 0, -1})
+    local center = math.vadd(aimPos, math.vscale(fwd, kLaserLen / 2))
+    return math.qrot(gripInv, math.vsub(center, grip.pos)), math.qmul(gripInv, aimQ)
 end
 
 local function updateLaser(hand, ctrl, matEnt)

@@ -35,12 +35,11 @@ struct BindLink {
     bool disabled = false;
 };
 
-bool bindResolve(const entt::registry& reg, const std::vector<refl::RootRef>& roots, const Bind* b,
-                 BindLink& l) {
+bool bindResolve(const entt::registry& reg, const Bind* b, BindLink& l) {
     if (!b)
         return true;
     std::string err;
-    if (!resolveUrl(reg, roots, b->url, l.r, err))
+    if (!resolveUrl(reg, b->url, l.r, err))
         return false;
     l.live = b->dir != BindDir::Write;
     l.write = b->dir != BindDir::Read;
@@ -156,7 +155,7 @@ void uiEnsureContext(const entt::registry& reg, entt::entity canvas, VkRenderPas
     ImGui_ImplVulkan_Init(&ii);
 }
 
-void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds, const std::vector<refl::RootRef>& roots) {
+void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds) {
     std::unordered_map<entt::entity, std::vector<entt::entity>> kids;
     for (auto [c, wg, p] : reg.view<UIWidget, Parent>().each()) {
         (void)wg;
@@ -177,7 +176,7 @@ void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds, const std::v
     drawWidget = [&](entt::entity e) {
         ImGui::PushID((int)e);
         BindLink l;
-        const bool draw = bindResolve(reg, roots, reg.try_get<Bind>(e), l);
+        const bool draw = bindResolve(reg, reg.try_get<Bind>(e), l);
         if (draw) {
             if (auto* s = reg.try_get<UISliderF>(e)) {
                 bindSyncIn(l, &s->value, sizeof s->value);

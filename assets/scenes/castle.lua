@@ -10,7 +10,7 @@ function M._on_ready(self)
     scene.replace(ground, "MaterialRef", { material = mat })
     local ch = scene.entity("castle")
     scene.replace(ch, "Transform", { pos = { 0, 0, 0 } })
-    render.gltf(ch, "local/castle/source/castle.glb")
+    graphics.gltf(ch, "local/castle/source/castle.glb")
     scene.set_pose("cam", { 0, 1.7, 7 }, { 0, 0, 0, 1 })
 end
 return M

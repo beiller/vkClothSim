@@ -9,6 +9,8 @@
 class VkApp {
 public:
     bool initInstance(int width, int height, const char* title);
+    // device-only (no window/surface): for --headless; creates instance + device + queue + cmd pool/fence
+    bool initHeadless();
     bool initDevice(VkDevice dev);
     VkDevice makeDevice();
     const VkDeviceCreateInfo& deviceCreateInfo() const { return m_dci; }

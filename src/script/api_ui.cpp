@@ -20,11 +20,12 @@ const UrlRef bindRef(Engine& w, lua_State* L, int idx) {
     const char* bind = luaL_checkstring(L, idx);
     UrlRef r;
     std::string err;
-    if (!resolveUrl(w.reg, engineRoots(w), bind, r, err))
+    if (!resolveUrl(w.reg, bind, r, err))
         luaL_error(L, "bind '%s': %s", bind, err.c_str());
     return r;
 }
 
+/// ui.window(title: string, w?: number, h?: number) -> entity | create a UI canvas window (default 320x200) at a fixed world spot in front of the default view; re-place via the canvas Transform
 int lUiWindow(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const float w = (float)luaL_optnumber(L, 2, 0.0), h = (float)luaL_optnumber(L, 3, 0.0);
@@ -34,18 +35,21 @@ int lUiWindow(lua_State* L) {
     return 1;
 }
 
+/// ui.tab(win: entity, label: string) -> entity | add a tab page to window win
 int lUiTab(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1), UITab{luaL_checkstring(L, 2)}));
     return 1;
 }
 
+/// ui.editor(tab: entity) | fill tab with the scene editor (entity tree + reflected field widgets for every selected entity)
 int lUiEditor(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     spawnEditorUi(self->w(), luaReadEnt(L, 1));
     return 0;
 }
 
+/// ui.button(parent: entity, label: string, fn: function) -> entity | add a button under parent; fn is called when it is clicked
 int lUiButton(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const entt::entity parent = luaReadEnt(L, 1);
@@ -58,12 +62,14 @@ int lUiButton(lua_State* L) {
     return 1;
 }
 
+/// ui.text(parent: entity, label: string) -> entity | add a static text line under parent
 int lUiText(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     luaPushEnt(L, spawnWidget(self->w().reg, self->w().uiSeq, luaReadEnt(L, 1), UIText{luaL_checkstring(L, 2)}));
     return 1;
 }
 
+/// ui.section(parent: entity, label: string, collapsible?: bool) -> entity | add a (collapsible by default) labeled section under parent; its children are added to the returned entity
 int lUiSection(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const bool collapsible = lua_isnoneornil(L, 3) ? true : lua_toboolean(L, 3);
@@ -71,6 +77,7 @@ int lUiSection(lua_State* L) {
     return 1;
 }
 
+/// ui.slider_f(parent: entity, label: string, bind: string, lo?: number, hi?: number, fmt?: string) -> entity | add a float slider under parent bound to reflected field `bind` (lo/hi default to the field's own range; fmt defaults to "%.2f")
 int lUiSliderF(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
@@ -84,6 +91,7 @@ int lUiSliderF(lua_State* L) {
     return 1;
 }
 
+/// ui.slider_i(parent: entity, label: string, bind: string, lo?: number, hi?: number) -> entity | add an integer slider under parent bound to reflected field `bind` (lo/hi default to the field's own range)
 int lUiSliderI(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
@@ -96,6 +104,7 @@ int lUiSliderI(lua_State* L) {
     return 1;
 }
 
+/// ui.checkbox(parent: entity, label: string, bind: string) -> entity | add a checkbox under parent bound to reflected bool field `bind`
 int lUiCheckbox(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
@@ -106,6 +115,7 @@ int lUiCheckbox(lua_State* L) {
     return 1;
 }
 
+/// ui.color(parent: entity, label: string, bind: string) -> entity | add a color picker under parent bound to reflected vec3 field `bind` (RGB 0..1)
 int lUiColor(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
@@ -117,6 +127,7 @@ int lUiColor(lua_State* L) {
     return 1;
 }
 
+/// ui.drag_v3(parent: entity, label: string, bind: string, speed?: number) -> entity | add a 3D drag gizmo under parent bound to reflected vec3 field `bind` (default move speed 0.1)
 int lUiDragV3(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const auto r = bindRef(self->w(), L, 3);
@@ -129,6 +140,7 @@ int lUiDragV3(lua_State* L) {
     return 1;
 }
 
+/// ui.fire_button(name: string) | fire a named button callback registered via scene.button(name, fn)
 int lFireButton(lua_State* L) {
     SceneScript::sSelf(L)->button(luaL_checkstring(L, 1));
     return 0;
@@ -137,16 +149,16 @@ int lFireButton(lua_State* L) {
 }
 
 void luaRegisterUi(lua_State* L, SceneScript* host) {
-    reg(L, host, "ui_window", lUiWindow);
-    reg(L, host, "ui_tab", lUiTab);
-    reg(L, host, "ui_editor", lUiEditor);
-    reg(L, host, "ui_button", lUiButton);
-    reg(L, host, "ui_text", lUiText);
-    reg(L, host, "ui_section", lUiSection);
-    reg(L, host, "ui_slider_f", lUiSliderF);
-    reg(L, host, "ui_slider_i", lUiSliderI);
-    reg(L, host, "ui_checkbox", lUiCheckbox);
-    reg(L, host, "ui_color", lUiColor);
-    reg(L, host, "ui_drag_v3", lUiDragV3);
+    reg(L, host, "window", lUiWindow);
+    reg(L, host, "tab", lUiTab);
+    reg(L, host, "editor", lUiEditor);
+    reg(L, host, "button", lUiButton);
+    reg(L, host, "text", lUiText);
+    reg(L, host, "section", lUiSection);
+    reg(L, host, "slider_f", lUiSliderF);
+    reg(L, host, "slider_i", lUiSliderI);
+    reg(L, host, "checkbox", lUiCheckbox);
+    reg(L, host, "color", lUiColor);
+    reg(L, host, "drag_v3", lUiDragV3);
     reg(L, host, "fire_button", lFireButton);
 }

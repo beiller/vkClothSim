@@ -1,92 +1,128 @@
 # Architecture
 
-Jolt rigid-body sim with a GPU soft-body layer (cloth + ball) using Jolt capsules as colliders.
-Soft-body bodies are passed to the GPU as vertices + two-point joints; Jolt capsules are passed as colliders.
+Two servers + world, all data-driven through the ENTT ECS. The registry is the single
+source of truth; servers read/write components and never talk to each other directly.
 
 ## System map
 
 ```
-+--------------------------------------------------------------------------------+
-| main.cpp   (glue only)                                                         |
-| args -> VR auto-detect -> scene pick -> ImGui init -> frame loop -> present    |
-+-----------=-------------------------------=------------------------------------+
++--------------------------------------------------------------------------------------+
+| main.cpp   (glue only: args, server enablement, frame loop, pacing, profiling)        |
++-----------=-----------------------------=---------------------------------------------+
             |                               |
-            |  selects                      |
-            |            new frame + draw   |
+  owns + steps                          owns + steps
             v                               v
 +-----------------------+      +------------------------+
-| scenes/ (src/scenes/) |      | ImGui + UIState ui     |
-| demo hdri hierarchy   |      | joltIters, exposure,   |
-| shadowtest            |      | envIntensity, bgColor, |
-| spawn*() -> ECS       |      | drawUi(World&) fn      |
-| (systems.cpp)         |      +------------------------+
-+-----------------------+
+| PhysicsServer         |      | GraphicsServer         |
+| (src/physics/, Jolt)  |      | (src/vk/ + src/sim/)   |
+| CPU rigid bodies      |      | Vulkan renderer        |
+| update(reg, dt):      |      | GPU soft PBD sim       |
+|  120 Hz accumulator   |      | GPU DQ skinning        |
+|  hook -> project ->   |      | canvas targets (UI FBO)|
+|  kinematic -> step -> |      | updateSim(reg, dt):    |
+|  pose writeback       |      |  skin every frame,     |
+| raycast/pose queries  |      |  soft 60 Hz accumulator|
++-----------------------+      +------------------------+
             |                               |
-            |  spawn*() (entities + comps)  |
-            |           ui.* read by loop   |
+            |  reads/writes                |  reads/writes
             v                               v
-      +-----=-------------------------------=--------+
-      | World  (world.hpp)   --   shared state       |
-      | entt::registry reg   (ecs.hpp)               |
-      | Transform  Parent  WorldTransform  Animation |
-      | RigidDynamics  RigidStatic  CapsuleCollider  |
-      | SoftBodyData  PinHold  Camera  Renderable    |
-      | Material  PointLight  Name                   |
-      +----------------------------------------------+
-                              |
-                              |  owns (member objects)
-          |===================|===|=======================|====================|
-          v                       v                       v                    v
-  +-----=---------+   +---------=------------+   +------=---------+   +------=----------+
-  | RigidScene    |   | SoftSim              |   | Renderer       |   | Xr (OpenXR)     |
-  | (Jolt, CPU)   |   | (GPU compute)        |   | (Vulkan)       |   | session, views, |
-  | app/rigid.cpp |   | sim/ + softbody.comp |   | vk/ + shaders/ |   | swapchains      |
-  +---------------+   +----------------------+   +----------------+   +-----------------+
-                                  |                       |
-                                  |   record + submit cmd buffers (per frame)
-                                  |=======================|
-                                              v
-       +--------------------------------------=-------------------------------------+
-       | VkApp  (vk/)   --   GLFW + Vulkan foundation                               |
-       | window, instance/device/queue, swapchain, HDR target, depth, cmd pools     |
-       +----------------------------------------------------------------------------+
++--------------------------------------------------------------------------------------+
+| World: entt::registry (src/core/)                                                   |
+| Transform Parent WorldTransform  RigidBody KinematicBody Collider *Shape             |
+| Joint SixDofJoint  SoftBodyData Skeleton Geometry Renderable Material Texture       |
+| GPUTexture Environment PointLight Camera SceneCamera VrCamera VrRoot                |
+| SettingsRoot RenderSettings PhysicsSettings  LuaScript UI* Bind Name                |
++--------------------------------------------------------------------------------------+
+            |
+   also in the world (glue systems, src/systems.cpp):
+     resolveWorldTransforms  stepXr/stepControllers  stepMouse/stepKeyboard  stepBinds
+            |
+            +-- Xr (OpenXR session/views) -> ControllerInput / camera Transform
+            +-- Ui (ImGui, one context per canvas) <- canvas FBOs from GraphicsServer
+            +-- SceneScript (Lua 5.4 host) -> _on_ready/_animate/_physics hooks
+            +-- SceneLoader (JSON -> ECS; spawns the settings entity)
 ```
 
-## Interactions
+Cross-server seams (the only ones):
+- `IRaycast` — UI picking + Lua `physics.raycast` call `PhysicsServer::raycast`
+- canvas targets — UI draws into `GraphicsServer::uiTargetPass/Fb`, reads `canvasImage`
+- drawable vertex buffers — soft/skin adopt renderer-owned buffers via `requestVerts`
+  (in-server; headless mode: GraphicsServer allocates them itself)
 
-1. **scenes/ -> ECS registry** — `spawn*()` (systems.cpp) creates entities + components once at startup (capsules, soft bodies, static meshes, lights, cameras, VR rig)
-2. **frame loop <-> UIState ui** — loop reads `ui.joltIters`/`exposure`/`envIntensity`; scene `drawUi()` writes them (ImGui widgets)
-3. **ECS <-> RigidScene** — Jolt poses -> `Transform` (RigidDynamics); `Transform` -> static pose (RigidStatic, user-driven bodies, `stepStaticRigid`)
-4. **ECS -> SoftSim** — capsule poses: `WorldTransform` -> `sim.setCapsulePose` (GPU capsule buffer); `SoftBodyData` -> pinned/params/steps
-5. **SoftSim <-> Renderer** — shared pos/nrm VkBuffers = soft-body mesh verts (`renderer.addMesh` hands the same buffers to `sim.addSoftBody`)
-6. **Xr -> ECS** — head pose -> active camera `Transform` (`stepXr`); fly camera is skipped while a session is running
-7. **Xr -> Renderer** — per-eye pose + lens tangents -> `setVrEyes()`; swapchain images for direct headset render
-8. **ECS -> Renderer** — `syncSceneToRenderer`: Renderable+WorldTransform -> model matrices, Material -> per-instance PBR params, PointLight -> lights UBO
-9. **SoftSim, Renderer -> VkApp** — record into VkApp command pools, submit per frame (soft sim uses its own simCmd)
-10. **assets.cpp (TinyEXR) -> Renderer** — equirect HDR -> `env_cube.comp` -> `env_prefilter.comp` (spec mips) + `env_irradiance.comp`, used as split-sum IBL
-11. **RigidScene internals** — Jolt PhysicsSystem + JobSystemThreadPool + TempAllocator
+## Server enablement
 
-## Per-frame pipeline
+| Flag | window | device | physics | soft/skin | draw | UI | XR |
+|------|--------|--------|---------|-----------|------|----|----|
+| (default) | yes | yes | on | on | on | on | auto |
+| `--no-graphics` | no | **no** | on | off | off | off | off |
+| `--headless` | no | yes (device-only) | on | on | off | off | off |
 
-Order in `main.cpp`, fixed dt = 1/60:
+Optional `--frames N` exits after N frames (CI). Serverless/headless use a fixed
+`kFrameDt` per frame for determinism; windowed mode uses the measured frame dt.
 
-1. `stepRigid` — Jolt `Update(kFrameDt)`; poses -> ECS Transform
-2. `pollEvents`; `xr->poll` -> XrFrame (eye poses)
-3. `stepFlyCamera` — mouse/WASD/QE -> camera Transform (only when no XR session)
-4. `stepXr` — head -> camera Transform; eyes -> `renderer.setVrEyes`
-5. `resolveWorldTransforms` — Transform + Parent -> WorldTransform (hierarchy)
-6. `syncColliders` — CapsuleCollider + WorldTransform -> `sim.setCapsulePose`
-7. `stepSoft` — SoftBodyData -> `sim.setPinned/setParams`; `sim.record(simCmd)`:
-    - per substep: mode 0 verlet integrate (damping/gravity/clamp) -> mode 1 distance constraints x passes x graph-color groups (one dispatch per color) -> mode 2 capsule collision + velocity clamp
-    - after all substeps: mode 3 recompute normals
-    - `app.submit(simCmd)`
-8. `stepStaticRigid` — Transform -> Jolt static body pose
-9. `setViewProj` — camera WorldTransform -> view/proj + camPos UBO
-13. `draw` / `drawVr` — `syncSceneToRenderer` -> `renderShadowCubes` (per-light cube) -> `renderScenePass` (PBR + IBL + shadows -> HDR target) -> tonemap -> window and/or per-VR-eye targets -> ImGui overlay
-14. `present`
+## Per-frame pipeline (windowed mode)
+
+1. poll/resize; `xr.waitFrame/poll` -> XrFrame
+2. `graphics.flushFrees`; pending scene swap -> `loadScene`
+3. `stepMouse/stepKeyboard` (GLFW -> MouseInput/KeyboardInput)
+4. `script.activateScripts + animateAll(dt)` (`_animate` hooks)
+5. `stepXr + stepControllers` (when an XR session runs)
+6. `physics.update(reg, dt)` — 120 Hz accumulator; per internal step: `_physics` hook ->
+   Jolt project/kinematic/step -> pose writeback to Transform
+7. `resolveWorldTransforms` — Transform + Parent -> WorldTransform (hierarchy)
+8. `graphics.updateSim(reg, dt)` — skin DQ step (own submit); soft PBD on its 60 Hz
+   accumulator (own submit; verlet integrate -> graph-colored distance constraints ->
+   capsule collision -> normal recompute)
+9. camera -> `setViewProj`; UI canvas picking (raycast vs canvas colliders -> uv)
+10. `uiFrame` (ImGui draw into canvas FBOs); `stepBinds` (Bind component sync)
+11. acquire -> `draw`/`drawVr` (PBR + IBL, PCSS shadows, SSS/glass, tonemap, ImGui overlay)
+    -> present
+
+## Scene content
+
+- `assets/scenes/*.json` — objects with components; one camera object required; optional
+  `"set"` block of short URLs (`render.exposure`, `rigid.velocitySteps`) resolved against
+  the settings entity.
+- per-entity `.lua` behavior scripts; hooks `_on_ready` (once), `_animate` (per render
+  frame), `_physics` (per fixed sim step). All geometry is generated in Lua
+  (`assets/scenes/mesh.lua` is always loaded as the global `mesh`).
+
+## Lua API (one table per subsystem)
+
+| Table | Host | Functions |
+|-------|------|-----------|
+| `scene.*` | world / loader | entity emplace replace component remove set_pose get_pose world_pose set_morph shapes link_mesh get_entity find_components attach_script destroy add_child time button scenes request_scene last_error set get |
+| `math.*` | — | vadd vsub vscale vlen vnorm vcross vdot qmul qinv qaxis qrot qfromto |
+| `physics.*` | PhysicsServer | raycast |
+| `soft.*` | GraphicsServer | set_floor |
+| `graphics.*` | GraphicsServer | gltf load_texture render_texture |
+| `ui.*` | UI | window tab editor button text section slider_f slider_i checkbox color drag_v3 fire_button |
+| `input.*` | input systems | key_down |
+| `mesh.*` | — (geometry stdlib) | box sphere capsule plane tapered ball + custom generators |
+
+`scene.set/get` take a URL: `name.Component.field`, or the short forms `render.<field>` /
+`rigid.<field>` which resolve against the settings entity's RenderSettings /
+PhysicsSettings components.
+
+## Build layout (CMake)
+
+- `3dsim_core` — components, reflection, URL resolution, math/mesh types
+- `3dsim_io` — gltf + asset loaders
+- `3dsim_solvers` — tapered-capsule shape fitter
+- `3dsim_physics` — RigidScene (Jolt) + PhysicsServer
+- `3dsim_graphics` — VkApp, Renderer, soft/skin GPU sim + GraphicsServer
+- `3dsim_xr` — OpenXR backend
+- `3dsim_ui` — ImGui host (one context per canvas)
+- `3dsim_script` — Lua 5.4 host + per-domain API modules
+- `vksim` — main.cpp + systems.cpp + scene.cpp (glue only)
+
+CPU self-tests (no GPU): `dualquat_test`, `view_proj_test`, `collision_shape_solver_test`.
 
 ## Notes
 
-- The ECS `World` is the hub: the four sub-systems never talk to each other directly, everything goes through entities/components.
-- The soft sim and renderer are decoupled purely by the shared GPU vertex buffers (no CPU readback of cloth verts).
-- Jolt capsules are the only bridge between the rigid and soft worlds (pos -> GPU capsule buffer, step 9).
+- sim runs at a fixed timestep (120 Hz rigid / 60 Hz soft), decoupled from the render
+  rate by per-server accumulators; NO_VSYNC pacing in main is pure render pacing.
+- the soft sim and renderer never exchange vertex data on the CPU — sim writes into
+  renderer-owned buffers (or GraphicsServer-owned in headless mode).
+- Jolt capsules are the only bridge between the rigid and soft worlds
+  (WorldTransform -> GPU capsule buffer each soft step).

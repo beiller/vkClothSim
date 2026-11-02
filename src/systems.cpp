@@ -182,20 +182,6 @@ void stepKeyboard(Engine& w) {
     });
 }
 
-void stepRigid(RigidScene& rigid, entt::registry& reg) {
-    rigid.project(reg);
-    for (const auto e : reg.view<KinematicBody>()) {
-        const Transform wt = worldTransform(reg, e);
-        rigid.setKinematicPose(e, wt.pos, wt.quat);
-    }
-    rigid.step();
-    reg.view<RigidBody, Transform>().each([&](entt::entity e, auto&, Transform& t) {
-        const Transform p = rigid.pose(e);
-        t.pos = p.pos;
-        t.quat = p.quat;
-    });
-}
-
 void resolveWorldTransforms(entt::registry& reg) {
     struct Node {
         entt::entity e;
@@ -256,13 +242,6 @@ void resolveWorldTransforms(entt::registry& reg) {
     }
 }
 
-void stepSoft(Engine& w, VkCommandBuffer cmd) {
-    w.gpuSim.soft.syncCapsules(w.reg);
-    w.gpuSim.soft.project(w.reg);
-    w.gpuSim.soft.record(cmd, w.reg);
-}
-
-
 bool uiPanelUv(const entt::registry& reg, entt::entity canvas, const V3& hitPos, V2& uv) {
     if (canvas == entt::null)
         return false;
@@ -297,13 +276,13 @@ static int fieldBytes(FieldKind k) {
     }
 }
 
-void stepBinds(entt::registry& reg, const std::vector<refl::RootRef>& roots) {
+void stepBinds(entt::registry& reg) {
     for (auto [e, b] : reg.view<Bind>().each()) {
         if (b.target.empty())
             continue;
         std::string err;
         UrlRef s, d;
-        if (!resolveUrl(reg, roots, b.url, s, err))
+        if (!resolveUrl(reg, b.url, s, err))
             continue;
         if (!resolveEntityField(reg, e, b.target, "", d, err))
             continue;

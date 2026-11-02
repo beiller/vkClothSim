@@ -90,7 +90,7 @@ function M._animate(_, dt)
         local yaw = math.sin(t * 0.8 - i * 0.5) * 0.12
         local tilt = math.sin(t * 0.6 + i * 0.4) * 0.06
         scene.set_pose(bones[i], { (i > 1) and kLen or 0, 0, 0 },
-                      scene.qmul(scene.qaxis({ 0, 1, 0 }, yaw), scene.qaxis({ 0, 0, 1 }, tilt)))
+                      math.qmul(math.qaxis({ 0, 1, 0 }, yaw), math.qaxis({ 0, 0, 1 }, tilt)))
     end
 end
 

@@ -26,7 +26,7 @@ function M._on_ready(self)
     local gCol = scene.entity()
     scene.replace(gCol, "Collider", { shape = gShape })
     scene.replace(ground, "KinematicBody", { colliders = { gCol } })
-    soft.floor(0.0001)
+    soft.set_floor(0.0001)
 
     math.randomseed(12345)
     for i, t in ipairs(kTapers) do
@@ -39,8 +39,8 @@ function M._on_ready(self)
             local px = (math.random() * 2 - 1) * 3.0
             local py = 4.0 + 2.5 * math.random()
             local pz = (math.random() * 2 - 1) * 3.0
-            local q = scene.qmul(scene.qaxis({ 0, 1, 0 }, math.random() * 2 * math.pi),
-                                scene.qaxis({ 1, 0, 0 }, (math.random() * 2 - 1) * 1.2))
+            local q = math.qmul(math.qaxis({ 0, 1, 0 }, math.random() * 2 * math.pi),
+                                math.qaxis({ 1, 0, 0 }, (math.random() * 2 - 1) * 1.2))
             local e = scene.entity()
             scene.replace(e, "Transform", { pos = { px, py, pz }, quat = q })
             scene.replace(e, "Renderable", { geom = capGeom })

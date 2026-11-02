@@ -32,18 +32,15 @@ public:
     void reset();
     void removeBody(entt::entity e);
     bool hasBody(entt::entity e) const;
-    void setKinematicPose(entt::entity e, const V3& pos, const Quat& quat);
+    void setKinematicPose(entt::entity e, const V3& pos, const Quat& quat, float dt);
     void project(const entt::registry& reg);
-    void step();
+    void step(const entt::registry& reg, float dt);
     Transform pose(entt::entity e) const;
     RayHit raycast(const V3& origin, const V3& dir, float maxDist,
                    const std::vector<entt::entity>& excludes = {}) const;
     entt::entity entityFor(JPH::BodyID id) const;
     const JPH::Shape* shape(const entt::registry& reg, entt::entity e);
     void watch(entt::registry& reg);
-
-    int velocitySteps = 10;
-    int positionSteps = 10;
 
 private:
     struct Applied {

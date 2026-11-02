@@ -45,22 +45,22 @@ end
 -- random unit direction
 local function randUnit()
     local v = { math.random() * 2 - 1, math.random() * 2 - 1, math.random() * 2 - 1 }
-    local l = scene.vlen(v)
+    local l = math.vlen(v)
     if l < 1e-3 then
         return { 0, 1, 0 }
     end
-    return scene.vscale(v, 1 / l)
+    return math.vscale(v, 1 / l)
 end
 
 -- bend this generation away from its parent's direction (main branches bend most)
 local function spreadDir(pdir, depth)
     local ang = (1.05 - 0.12 * depth) * (0.75 + 0.5 * math.random())
-    local axis = scene.vcross(pdir, randUnit())
-    if scene.vlen(axis) < 0.1 then
+    local axis = math.vcross(pdir, randUnit())
+    if math.vlen(axis) < 0.1 then
         axis = { 0, 0, 1 }
     end
-    axis = scene.vnorm(axis)
-    return scene.vnorm(scene.qrot(scene.qaxis(axis, ang), pdir))
+    axis = math.vnorm(axis)
+    return math.vnorm(math.qrot(math.qaxis(axis, ang), pdir))
 end
 
 -- segment length: capsule overhangs its joint so branch pieces connect
@@ -70,10 +70,10 @@ end
 
 local function addBranch(parent, parentWQ, parentWPos, parentDir, depth)
     local dir = depth <= 1 and { 0, 1, 0 } or spreadDir(parentDir, depth)
-    local wpos = depth == 0 and { 0, 1, 0 } or scene.vadd(parentWPos, scene.vscale(dir, edgeLen(depth)))
-    local nodeWQ = scene.qfromto({ 0, 1, 0 }, scene.vnorm(dir))
-    local localPos = depth == 0 and wpos or scene.qrot(scene.qinv(parentWQ), scene.vsub(wpos, parentWPos))
-    local localQuat = depth == 0 and nodeWQ or scene.qmul(scene.qinv(parentWQ), nodeWQ)
+    local wpos = depth == 0 and { 0, 1, 0 } or math.vadd(parentWPos, math.vscale(dir, edgeLen(depth)))
+    local nodeWQ = math.qfromto({ 0, 1, 0 }, math.vnorm(dir))
+    local localPos = depth == 0 and wpos or math.qrot(math.qinv(parentWQ), math.vsub(wpos, parentWPos))
+    local localQuat = depth == 0 and nodeWQ or math.qmul(math.qinv(parentWQ), nodeWQ)
     local amp = 0.02 + 0.02 * depth -- tips sway more
     local phase = 0.35 * depth      -- outward lag -> bend travels to the tips
     local isClock = depth == 0

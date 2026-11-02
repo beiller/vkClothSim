@@ -69,6 +69,32 @@ cmake --build build -j
 DRI_PRIME=1 ./build/vksim      # force AMD iGPU (RADV) instead of the 4090
 ```
 
+## Lua API docs (auto-generated)
+
+`docs/LUA_API.md` is generated — never edit it by hand:
+
+```sh
+python3 tools/gen_lua_api.py   # re-run after any change to src/script/api_*.cpp or lua_host.cpp
+```
+
+Every exposed function MUST carry a one-line doc string directly above its handler (or reg() call):
+
+```cpp
+/// table.name(arg1: type, arg2?: type) -> ret | what it does, arg semantics, error cases
+int lFoo(lua_State* L) { ... }
+```
+
+`?` marks optional args; omit `-> ret` for void functions. The generator exits non-zero if any function lacks a valid annotation (or if the annotation's table.name doesn't match its registration), so it doubles as an API lint.
+
+The "magic" script-module hooks are documented the same way, in `lua_host.cpp` above `activateScripts()`:
+
+```cpp
+/// script-instance | <what the inst table is and its fields>
+/// script-hook _on_ready(inst) | <when it is called>
+```
+
+The generator lists hooks from the `grab("_name", ...)` call sites (machine truth) and fails if a looked-up hook has no doc, or warns on a doc for a hook that no longer exists.
+
 ## Screenshot
 
 Needs `import`/ImageMagick + `xprop`; the window title is always `3dsim`.

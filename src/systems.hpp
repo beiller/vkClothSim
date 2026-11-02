@@ -3,7 +3,6 @@
 
 #include "ecs.hpp"
 #include "mesh.hpp"
-#include "sim/sim.hpp"
 #include "ui.hpp"
 #include "engine.hpp"
 #include <vector>
@@ -18,9 +17,7 @@ inline entt::entity findMarker(const entt::registry& reg) {
 entt::entity findActiveCamera(const entt::registry& reg);
 CameraView cameraView(const entt::registry& reg, entt::entity cam, float aspect);
 
-void stepRigid(RigidScene& rigid, entt::registry& reg);
 void resolveWorldTransforms(entt::registry& reg);
-void stepSoft(Engine& w, VkCommandBuffer cmd);
 
 void stepXr(entt::registry& reg, const XrFrame& fr);
 entt::entity spawnVrRoot(entt::registry& reg);
@@ -33,4 +30,4 @@ void stepMouse(Engine& w);
 void stepKeyboard(Engine& w);
 void spawnInputEntities(Engine& w);
 
-void stepBinds(entt::registry& reg, const std::vector<refl::RootRef>& roots);
+void stepBinds(entt::registry& reg);

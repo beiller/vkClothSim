@@ -39,8 +39,7 @@ bool resolveEntityField(const entt::registry& reg, entt::entity ent, const std::
     return false;
 }
 
-bool resolveUrl(const entt::registry& reg, const std::vector<refl::RootRef>& roots, const std::string& url, UrlRef& out,
-                std::string& err) {
+bool resolveUrl(const entt::registry& reg, const std::string& url, UrlRef& out, std::string& err) {
     const auto dot = url.find('.');
     if (dot == std::string::npos) {
         err = "expected 'name.Component.field'";
@@ -49,21 +48,17 @@ bool resolveUrl(const entt::registry& reg, const std::vector<refl::RootRef>& roo
     const std::string head = url.substr(0, dot);
 
     if (head == "render" || head == "rigid") {
-        const std::string rest = url.substr(dot + 1);
-        const char* wantName = head == "render" ? "RenderSettings" : "RigidScene";
-        for (const auto& root : roots) {
-            if (std::strcmp(root.type->name, wantName) != 0)
-                continue;
-            const FieldDesc* f = findField(root.type, rest);
-            if (!f) {
-                err = "no field '" + rest + "' in " + head;
-                return false;
-            }
-            out = {f, (char*)root.base + f->offset};
-            return true;
+        entt::entity settings = entt::null;
+        for (auto e : reg.view<SettingsRoot>()) {
+            settings = e;
+            break;
         }
-        err = "no '" + head + "' root";
-        return false;
+        if (settings == entt::null) {
+            err = "no 'settings' entity";
+            return false;
+        }
+        const std::string cf = (head == "render" ? "RenderSettings." : "PhysicsSettings.") + url.substr(dot + 1);
+        return resolveEntityField(reg, settings, cf, head, out, err);
     }
 
     // entity names may contain dots: the last two dot segments are Component.field
@@ -192,18 +187,16 @@ static bool applyGet(const UrlRef& r, float* vals, int maxN, int& n, std::string
     return false;
 }
 
-bool sceneSet(const entt::registry& reg, const std::vector<refl::RootRef>& roots, const std::string& url, const float* vals,
-              int n, std::string& err) {
+bool sceneSet(const entt::registry& reg, const std::string& url, const float* vals, int n, std::string& err) {
     UrlRef r;
-    if (!resolveUrl(reg, roots, url, r, err))
+    if (!resolveUrl(reg, url, r, err))
         return false;
     return applySet(r, vals, n, err);
 }
 
-bool sceneGet(const entt::registry& reg, const std::vector<refl::RootRef>& roots, const std::string& url, float* vals,
-              int maxN, int& n, std::string& err) {
+bool sceneGet(const entt::registry& reg, const std::string& url, float* vals, int maxN, int& n, std::string& err) {
     UrlRef r;
-    if (!resolveUrl(reg, roots, url, r, err))
+    if (!resolveUrl(reg, url, r, err))
         return false;
     return applyGet(r, vals, maxN, n, err);
 }

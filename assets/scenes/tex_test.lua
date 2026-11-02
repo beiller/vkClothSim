@@ -14,11 +14,11 @@ local function makeCube(name, pos, tex)
 end
 
 function M._on_ready(self)
-    makeCube("cube_png", { -3, 1, 0 }, scene.load_texture("cloth_albedo.png", "tex_png"))
-    makeCube("cube_rt", { 3, 1, 0 }, scene.render_texture(256, 256, "rt"))
-    local tmp = scene.load_texture("cloth_albedo.png")
+    makeCube("cube_png", { -3, 1, 0 }, graphics.load_texture("cloth_albedo.png", "tex_png"))
+    makeCube("cube_rt", { 3, 1, 0 }, graphics.render_texture(256, 256, "rt"))
+    local tmp = graphics.load_texture("cloth_albedo.png")
     scene.destroy(tmp)
-    scene.replace(scene.get_entity("env"), "Environment", { tex = scene.load_texture("fly-studio-03_1K.exr", "env2") })
+    scene.replace(scene.get_entity("env"), "Environment", { tex = graphics.load_texture("fly-studio-03_1K.exr", "env2") })
 end
 
 return M

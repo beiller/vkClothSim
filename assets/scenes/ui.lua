@@ -6,25 +6,25 @@ local function build(parent, spec)
     for _, w in ipairs(spec) do
         local t = w.type
         if t == "section" then
-            local sec = scene.ui_section(parent, w.label, w.collapsible)
+            local sec = ui.section(parent, w.label, w.collapsible)
             if w.children then
                 build(sec, w.children)
             end
         elseif t == "slider-f" then
-            scene.ui_slider_f(parent, w.label, w.bind, w.lo, w.hi, w.fmt)
+            ui.slider_f(parent, w.label, w.bind, w.lo, w.hi, w.fmt)
         elseif t == "slider-i" then
-            scene.ui_slider_i(parent, w.label, w.bind, w.lo, w.hi)
+            ui.slider_i(parent, w.label, w.bind, w.lo, w.hi)
         elseif t == "checkbox" then
-            scene.ui_checkbox(parent, w.label, w.bind)
+            ui.checkbox(parent, w.label, w.bind)
         elseif t == "color" then
-            scene.ui_color(parent, w.label, w.bind)
+            ui.color(parent, w.label, w.bind)
         elseif t == "drag-v3" then
-            scene.ui_drag_v3(parent, w.label, w.bind, w.speed)
+            ui.drag_v3(parent, w.label, w.bind, w.speed)
         elseif t == "text" then
-            scene.ui_text(parent, w.label)
+            ui.text(parent, w.label)
         elseif t == "button" then
-            scene.ui_button(parent, w.label, function()
-                scene.fire_button(w.action)
+            ui.button(parent, w.label, function()
+                ui.fire_button(w.action)
             end)
         else
             error("unknown widget type '" .. t .. "'")
@@ -35,14 +35,14 @@ end
 -- the per-scene main ui window: the engine calls this with the whole scene json;
 -- a scene with no "ui" block (or ui.hidden) gets no window
 local function main(spec)
-    local ui = spec.ui
-    if not ui or ui.hidden then return end
-    local size = ui.size or { 320, 720 }
-    local win = scene.ui_window(ui.title or spec.name or "scene", size[1], size[2])
-    if ui.widgets then
-        build(scene.ui_tab(win, "scene"), ui.widgets)
+    local u = spec.ui
+    if not u or u.hidden then return end
+    local size = u.size or { 320, 720 }
+    local win = ui.window(u.title or spec.name or "scene", size[1], size[2])
+    if u.widgets then
+        build(ui.tab(win, "scene"), u.widgets)
     end
-    scene.ui_editor(scene.ui_tab(win, "editor"))
+    ui.editor(ui.tab(win, "editor"))
 end
 
 M.build = build

@@ -17,6 +17,7 @@ void reg(lua_State* L, SceneScript* host, const char* name, lua_CFunction fn) {
     lua_setfield(L, -2, name);
 }
 
+/// scene.set(target: entity|string, field: string, value: number|table) | set a reflected field (URL form "Entity.field" or entity + field name); value is a number or an array of up to 4 numbers
 int lSet(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const auto readVals = [L](int idx) {
@@ -47,11 +48,12 @@ int lSet(lua_State* L) {
     }
     const std::string url = luaL_checkstring(L, 1);
     const auto vals = readVals(2);
-    if (vals.empty() || !sceneSet(w.reg, engineRoots(w), url, vals.data(), (int)vals.size(), err))
+    if (vals.empty() || !sceneSet(w.reg, url, vals.data(), (int)vals.size(), err))
         return luaL_error(L, "scene.set '%s': %s", url.c_str(), err.c_str());
     return 0;
 }
 
+/// scene.get(target: entity|string, field?: string) -> number|vec3|vec4 | read a reflected field (URL form "Entity.field", or entity + field name); returns a scalar, {x,y,z}, or {x,y,z,w} depending on the field's width
 int lGet(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     float vals[4]{};
@@ -59,7 +61,7 @@ int lGet(lua_State* L) {
     std::string err;
     const bool ok = lua_isnumber(L, 1)
                         ? sceneGetEnt(w.reg, luaReadEnt(L, 1), luaL_checkstring(L, 2), vals, 4, n, err)
-                        : sceneGet(w.reg, engineRoots(w), luaL_checkstring(L, 1), vals, 4, n, err);
+                        : sceneGet(w.reg, luaL_checkstring(L, 1), vals, 4, n, err);
     if (!ok)
         return luaL_error(L, "scene.get: %s", err.c_str());
     if (n == 1) {
@@ -74,6 +76,7 @@ int lGet(lua_State* L) {
     return 1;
 }
 
+/// scene.scenes() -> table | list loadable scenes in assets/scenes as an array of {label, path} (label from the json "name" field when present)
 int lScenes(lua_State* L) {
     const std::string dir = std::filesystem::exists("assets/scenes") ? "assets/scenes"
                                                                   : exeDir() + "/../assets/scenes";
@@ -102,21 +105,25 @@ int lScenes(lua_State* L) {
     return 1;
 }
 
+/// scene.request_scene(path: string) | queue a scene to load at the end of this frame (e.g. from a UI button)
 int lRequestScene(lua_State* L) {
     SceneScript::sSelf(L)->w().pendingScene = luaL_checkstring(L, 1);
     return 0;
 }
 
+/// scene.last_error() -> string | error message from the last failed scene load (empty when none)
 int lLastError(lua_State* L) {
     lua_pushstring(L, SceneScript::sSelf(L)->w().loadError.c_str());
     return 1;
 }
 
+/// scene.time() -> number | seconds since engine start (monotonic, for _animate timing)
 int lTime(lua_State* L) {
     lua_pushnumber(L, SceneScript::sSelf(L)->time());
     return 1;
 }
 
+/// scene.button(name: string, fn: function) | register a named button callback; fired by ui.fire_button(name) or a UI widget bound to that action
 int lButton(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const std::string name = luaL_checkstring(L, 1);
@@ -125,25 +132,56 @@ int lButton(lua_State* L) {
     return 0;
 }
 
-// render.gltf
+/// graphics.gltf(e: entity, path: string) -> entity | load a glTF file into e (meshes, materials, textures, skeleton); returns e
 int lGltf(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
     const std::string path = luaL_checkstring(L, 2);
     std::string err;
     if (loadGltf(w.reg, e, path, err) == entt::null)
-        return luaL_error(L, "render.gltf: %s", err.c_str());
+        return luaL_error(L, "graphics.gltf: %s", err.c_str());
     luaPushEnt(L, e);
     return 1;
 }
 
-// soft.floor
+/// graphics.load_texture(path: string, name?: string) -> entity | create a path-only Texture (file loaded and uploaded on first use), optionally named
+int lLoadTexture(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    const std::string path = luaL_checkstring(L, 1);
+    const entt::entity e = w.reg.create();
+    if (const char* name = luaL_optstring(L, 2, nullptr))
+        w.reg.emplace<Name>(e, name);
+    w.reg.emplace<Texture>(e).path = path;
+    luaPushEnt(L, e);
+    return 1;
+}
+
+/// graphics.render_texture(w: int, h: int, name?: string) -> entity | create a standalone GPUTexture render target (no Texture parent); render into it, then attach to a material or environment (errors when the graphics server is disabled)
+int lRenderTexture(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    if (!w.hasDevice)
+        return luaL_error(L, "graphics.render_texture: graphics server disabled");
+    const uint32_t wpx = (uint32_t)luaL_checkinteger(L, 1);
+    const uint32_t hpx = (uint32_t)luaL_checkinteger(L, 2);
+    const entt::entity e = w.reg.create();
+    if (const char* name = luaL_optstring(L, 3, nullptr))
+        w.reg.emplace<Name>(e, name);
+    w.reg.emplace<GPUTexture>(e, GPUTexture{wpx, hpx});
+    w.graphics.makeGpuTexture(e, wpx, hpx);
+    luaPushEnt(L, e);
+    return 1;
+}
+
+/// soft.set_floor(y: number) | set the Y of the soft-body (cloth) floor plane (errors when the graphics server is disabled)
 int lSoftFloor(lua_State* L) {
-    SceneScript::sSelf(L)->w().gpuSim.soft.setFloor((float)luaL_checknumber(L, 1));
+    Engine& w = SceneScript::sSelf(L)->w();
+    if (!w.hasDevice)
+        return luaL_error(L, "soft.set_floor: graphics server disabled");
+    w.graphics.setFloor((float)luaL_checknumber(L, 1));
     return 0;
 }
 
-// physics.raycast
+/// physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table | rigid-body raycast; returns {hit = true, pos = vec3, dist = number, entity = entity} or nil when nothing is hit; `excludes` is an array of entities to skip
 int lRaycast(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const V3 origin = luaReadV3(L, 1);
@@ -160,18 +198,18 @@ int lRaycast(lua_State* L) {
             excludes.push_back(luaReadEnt(L, -1));
             lua_pop(L, 1);
         }
-    const RayHit hit = w.rigid.raycast(origin, dir, maxDist, excludes);
+    const RayHit hit = w.physics.raycast(origin, dir, maxDist, excludes);
     if (!hit.hit) {
         lua_pushnil(L);
         return 1;
     }
-    const entt::entity bodyEnt = w.rigid.entityFor(hit.body);
+    const entt::entity bodyEnt = w.physics.entityFor(hit.body);
     lua_newtable(L);
     lua_pushboolean(L, true);
     lua_setfield(L, -2, "hit");
     luaPushV3(L, hit.pos);
     lua_setfield(L, -2, "pos");
-    lua_pushnumber(L, maxDist);
+    lua_pushnumber(L, glm::length(hit.pos - origin));
     lua_setfield(L, -2, "dist");
     if (bodyEnt != entt::null) {
         luaPushEnt(L, bodyEnt);
@@ -192,12 +230,14 @@ void luaRegisterScene(lua_State* L, SceneScript* host) {
     reg(L, host, "last_error", lLastError);
 }
 
-void luaRegisterRenderTable(lua_State* L, SceneScript* host) {
+void luaRegisterGraphicsTable(lua_State* L, SceneScript* host) {
     reg(L, host, "gltf", lGltf);
+    reg(L, host, "load_texture", lLoadTexture);
+    reg(L, host, "render_texture", lRenderTexture);
 }
 
 void luaRegisterSoftTable(lua_State* L, SceneScript* host) {
-    reg(L, host, "floor", lSoftFloor);
+    reg(L, host, "set_floor", lSoftFloor);
 }
 
 void luaRegisterPhysicsTable(lua_State* L, SceneScript* host) {

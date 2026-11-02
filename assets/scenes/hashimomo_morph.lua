@@ -14,7 +14,7 @@ end
 function M._on_ready()
     ch = scene.entity("char")
     scene.replace(ch, "Transform", { pos = { 0, 0, 0 } })
-    render.gltf(ch, "local/hashimoto.glb")
+    graphics.gltf(ch, "local/hashimoto.glb")
 
     local mat = scene.entity("mat_ground")
     scene.replace(mat, "Material", { baseColor = { 0.35, 0.35, 0.38 }, metallic = 0, roughness = 0.95 })
@@ -25,12 +25,12 @@ function M._on_ready()
 
     -- the "ui_state" entity is a named, unrendered bind target: the sliders write to
     -- its Material fields, which _animate reads back with scene.get
-    local ui = scene.entity("ui_state")
-    scene.emplace(ui, "Material", { metallic = 1, roughness = 0.85 })
-    local win = scene.ui_window("morph", 300, 110)
-    scene.ui_text(win, "shape key -> all meshes that have it")
-    scene.ui_slider_f(win, "shape #", "ui_state.Material.metallic", 1, #SHAPES, "%.0f")
-    scene.ui_slider_f(win, "weight", "ui_state.Material.roughness", 0, 1, "%.2f")
+    local state = scene.entity("ui_state")
+    scene.emplace(state, "Material", { metallic = 1, roughness = 0.85 })
+    local win = ui.window("morph", 300, 110)
+    ui.text(win, "shape key -> all meshes that have it")
+    ui.slider_f(win, "shape #", "ui_state.Material.metallic", 1, #SHAPES, "%.0f")
+    ui.slider_f(win, "weight", "ui_state.Material.roughness", 0, 1, "%.2f")
 end
 
 function M._animate()

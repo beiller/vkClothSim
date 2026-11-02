@@ -20,7 +20,7 @@ function M._on_ready(self)
 
     local ch = scene.entity("char")
     scene.replace(ch, "Transform", { pos = { 0, 0, 0 } })
-    render.gltf(ch, "local/hashimoto.glb")
+    graphics.gltf(ch, "local/hashimoto.glb")
 
     local matJoint = scene.entity("mat_joint")
     scene.replace(matJoint, "Material", { baseColor = {1, 0.15, 0.15}, metallic = 0, roughness = 0.4,

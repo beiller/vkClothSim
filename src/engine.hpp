@@ -1,14 +1,11 @@
 #pragma once
-#include "app/rigid.hpp"
-#include "core/reflect.hpp"
+#include "physics/physics_server.hpp"
 #include "script/scene_script.hpp"
-#include "sim/gpusim.hpp"
-#include "vk/renderer.hpp"
+#include "vk/graphics_server.hpp"
 #include "xr_backend.hpp"
 #include <entt/entt.hpp>
 #include <memory>
-#include <utility>
-#include <vector>
+#include <string>
 
 class VkApp;
 
@@ -26,12 +23,12 @@ struct PhaseMs {
 struct Engine {
     entt::registry reg;
     VkApp* app = nullptr;
-    RigidScene rigid;
-    GpuSim gpuSim;
-    Renderer renderer;
+    PhysicsServer physics;
+    GraphicsServer graphics;
     std::unique_ptr<IXrBackend> xr;
-    RenderSettings render;
     SceneScript script;
+    bool hasDevice = false; // graphics server initialized (Vulkan device present)
+    bool hasWindow = false; // window + renderer draw path active
     float fps = 0.0f;
     PhaseMs phase;
     bool showDemo = false;
@@ -41,8 +38,3 @@ struct Engine {
     std::string scenePath;
     std::string loadError;
 };
-
-// the non-entity reflection roots (editor / url binding); only glue code builds this
-inline std::vector<refl::RootRef> engineRoots(Engine& w) {
-    return {{refl::findType("RenderSettings"), &w.render}, {refl::findType("RigidScene"), &w.rigid}};
-}

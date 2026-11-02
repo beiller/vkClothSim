@@ -47,7 +47,7 @@ struct UiFeed {
     bool demo = false;
 };
 
-// canvas target (FBO) must exist (Renderer::uiEnsureTarget); called after it
+// canvas target (FBO) must exist (GraphicsServer::uiEnsureTarget); called after it
 void uiEnsureContext(const entt::registry& reg, entt::entity canvas, VkRenderPass rp, VkFramebuffer fb);
-void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds, const std::vector<refl::RootRef>& roots);
+void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds);
 void uiRender(entt::entity canvas, VkCommandBuffer cmd);
