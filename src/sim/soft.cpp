@@ -147,6 +147,39 @@ void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::
     b.posMem = rw.pos.memory;
     b.nrm = rw.nrm.buffer;
     b.nrmMem = rw.nrm.memory;
+    // The shared pos/nrm buffer is DEVICE_LOCAL (not mappable) and may still hold the
+    // renderer's local-space upload (or be mid-read). Fill it with the sim's world-space
+    // initial positions via a staging copy so the first visible frame is correct regardless
+    // of draw order; a pinned body never rewrites it, so wait idle first to avoid tearing.
+    vkDeviceWaitIdle(m_dev);
+    auto fillShared = [this](VkBuffer dst, const void* data, VkDeviceSize bytes) {
+        VkBuffer stage;
+        VkDeviceMemory stageMem;
+        VkBufferCreateInfo sbi{};
+        sbi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        sbi.size = bytes;
+        sbi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        VK(vkCreateBuffer(m_dev, &sbi, nullptr, &stage));
+        VkMemoryRequirements mr;
+        vkGetBufferMemoryRequirements(m_dev, stage, &mr);
+        VkMemoryAllocateInfo maa{};
+        maa.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        maa.allocationSize = mr.size;
+        maa.memoryTypeIndex = vkFindMemoryType(m_pdev, mr, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VK(vkAllocateMemory(m_dev, &maa, nullptr, &stageMem));
+        VK(vkBindBufferMemory(m_dev, stage, stageMem, 0));
+        void* p;
+        VK(vkMapMemory(m_dev, stageMem, 0, bytes, 0, &p));
+        std::memcpy(p, data, bytes);
+        vkUnmapMemory(m_dev, stageMem);
+        const VkBufferCopy r{0, 0, bytes};
+        vkSubmitAndWait(m_dev, m_pdev, [&](VkCommandBuffer cb) { vkCmdCopyBuffer(cb, stage, dst, 1, &r); });
+        vkDestroyBuffer(m_dev, stage, nullptr);
+        vkFreeMemory(m_dev, stageMem, nullptr);
+    };
+    fillShared(b.pos, mesh.pos.data(), 12 * vn);
+    if (!mesh.nrm.empty())
+        fillShared(b.nrm, mesh.nrm.data(), 12 * vn);
     auto mk = [this](VkBuffer& buf, VkDeviceMemory& mem, VkDeviceSize bytes, const void* data) {
         vkMakeBufferDev(m_dev, m_pdev, buf, mem, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, data);
     };
