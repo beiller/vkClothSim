@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-GLB="${1:-local/basegen8.glb}"     # relative to assets/
+GLB="${1:-local/hashimoto.glb}"     # relative to assets/
 THRESHOLD="${2:-0.3}"              # skin-weight cutoff, matches the current kFits
 LUA=assets/scenes/caps_fit.lua
 BIN=build/bone_probe
