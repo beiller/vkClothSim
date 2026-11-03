@@ -121,6 +121,8 @@ static const FieldDesc kRigidBody[] = {
     {"mass", OFF(RigidBody, mass), FieldKind::SliderF, 0.0f, 1000.0f},
     {"forceSleep", OFF(RigidBody, forceSleep), FieldKind::Checkbox},
     {"colliders", OFF(RigidBody, colliders), FieldKind::EntArr},
+    {"force", OFF(RigidBody, force), FieldKind::DragV3},
+    {"impulse", OFF(RigidBody, impulse), FieldKind::DragV3},
 };
 /// KinematicBody | Jolt kinematic (script-driven) body: `colliders` = collider entities
 static const FieldDesc kKinematicBody[] = {

@@ -1,6 +1,6 @@
 -- VR controller (right hand): the stick walks the "vr root" anchor in the VR head's ("vr cam")
--- frame; the trigger grabs/releases: a Jolt point joint for dynamic bodies, an in-place
--- parent (and restore) to the hand anchor for kinematic ones. The grab anchor is a kinematic
+-- frame; the trigger grabs/releases: a welded SixDOF joint (all axes fixed) for dynamic bodies,
+-- an in-place parent (and restore) to the hand anchor for kinematic ones. The grab anchor is a kinematic
 -- capsule this script drives from the aim pose - the rigid step pulls kinematic poses from
 -- the ECS before each step, so a pose written in _physics is live for that step.
 -- Always runs - without a headset the controller is simply inactive and nothing moves.
@@ -182,8 +182,18 @@ local function grab()
         -- would otherwise always win at fraction 0
         local hit = physics.raycast(aimWorld, fwd, kGrabRange, { handAnchor })
         if hit and hit.entity and isDynamic(hit.entity) then
+            -- welded SixDOF joint: all axes fixed at the grab pose. relQuat = object^-1 * hand
+            -- (Jolt's rest state is q2 = q1 * r0, so r0 = bodyA * bodyB^-1 expressed as
+            --  qinv(bodyB) * bodyA) makes "zero rotation" the object's current orientation
+            -- relative to the hand - it carries rigidly instead of snapping to the hand.
+            local bq = scene.world_pose(hit.entity).quat
             local j = scene.entity()
-            scene.replace(j, "Joint", { bodyA = handAnchor, bodyB = hit.entity, type = 0, grabPos = hit.pos })
+            scene.replace(j, "SixDofJoint", {
+                bodyA = handAnchor, bodyB = hit.entity, grabPos = hit.pos,
+                relQuat = math.qmul(math.qinv(bq), aq),
+                limOn = 1,
+                limTransMin = { 0, 0, 0 }, limTransMax = { 0, 0, 0 },
+                limAngMin = { 0, 0, 0 }, limAngMax = { 0, 0, 0 } })
             scene.add_child(handAnchor, j)
             joint = j
             spawnMarker(hit.entity, hit.pos)

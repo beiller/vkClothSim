@@ -34,7 +34,7 @@ public:
     bool hasBody(entt::entity e) const;
     void setKinematicPose(entt::entity e, const V3& pos, const Quat& quat, float dt);
     void project(const entt::registry& reg);
-    void step(const entt::registry& reg, float dt);
+    void step(entt::registry& reg, float dt);
     Transform pose(entt::entity e) const;
     RayHit raycast(const V3& origin, const V3& dir, float maxDist,
                    const std::vector<entt::entity>& excludes = {}) const;

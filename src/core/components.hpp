@@ -103,8 +103,10 @@ struct RigidBody {
     bool forceSleep = false; // true = keep the body asleep (welds disabled, re-slept every frame);
                              // false = release it (woken once, welds re-enabled, Jolt owns the state)
     std::vector<entt::entity> colliders;
+    V3 force{};   // continuous world-space force, applied every tick while non-zero (clear to stop)
+    V3 impulse{}; // one-shot: applied on the tick it is seen, then zeroed by the engine
 
-    // forceSleep is a command, not synced state: excluded on purpose
+    // forceSleep/force/impulse are commands, not synced state: excluded on purpose
     bool operator==(const RigidBody& o) const {
         return friction == o.friction && restitution == o.restitution && damping == o.damping &&
                mass == o.mass && colliders == o.colliders;

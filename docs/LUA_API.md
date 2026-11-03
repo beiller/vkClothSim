@@ -459,6 +459,8 @@ Jolt dynamic body: friction/restitution/damping/mass, forceSleep, `colliders` = 
 | mass | number | [0.0, 1000.0] |
 | forceSleep | bool |  |
 | colliders | entity[] |  |
+| force | vec3 |  |
+| impulse | vec3 |  |
 
 ### KinematicBody
 

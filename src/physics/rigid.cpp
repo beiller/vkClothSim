@@ -35,6 +35,10 @@ JPH::Quat jQuat(Quat q) {
     return {q.x, q.y, q.z, q.w};
 }
 
+JPH::Vec3 jVec(V3 v) {
+    return {v.x, v.y, v.z};
+}
+
 JPH::ShapeRefC applyBodyScale(JPH::ShapeRefC shape, const V3& s) {
     if (s.x == 1.0f && s.y == 1.0f && s.z == 1.0f)
         return shape;
@@ -603,7 +607,7 @@ void RigidScene::project(const entt::registry& reg) {
     }
 }
 
-void RigidScene::step(const entt::registry& reg, float dt) {
+void RigidScene::step(entt::registry& reg, float dt) {
     int vel = 10, pos = 10;
     for (auto [e, s] : reg.view<PhysicsSettings>().each()) {
         vel = s.velocitySteps;
@@ -629,6 +633,17 @@ void RigidScene::step(const entt::registry& reg, float dt) {
         if (motion < 1e-4f)
             continue;
         bi.ActivateConstraint(two);
+    }
+    // apply user forces/impulses before the step; impulse is a one-shot command (consumed below)
+    for (auto [e, rb] : reg.view<RigidBody>().each()) {
+        if (!hasBody(e))
+            continue; // kinematic / no Jolt body: can't take force
+        if (glm::length(rb.force) > 1e-9f)
+            bi.AddForce(m_body[e], jVec(rb.force));
+        if (glm::length(rb.impulse) > 1e-9f) {
+            bi.AddImpulse(m_body[e], jVec(rb.impulse));
+            reg.get<RigidBody>(e).impulse = {}; // consume the command
+        }
     }
     m_phys->Update(dt, 1, m_temp, m_job);
 }
