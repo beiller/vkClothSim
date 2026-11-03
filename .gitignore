@@ -1,5 +1,4 @@
 build/
-lib/
 *.png
 !assets/*.png
 *.spv

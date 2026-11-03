@@ -20,6 +20,7 @@ enum class Cmp {
     BoxShape,
     TaperedCapsule,
     SphereShape,
+    ConvexHullShape,
     Collider,
     ControllerInput,
     MouseInput,
@@ -62,6 +63,8 @@ const char* cmpName(Cmp c) {
         return "TaperedCapsule";
     case Cmp::SphereShape:
         return "SphereShape";
+    case Cmp::ConvexHullShape:
+        return "ConvexHullShape";
     case Cmp::Collider:
         return "Collider";
     case Cmp::ControllerInput:
@@ -125,6 +128,8 @@ void* base(const entt::registry& reg, entt::entity e, Cmp c) {
         return const_cast<TaperedCapsule*>(reg.try_get<TaperedCapsule>(e));
     case Cmp::SphereShape:
         return const_cast<SphereShape*>(reg.try_get<SphereShape>(e));
+    case Cmp::ConvexHullShape:
+        return const_cast<ConvexHullShape*>(reg.try_get<ConvexHullShape>(e));
     case Cmp::Collider:
         return const_cast<Collider*>(reg.try_get<Collider>(e));
     case Cmp::ControllerInput:
@@ -195,6 +200,9 @@ void emplaceDefault(entt::registry& reg, entt::entity e, Cmp c) {
         break;
     case Cmp::SphereShape:
         reg.emplace<SphereShape>(e);
+        break;
+    case Cmp::ConvexHullShape:
+        reg.emplace<ConvexHullShape>(e);
         break;
     case Cmp::Collider:
         reg.emplace<Collider>(e);
@@ -272,6 +280,9 @@ void removeC(entt::registry& reg, entt::entity e, Cmp c) {
         break;
     case Cmp::SphereShape:
         reg.remove<SphereShape>(e);
+        break;
+    case Cmp::ConvexHullShape:
+        reg.remove<ConvexHullShape>(e);
         break;
     case Cmp::Collider:
         reg.remove<Collider>(e);
@@ -567,6 +578,12 @@ bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typ
     if (c == Cmp::SphereShape) {
         if (reg.get<SphereShape>(e).radius <= 0.0f) {
             err = "SphereShape: radius must be > 0";
+            return false;
+        }
+    }
+    if (c == Cmp::ConvexHullShape) {
+        if (reg.get<ConvexHullShape>(e).points.size() < 12) {
+            err = "ConvexHullShape: needs at least 4 points (12 xyz values)";
             return false;
         }
     }

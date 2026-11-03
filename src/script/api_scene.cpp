@@ -5,6 +5,7 @@
 #include "assets.hpp"
 #include "gltf.hpp"
 #include "url.hpp"
+#include "physics/mesh_decomp.hpp"
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -235,6 +236,33 @@ int lRaycast(lua_State* L) {
     return 1;
 }
 
+/// physics.convex_decompose(mesh: entity, maxHulls?: number, maxVertsPerHull?: number, threshold?: number) -> table | decompose a Geometry mesh into convex parts (CoACD); returns an array of hulls, each a flat {x,y,z,...} point list ready for ConvexHullShape.points; falls back to one hull of all vertices on degenerate input
+int lConvexDecompose(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    const entt::entity e = luaReadEnt(L, 1);
+    if (!w.reg.try_get<Geometry>(e))
+        return luaL_error(L, "physics.convex_decompose: no such mesh");
+    DecompParams p;
+    if (!lua_isnoneornil(L, 2))
+        p.maxHulls = (int)luaL_checknumber(L, 2);
+    if (!lua_isnoneornil(L, 3))
+        p.maxVertsPerHull = (int)luaL_checknumber(L, 3);
+    if (!lua_isnoneornil(L, 4))
+        p.threshold = (float)luaL_checknumber(L, 4);
+    const auto hulls = convexDecompose(w.reg.get<Geometry>(e).mesh, p);
+    lua_createtable(L, (int)hulls.size(), 0);
+    for (size_t i = 0; i < hulls.size(); ++i) {
+        const auto& h = hulls[i];
+        lua_createtable(L, (int)h.size(), 0);
+        for (size_t j = 0; j < h.size(); ++j) {
+            lua_pushnumber(L, h[j]);
+            lua_seti(L, -2, (int)j + 1);
+        }
+        lua_seti(L, -2, (int)i + 1);
+    }
+    return 1;
+}
+
 }
 
 void luaRegisterScene(lua_State* L, SceneScript* host) {
@@ -259,4 +287,5 @@ void luaRegisterSoftTable(lua_State* L, SceneScript* host) {
 
 void luaRegisterPhysicsTable(lua_State* L, SceneScript* host) {
     reg(L, host, "raycast", lRaycast);
+    reg(L, host, "convex_decompose", lConvexDecompose);
 }

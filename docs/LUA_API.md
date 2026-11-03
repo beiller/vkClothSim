@@ -49,6 +49,7 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [`graphics.render_texture(w: int, h: int, name?: string) -> entity`](#graphicsrendertexturew-int-h-int-name-string---entity)
 - [physics](#physics)
   - [`physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table`](#physicsraycastorigin-vec3-dir-vec3-maxdist-number-excludes-table---table)
+  - [`physics.convex_decompose(mesh: entity, maxHulls?: number, maxVertsPerHull?: number, threshold?: number) -> table`](#physicsconvexdecomposemesh-entity-maxhulls-number-maxvertsperhull-number-threshold-number---table)
 - [soft](#soft)
   - [`soft.set_floor(y: number)`](#softsetfloory-number)
 - [ui](#ui)
@@ -82,6 +83,7 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [BoxShape](#boxshape)
   - [TaperedCapsule](#taperedcapsule)
   - [SphereShape](#sphereshape)
+  - [ConvexHullShape](#convexhullshape)
   - [Collider](#collider)
   - [Joint](#joint)
   - [SixDofJoint](#sixdofjoint)
@@ -264,6 +266,10 @@ create a standalone GPUTexture render target (no Texture parent); render into it
 ### `physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table`
 
 rigid-body raycast; returns {hit = true, pos = vec3, dist = number, entity = entity} or nil when nothing is hit; `excludes` is an array of entities to skip
+
+### `physics.convex_decompose(mesh: entity, maxHulls?: number, maxVertsPerHull?: number, threshold?: number) -> table`
+
+decompose a Geometry mesh into convex parts (CoACD); returns an array of hulls, each a flat {x,y,z,...} point list ready for ConvexHullShape.points; falls back to one hull of all vertices on degenerate input
 
 ## soft
 
@@ -507,6 +513,14 @@ sphere collider shape: radius
 | field | type | range |
 |---|---|---|
 | radius | number | [0.0, 10.0] |
+
+### ConvexHullShape
+
+convex-hull collider shape: `points` = flat xyz triples of the hull vertices
+
+| field | type | range |
+|---|---|---|
+| points | number[] |  |
 
 ### Collider
 

@@ -91,6 +91,10 @@ struct SphereShape {
     float radius = 0.0f;
 };
 
+struct ConvexHullShape {
+    std::vector<float> points; // hull vertices as flat xyz triples (mesh local space); Jolt builds the convex hull
+};
+
 struct Collider {
     entt::entity shape = entt::null;
 };

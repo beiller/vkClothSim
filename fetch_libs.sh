@@ -15,6 +15,8 @@
 #   tinyexr  github.com/syoyo/tinyexr              v1.0.3          1.0.x
 #   miniz    github.com/syoyo/tinyexr (deps/miniz) v1.0.3          miniz 2.x
 #   tinygltf github.com/syoyo/tinygltf (glTF v3 C) 0d9ce1a         glTF 2.0 parser
+#   coacd    github.com/SarahWeiii/CoACD          1.0.9           CoACD 1.0.9
+#   cdt      github.com/artem-ogre/CDT            ec03b309        CDT (CoACD's pinned dep)
 #
 # A bad ref fails the clone loudly (see the tag list it prints). If a tag has
 # moved, bump the REF in the calls at the bottom.
@@ -94,6 +96,28 @@ fetch_files miniz https://github.com/syoyo/tinyexr v1.0.3 deps/miniz/miniz.h dep
 fetch_files tinygltf https://github.com/syoyo/tinygltf 0d9ce1a9561688c6c6e7471430d15a50a0b15f1a \
     tiny_gltf_v3.h tiny_gltf_v3.c tinygltf_json_c.h LICENSE
 
+# CoACD (approximate convex decomposition). Its CDT dependency is a git submodule, which a
+# plain clone does not fetch, so we clone it separately into the nested path the build uses.
+fetch_full coacd https://github.com/SarahWeiii/CoACD 1.0.9
+if [ ! -e "lib/coacd/3rd/cdt/CDT/CMakeLists.txt" ] || [ "$FORCE" -eq 1 ]; then
+    mkdir -p lib/coacd/3rd/cdt
+    echo "  [clone] https://github.com/artem-ogre/CDT @ ec03b309fd18102ab1da069f2edf3b37be5d1fb3"
+    rm -rf lib/coacd/3rd/cdt/CDT
+    tmp=$(mktemp -d)
+    if ! git clone --quiet https://github.com/artem-ogre/CDT "$tmp"; then
+        echo "error: could not clone CDT" >&2
+        exit 1
+    fi
+    if ! git -C "$tmp" checkout --quiet "ec03b309fd18102ab1da069f2edf3b37be5d1fb3" 2>/dev/null; then
+        echo "error: CDT has no commit 'ec03b309fd18102ab1da069f2edf3b37be5d1fb3'" >&2
+        rm -rf "$tmp"
+        exit 1
+    fi
+    # the CDT project lives in a CDT/ subdirectory of the repo (not at the repo root)
+    cp -a "$tmp/CDT/." lib/coacd/3rd/cdt/CDT/
+    rm -rf "lib/coacd/3rd/cdt/CDT/.git" "$tmp"
+fi
+
 # sanity: each lib's key file is present and non-empty
 for f in \
     lib/entt/single_include/entt/entt.hpp \
@@ -107,7 +131,10 @@ for f in \
     lib/tinyexr/tinyexr.cc \
     lib/miniz/miniz.h \
     lib/tinygltf/tiny_gltf_v3.h \
-    lib/tinygltf/tiny_gltf_v3.c
+    lib/tinygltf/tiny_gltf_v3.c \
+    lib/coacd/public/coacd.h \
+    lib/coacd/CMakeLists.txt \
+    lib/coacd/3rd/cdt/CDT/CMakeLists.txt
 do
     [ -s "$f" ] || { echo "error: $f missing/empty" >&2; exit 1; }
 done

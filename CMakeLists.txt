@@ -97,6 +97,17 @@ add_library(tinyexr STATIC ${CMAKE_SOURCE_DIR}/lib/tinyexr/tinyexr.cc)
 target_include_directories(tinyexr PUBLIC ${CMAKE_SOURCE_DIR}/lib/tinyexr)
 add_library(miniz STATIC ${CMAKE_SOURCE_DIR}/lib/miniz/miniz.c)
 target_include_directories(miniz PUBLIC ${CMAKE_SOURCE_DIR}/lib/miniz)
+# CoACD (approximate convex decomposition, SIGGRAPH'22). Built in "OFF" mode: no boost/
+# openvdb/spdlog/zlib - just its own sources + the vendored CDT headers + std::threads.
+file(GLOB_RECURSE COACD_SRC ${CMAKE_SOURCE_DIR}/lib/coacd/src/*.cpp ${CMAKE_SOURCE_DIR}/lib/coacd/src/*.cc)
+list(FILTER COACD_SRC EXCLUDE REGEX ".*/preprocess.*")
+add_library(coacd STATIC ${COACD_SRC} ${CMAKE_SOURCE_DIR}/lib/coacd/public/coacd.cpp)
+target_compile_features(coacd PRIVATE cxx_std_20)
+target_include_directories(coacd PUBLIC ${CMAKE_SOURCE_DIR}/lib/coacd/public
+                                     PRIVATE ${CMAKE_SOURCE_DIR}/lib/coacd/3rd/cdt/CDT/include)
+target_compile_definitions(coacd PRIVATE WITH_3RD_PARTY_LIBS=0 DISABLE_SPDLOG WITH_STD_THREADS=1)
+find_package(Threads REQUIRED)
+target_link_libraries(coacd PUBLIC Threads::Threads)
 add_library(imgui STATIC ${IMGUI_SOURCES})
 target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
 target_link_libraries(imgui PRIVATE glfw)
@@ -127,10 +138,11 @@ target_include_directories(3dsim_solvers PUBLIC ${CMAKE_SOURCE_DIR}/solvers)
 
 add_library(3dsim_physics STATIC
     src/physics/rigid.cpp
-    src/physics/physics_server.cpp)
+    src/physics/physics_server.cpp
+    src/physics/mesh_decomp.cpp)
 target_compile_features(3dsim_physics PRIVATE cxx_std_23)
 target_include_directories(3dsim_physics PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(3dsim_physics PUBLIC 3dsim_core PRIVATE Jolt::Jolt)
+target_link_libraries(3dsim_physics PUBLIC 3dsim_core PRIVATE Jolt::Jolt coacd)
 
 set(XR_SOURCES src/xr/openxr_loader.cpp src/xr/xr.cpp)
 set(XR_INCLUDES ${CMAKE_SOURCE_DIR}/lib/openxr)

@@ -1,0 +1,16 @@
+{
+    "name": "sword decomp",
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [7, 2.5, -7], "quat": [0, 0, 0, 1] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/camera"
+        },
+        { "name": "key light", "components": { "Transform": { "pos": [4, 8, 4] }, "PointLight": { "color": [1.0, 0.97, 0.92], "intensity": 300, "radius": 0.5 } } },
+        { "name": "mat_ground", "components": { "Material": { "baseColor": [0.19, 0.21, 0.17], "roughness": 0.85 } } },
+        { "name": "probe", "script": "scenes/sword_decomp" }
+    ]
+}

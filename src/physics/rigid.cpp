@@ -10,6 +10,7 @@
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 #include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
@@ -205,6 +206,17 @@ const JPH::Shape* RigidScene::shape(const entt::registry& reg, entt::entity e) {
     }
     else if (const auto* ss = reg.try_get<SphereShape>(e))
         s = JPH::ShapeRefC(new JPH::SphereShape(ss->radius));
+    else if (const auto* ch = reg.try_get<ConvexHullShape>(e)) {
+        const auto& pts = ch->points;
+        JPH::ConvexHullShapeSettings settings;
+        settings.mPoints.reserve(pts.size() / 3);
+        for (size_t i = 0; i + 2 < pts.size(); i += 3)
+            settings.mPoints.push_back(JPH::Vec3(pts[i], pts[i + 1], pts[i + 2]));
+        const JPH::Shape::ShapeResult r = settings.Create();
+        if (!r.Get())
+            return nullptr;
+        s = r.Get();
+    }
     if (!s.GetPtr())
         return nullptr;
     const JPH::Shape* ptr = s.GetPtr();
@@ -229,6 +241,7 @@ void RigidScene::watch(entt::registry& reg) {
     reg.on_destroy<BoxShape>().connect<&RigidScene::onShapeDestroyed>(this);
     reg.on_destroy<TaperedCapsule>().connect<&RigidScene::onShapeDestroyed>(this);
     reg.on_destroy<SphereShape>().connect<&RigidScene::onShapeDestroyed>(this);
+    reg.on_destroy<ConvexHullShape>().connect<&RigidScene::onShapeDestroyed>(this);
 }
 
 void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const Quat& quat, float dt) {
@@ -415,6 +428,13 @@ uint64_t RigidScene::shapeFingerprint(const entt::registry& reg, const std::vect
             mix(tc, sizeof(TaperedCapsule));
         else if (const auto* ss = reg.try_get<SphereShape>(col->shape))
             mix(ss, sizeof(SphereShape));
+        else if (const auto* ch = reg.try_get<ConvexHullShape>(col->shape)) {
+            // vector field: hash the count + actual data (sizeof would hit the unstable ptr)
+            const size_t n = ch->points.size();
+            mix(&n, sizeof(size_t));
+            if (!ch->points.empty())
+                mix(ch->points.data(), n * sizeof(float));
+        }
         const Transform t = reg.try_get<Transform>(c) ? reg.get<Transform>(c) : Transform{};
         mix(&t, sizeof(Transform));
     }

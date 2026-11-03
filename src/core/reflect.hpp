@@ -151,6 +151,10 @@ static const FieldDesc kTaperedCapsule[] = {
 static const FieldDesc kSphereShape[] = {
     {"radius", OFF(SphereShape, radius), FieldKind::SliderF, 0.0f, 10.0f},
 };
+/// ConvexHullShape | convex-hull collider shape: `points` = flat xyz triples of the hull vertices
+static const FieldDesc kConvexHullShape[] = {
+    {"points", OFF(ConvexHullShape, points), FieldKind::FloatArr},
+};
 /// Collider | links a shape entity to a body: `shape` = shape entity ref
 static const FieldDesc kCollider[] = {
     {"shape", OFF(Collider, shape), FieldKind::Ref},
@@ -286,6 +290,7 @@ static const TypeDesc kTypes[] = {
     {"BoxShape", kBoxShape},
     {"TaperedCapsule", kTaperedCapsule},
     {"SphereShape", kSphereShape},
+    {"ConvexHullShape", kConvexHullShape},
     {"Collider", kCollider},
     {"Joint", kJoint},
     {"SixDofJoint", kSixDofJoint},
