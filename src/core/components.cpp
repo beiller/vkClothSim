@@ -320,13 +320,6 @@ void removeC(entt::registry& reg, entt::entity e, Cmp c) {
     }
 }
 
-const FieldDesc* findField(const TypeDesc* t, const std::string& name) {
-    for (const auto& f : t->fields)
-        if (f.name == name)
-            return &f;
-    return nullptr;
-}
-
 bool fieldValue(const CompField& f, const float*& src, int& len) {
     if (f.isArr) {
         if (f.arr.empty()) {
@@ -341,6 +334,7 @@ bool fieldValue(const CompField& f, const float*& src, int& len) {
     if (f.n > 0) {
         src = f.v;
         len = f.n;
+        return true;
     }
     return false;
 }

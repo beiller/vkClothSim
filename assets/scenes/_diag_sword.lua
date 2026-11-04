@@ -3,7 +3,7 @@ local M = {}
 function M._on_ready(self)
     local root = scene.entity("sword_root")
     scene.replace(root, "Transform", { pos = { 0, 12, 0 } })
-    graphics.gltf(root, "local/sword.glb")
+    scene.spawn(graphics.gltf("local/sword.glb"), root)
 
     print(string.format("DIAG Geometry(all)=%d", #scene.find_components("Geometry")))
     print(string.format("DIAG Renderable(all)=%d", #scene.find_components("Renderable")))

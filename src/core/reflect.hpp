@@ -35,6 +35,13 @@ struct TypeDesc {
     std::span<const FieldDesc> fields;
 };
 
+inline const FieldDesc* findField(const TypeDesc* t, const std::string& name) {
+    for (const auto& f : t->fields)
+        if (f.name == name)
+            return &f;
+    return nullptr;
+}
+
 namespace refl {
 
 #define OFF(T, f) offsetof(T, f)

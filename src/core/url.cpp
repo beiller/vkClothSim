@@ -3,13 +3,6 @@
 #include <cstring>
 #include <entt/entt.hpp>
 
-static const FieldDesc* findField(const TypeDesc* t, const std::string& name) {
-    for (const auto& f : t->fields)
-        if (name == f.name)
-            return &f;
-    return nullptr;
-}
-
 // "LuaScript.var" -> a slot in the script's vars mirror. The var path may be nested
 // ("pos.x"); subvars of 3/4-number table slots resolve to member views into the
 // contiguous vec storage. Numbers are float, plus bool/vec3/quat; string vars are not

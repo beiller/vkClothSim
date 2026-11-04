@@ -421,6 +421,15 @@ entt::entity Renderer::uploadTexture(entt::registry& reg, entt::entity texEnt) {
             }
         }
         if (!ok) {
+            TextureData td;
+            if (loadEmbeddedTexture(t->path, td) && !td.rgba.empty()) {
+                data = std::move(td.rgba);
+                w = td.w;
+                h = td.h;
+                ok = true;
+            }
+        }
+        if (!ok) {
             if (m_texWarned.insert(texEnt).second)
                 std::fprintf(stderr, "3dsim: texture '%s' not found\n", t->path.c_str());
             return entt::null;

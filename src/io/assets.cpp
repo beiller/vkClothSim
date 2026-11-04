@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <unistd.h>
+#include <unordered_map>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
@@ -69,5 +70,25 @@ bool loadHdr(const std::string& path, HdrData& out) {
         out.rgb[(size_t)i * 3 + 2] = rgba[(size_t)i * 4 + 2];
     }
     std::free(rgba);
+    return true;
+}
+
+namespace {
+std::unordered_map<std::string, TextureData> g_embeddedTex;
+}
+
+void registerEmbeddedTexture(const std::string& id, const std::vector<uint8_t>& rgba, uint32_t w, uint32_t h) {
+    TextureData td;
+    td.rgba = rgba;
+    td.w = (int)w;
+    td.h = (int)h;
+    g_embeddedTex[id] = std::move(td);
+}
+
+bool loadEmbeddedTexture(const std::string& id, TextureData& out) {
+    const auto it = g_embeddedTex.find(id);
+    if (it == g_embeddedTex.end())
+        return false;
+    out = it->second;
     return true;
 }

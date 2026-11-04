@@ -1,0 +1,6 @@
+{
+    "name": "gltf table test",
+    "objects": [
+        { "name": "probe", "script": "scenes/_gltf_table_test" }
+    ]
+}

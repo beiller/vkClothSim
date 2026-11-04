@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <vector>
 
 namespace {
@@ -69,6 +70,55 @@ std::vector<uint8_t> b64Decode(const std::string& in) {
     else if (n == 2)
         out.push_back((uint8_t)((acc >> 4) & 0xff));
     return out;
+}
+
+bool parseGltfFile(const std::string& path, tg3_model& model, std::string& fileBase, std::string& baseDir,
+                   std::string& fileId, std::string& err) {
+    std::string file;
+    if (std::filesystem::exists("assets/" + path))
+        file = "assets/" + path;
+    else if (std::filesystem::exists(exeDir() + "/../assets/" + path))
+        file = exeDir() + "/../assets/" + path;
+    else {
+        err = "gltf file not found: " + path;
+        return false;
+    }
+    std::ifstream f(file, std::ios::binary);
+    if (!f) {
+        err = "gltf file unreadable: " + path;
+        return false;
+    }
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    baseDir = std::filesystem::path(file).parent_path().string();
+    fileBase = std::filesystem::path(file).stem().string();
+    fileId = file;
+
+    tg3_parse_options opt;
+    tg3_parse_options_init(&opt);
+    opt.fs.file_exists = fsExists;
+    opt.fs.read_file = fsRead;
+    opt.fs.free_file = fsFree;
+
+    tg3_error_stack es;
+    tg3_error_stack_init(&es);
+    const tg3_error_code rc =
+        tg3_parse_auto(&model, &es, bytes.data(), bytes.size(), baseDir.c_str(), (uint32_t)baseDir.size(), &opt);
+    if (rc != TG3_OK) {
+        err = es.count && es.entries ? es.entries[0].message : "gltf parse failed";
+        return false;
+    }
+    for (uint32_t i = 0; i < model.extensions_required_count; ++i)
+        if (s(model.extensions_required[i]) == "KHR_draco_mesh_compression") {
+            err = "DRACO-compressed gltf is not supported";
+            tg3_model_free(&model);
+            return false;
+        }
+    if (!model.scenes_count) {
+        err = "gltf has no scene";
+        tg3_model_free(&model);
+        return false;
+    }
+    return true;
 }
 
 // glTF color data is sRGB-encoded, lighting math is linear: decode sRGB -> linear. Data textures (normal, metallicRoughness, occlusion) are already linear, must not be decoded
@@ -798,53 +848,427 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
     return e;
 }
 
+// ---- registry-free table emission (graphics.gltf -> name->node map) ----
+struct GltfTblCtx {
+    const tg3_model* m;
+    std::string fileBase;
+    std::string fileId;
+    std::string baseDir;
+    std::map<int32_t, std::string> matKeys;
+    std::map<std::pair<int32_t, bool>, std::string> texKeys;
+    std::set<std::string> usedNames;
+    std::map<int32_t, std::string> nodeKeys;                // nodeIdx -> table key (for skeleton refs)
+    std::map<int32_t, std::vector<std::string>> skinMeshes; // skinIdx -> mesh node keys
+    std::map<int32_t, std::string> skinPlacement;           // skinIdx -> placement (first mesh) key
+};
+
+void warnT(GltfTblCtx& c, const std::string& msg) {
+    std::fprintf(stderr, "3dsim: gltf %s: %s\n", c.fileBase.c_str(), msg.c_str());
+}
+
+CompField fNum(const std::string& name, float v) {
+    CompField f;
+    f.name = name;
+    f.v[0] = v;
+    f.n = 1;
+    return f;
+}
+
+CompField fVec(const std::string& name, const float* v, int n) {
+    CompField f;
+    f.name = name;
+    for (int i = 0; i < n && i < 4; ++i)
+        f.v[i] = v[i];
+    f.n = n;
+    return f;
+}
+
+CompField fArr(const std::string& name, const std::vector<float>& a) {
+    CompField f;
+    f.name = name;
+    f.isArr = true;
+    f.arr = a;
+    f.n = (int)a.size();
+    return f;
+}
+
+CompField fStr(const std::string& name, const std::string& sv) {
+    CompField f;
+    f.name = name;
+    f.isStr = true;
+    f.str = sv;
+    return f;
+}
+
+CompField fStrArr(const std::string& name, const std::vector<std::string>& a) {
+    CompField f;
+    f.name = name;
+    f.isStrArr = true;
+    f.strArr = a;
+    f.n = (int)a.size();
+    return f;
+}
+
+std::string uniqueNameT(GltfTblCtx& c, const std::string& base) {
+    std::string n = base;
+    for (int i = 2; std::find(c.usedNames.begin(), c.usedNames.end(), n) != c.usedNames.end(); ++i)
+        n = base + "#" + std::to_string(i);
+    c.usedNames.insert(n);
+    return n;
+}
+
+std::string imageIdT(const GltfTblCtx& c, int32_t imgIdx) {
+    const tg3_image& img = c.m->images[imgIdx];
+    if (img.uri.data && img.buffer_view < 0 && strncmp(img.uri.data, "data:", 5) != 0)
+        return c.baseDir + "/" + s(img.uri);
+    return c.fileId + "#img" + std::to_string(imgIdx);
+}
+
+std::string texKeyForImage(GltfTblCtx& c, int32_t imgIdx, bool srgb, GltfTableData& out) {
+    if (imgIdx < 0 || (uint32_t)imgIdx >= c.m->images_count)
+        return "";
+    const auto key = std::make_pair(imgIdx, srgb);
+    const auto it = c.texKeys.find(key);
+    if (it != c.texKeys.end())
+        return it->second;
+    std::vector<uint8_t> px;
+    int wpx = 0, hpx = 0;
+    if (!decodeImage(*c.m, imgIdx, c.baseDir, px, wpx, hpx, srgb)) {
+        warnT(c, "cannot decode image " + std::to_string(imgIdx));
+        return "";
+    }
+    const std::string k = uniqueNameT(c, "tex_" + std::to_string(imgIdx) + (srgb ? "_s" : ""));
+    c.texKeys[key] = k;
+    registerEmbeddedTexture(imageIdT(c, imgIdx), px, (uint32_t)wpx, (uint32_t)hpx);
+    // pixels live in the embedded store; the Texture node carries only path + space
+    CompFields tf;
+    tf.push_back(fStr("path", imageIdT(c, imgIdx)));
+    tf.push_back(fStr("space", "linear"));
+    out.nodes[k]["Texture"] = std::move(tf);
+    out.keys.push_back(k);
+    return k;
+}
+
+std::string texKeyForTexture(GltfTblCtx& c, int32_t texIdx, bool srgb, GltfTableData& out) {
+    if (texIdx < 0 || (uint32_t)texIdx >= c.m->textures_count)
+        return "";
+    return texKeyForImage(c, c.m->textures[texIdx].source, srgb, out);
+}
+
+// mirrors materialFor, but emits CompFields under a resource key instead of an entity
+std::string matKeyFor(GltfTblCtx& c, int32_t matIdx, GltfTableData& out) {
+    const auto it = c.matKeys.find(matIdx);
+    if (it != c.matKeys.end())
+        return it->second;
+    std::string key;
+    CompFields mf;
+    if (matIdx < 0 || (uint32_t)matIdx >= c.m->materials_count) {
+        key = uniqueNameT(c, "mat_default");
+        const float bc[3] = {1.0f, 1.0f, 1.0f};
+        const float em[3] = {0.0f, 0.0f, 0.0f};
+        mf.push_back(fVec("baseColor", bc, 3));
+        mf.push_back(fNum("metallic", 0.0f));
+        mf.push_back(fNum("roughness", 1.0f));
+        mf.push_back(fVec("emissive", em, 3));
+    } else {
+        const tg3_material& gm = c.m->materials[matIdx];
+        const auto& pbr = gm.pbr_metallic_roughness;
+        key = uniqueNameT(c, s(gm.name).empty() ? "mat_" + std::to_string(matIdx) : s(gm.name));
+        const float bc[3] = {srgbToLinear((float)pbr.base_color_factor[0]),
+                             srgbToLinear((float)pbr.base_color_factor[1]),
+                             srgbToLinear((float)pbr.base_color_factor[2])};
+        const float em[3] = {srgbToLinear((float)gm.emissive_factor[0]),
+                             srgbToLinear((float)gm.emissive_factor[1]),
+                             srgbToLinear((float)gm.emissive_factor[2])};
+        mf.push_back(fVec("baseColor", bc, 3));
+        mf.push_back(fNum("metallic", (float)pbr.metallic_factor));
+        mf.push_back(fNum("roughness", (float)pbr.roughness_factor));
+        mf.push_back(fVec("emissive", em, 3));
+        const auto slot = [&](int32_t texIdx, int32_t coord, const char* what, const char* field, bool srgb) {
+            if (texIdx < 0)
+                return;
+            if (coord != 0) {
+                warnT(c, std::string(what) + " uses uv channel " + std::to_string(coord) +
+                         " (only uv0 is packed); map skipped");
+                return;
+            }
+            const std::string tk = texKeyForTexture(c, texIdx, srgb, out);
+            if (!tk.empty())
+                mf.push_back(fStr(field, tk));
+        };
+        slot(pbr.base_color_texture.index, pbr.base_color_texture.tex_coord, "baseColor", "tex", true);
+        slot(pbr.metallic_roughness_texture.index, pbr.metallic_roughness_texture.tex_coord, "metallicRoughness",
+             "texMR", false);
+        slot(gm.normal_texture.index, gm.normal_texture.tex_coord, "normal", "texNormal", false);
+        if (gm.normal_texture.index >= 0)
+            mf.push_back(fNum("normalScale", (float)gm.normal_texture.scale));
+        slot(gm.emissive_texture.index, gm.emissive_texture.tex_coord, "emissive", "texEmissive", true);
+        mf.push_back(fNum("alpha", (float)pbr.base_color_factor[3]));
+        mf.push_back(fNum("alphaCutoff", (float)gm.alpha_cutoff));
+        const std::string am = s(gm.alpha_mode);
+        mf.push_back(fNum("alphaMode", am == "BLEND" ? 2.0f : (am == "MASK" ? 1.0f : 0.0f)));
+        for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
+            if (s(gm.ext.extensions[i].name) != "KHR_materials_transmission")
+                continue;
+            const tg3_value& ext = gm.ext.extensions[i].value;
+            double tf = 1.0;
+            for (uint32_t j = 0; j < ext.object_count; ++j) {
+                const auto& od = ext.object_data[j];
+                if (s(od.key) == "transmissionFactor" && od.value.type == TG3_VALUE_REAL)
+                    tf = od.value.real_val;
+                if (s(od.key) == "transmissionTexture" && od.value.type == TG3_VALUE_INT && od.value.int_val >= 0)
+                    warnT(c, "transmissionTexture is not supported (ignored; use transmissionFactor)");
+            }
+            if (tf > 0.0)
+                mf.push_back(
+                    fNum("refraction", (float)tf)); // 1:1: transmissionFactor drives the refraction amount (0..1)
+            break;
+        }
+        for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
+            if (s(gm.ext.extensions[i].name) != "KHR_materials_ior")
+                continue;
+            const tg3_value& ext = gm.ext.extensions[i].value;
+            double io = 1.5;
+            for (uint32_t j = 0; j < ext.object_count; ++j) {
+                const auto& od = ext.object_data[j];
+                if (s(od.key) == "ior" && od.value.type == TG3_VALUE_REAL)
+                    io = od.value.real_val;
+                if (s(od.key) == "iorTexture" && od.value.type == TG3_VALUE_INT && od.value.int_val >= 0)
+                    warnT(c, "iorTexture is not supported (ignored; use ior)");
+            }
+            mf.push_back(fNum("ior", (float)io));
+            break;
+        }
+        // KHR_materials_volume is the glTF SSS encoding: baseColorTransmission is the
+        // transmitted fraction; attenuation/colour are ignored (the SSS pass is a
+        // scalar-strength blur, Godot style)
+        for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
+            if (s(gm.ext.extensions[i].name) != "KHR_materials_volume")
+                continue;
+            const tg3_value& ext = gm.ext.extensions[i].value;
+            float bt[3] = {0.0f, 0.0f, 0.0f};
+            bool haveBt = false, warnedAttenuation = false;
+            for (uint32_t j = 0; j < ext.object_count; ++j) {
+                const auto& od = ext.object_data[j];
+                const std::string k = s(od.key);
+                if (k == "baseColorTransmission" && od.value.type == TG3_VALUE_ARRAY && od.value.array_count == 3) {
+                    for (uint32_t n = 0; n < 3; ++n)
+                        if (od.value.array_data[n].type == TG3_VALUE_REAL)
+                            bt[n] = (float)od.value.array_data[n].real_val;
+                    haveBt = true;
+                }
+                if ((k == "baseColorTransmissionTexture" || k == "thicknessTexture") &&
+                    od.value.type == TG3_VALUE_INT && od.value.int_val >= 0)
+                    warnT(c, k + " is not supported (ignored)");
+                if ((k == "attenuationColor" || k == "attenuationColorExtinction" || k == "attenuationDistance" ||
+                     k == "thickness") &&
+                    !warnedAttenuation) {
+                    warnT(c, "KHR_materials_volume attenuation/thickness are not supported (ignored; volume maps to "
+                             "ssssWeight only)");
+                    warnedAttenuation = true;
+                }
+            }
+            if (haveBt)
+                mf.push_back(fVec("ssssWeight", bt, 3));
+            break;
+        }
+    }
+    out.nodes[key]["Material"] = std::move(mf);
+    out.keys.push_back(key);
+    c.matKeys[matIdx] = key;
+    return key;
+}
+
+// reads pos/nrm/uv/idx/joints/weights for a skinned primitive (mirrors finishSkinned; shapes are
+// dropped in table mode because Geometry has no morph field)
+bool readSkinnedMesh(const tg3_model& m, const tg3_mesh& gm, const tg3_primitive& p, int nJ, Mesh& out,
+                     std::string& warn) {
+    if (p.mode != -1 && p.mode != 4) {
+        warn = "primitive mode is not triangles";
+        return false;
+    }
+    std::vector<float> pos0;
+    if (!readAccessor(m, attrAccessor(p, "POSITION"), 3, pos0) || pos0.empty()) {
+        warn = "bad POSITION";
+        return false;
+    }
+    const int nV = (int)(pos0.size() / 3);
+    out.pos = std::move(pos0);
+    std::vector<float> nrm0;
+    if (readAccessor(m, attrAccessor(p, "NORMAL"), 3, nrm0) && nrm0.size() == (size_t)nV * 3)
+        out.nrm = std::move(nrm0);
+    else {
+        std::vector<uint32_t> idx;
+        std::vector<float> idxf;
+        if (p.indices >= 0 && readAccessor(m, p.indices, 1, idxf))
+            for (float v : idxf)
+                idx.push_back((uint32_t)v);
+        computeNormals(out.pos, idx, out.nrm);
+    }
+    const int32_t ja = jointAcc(p);
+    const int32_t wa = attrAccessor(p, "WEIGHTS_0") >= 0 ? attrAccessor(p, "WEIGHTS_0") : attrAccessor(p, "WEIGHT_0");
+    std::vector<float> jf, wf;
+    if (!readAccessor(m, ja, 4, jf) || jf.size() != (size_t)4 * nV) {
+        warn = "bad JOINTS_0";
+        return false;
+    }
+    const int wc = wa >= 0 ? typeComps(m.accessors[wa].type) : 0;
+    const bool haveW = wc > 0 && readAccessor(m, wa, wc, wf) && wf.size() == (size_t)wc * nV;
+    if (wc > 0 && !haveW)
+        warn = "bad WEIGHTS_0 (treating as zero)";
+    out.joints.resize((size_t)4 * nV);
+    out.weights.assign((size_t)4 * nV, 0.0f);
+    bool badJoint = false;
+    for (int v = 0; v < nV; ++v) {
+        float sum = 0.0f;
+        for (int i = 0; i < 4; ++i) {
+            const float jv = jf[4 * v + i];
+            const bool okJ = jv >= 0.0f && jv < (float)nJ;
+            if (!okJ)
+                badJoint = true;
+            out.joints[4 * v + i] = okJ ? (uint32_t)jv : 0;
+            const float wgt = (i < wc && haveW) ? wf[wc * v + i] : 0.0f;
+            out.weights[4 * v + i] = wgt;
+            sum += wgt;
+        }
+        if (sum > 1e-6f)
+            for (int i = 0; i < 4; ++i)
+                out.weights[4 * v + i] /= sum;
+    }
+    if (badJoint && warn.empty())
+        warn = "joint index out of range (clamped)";
+    std::vector<float> uv, idxf2;
+    if (!readAccessor(m, attrAccessor(p, "TEXCOORD_0"), 2, uv) || uv.size() != (size_t)nV * 2)
+        uv.assign((size_t)nV * 2, 0.0f);
+    out.uv = std::move(uv);
+    bool badIdx = false;
+    if (p.indices >= 0) {
+        if (!readAccessor(m, p.indices, 1, idxf2))
+            badIdx = true;
+        for (float v : idxf2) {
+            if (v < 0.0f || v >= (float)nV) {
+                badIdx = true;
+                break;
+            }
+            out.indices.push_back((uint32_t)v);
+        }
+    } else
+        for (int i = 0; i < nV; ++i)
+            out.indices.push_back((uint32_t)i);
+    if (badIdx) {
+        warn = "index out of range";
+        return false;
+    }
+    return true;
+}
+
+// mirrors buildNode, but emits into the table (flattened: Geometry on the node)
+void nodeToTable(GltfTblCtx& c, int32_t nodeIdx, const std::string& parentKey, GltfTableData& out) {
+    if (nodeIdx < 0 || (uint32_t)nodeIdx >= c.m->nodes_count)
+        return;
+    const tg3_node& n = c.m->nodes[nodeIdx];
+    Transform t{};
+    if (!nodePose(n, t)) {
+        warnT(c, "node " + s(n.name) + ": degenerate transform");
+        return;
+    }
+    const std::string key = uniqueNameT(c, s(n.name).empty() ? "node_" + std::to_string(nodeIdx) : s(n.name));
+    c.nodeKeys[nodeIdx] = key;
+    auto& node = out.nodes[key];
+    out.keys.push_back(key);
+    if (!parentKey.empty())
+        node["Parent"] = {fStr("e", parentKey)};
+    const float pv[3] = {t.pos.x, t.pos.y, t.pos.z};
+    const float sv[3] = {t.scale.x, t.scale.y, t.scale.z};
+    const float qv[4] = {t.quat.x, t.quat.y, t.quat.z, t.quat.w};
+    node["Transform"] = {fVec("pos", pv, 3), fVec("scale", sv, 3), fVec("quat", qv, 4)};
+    if (n.mesh >= 0 && (uint32_t)n.mesh < c.m->meshes_count) {
+        const tg3_mesh& gm = c.m->meshes[n.mesh];
+        const std::string mName = s(gm.name);
+        int32_t skin = n.skin;
+        if (skin < 0 && c.m->skins_count == 1)
+            skin = 0;
+        for (uint32_t i = 0; i < gm.primitives_count; ++i) {
+            const tg3_primitive& p = gm.primitives[i];
+            const bool skinned = jointAcc(p) >= 0 && skin >= 0;
+            Mesh pm;
+            std::string pwarn;
+            if (skinned) {
+                const int nJ = (int)c.m->skins[skin].joints_count;
+                const bool ok = readSkinnedMesh(*c.m, gm, p, nJ, pm, pwarn);
+                if (!pwarn.empty())
+                    warnT(c, "mesh " + mName + " primitive " + std::to_string(i) + ": " + pwarn);
+                if (!ok || pm.vertexCount() == 0)
+                    continue;
+            } else {
+                if (jointAcc(p) >= 0)
+                    warnT(c, "skinned mesh " + mName + ": no usable skin, using bind pose");
+                const bool ok = packPrimitive(*c.m, gm, p, pm, pwarn);
+                if (!pwarn.empty())
+                    warnT(c, "mesh " + mName + " primitive " + std::to_string(i) + ": " + pwarn);
+                if (!ok || pm.vertexCount() == 0)
+                    continue;
+            }
+            std::string pk = key;
+            std::unordered_map<std::string, CompFields>* pn;
+            if (i > 0) {
+                // extra primitives go to sibling keys (one Geometry per node entry)
+                pk = uniqueNameT(c, key + "__" + std::to_string(i));
+                out.keys.push_back(pk);
+                auto& sn = out.nodes[pk];
+                sn["Parent"] = {fStr("e", key)};
+                pn = &sn;
+            } else
+                pn = &node;
+            CompFields gf;
+            if (!pm.pos.empty())
+                gf.push_back(fArr("pos", pm.pos));
+            if (!pm.nrm.empty())
+                gf.push_back(fArr("nrm", pm.nrm));
+            if (!pm.uv.empty())
+                gf.push_back(fArr("uv", pm.uv));
+            CompField ix;
+            ix.name = "idx";
+            ix.isArr = true;
+            for (uint32_t v : pm.indices)
+                ix.arr.push_back((float)v);
+            ix.n = (int)ix.arr.size();
+            gf.push_back(std::move(ix));
+            if (!pm.joints.empty()) {
+                CompField jf;
+                jf.name = "joints";
+                jf.isArr = true;
+                for (uint32_t v : pm.joints)
+                    jf.arr.push_back((float)v);
+                jf.n = (int)jf.arr.size();
+                gf.push_back(std::move(jf));
+                gf.push_back(fArr("weights", pm.weights));
+            }
+            (*pn)["Geometry"] = std::move(gf);
+            // no geom field: spawn wires Renderable.geom to the node's own entity
+            (*pn)["Renderable"] = {};
+            const std::string mk = matKeyFor(c, p.material, out);
+            if (!mk.empty())
+                (*pn)["MaterialRef"] = {fStr("material", mk)};
+            if (skinned) {
+                auto& meshes = c.skinMeshes[skin];
+                if (meshes.empty())
+                    c.skinPlacement[skin] = pk;
+                meshes.push_back(pk);
+            }
+        }
+    }
+    for (uint32_t i = 0; i < n.children_count; ++i)
+        nodeToTable(c, n.children[i], key, out);
+}
+
 }
 
 entt::entity loadGltf(entt::registry& reg, entt::entity e, const std::string& path, std::string& err) {
-    std::string file;
-    if (std::filesystem::exists("assets/" + path))
-        file = "assets/" + path;
-    else if (std::filesystem::exists(exeDir() + "/../assets/" + path))
-        file = exeDir() + "/../assets/" + path;
-    else {
-        err = "gltf file not found: " + path;
-        return entt::null;
-    }
-    std::ifstream f(file, std::ios::binary);
-    if (!f) {
-        err = "gltf file unreadable: " + path;
-        return entt::null;
-    }
-    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    const std::string baseDir = std::filesystem::path(file).parent_path().string();
-    const std::string fileBase = std::filesystem::path(file).stem().string();
-
-    tg3_parse_options opt;
-    tg3_parse_options_init(&opt);
-    opt.fs.file_exists = fsExists;
-    opt.fs.read_file = fsRead;
-    opt.fs.free_file = fsFree;
-
     tg3_model model;
-    tg3_error_stack es;
-    tg3_error_stack_init(&es);
-    const tg3_error_code rc = tg3_parse_auto(&model, &es, bytes.data(), bytes.size(), baseDir.c_str(),
-                                             (uint32_t)baseDir.size(), &opt);
-    if (rc != TG3_OK) {
-        err = es.count && es.entries ? es.entries[0].message : "gltf parse failed";
+    std::string fileBase, baseDir, fileId;
+    if (!parseGltfFile(path, model, fileBase, baseDir, fileId, err))
         return entt::null;
-    }
-    for (uint32_t i = 0; i < model.extensions_required_count; ++i)
-        if (s(model.extensions_required[i]) == "KHR_draco_mesh_compression") {
-            err = "DRACO-compressed gltf is not supported";
-            tg3_model_free(&model);
-            return entt::null;
-        }
-    if (!model.scenes_count) {
-        err = "gltf has no scene";
-        tg3_model_free(&model);
-        return entt::null;
-    }
     const int32_t sceneIdx =
         model.default_scene >= 0 && (uint32_t)model.default_scene < model.scenes_count ? model.default_scene : 0;
     const tg3_scene& scene = model.scenes[sceneIdx];
@@ -855,7 +1279,7 @@ entt::entity loadGltf(entt::registry& reg, entt::entity e, const std::string& pa
     }
     if (!reg.try_get<Transform>(e))
         reg.emplace<Transform>(e);
-    GltfCtx c{reg, &model, fileBase, file, baseDir, e, {}, {}};
+    GltfCtx c{reg, &model, fileBase, fileId, baseDir, e, {}, {}};
     // note: value-initialized entt::entity is 0, not entt::null (all bits set in EnTT 4)
     c.materials.assign(model.materials_count, entt::null);
     c.nodeEntities.assign(model.nodes_count, entt::null);
@@ -865,4 +1289,59 @@ entt::entity loadGltf(entt::registry& reg, entt::entity e, const std::string& pa
     finishSkinned(c);
     tg3_model_free(&model);
     return e;
+}
+
+bool gltfToData(const std::string& path, GltfTableData& out, std::string& err) {
+    tg3_model model;
+    std::string fileBase, baseDir, fileId;
+    if (!parseGltfFile(path, model, fileBase, baseDir, fileId, err))
+        return false;
+    const int32_t sceneIdx =
+        model.default_scene >= 0 && (uint32_t)model.default_scene < model.scenes_count ? model.default_scene : 0;
+    const tg3_scene& scene = model.scenes[sceneIdx];
+    if (!scene.nodes_count) {
+        err = "gltf scene has no nodes";
+        tg3_model_free(&model);
+        return false;
+    }
+    GltfTblCtx c{&model, fileBase, fileId, baseDir, {}, {}, {}, {}, {}, {}};
+    for (uint32_t i = 0; i < scene.nodes_count; ++i)
+        nodeToTable(c, scene.nodes[i], "", out);
+    // emit one Skeleton per used skin (after all nodes, so joint refs resolve by name)
+    for (const auto& [skin, meshKeys] : c.skinMeshes) {
+        const tg3_skin& sk = model.skins[skin];
+        std::vector<std::string> boneNames, jointRefs;
+        bool complete = true;
+        for (uint32_t i = 0; i < sk.joints_count; ++i) {
+            const int32_t ji = sk.joints[i];
+            if ((uint32_t)ji >= model.nodes_count) {
+                complete = false;
+                break;
+            }
+            const auto nit = c.nodeKeys.find(ji);
+            if (nit == c.nodeKeys.end()) {
+                complete = false;
+                break;
+            }
+            boneNames.push_back(s(model.nodes[ji].name));
+            jointRefs.push_back(nit->second);
+        }
+        if (!complete) {
+            warnT(c, "skin " + std::to_string(skin) + ": a joint node is missing; skeleton skipped (bind pose)");
+            continue;
+        }
+        const std::string key = uniqueNameT(c, s(sk.name).empty() ? "skin_" + std::to_string(skin) : s(sk.name));
+        CompFields sf;
+        sf.push_back(fStr("name", s(sk.name)));
+        sf.push_back(fStrArr("boneNames", boneNames));
+        sf.push_back(fStrArr("joints", jointRefs));
+        const auto pit = c.skinPlacement.find(skin);
+        if (pit != c.skinPlacement.end())
+            sf.push_back(fStr("placement", pit->second));
+        sf.push_back(fStrArr("meshes", meshKeys));
+        out.nodes[key]["Skeleton"] = std::move(sf);
+        out.keys.push_back(key);
+    }
+    tg3_model_free(&model);
+    return true;
 }

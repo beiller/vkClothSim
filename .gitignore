@@ -1,4 +1,6 @@
 build/
+build-dbg/
+build-prof/
 *.png
 !assets/*.png
 *.spv
@@ -7,6 +9,5 @@ assets/local/
 Screenshot_2026-10-14_16-50-11.jpg
 Screenshot_2026-10-14_16-50-19.jpg
 workplans/
-build-prof/
 perf/
 *.pyc

@@ -150,15 +150,35 @@ int lButton(lua_State* L) {
     return 0;
 }
 
-/// graphics.gltf(e: entity, path: string) -> entity | load a glTF file into e (meshes, materials, textures, skeleton); returns e
+/// graphics.gltf(path: string) -> table | parse a glTF file as a name->node map (node = component-name -> field table);
+/// no world entities are created; pass to scene.spawn to materialize. Compat: graphics.gltf(e, path) still loads
+/// straight into e
 int lGltf(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
-    const entt::entity e = luaReadEnt(L, 1);
-    const std::string path = luaL_checkstring(L, 2);
+    if (lua_isnumber(L, 1)) {
+        const entt::entity e = luaReadEnt(L, 1);
+        const std::string path = luaL_checkstring(L, 2);
+        std::string err;
+        if (loadGltf(w.reg, e, path, err) == entt::null)
+            return luaL_error(L, "graphics.gltf: %s", err.c_str());
+        luaPushEnt(L, e);
+        return 1;
+    }
+    const std::string path = luaL_checkstring(L, 1);
+    GltfTableData data;
     std::string err;
-    if (loadGltf(w.reg, e, path, err) == entt::null)
+    if (!gltfToData(path, data, err))
         return luaL_error(L, "graphics.gltf: %s", err.c_str());
-    luaPushEnt(L, e);
+    lua_createtable(L, 0, (int)data.keys.size());
+    for (const std::string& key : data.keys) {
+        const auto& node = data.nodes[key];
+        lua_createtable(L, 0, (int)node.size());
+        for (const auto& [cn, fields] : node) {
+            pushCompData(L, cn, fields);
+            lua_setfield(L, -2, cn.c_str());
+        }
+        lua_setfield(L, -2, key.c_str());
+    }
     return 1;
 }
 
@@ -236,12 +256,36 @@ int lRaycast(lua_State* L) {
     return 1;
 }
 
-/// physics.convex_decompose(mesh: entity, maxHulls?: number, maxVertsPerHull?: number, threshold?: number) -> table | decompose a Geometry mesh into convex parts (CoACD); returns an array of hulls, each a flat {x,y,z,...} point list ready for ConvexHullShape.points; falls back to one hull of all vertices on degenerate input
+/// physics.convex_decompose(mesh: entity|Geometry-table, maxHulls?: number, maxVertsPerHull?: number, threshold?:
+/// number) -> table | decompose a mesh into convex parts (CoACD); `mesh` is an entity with Geometry or a raw Geometry
+/// field table; returns an array of hulls, each a flat {x,y,z,...} point list ready for ConvexHullShape.points; falls
+/// back to one hull of all vertices on degenerate input
 int lConvexDecompose(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
-    const entt::entity e = luaReadEnt(L, 1);
-    if (!w.reg.try_get<Geometry>(e))
-        return luaL_error(L, "physics.convex_decompose: no such mesh");
+    Mesh mesh;
+    if (lua_isnumber(L, 1)) {
+        const entt::entity e = luaReadEnt(L, 1);
+        if (!w.reg.try_get<Geometry>(e))
+            return luaL_error(L, "physics.convex_decompose: no such mesh");
+        mesh = w.reg.get<Geometry>(e).mesh;
+    } else {
+        CompData* cd = nullptr;
+        if (!asCompData(L, 1, &cd) || cd->type != "Geometry")
+            return luaL_error(L, "physics.convex_decompose: argument must be a mesh entity or a Geometry table");
+        for (const auto& f : cd->fields) {
+            if (!f.isArr || f.arr.empty())
+                continue;
+            if (f.name == "pos")
+                mesh.pos = f.arr;
+            else if (f.name == "nrm")
+                mesh.nrm = f.arr;
+            else if (f.name == "uv")
+                mesh.uv = f.arr;
+            else if (f.name == "idx")
+                for (float v : f.arr)
+                    mesh.indices.push_back((uint32_t)v);
+        }
+    }
     DecompParams p;
     if (!lua_isnoneornil(L, 2))
         p.maxHulls = (int)luaL_checknumber(L, 2);
@@ -249,7 +293,7 @@ int lConvexDecompose(lua_State* L) {
         p.maxVertsPerHull = (int)luaL_checknumber(L, 3);
     if (!lua_isnoneornil(L, 4))
         p.threshold = (float)luaL_checknumber(L, 4);
-    const auto hulls = convexDecompose(w.reg.get<Geometry>(e).mesh, p);
+    const auto hulls = convexDecompose(mesh, p);
     lua_createtable(L, (int)hulls.size(), 0);
     for (size_t i = 0; i < hulls.size(); ++i) {
         const auto& h = hulls[i];

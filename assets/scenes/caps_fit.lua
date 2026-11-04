@@ -346,6 +346,7 @@ local kJoints = {
 function M._on_ready(self)
     local ch = scene.entity("char")
     scene.replace(ch, "Transform", { pos = { 0, 0, 0 } })
+-- entity-form gltf load: skinned model (the table API supports skinning too; kept on the entity path for full parity)
     graphics.gltf(ch, "local/hashimoto.glb")
     local ground = scene.entity("ground")
     scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })

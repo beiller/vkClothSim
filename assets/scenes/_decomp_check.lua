@@ -14,7 +14,8 @@ function M._on_ready(self)
 
     -- load a glTF and decompose its first mesh with CoACD
     local root = scene.entity("model")
-    graphics.gltf(root, "local/basegen8.glb")
+    scene.replace(root, "Transform", { pos = { 0, 0, 0 } })
+    scene.spawn(graphics.gltf("local/basegen8.glb"), root)
     local meshes = scene.find_components("Geometry", root)
     if #meshes == 0 then
         print("DECOMP FAIL: no Geometry mesh under model")

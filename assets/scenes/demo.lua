@@ -93,6 +93,7 @@ function M._on_ready(self)
 
     local ch = scene.entity("hashimoto")
     scene.replace(ch, "Transform", { pos = { -5, 0, 0 } })
+-- entity-form gltf load: skinned model (the table API supports skinning too; kept on the entity path for full parity)
     graphics.gltf(ch, "local/basegen8.glb")
 end
 

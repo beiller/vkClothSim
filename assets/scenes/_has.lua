@@ -35,6 +35,7 @@ function M._on_ready(self)
 
     local ch = scene.entity("char")
     scene.replace(ch, "Transform", { pos = { 0, 0, 0 } })
+-- entity-form gltf load: skinned model with morph targets (the table API drops shapes, so this stays on the entity path)
     graphics.gltf(ch, "local/hashimoto.glb")
     scene.set_morph(ch, "FHMHashimoto", 0.85) -- entity handle: the name "char" is ambiguous
 end

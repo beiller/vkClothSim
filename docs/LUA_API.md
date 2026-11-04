@@ -10,6 +10,7 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [`scene.entity(name?: string) -> entity`](#sceneentityname-string---entity)
   - [`scene.emplace(e: entity, type: string, fields?: table)`](#sceneemplacee-entity-type-string-fields-table)
   - [`scene.replace(e: entity, type: string, fields?: table)`](#scenereplacee-entity-type-string-fields-table)
+  - [`scene.spawn(tbl: table, parent?: entity|string) -> table`](#scenespawntbl-table-parent-entitystring---table)
   - [`scene.component(e: entity, type: string) -> table`](#scenecomponente-entity-type-string---table)
   - [`scene.remove(e: entity, type: string)`](#sceneremovee-entity-type-string)
   - [`scene.set_pose(e: entity|string, pos: vec3, quat: quat)`](#scenesetposee-entitystring-pos-vec3-quat-quat)
@@ -44,12 +45,12 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [`math.qrot(q: quat, v: vec3) -> vec3`](#mathqrotq-quat-v-vec3---vec3)
   - [`math.qfromto(a: vec3, b: vec3) -> quat`](#mathqfromtoa-vec3-b-vec3---quat)
 - [graphics](#graphics)
-  - [`graphics.gltf(e: entity, path: string) -> entity`](#graphicsgltfe-entity-path-string---entity)
+  - [`graphics.gltf(path: string) -> table`](#graphicsgltfpath-string---table)
   - [`graphics.load_texture(path: string, name?: string) -> entity`](#graphicsloadtexturepath-string-name-string---entity)
   - [`graphics.render_texture(w: int, h: int, name?: string) -> entity`](#graphicsrendertexturew-int-h-int-name-string---entity)
 - [physics](#physics)
   - [`physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table`](#physicsraycastorigin-vec3-dir-vec3-maxdist-number-excludes-table---table)
-  - [`physics.convex_decompose(mesh: entity, maxHulls?: number, maxVertsPerHull?: number, threshold?: number) -> table`](#physicsconvexdecomposemesh-entity-maxhulls-number-maxvertsperhull-number-threshold-number---table)
+  - [`physics.convex_decompose(mesh: entity|table, maxHulls?: number, maxVertsPerHull?: number, threshold?: number) -> table`](#physicsconvexdecomposemesh-entitytable-maxhulls-number-maxvertsperhull-number-threshold-number---table)
 - [soft](#soft)
   - [`soft.set_floor(y: number)`](#softsetfloory-number)
 - [ui](#ui)
@@ -114,6 +115,10 @@ create or replace component `type` on e from a field table (a Geometry table may
 ### `scene.replace(e: entity, type: string, fields?: table)`
 
 replace an existing component `type` on e from a field table (errors if the component is absent; Geometry may carry "shapes")
+
+### `scene.spawn(tbl: table, parent?: entity|string) -> table`
+
+materialize a name→node map into live entities in one call; node = component-name → field table. Refs resolve by name: an integer passes through as-is; a string resolves to a same-spawn name first, then a world name. All `Transform`/`Parent` components are written before any other (so a `Skeleton` node binds against the complete hierarchy). Returns the name→entity map. Typical use: `scene.spawn(graphics.gltf(path))`
 
 ### `scene.component(e: entity, type: string) -> table`
 
@@ -249,9 +254,9 @@ shortest rotation mapping direction a onto b
 
 ## graphics
 
-### `graphics.gltf(e: entity, path: string) -> entity`
+### `graphics.gltf(path: string) -> table`
 
-load a glTF file into e (meshes, materials, textures, skeleton); returns e
+parse a glTF file as a name→node map (node = component-name → field table); no world entities are created — pass the result to `scene.spawn` to materialize. Skinned models emit a full `Skeleton` node (joints + weights on the `Geometry`, one per skin); morph targets are dropped in table mode. **Compat:** `graphics.gltf(e, path)` still loads straight into e (meshes, materials, textures, skeleton) and returns e
 
 ### `graphics.load_texture(path: string, name?: string) -> entity`
 
@@ -267,9 +272,9 @@ create a standalone GPUTexture render target (no Texture parent); render into it
 
 rigid-body raycast; returns {hit = true, pos = vec3, dist = number, entity = entity} or nil when nothing is hit; `excludes` is an array of entities to skip
 
-### `physics.convex_decompose(mesh: entity, maxHulls?: number, maxVertsPerHull?: number, threshold?: number) -> table`
+### `physics.convex_decompose(mesh: entity|table, maxHulls?: number, maxVertsPerHull?: number, threshold?: number) -> table`
 
-decompose a Geometry mesh into convex parts (CoACD); returns an array of hulls, each a flat {x,y,z,...} point list ready for ConvexHullShape.points; falls back to one hull of all vertices on degenerate input
+decompose a mesh into convex parts (CoACD); `mesh` is an entity with a Geometry, or a raw Geometry field table; returns an array of hulls, each a flat {x,y,z,...} point list ready for ConvexHullShape.points; falls back to one hull of all vertices on degenerate input
 
 ## soft
 
