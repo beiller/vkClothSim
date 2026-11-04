@@ -21,6 +21,7 @@ bool XrLoader::load() {
         m_handle = dlopen(p.c_str(), RTLD_NOW | RTLD_GLOBAL);
         if (m_handle)
             break;
+        m_error = dlerror();
     }
     if (!m_handle)
         return false;

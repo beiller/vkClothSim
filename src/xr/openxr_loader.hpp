@@ -1,5 +1,6 @@
 #pragma once
 #include "openxr.h"
+#include <string>
 
 #define XR_FUNCS(X)                                                                                                    \
     X(xrCreateInstance)                                                                                                \
@@ -49,6 +50,7 @@
 struct XrLoader {
     bool load();
     bool ready() const { return m_handle != nullptr; }
+    const char* lastError() const { return m_error.c_str(); }
 
 #define XR_PFN(name) PFN_##name name = nullptr;
     XR_FUNCS(XR_PFN)
@@ -56,4 +58,5 @@ struct XrLoader {
 
 private:
     void* m_handle = nullptr;
+    std::string m_error;
 };

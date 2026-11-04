@@ -2,12 +2,14 @@
 
 #include "vk/vkapp.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -58,7 +60,7 @@ VkFormat pickFormat(int64_t* fmts, uint32_t n) {
 
 bool Xr::createDevice(VkApp& app) {
     if (!m_loader.load()) {
-        std::printf("xr: vendored loader not found (lib/openxr/lib/libopenxr.so.1)\n");
+        std::printf("xr: failed to load lib/openxr/lib/libopenxr.so.1: %s\n", m_loader.lastError());
         return false;
     }
     if (!createInstance())
@@ -647,8 +649,11 @@ void Xr::destroyActions() {
 void Xr::shutdown() {
     if (m_session != XR_NULL_HANDLE) {
         if (m_running) {
-            xrafail(m_loader.xrEndSession(m_session), "endSession");
-            m_running = false;
+            m_loader.xrRequestExitSession(m_session);
+            for (int i = 0; i < 300 && m_running; ++i) {
+                pollEvents();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
         }
         for (auto& s : m_swaps) {
             if (s.sc != XR_NULL_HANDLE) {

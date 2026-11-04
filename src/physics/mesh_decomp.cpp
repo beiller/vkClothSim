@@ -1,6 +1,7 @@
 #include "physics/mesh_decomp.hpp"
 #include "coacd.h"
 #include <array>
+#include <cstdio>
 #include <iostream>
 #include <stdexcept>
 
@@ -46,10 +47,15 @@ std::vector<std::vector<float>> convexDecompose(const Mesh& mesh, const DecompPa
                                  p.maxVertsPerHull, false, 0.01, "ch", 0, false);
         if (!parts.empty())
             return toHulls(parts);
-    } catch (const std::exception&) {
-        // degenerate / non-manifold input: fall through to the single-hull fallback
+        std::fprintf(stderr, "3dsim: convex_decompose: CoACD produced no parts for %d-vert mesh\n", nV);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "3dsim: convex_decompose: CoACD failed on %d-vert mesh: %s\n", nV, e.what());
     }
 
-    // fallback: one convex hull of every vertex (mesh.pos is already flat xyz)
+    // fallback: one convex hull of every vertex (mesh.pos is already flat xyz). Only sane for
+    // small meshes; a full-mesh hull on a large one makes Jolt's narrowphase unusably slow,
+    // so skip instead (the caller sees an empty result)
+    if (nV > p.maxVertsPerHull)
+        return {};
     return { mesh.pos };
 }

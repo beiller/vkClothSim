@@ -9,8 +9,9 @@
             },
             "script": "scenes/camera"
         },
-        { "name": "key light", "components": { "Transform": { "pos": [4, 8, 4] }, "PointLight": { "color": [1.0, 0.97, 0.92], "intensity": 300, "radius": 0.5 } } },
         { "name": "mat_ground", "components": { "Material": { "baseColor": [0.19, 0.21, 0.17], "roughness": 0.85 } } },
-        { "name": "probe", "script": "scenes/sword_decomp" }
+        { "name": "key light", "components": { "Transform": { "pos": [4, 8, 4] }, "PointLight": { "color": [1.0, 0.97, 0.92], "intensity": 300, "radius": 0.5 } } },
+        { "name": "probe", "script": "scenes/sword_decomp" },
+        { "name": "vr", "script": "scenes/vr_controller" }
     ]
 }
