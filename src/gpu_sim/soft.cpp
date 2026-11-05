@@ -19,20 +19,6 @@ std::vector<VkDescriptorSetLayoutBinding> softBinds() {
     return binds;
 }
 
-VkBufferMemoryBarrier bufBarrier(VkBuffer buf,
-                                 VkAccessFlags dst = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT) {
-    VkBufferMemoryBarrier b{};
-    b.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.buffer = buf;
-    b.offset = 0;
-    b.size = VK_WHOLE_SIZE;
-    b.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    b.dstAccessMask = dst;
-    return b;
-}
-
 void stageBarrier(VkCommandBuffer cmd, VkPipelineStageFlags src, VkPipelineStageFlags dst,
                   const VkBufferMemoryBarrier* bmbs, uint32_t n) {
     vkCmdPipelineBarrier(cmd, src, dst, 0, 0, nullptr, n, bmbs, 0, nullptr);
@@ -217,18 +203,7 @@ void Soft::build() {
     m_softPoolCap = (int)maxSets;
     m_softPoolUsed = 0;
     m_softPl = vkMakePipelineLayoutPC(m_dev, m_softDsl, VK_SHADER_STAGE_COMPUTE_BIT, 16);
-    VkShaderModule cm = vkMakeModule(m_dev, softbody_spv, softbody_spv_len / 4);
-    VkPipelineShaderStageCreateInfo cs{};
-    cs.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cs.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    cs.module = cm;
-    cs.pName = "main";
-    VkComputePipelineCreateInfo cpc{};
-    cpc.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    cpc.stage = cs;
-    cpc.layout = m_softPl;
-    VK(vkCreateComputePipelines(m_dev, VK_NULL_HANDLE, 1, &cpc, nullptr, &m_softPipe));
-    vkDestroyShaderModule(m_dev, cm, nullptr);
+    m_softPipe = makeComputePipeline(m_dev, softbody_spv, softbody_spv_len / 4, m_softPl);
     for (auto& b : m_body) {
         makeBodySet(b);
         ++m_softPoolUsed;
@@ -429,19 +404,15 @@ void Soft::reset() {
     m_warned.clear();
     m_free.clear();
     for (auto& p : m_softPools)
-        if (p)
-            vkDestroyDescriptorPool(m_dev, p, nullptr);
+        vkFree(m_dev, &p, vkDestroyDescriptorPool);
     m_softPools.clear();
     m_softPoolCap = 0;
     m_softPoolUsed = 0;
-    if (m_softDsl)
-        vkDestroyDescriptorSetLayout(m_dev, m_softDsl, nullptr);
+    vkFree(m_dev, &m_softDsl, vkDestroyDescriptorSetLayout);
     m_softDsl = VK_NULL_HANDLE;
-    if (m_softPl)
-        vkDestroyPipelineLayout(m_dev, m_softPl, nullptr);
+    vkFree(m_dev, &m_softPl, vkDestroyPipelineLayout);
     m_softPl = VK_NULL_HANDLE;
-    if (m_softPipe)
-        vkDestroyPipeline(m_dev, m_softPipe, nullptr);
+    vkFree(m_dev, &m_softPipe, vkDestroyPipeline);
     m_softPipe = VK_NULL_HANDLE;
     vkFreeBuffer(m_dev, m_capsInstances, m_capsInstancesMem);
     m_capsInstances = VK_NULL_HANDLE;

@@ -30,7 +30,6 @@ int lUiWindow(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     const float w = (float)luaL_optnumber(L, 2, 0.0), h = (float)luaL_optnumber(L, 3, 0.0);
     const V2 px{w > 0.0f ? w : 320.0f, h > 0.0f ? h : 200.0f};
-    // static world spot in front of the default view; scenes may re-place via the canvas Transform
     luaPushEnt(L, spawnUiWindow(self->w().reg, self->w().uiSeq, luaL_checkstring(L, 1), px, V3{0.0f, 1.5f, 2.8f}));
     return 1;
 }

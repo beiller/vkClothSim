@@ -89,7 +89,6 @@ void SceneScript::init(Engine& w) {
     luaRegisterScene(L, this);
     lua_setglobal(L, "scene");
 
-    // extend the standard math library (sqrt/sin/... stay available) with vector/quaternion helpers
     lua_getglobal(L, "math");
     luaRegisterMath(L, this);
     lua_settop(L, -1);
@@ -123,12 +122,23 @@ void SceneScript::watch(entt::registry& reg) {
 int SceneScript::includeModule(const std::string& rel, std::string& err) {
     if (!safeIncludePath(rel, err))
         return -1;
-    std::string full = assetsRoot() + "/" + rel;
+    // "scenes/..." refs are shipped scripts (camera, mesh, ...): always the assets root.
+    // Bare names resolve against the active scenes dir (--scenes-dir), then fall back
+    // to the shipped scene scripts.
+    std::string full = rel.rfind("scenes/", 0) == 0 ? assetsRoot() + "/" + rel : scenesDir() + "/" + rel;
     if (full.size() < 4 || full.compare(full.size() - 4, 4, ".lua") != 0)
         full += ".lua";
     if (const auto it = m_modules.find(full); it != m_modules.end())
         return it->second;
     std::ifstream in(full);
+    if (!in && rel.rfind("scenes/", 0) != 0) {
+        full = assetsRoot() + "/scenes/" + rel;
+        if (full.size() < 4 || full.compare(full.size() - 4, 4, ".lua") != 0)
+            full += ".lua";
+        if (const auto it2 = m_modules.find(full); it2 != m_modules.end())
+            return it2->second;
+        in = std::ifstream(full);
+    }
     if (!in) {
         err = "cannot open '" + full + "'";
         return -1;
@@ -161,6 +171,15 @@ bool SceneScript::loadMeshStdlib(std::string& err) {
     return true;
 }
 
+void SceneScript::loadTestStdlib() {
+    std::string err;
+    const int ref = includeModule("t", err);
+    if (ref < 0)
+        return; // no t.lua in the active scenes dir: test scenes fail with "t is nil"
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    lua_setglobal(L, "t");
+}
+
 entt::entity SceneScript::callMeshGen(const std::string& gen, const std::vector<std::pair<std::string, double>>& params,
                                      std::string& err) {
     if (m_geomModule < 0) {
@@ -174,11 +193,9 @@ entt::entity SceneScript::callMeshGen(const std::string& gen, const std::vector<
         lua_pop(L, 2);
         return entt::null;
     }
-    lua_createtable(L, (int)params.size(), 0);
-    for (const auto& [k, v] : params) {
-        lua_pushnumber(L, v);
-        lua_setfield(L, -2, k.c_str());
-    }
+    LuaTable t(L, (int)params.size(), 0);
+    for (const auto& [k, v] : params)
+        t.setNum(k.c_str(), v);
     if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
         err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
         std::fprintf(stderr, "3dsim: mesh %s: %s\n", gen.c_str(), err.c_str());
@@ -395,8 +412,6 @@ void SceneScript::onScriptDestroy(entt::registry& reg, entt::entity e) {
         destroyScript(ls->inst, ls->params, ls->onReady, ls->animate, ls->physics);
 }
 
-// script module contract: a .lua file attached via scene.attach_script must return a table (the module).
-// The engine builds a per-attach instance table and calls the module's hooks with it as `self`.
 /// script-instance | per-attach instance table passed as self to every hook; fields: entity (the attached entity), params (the table passed to scene.attach_script, when given); its __index metatable is the module, so module functions act as methods and inst fields hold per-instance state
 /// script-hook _on_ready(inst) | called once when the attached module has loaded
 /// script-hook _animate(inst, dt) | called every frame with the frame delta time in seconds
@@ -564,9 +579,7 @@ static void setDotted(lua_State* L, int baseIdx, const std::string& key, int val
         lua_pop(L, 1);
 }
 
-// sync the vars mirror with each script's inst.vars table: pushToLua copies mirror -> table
-// (so hooks see widget writes), otherwise table -> mirror (so widgets/scene.get see hook
-// writes). The pull never erases mirror entries, keeping bound UrlRef slots stable.
+// pull never erases mirror entries (keeps bound UrlRef slots stable)
 void SceneScript::syncVars(entt::registry& reg, bool pushToLua) {
     if (!L)
         return;
@@ -595,21 +608,20 @@ void SceneScript::syncVars(entt::registry& reg, bool pushToLua) {
                     lua_pop(L, 1);
                 }
                 for (const auto& [k, v] : ls.varsV3) {
-                    lua_createtable(L, 3, 0);
-                    for (int i = 0; i < 3; ++i) {
-                        lua_pushnumber(L, v[i]);
-                        lua_rawseti(L, -2, i + 1);
-                    }
-                    setDotted(L, varsAbs, k, lua_gettop(L));
+                    LuaTable t(L, 3, 0);
+                    t.appendNum(v.x);
+                    t.appendNum(v.y);
+                    t.appendNum(v.z);
+                    setDotted(L, varsAbs, k, t.idx);
                     lua_pop(L, 1);
                 }
                 for (const auto& [k, v] : ls.varsQ) {
-                    lua_createtable(L, 4, 0);
-                    for (int i = 0; i < 4; ++i) {
-                        lua_pushnumber(L, v[i]);
-                        lua_rawseti(L, -2, i + 1);
-                    }
-                    setDotted(L, varsAbs, k, lua_gettop(L));
+                    LuaTable t(L, 4, 0);
+                    t.appendNum(v.x);
+                    t.appendNum(v.y);
+                    t.appendNum(v.z);
+                    t.appendNum(v.w);
+                    setDotted(L, varsAbs, k, t.idx);
                     lua_pop(L, 1);
                 }
             } else {

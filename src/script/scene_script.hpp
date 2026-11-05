@@ -12,9 +12,7 @@
 struct lua_State;
 struct Engine;
 
-// embedded Lua host: owns the VM, module cache, refs, and the per-entity hook lifecycle.
-// The Lua API is implemented by the per-domain modules (luaRegister*), each of which
-// registers its own functions against this host.
+// embedded Lua host: owns the VM, module cache, refs, and the per-entity hook lifecycle
 class SceneScript {
 public:
     SceneScript() = default;
@@ -32,6 +30,8 @@ public:
     float time() const { return m_time; }
 
     bool loadMeshStdlib(std::string& err);
+    // loads tests/t.lua as global `t` for scene test scripts; non-fatal when absent
+    void loadTestStdlib();
     entt::entity callMeshGen(const std::string& gen, const std::vector<std::pair<std::string, double>>& params,
                              std::string& err);
     void buildUi(const nlohmann::json& spec);
@@ -41,7 +41,6 @@ public:
     bool varStr(const entt::registry& reg, const std::string& url, std::string& out, std::string& err);
     void setVarStr(const entt::registry& reg, const std::string& url, const std::string& val, std::string& err);
 
-    // shared access for the API modules
     static SceneScript* sSelf(lua_State* L);
     Engine& w() const { return *m_w; }
     int newRef(lua_State* L, int idx);
@@ -70,7 +69,6 @@ private:
     float m_time = 0.0f;
 };
 
-// API module registration (each file implements one domain)
 void luaRegisterMath(lua_State* L, SceneScript* host);
 void luaRegisterComponents(lua_State* L, SceneScript* host);
 void luaRegisterScene(lua_State* L, SceneScript* host);

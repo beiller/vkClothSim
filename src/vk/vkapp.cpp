@@ -9,17 +9,6 @@
 #include <string_view>
 #include <vector>
 
-namespace {
-
-void checkResult(VkResult r, const char* what) {
-    if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR || r == VK_ERROR_OUT_OF_DATE_KHR)
-        return;
-    std::fprintf(stderr, "vk %s error %d @%s:%d\n", what, (int)r, __FILE__, __LINE__);
-    std::abort();
-}
-
-}
-
 bool VkApp::initInstance(int width, int height, const char* title) {
     if (!glfwInit()) {
         std::fprintf(stderr, "glfwInit failed\n");
@@ -376,17 +365,7 @@ bool VkApp::initDevice(VkDevice dev) {
     batt[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     batt[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     batt[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    VkAttachmentReference bcr[1] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
-    VkSubpassDescription bsp{};
-    bsp.colorAttachmentCount = 1;
-    bsp.pColorAttachments = &bcr[0];
-    VkRenderPassCreateInfo brpc{};
-    brpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    brpc.attachmentCount = 1;
-    brpc.pAttachments = batt;
-    brpc.subpassCount = 1;
-    brpc.pSubpasses = &bsp;
-    VK(vkCreateRenderPass(m_dev, &brpc, nullptr, &m_rp));
+    m_rp = makeSimpleRenderPass(m_dev, batt[0]);
 
     VkSamplerCreateInfo sci{};
     sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -473,7 +452,7 @@ uint32_t VkApp::acquireNextImage() {
             recreateSwapchain();
             continue;
         }
-        checkResult(r, "acquire");
+        vkCheck(r, "acquire");
         VK(vkWaitForFences(m_dev, 1, &m_acqFence, VK_TRUE, 30000000000ull));
         VK(vkResetFences(m_dev, 1, &m_acqFence));
         return idx;
@@ -506,7 +485,7 @@ void VkApp::present(uint32_t idx, bool wait) {
     pi.swapchainCount = 1;
     pi.pSwapchains = &m_sc;
     pi.pImageIndices = &idx;
-    checkResult(vkQueuePresentKHR(m_queue, &pi), "present");
+    vkCheck(vkQueuePresentKHR(m_queue, &pi), "present");
     if (wait)
         VK(vkQueueWaitIdle(m_queue));
 }
@@ -579,13 +558,7 @@ void VkApp::recreateSwapchain() {
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sceneColor, m_sceneColorMem, m_sceneColorView, mips);
-    VkImageViewCreateInfo savci{};
-    savci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    savci.image = m_sceneColor;
-    savci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    savci.format = m_hdrFmt;
-    savci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VK(vkCreateImageView(m_dev, &savci, nullptr, &m_sceneColorAttView));
+    m_sceneColorAttView = makeImageView(m_dev, m_sceneColor, m_hdrFmt);
     createAttachment(m_extent, m_hdrFmt, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sceneColorTemp, m_sceneColorTempMem, m_sceneColorTempView);
     createAttachment(m_extent, m_hdrFmt,
@@ -599,61 +572,27 @@ void VkApp::recreateSwapchain() {
                      VK_IMAGE_ASPECT_COLOR_BIT, m_hdr, m_hdrMem, m_hdrView);
 
     VkImageView satts[4] = {m_sceneColorAttView, m_depthView, m_sssDiffuseView, m_sssWeightView};
-    VkFramebufferCreateInfo sfci{};
-    sfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    sfci.renderPass = m_rpScene;
-    sfci.attachmentCount = 4;
-    sfci.pAttachments = satts;
-    sfci.width = m_extent.width;
-    sfci.height = m_extent.height;
-    sfci.layers = 1;
-    VK(vkCreateFramebuffer(m_dev, &sfci, nullptr, &m_sceneFb));
+    makeFramebuffer(m_dev, m_rpScene, m_extent.width, m_extent.height, satts, 4, m_sceneFb);
 
     VkImageView natts[4] = {m_hdrView, m_depthView, m_sssDiffuseView, m_sssWeightView};
-    VkFramebufferCreateInfo nfci{};
-    nfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    nfci.renderPass = m_rpSceneNoClear;
-    nfci.attachmentCount = 4;
-    nfci.pAttachments = natts;
-    nfci.width = m_extent.width;
-    nfci.height = m_extent.height;
-    nfci.layers = 1;
-    VK(vkCreateFramebuffer(m_dev, &nfci, nullptr, &m_sceneFbNoClear));
+    makeFramebuffer(m_dev, m_rpSceneNoClear, m_extent.width, m_extent.height, natts, 4, m_sceneFbNoClear);
 
     m_views.resize(icnt);
     m_fbs.resize(icnt);
     for (uint32_t i = 0; i < icnt; ++i) {
-        VkImageViewCreateInfo vci{};
-        vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        vci.image = m_images[i];
-        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        vci.format = m_fmt.format;
-        vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VK(vkCreateImageView(m_dev, &vci, nullptr, &m_views[i]));
-        VkImageView fatts[1] = {m_views[i]};
-        VkFramebufferCreateInfo fci{};
-        fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        fci.renderPass = m_rp;
-        fci.attachmentCount = 1;
-        fci.pAttachments = fatts;
-        fci.width = m_extent.width;
-        fci.height = m_extent.height;
-        fci.layers = 1;
-        VK(vkCreateFramebuffer(m_dev, &fci, nullptr, &m_fbs[i]));
+        m_views[i] = makeImageView(m_dev, m_images[i], m_fmt.format);
+        makeFramebuffer(m_dev, m_rp, m_extent.width, m_extent.height, &m_views[i], 1, m_fbs[i]);
     }
 }
 
 void VkApp::destroySwapchainResources() {
     for (auto* fb : m_fbs)
         vkDestroyFramebuffer(m_dev, fb, nullptr);
-    if (m_sceneFb)
-        vkDestroyFramebuffer(m_dev, m_sceneFb, nullptr);
+    vkFree(m_dev, &m_sceneFb, vkDestroyFramebuffer);
     for (auto* v : m_views)
         vkDestroyImageView(m_dev, v, nullptr);
-    if (m_sc)
-        vkDestroySwapchainKHR(m_dev, m_sc, nullptr);
-    if (m_sceneFbNoClear)
-        vkDestroyFramebuffer(m_dev, m_sceneFbNoClear, nullptr);
+    vkFree(m_dev, &m_sc, vkDestroySwapchainKHR);
+    vkFree(m_dev, &m_sceneFbNoClear, vkDestroyFramebuffer);
     vkDestroyImageView(m_dev, m_depthView, nullptr);
     vkDestroyImage(m_dev, m_depth, nullptr);
     vkFreeMemory(m_dev, m_depthMem, nullptr);

@@ -311,7 +311,6 @@ struct Name {
     std::string id;
 };
 
-// UI descriptors (consumed by the ImGui layer; see ui.hpp)
 struct UIWindow {
     std::string title;
     entt::entity canvas = entt::null;
@@ -379,7 +378,6 @@ struct UITab {
     std::string label;
 };
 
-// reflection glue (components.cpp): typed field access to components by name
 struct CompField {
     std::string name;
     float v[4] = {};

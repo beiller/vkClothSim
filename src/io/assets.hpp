@@ -17,6 +17,9 @@ struct HdrData {
 
 std::string exeDir();
 std::string assetsRoot();
+// directory holding scene .json files; --scenes-dir overrides (default assets/scenes)
+std::string scenesDir();
+void setScenesDir(const std::string& dir);
 bool loadTexture(const std::string& path, TextureData& out, bool flip = true);
 bool loadHdr(const std::string& path, HdrData& out);
 

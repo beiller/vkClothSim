@@ -62,7 +62,6 @@ std::vector<entt::entity> findComponentEntities(const Engine& w, entt::entity ro
     return out;
 }
 
-// the first entity in e's subtree carrying a Skeleton (or null)
 entt::entity skelEntity(const Engine& w, entt::entity e) {
     const auto v = findComponentEntities(w, e, "Skeleton");
     return v.empty() ? entt::null : v.front();
@@ -233,7 +232,6 @@ int lCompReplace(lua_State* L) {
     return 0;
 }
 
-// resolve a string entity ref: same-spawn name first, then world name
 entt::entity resolveRef(const std::unordered_map<std::string, entt::entity>& batch, const entt::registry& reg,
                         const std::string& name) {
     const auto it = batch.find(name);
@@ -258,7 +256,7 @@ int lSpawn(lua_State* L) {
     if (parent != entt::null && !w.reg.try_get<Transform>(parent))
         return luaL_error(L, "scene.spawn: parent must have a Transform");
 
-    // pass 1: create + Name every entity (world-unique names)
+    // pass 1: create + Name; names deduped to world-unique (#N suffix)
     std::vector<std::string> keys;
     std::unordered_map<std::string, entt::entity> batch;
     lua_pushnil(L);
@@ -311,7 +309,7 @@ int lSpawn(lua_State* L) {
         lua_pop(L, 1); // node table
     }
 
-    // pass 2: emplace components (string refs pre-resolved: same-spawn first)
+    // pass 2: emplace remaining components
     for (const std::string& key : keys) {
         const entt::entity e = batch[key];
         lua_getfield(L, tbl, key.c_str());

@@ -5,6 +5,7 @@
 #include "gpu_sim/gpuverts.hpp"
 #include "math.hpp"
 #include "mesh.hpp"
+#include "vk/ubos.hpp"
 #include "xr/xr_frame.hpp"
 #include <entt/entt.hpp>
 #include <functional>
@@ -25,7 +26,7 @@ struct CameraView {
 
 class Renderer {
 public:
-    static constexpr int kMaxLights = 8;
+    static constexpr int kMaxLights = ::kMaxLights;
     static constexpr int kPoolChunk = 64;
 
     void init(VkApp& app, int nInstances, const Mat4& viewProj);

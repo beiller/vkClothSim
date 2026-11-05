@@ -7,6 +7,7 @@
 
 #include "stb_image.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -74,12 +75,8 @@ std::vector<uint8_t> b64Decode(const std::string& in) {
 
 bool parseGltfFile(const std::string& path, tg3_model& model, std::string& fileBase, std::string& baseDir,
                    std::string& fileId, std::string& err) {
-    std::string file;
-    if (std::filesystem::exists("assets/" + path))
-        file = "assets/" + path;
-    else if (std::filesystem::exists(exeDir() + "/../assets/" + path))
-        file = exeDir() + "/../assets/" + path;
-    else {
+    const std::string file = assetsRoot() + "/" + path;
+    if (!std::filesystem::exists(file)) {
         err = "gltf file not found: " + path;
         return false;
     }
@@ -121,10 +118,7 @@ bool parseGltfFile(const std::string& path, tg3_model& model, std::string& fileB
     return true;
 }
 
-// glTF color data is sRGB-encoded, lighting math is linear: decode sRGB -> linear. Data textures (normal, metallicRoughness, occlusion) are already linear, must not be decoded
-static float srgbToLinear(float s) {
-    return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
-}
+// data textures (normal, metallicRoughness, occlusion) are already linear: must not be decoded
 static void decodeSrgb(std::vector<uint8_t>& rgba) {
     for (size_t i = 0; i < rgba.size(); i += 4)
         for (int c = 0; c < 3; ++c)
@@ -464,15 +458,16 @@ struct GltfCtx {
     std::vector<std::string> usedNames;
 };
 
-void warn(GltfCtx& c, const std::string& msg) {
-    std::fprintf(stderr, "3dsim: gltf %s: %s\n", c.fileBase.c_str(), msg.c_str());
+void gltfWarn(const std::string& fileBase, const std::string& msg) {
+    std::fprintf(stderr, "3dsim: gltf %s: %s\n", fileBase.c_str(), msg.c_str());
 }
 
-std::string imageId(const GltfCtx& c, int32_t imgIdx) {
-    const tg3_image& img = c.m->images[imgIdx];
+// external file -> path; embedded -> "<file>#img<n>" (shared by both import modes)
+std::string imageId(const tg3_model* m, const std::string& baseDir, const std::string& fileId, int32_t imgIdx) {
+    const tg3_image& img = m->images[imgIdx];
     if (img.uri.data && img.buffer_view < 0 && strncmp(img.uri.data, "data:", 5) != 0)
-        return c.baseDir + "/" + s(img.uri);
-    return c.fileId + "#img" + std::to_string(imgIdx);
+        return baseDir + "/" + s(img.uri);
+    return fileId + "#img" + std::to_string(imgIdx);
 }
 
 entt::entity textureForImage(GltfCtx& c, int32_t imgIdx, bool srgb) {
@@ -485,10 +480,10 @@ entt::entity textureForImage(GltfCtx& c, int32_t imgIdx, bool srgb) {
     std::vector<uint8_t> px;
     int wpx = 0, hpx = 0;
     if (!decodeImage(*c.m, imgIdx, c.baseDir, px, wpx, hpx, srgb)) {
-        warn(c, "cannot decode image " + std::to_string(imgIdx));
+        gltfWarn(c.fileBase, "cannot decode image " + std::to_string(imgIdx));
         return entt::null;
     }
-    return c.textures[key] = makeTexture(c.reg, imageId(c, imgIdx), px.data(), wpx, hpx);
+    return c.textures[key] = makeTexture(c.reg, imageId(c.m, c.baseDir, c.fileId, imgIdx), px.data(), wpx, hpx);
 }
 
 entt::entity textureForTexture(GltfCtx& c, int32_t texIdx, bool srgb) {
@@ -497,44 +492,40 @@ entt::entity textureForTexture(GltfCtx& c, int32_t texIdx, bool srgb) {
     return textureForImage(c, c.m->textures[texIdx].source, srgb);
 }
 
-entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
-    if (matIdx >= 0 && (uint32_t)matIdx < c.materials.size() && c.materials[matIdx] != entt::null)
-        return c.materials[matIdx];
-    if (matIdx < 0 || (uint32_t)matIdx >= c.m->materials_count)
-        return spawnMaterial(c.reg, V3{1, 1, 1}, 0.0f, 1.0f, V3{0, 0, 0}, nullptr);
-    const tg3_material& gm = c.m->materials[matIdx];
+// glTF material -> engine values; shared by both import modes (entity + table)
+struct MatVals {
+    V3 baseColor = {1, 1, 1}, emissive = {0, 0, 0};
+    float metallic = 0.0f, roughness = 1.0f, alpha = 1.0f, alphaCutoff = 0.5f;
+    int alphaMode = 0; // 0 opaque, 1 mask, 2 blend
+    float normalScale = 1.0f;
+    bool hasNormal = false;
+    float refraction = 0.0f, ior = 0.0f; // 0 = extension absent
+    V3 ssssWeight = {0, 0, 0};
+    bool hasSsss = false;
+    struct Slot { const char* field; int32_t idx, coord; bool srgb; };
+    std::array<Slot, 4> slots; // baseColor, metallicRoughness, normal, emissive
+};
+
+MatVals matVals(const tg3_material& gm, const std::string& fileBase) {
+    MatVals v;
     const auto& pbr = gm.pbr_metallic_roughness;
-    const std::string name = gm.name.data ? s(gm.name) : "mat_" + std::to_string(matIdx);
-    std::string full = c.fileBase + "/" + name;
-    for (int n = 1; std::find(c.usedNames.begin(), c.usedNames.end(), full) != c.usedNames.end(); ++n)
-        full = c.fileBase + "/" + name + "." + std::to_string(n);
-    c.usedNames.push_back(full);
-    const V3 baseColor = {srgbToLinear((float)pbr.base_color_factor[0]), srgbToLinear((float)pbr.base_color_factor[1]),
-                         srgbToLinear((float)pbr.base_color_factor[2])};
-    const V3 emissive = {srgbToLinear((float)gm.emissive_factor[0]), srgbToLinear((float)gm.emissive_factor[1]),
-                        srgbToLinear((float)gm.emissive_factor[2])};
-    const entt::entity e =
-        spawnMaterial(c.reg, baseColor, (float)pbr.metallic_factor, (float)pbr.roughness_factor, emissive, full.c_str());
-    auto& mat = c.reg.get<Material>(e);
-    const auto slot = [&](int32_t texIdx, int32_t coord, const char* what, entt::entity* field, bool srgb) {
-        if (texIdx < 0)
-            return;
-        if (coord != 0) {
-            warn(c, std::string(what) + " uses uv channel " + std::to_string(coord) + " (only uv0 is packed); map skipped");
-            return;
-        }
-        *field = textureForTexture(c, texIdx, srgb);
-    };
-    slot(pbr.base_color_texture.index, pbr.base_color_texture.tex_coord, "baseColor", &mat.tex, true);
-    slot(pbr.metallic_roughness_texture.index, pbr.metallic_roughness_texture.tex_coord, "metallicRoughness", &mat.texMR, false);
-    slot(gm.normal_texture.index, gm.normal_texture.tex_coord, "normal", &mat.texNormal, false);
-    if (gm.normal_texture.index >= 0)
-        mat.normalScale = (float)gm.normal_texture.scale;
-    slot(gm.emissive_texture.index, gm.emissive_texture.tex_coord, "emissive", &mat.texEmissive, true);
-    mat.alpha = (float)pbr.base_color_factor[3];
-    mat.alphaCutoff = (float)gm.alpha_cutoff;
+    v.baseColor = {srgbToLinear((float)pbr.base_color_factor[0]), srgbToLinear((float)pbr.base_color_factor[1]),
+                   srgbToLinear((float)pbr.base_color_factor[2])};
+    v.emissive = {srgbToLinear((float)gm.emissive_factor[0]), srgbToLinear((float)gm.emissive_factor[1]),
+                  srgbToLinear((float)gm.emissive_factor[2])};
+    v.metallic = (float)pbr.metallic_factor;
+    v.roughness = (float)pbr.roughness_factor;
+    v.slots[0] = {"tex", pbr.base_color_texture.index, pbr.base_color_texture.tex_coord, true};
+    v.slots[1] = {"texMR", pbr.metallic_roughness_texture.index, pbr.metallic_roughness_texture.tex_coord, false};
+    v.slots[2] = {"texNormal", gm.normal_texture.index, gm.normal_texture.tex_coord, false};
+    v.slots[3] = {"texEmissive", gm.emissive_texture.index, gm.emissive_texture.tex_coord, true};
+    v.hasNormal = gm.normal_texture.index >= 0;
+    if (v.hasNormal)
+        v.normalScale = (float)gm.normal_texture.scale;
+    v.alpha = (float)pbr.base_color_factor[3];
+    v.alphaCutoff = (float)gm.alpha_cutoff;
     const std::string am = s(gm.alpha_mode);
-    mat.alphaMode = am == "BLEND" ? 2 : (am == "MASK" ? 1 : 0);
+    v.alphaMode = am == "BLEND" ? 2 : (am == "MASK" ? 1 : 0);
     for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
         if (s(gm.ext.extensions[i].name) != "KHR_materials_transmission")
             continue;
@@ -545,10 +536,10 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
             if (s(od.key) == "transmissionFactor" && od.value.type == TG3_VALUE_REAL)
                 tf = od.value.real_val;
             if (s(od.key) == "transmissionTexture" && od.value.type == TG3_VALUE_INT && od.value.int_val >= 0)
-                warn(c, "transmissionTexture is not supported (ignored; use transmissionFactor)");
+                gltfWarn(fileBase, "transmissionTexture is not supported (ignored; use transmissionFactor)");
         }
         if (tf > 0.0)
-            mat.refraction = (float)tf; // 1:1: transmissionFactor drives the refraction amount (0..1)
+            v.refraction = (float)tf; // 1:1: transmissionFactor drives the refraction amount (0..1)
         break;
     }
     for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
@@ -561,9 +552,9 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
             if (s(od.key) == "ior" && od.value.type == TG3_VALUE_REAL)
                 io = od.value.real_val;
             if (s(od.key) == "iorTexture" && od.value.type == TG3_VALUE_INT && od.value.int_val >= 0)
-                warn(c, "iorTexture is not supported (ignored; use ior)");
+                gltfWarn(fileBase, "iorTexture is not supported (ignored; use ior)");
         }
-        mat.ior = (float)io;
+        v.ior = (float)io;
         break;
     }
     // KHR_materials_volume is the glTF SSS encoding: baseColorTransmission is the
@@ -586,17 +577,66 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
             }
             if ((k == "baseColorTransmissionTexture" || k == "thicknessTexture") && od.value.type == TG3_VALUE_INT &&
                 od.value.int_val >= 0)
-                warn(c, k + " is not supported (ignored)");
+                gltfWarn(fileBase, k + " is not supported (ignored)");
             if ((k == "attenuationColor" || k == "attenuationColorExtinction" || k == "attenuationDistance" || k == "thickness") &&
                 !warnedAttenuation) {
-                warn(c, "KHR_materials_volume attenuation/thickness are not supported (ignored; volume maps to ssssWeight only)");
+                gltfWarn(fileBase, "KHR_materials_volume attenuation/thickness are not supported (ignored; volume maps to ssssWeight only)");
                 warnedAttenuation = true;
             }
         }
-        if (haveBt)
-            mat.ssssWeight = V3{bt[0], bt[1], bt[2]};
+        if (haveBt) {
+            v.ssssWeight = V3{bt[0], bt[1], bt[2]};
+            v.hasSsss = true;
+        }
         break;
     }
+    return v;
+}
+
+// Resolve the four texture slots in order; cb(field, idx, srgb) does the per-mode work.
+template <typename Cb>
+void applyMatSlots(const MatVals& v, const std::string& fileBase, Cb&& cb) {
+    for (const auto& t : v.slots) {
+        if (t.idx < 0)
+            continue;
+        if (t.coord != 0) {
+            gltfWarn(fileBase, std::string(t.field) + " uses uv channel " + std::to_string(t.coord) +
+                                " (only uv0 is packed); map skipped");
+            continue;
+        }
+        cb(t.field, t.idx, t.srgb);
+    }
+}
+
+entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
+    if (matIdx >= 0 && (uint32_t)matIdx < c.materials.size() && c.materials[matIdx] != entt::null)
+        return c.materials[matIdx];
+    if (matIdx < 0 || (uint32_t)matIdx >= c.m->materials_count)
+        return spawnMaterial(c.reg, V3{1, 1, 1}, 0.0f, 1.0f, V3{0, 0, 0}, nullptr);
+    const tg3_material& gm = c.m->materials[matIdx];
+    const std::string name = gm.name.data ? s(gm.name) : "mat_" + std::to_string(matIdx);
+    std::string full = c.fileBase + "/" + name;
+    for (int n = 1; std::find(c.usedNames.begin(), c.usedNames.end(), full) != c.usedNames.end(); ++n)
+        full = c.fileBase + "/" + name + "." + std::to_string(n);
+    c.usedNames.push_back(full);
+    const MatVals v = matVals(gm, c.fileBase);
+    const entt::entity e = spawnMaterial(c.reg, v.baseColor, v.metallic, v.roughness, v.emissive, full.c_str());
+    auto& mat = c.reg.get<Material>(e);
+    applyMatSlots(v, c.fileBase, [&](const char* f, int32_t i, bool srgb) {
+        entt::entity* p = f == "tex" ? &mat.tex : f == "texMR" ? &mat.texMR : f == "texNormal" ? &mat.texNormal : &mat.texEmissive;
+        *p = textureForTexture(c, i, srgb);
+    });
+    mat.alpha = v.alpha;
+    mat.alphaCutoff = v.alphaCutoff;
+    mat.alphaMode = v.alphaMode;
+    if (v.hasNormal)
+        mat.normalScale = v.normalScale;
+    if (v.refraction > 0.0f)
+        mat.refraction = v.refraction;
+    if (v.ior > 0.0f)
+        mat.ior = v.ior;
+    if (v.hasSsss)
+        mat.ssssWeight = v.ssssWeight;
     return c.materials[matIdx] = e;
 }
 
@@ -631,15 +671,14 @@ std::vector<std::string> targetNames(const tg3_mesh& gm) {
     return out;
 }
 
-// each skinned prim keeps its full rest data (pos/nrm/joints/weights + shapes) in its own Mesh;
-// Skin::sync lazily adopts a per-mesh GPU state from it
+// full rest data stays in each prim's Mesh; Skin::sync lazily adopts a per-mesh GPU state from it
 void finishSkinned(GltfCtx& c) {
     for (const auto& pp : c.pending) {
         const int32_t skin = skinOf(c, pp.nodeIdx);
         const tg3_mesh& gm = c.m->meshes[pp.meshIdx];
         const tg3_primitive& p = gm.primitives[pp.primIdx];
         if (p.mode != -1 && p.mode != 4) {
-            warn(c, "skinned prim: primitive mode is not triangles");
+            gltfWarn(c.fileBase, "skinned prim: primitive mode is not triangles");
             continue;
         }
         if (c.skinChars[skin] == entt::null) {
@@ -656,7 +695,7 @@ void finishSkinned(GltfCtx& c) {
                 sk.inverse_bind_matrices >= 0 && readAccessor(*c.m, sk.inverse_bind_matrices, 16, ibf) &&
                 ibf.size() == 16 * sk.joints_count;
             if (!haveIbm)
-                warn(c, "skin " + std::to_string(skin) + ": missing or bad inverseBindMatrices (identity)");
+                gltfWarn(c.fileBase, "skin " + std::to_string(skin) + ": missing or bad inverseBindMatrices (identity)");
             std::vector<Mat4> invBinds;
             for (uint32_t i = 0; i < sk.joints_count; ++i) {
                 Mat4 m(1.0f);
@@ -670,7 +709,7 @@ void finishSkinned(GltfCtx& c) {
                     continue;
                 const tg3_node& jn = c.m->nodes[ji];
                 if (!jn.has_matrix && (std::fabs(jn.scale[0] - jn.scale[1]) > 1e-4 || std::fabs(jn.scale[1] - jn.scale[2]) > 1e-4)) {
-                    warn(c, "joint " + s(jn.name) + " has non-uniform scale (approximated by the DQ scale blend)");
+                    gltfWarn(c.fileBase, "joint " + s(jn.name) + " has non-uniform scale (approximated by the DQ scale blend)");
                     break;
                 }
             }
@@ -694,7 +733,7 @@ void finishSkinned(GltfCtx& c) {
 
         std::vector<float> pos0;
         if (!readAccessor(*c.m, attrAccessor(p, "POSITION"), 3, pos0) || pos0.empty()) {
-            warn(c, "skinned prim: bad POSITION");
+            gltfWarn(c.fileBase, "skinned prim: bad POSITION");
             continue;
         }
         const int nV = (int)(pos0.size() / 3);
@@ -715,13 +754,13 @@ void finishSkinned(GltfCtx& c) {
         const int32_t wa = attrAccessor(p, "WEIGHTS_0") >= 0 ? attrAccessor(p, "WEIGHTS_0") : attrAccessor(p, "WEIGHT_0");
         std::vector<float> jf, wf;
         if (!readAccessor(*c.m, ja, 4, jf) || jf.size() != (size_t)4 * nV) {
-            warn(c, "skinned prim: bad JOINTS_0");
+            gltfWarn(c.fileBase, "skinned prim: bad JOINTS_0");
             continue;
         }
         const int wc = wa >= 0 ? typeComps(c.m->accessors[wa].type) : 0;
         const bool haveW = wc > 0 && readAccessor(*c.m, wa, wc, wf) && wf.size() == (size_t)wc * nV;
         if (wc > 0 && !haveW)
-            warn(c, "skinned prim: bad WEIGHTS_0 (treating as zero)");
+            gltfWarn(c.fileBase, "skinned prim: bad WEIGHTS_0 (treating as zero)");
         pm.joints.resize((size_t)4 * nV);
         pm.weights.assign((size_t)4 * nV, 0.0f);
         bool badJoint = false;
@@ -742,7 +781,7 @@ void finishSkinned(GltfCtx& c) {
                     pm.weights[4 * v + i] /= sum;
         }
         if (badJoint)
-            warn(c, "skinned prim: joint index out of range (clamped)");
+            gltfWarn(c.fileBase, "skinned prim: joint index out of range (clamped)");
         std::vector<float> uv, idxf;
         if (!readAccessor(*c.m, attrAccessor(p, "TEXCOORD_0"), 2, uv) || uv.size() != (size_t)nV * 2)
             uv.assign((size_t)nV * 2, 0.0f);
@@ -762,7 +801,7 @@ void finishSkinned(GltfCtx& c) {
             for (int i = 0; i < nV; ++i)
                 pm.indices.push_back((uint32_t)i);
         if (badIdx) {
-            warn(c, "skinned prim: index out of range");
+            gltfWarn(c.fileBase, "skinned prim: index out of range");
             continue;
         }
         const std::string mName = s(gm.name);
@@ -787,9 +826,9 @@ void finishSkinned(GltfCtx& c) {
                 if (readAccessor(*c.m, acc, 3, d) && d.size() == (size_t)nV * 3)
                     sh.pos = std::move(d);
                 else
-                    warn(c, "skinned prim " + cname + ": target " + std::to_string(t) + " POSITION delta mismatch (slot zeroed)");
+                    gltfWarn(c.fileBase, "skinned prim " + cname + ": target " + std::to_string(t) + " POSITION delta mismatch (slot zeroed)");
             } else if (hasNrm)
-                warn(c, "skinned prim " + cname + ": target " + std::to_string(t) + " has no POSITION delta (slot zeroed)");
+                gltfWarn(c.fileBase, "skinned prim " + cname + ": target " + std::to_string(t) + " has no POSITION delta (slot zeroed)");
             pm.shapes.push_back(std::move(sh));
         }
         const entt::entity child = c.reg.create();
@@ -806,7 +845,7 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
     const tg3_node& n = c.m->nodes[nodeIdx];
     Transform t{};
     if (!nodePose(n, t)) {
-        warn(c, "node " + s(n.name) + ": degenerate transform");
+        gltfWarn(c.fileBase, "node " + s(n.name) + ": degenerate transform");
         return entt::null;
     }
     entt::entity e = c.reg.create();
@@ -827,12 +866,12 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
                 continue;
             }
             if (jointAcc(p) >= 0)
-                warn(c, "skinned mesh " + mName + ": no usable skin, using bind pose");
+                gltfWarn(c.fileBase, "skinned mesh " + mName + ": no usable skin, using bind pose");
             Mesh pm;
             std::string pwarn;
             const bool ok = packPrimitive(*c.m, gm, p, pm, pwarn);
             if (!pwarn.empty())
-                warn(c, "mesh " + mName + " primitive " + std::to_string(i) + ": " + pwarn);
+                gltfWarn(c.fileBase, "mesh " + mName + " primitive " + std::to_string(i) + ": " + pwarn);
             if (!ok || pm.vertexCount() == 0)
                 continue;
             const entt::entity child = c.reg.create();
@@ -848,7 +887,6 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
     return e;
 }
 
-// ---- registry-free table emission (graphics.gltf -> name->node map) ----
 struct GltfTblCtx {
     const tg3_model* m;
     std::string fileBase;
@@ -861,10 +899,6 @@ struct GltfTblCtx {
     std::map<int32_t, std::vector<std::string>> skinMeshes; // skinIdx -> mesh node keys
     std::map<int32_t, std::string> skinPlacement;           // skinIdx -> placement (first mesh) key
 };
-
-void warnT(GltfTblCtx& c, const std::string& msg) {
-    std::fprintf(stderr, "3dsim: gltf %s: %s\n", c.fileBase.c_str(), msg.c_str());
-}
 
 CompField fNum(const std::string& name, float v) {
     CompField f;
@@ -917,13 +951,6 @@ std::string uniqueNameT(GltfTblCtx& c, const std::string& base) {
     return n;
 }
 
-std::string imageIdT(const GltfTblCtx& c, int32_t imgIdx) {
-    const tg3_image& img = c.m->images[imgIdx];
-    if (img.uri.data && img.buffer_view < 0 && strncmp(img.uri.data, "data:", 5) != 0)
-        return c.baseDir + "/" + s(img.uri);
-    return c.fileId + "#img" + std::to_string(imgIdx);
-}
-
 std::string texKeyForImage(GltfTblCtx& c, int32_t imgIdx, bool srgb, GltfTableData& out) {
     if (imgIdx < 0 || (uint32_t)imgIdx >= c.m->images_count)
         return "";
@@ -934,15 +961,16 @@ std::string texKeyForImage(GltfTblCtx& c, int32_t imgIdx, bool srgb, GltfTableDa
     std::vector<uint8_t> px;
     int wpx = 0, hpx = 0;
     if (!decodeImage(*c.m, imgIdx, c.baseDir, px, wpx, hpx, srgb)) {
-        warnT(c, "cannot decode image " + std::to_string(imgIdx));
+        gltfWarn(c.fileBase, "cannot decode image " + std::to_string(imgIdx));
         return "";
     }
     const std::string k = uniqueNameT(c, "tex_" + std::to_string(imgIdx) + (srgb ? "_s" : ""));
     c.texKeys[key] = k;
-    registerEmbeddedTexture(imageIdT(c, imgIdx), px, (uint32_t)wpx, (uint32_t)hpx);
+    const std::string id = imageId(c.m, c.baseDir, c.fileId, imgIdx);
+    registerEmbeddedTexture(id, px, (uint32_t)wpx, (uint32_t)hpx);
     // pixels live in the embedded store; the Texture node carries only path + space
     CompFields tf;
-    tf.push_back(fStr("path", imageIdT(c, imgIdx)));
+    tf.push_back(fStr("path", id));
     tf.push_back(fStr("space", "linear"));
     out.nodes[k]["Texture"] = std::move(tf);
     out.keys.push_back(k);
@@ -955,7 +983,6 @@ std::string texKeyForTexture(GltfTblCtx& c, int32_t texIdx, bool srgb, GltfTable
     return texKeyForImage(c, c.m->textures[texIdx].source, srgb, out);
 }
 
-// mirrors materialFor, but emits CompFields under a resource key instead of an entity
 std::string matKeyFor(GltfTblCtx& c, int32_t matIdx, GltfTableData& out) {
     const auto it = c.matKeys.find(matIdx);
     if (it != c.matKeys.end())
@@ -972,106 +999,28 @@ std::string matKeyFor(GltfTblCtx& c, int32_t matIdx, GltfTableData& out) {
         mf.push_back(fVec("emissive", em, 3));
     } else {
         const tg3_material& gm = c.m->materials[matIdx];
-        const auto& pbr = gm.pbr_metallic_roughness;
         key = uniqueNameT(c, s(gm.name).empty() ? "mat_" + std::to_string(matIdx) : s(gm.name));
-        const float bc[3] = {srgbToLinear((float)pbr.base_color_factor[0]),
-                             srgbToLinear((float)pbr.base_color_factor[1]),
-                             srgbToLinear((float)pbr.base_color_factor[2])};
-        const float em[3] = {srgbToLinear((float)gm.emissive_factor[0]),
-                             srgbToLinear((float)gm.emissive_factor[1]),
-                             srgbToLinear((float)gm.emissive_factor[2])};
-        mf.push_back(fVec("baseColor", bc, 3));
-        mf.push_back(fNum("metallic", (float)pbr.metallic_factor));
-        mf.push_back(fNum("roughness", (float)pbr.roughness_factor));
-        mf.push_back(fVec("emissive", em, 3));
-        const auto slot = [&](int32_t texIdx, int32_t coord, const char* what, const char* field, bool srgb) {
-            if (texIdx < 0)
-                return;
-            if (coord != 0) {
-                warnT(c, std::string(what) + " uses uv channel " + std::to_string(coord) +
-                         " (only uv0 is packed); map skipped");
-                return;
-            }
-            const std::string tk = texKeyForTexture(c, texIdx, srgb, out);
+        const MatVals v = matVals(gm, c.fileBase);
+        mf.push_back(fVec("baseColor", &v.baseColor.x, 3));
+        mf.push_back(fNum("metallic", v.metallic));
+        mf.push_back(fNum("roughness", v.roughness));
+        mf.push_back(fVec("emissive", &v.emissive.x, 3));
+        applyMatSlots(v, c.fileBase, [&](const char* f, int32_t i, bool srgb) {
+            const std::string tk = texKeyForTexture(c, i, srgb, out);
             if (!tk.empty())
-                mf.push_back(fStr(field, tk));
-        };
-        slot(pbr.base_color_texture.index, pbr.base_color_texture.tex_coord, "baseColor", "tex", true);
-        slot(pbr.metallic_roughness_texture.index, pbr.metallic_roughness_texture.tex_coord, "metallicRoughness",
-             "texMR", false);
-        slot(gm.normal_texture.index, gm.normal_texture.tex_coord, "normal", "texNormal", false);
-        if (gm.normal_texture.index >= 0)
-            mf.push_back(fNum("normalScale", (float)gm.normal_texture.scale));
-        slot(gm.emissive_texture.index, gm.emissive_texture.tex_coord, "emissive", "texEmissive", true);
-        mf.push_back(fNum("alpha", (float)pbr.base_color_factor[3]));
-        mf.push_back(fNum("alphaCutoff", (float)gm.alpha_cutoff));
-        const std::string am = s(gm.alpha_mode);
-        mf.push_back(fNum("alphaMode", am == "BLEND" ? 2.0f : (am == "MASK" ? 1.0f : 0.0f)));
-        for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
-            if (s(gm.ext.extensions[i].name) != "KHR_materials_transmission")
-                continue;
-            const tg3_value& ext = gm.ext.extensions[i].value;
-            double tf = 1.0;
-            for (uint32_t j = 0; j < ext.object_count; ++j) {
-                const auto& od = ext.object_data[j];
-                if (s(od.key) == "transmissionFactor" && od.value.type == TG3_VALUE_REAL)
-                    tf = od.value.real_val;
-                if (s(od.key) == "transmissionTexture" && od.value.type == TG3_VALUE_INT && od.value.int_val >= 0)
-                    warnT(c, "transmissionTexture is not supported (ignored; use transmissionFactor)");
-            }
-            if (tf > 0.0)
-                mf.push_back(
-                    fNum("refraction", (float)tf)); // 1:1: transmissionFactor drives the refraction amount (0..1)
-            break;
-        }
-        for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
-            if (s(gm.ext.extensions[i].name) != "KHR_materials_ior")
-                continue;
-            const tg3_value& ext = gm.ext.extensions[i].value;
-            double io = 1.5;
-            for (uint32_t j = 0; j < ext.object_count; ++j) {
-                const auto& od = ext.object_data[j];
-                if (s(od.key) == "ior" && od.value.type == TG3_VALUE_REAL)
-                    io = od.value.real_val;
-                if (s(od.key) == "iorTexture" && od.value.type == TG3_VALUE_INT && od.value.int_val >= 0)
-                    warnT(c, "iorTexture is not supported (ignored; use ior)");
-            }
-            mf.push_back(fNum("ior", (float)io));
-            break;
-        }
-        // KHR_materials_volume is the glTF SSS encoding: baseColorTransmission is the
-        // transmitted fraction; attenuation/colour are ignored (the SSS pass is a
-        // scalar-strength blur, Godot style)
-        for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
-            if (s(gm.ext.extensions[i].name) != "KHR_materials_volume")
-                continue;
-            const tg3_value& ext = gm.ext.extensions[i].value;
-            float bt[3] = {0.0f, 0.0f, 0.0f};
-            bool haveBt = false, warnedAttenuation = false;
-            for (uint32_t j = 0; j < ext.object_count; ++j) {
-                const auto& od = ext.object_data[j];
-                const std::string k = s(od.key);
-                if (k == "baseColorTransmission" && od.value.type == TG3_VALUE_ARRAY && od.value.array_count == 3) {
-                    for (uint32_t n = 0; n < 3; ++n)
-                        if (od.value.array_data[n].type == TG3_VALUE_REAL)
-                            bt[n] = (float)od.value.array_data[n].real_val;
-                    haveBt = true;
-                }
-                if ((k == "baseColorTransmissionTexture" || k == "thicknessTexture") &&
-                    od.value.type == TG3_VALUE_INT && od.value.int_val >= 0)
-                    warnT(c, k + " is not supported (ignored)");
-                if ((k == "attenuationColor" || k == "attenuationColorExtinction" || k == "attenuationDistance" ||
-                     k == "thickness") &&
-                    !warnedAttenuation) {
-                    warnT(c, "KHR_materials_volume attenuation/thickness are not supported (ignored; volume maps to "
-                             "ssssWeight only)");
-                    warnedAttenuation = true;
-                }
-            }
-            if (haveBt)
-                mf.push_back(fVec("ssssWeight", bt, 3));
-            break;
-        }
+                mf.push_back(fStr(f, tk));
+        });
+        if (v.hasNormal)
+            mf.push_back(fNum("normalScale", v.normalScale));
+        mf.push_back(fNum("alpha", v.alpha));
+        mf.push_back(fNum("alphaCutoff", v.alphaCutoff));
+        mf.push_back(fNum("alphaMode", (float)v.alphaMode));
+        if (v.refraction > 0.0f)
+            mf.push_back(fNum("refraction", v.refraction)); // 1:1: transmissionFactor drives the refraction amount (0..1)
+        if (v.ior > 0.0f)
+            mf.push_back(fNum("ior", v.ior));
+        if (v.hasSsss)
+            mf.push_back(fVec("ssssWeight", &v.ssssWeight.x, 3));
     }
     out.nodes[key]["Material"] = std::move(mf);
     out.keys.push_back(key);
@@ -1079,8 +1028,7 @@ std::string matKeyFor(GltfTblCtx& c, int32_t matIdx, GltfTableData& out) {
     return key;
 }
 
-// reads pos/nrm/uv/idx/joints/weights for a skinned primitive (mirrors finishSkinned; shapes are
-// dropped in table mode because Geometry has no morph field)
+// shapes dropped in table mode (Geometry has no morph field)
 bool readSkinnedMesh(const tg3_model& m, const tg3_mesh& gm, const tg3_primitive& p, int nJ, Mesh& out,
                      std::string& warn) {
     if (p.mode != -1 && p.mode != 4) {
@@ -1162,14 +1110,14 @@ bool readSkinnedMesh(const tg3_model& m, const tg3_mesh& gm, const tg3_primitive
     return true;
 }
 
-// mirrors buildNode, but emits into the table (flattened: Geometry on the node)
+// flattened: Geometry on the node
 void nodeToTable(GltfTblCtx& c, int32_t nodeIdx, const std::string& parentKey, GltfTableData& out) {
     if (nodeIdx < 0 || (uint32_t)nodeIdx >= c.m->nodes_count)
         return;
     const tg3_node& n = c.m->nodes[nodeIdx];
     Transform t{};
     if (!nodePose(n, t)) {
-        warnT(c, "node " + s(n.name) + ": degenerate transform");
+        gltfWarn(c.fileBase, "node " + s(n.name) + ": degenerate transform");
         return;
     }
     const std::string key = uniqueNameT(c, s(n.name).empty() ? "node_" + std::to_string(nodeIdx) : s(n.name));
@@ -1197,15 +1145,15 @@ void nodeToTable(GltfTblCtx& c, int32_t nodeIdx, const std::string& parentKey, G
                 const int nJ = (int)c.m->skins[skin].joints_count;
                 const bool ok = readSkinnedMesh(*c.m, gm, p, nJ, pm, pwarn);
                 if (!pwarn.empty())
-                    warnT(c, "mesh " + mName + " primitive " + std::to_string(i) + ": " + pwarn);
+                    gltfWarn(c.fileBase, "mesh " + mName + " primitive " + std::to_string(i) + ": " + pwarn);
                 if (!ok || pm.vertexCount() == 0)
                     continue;
             } else {
                 if (jointAcc(p) >= 0)
-                    warnT(c, "skinned mesh " + mName + ": no usable skin, using bind pose");
+                    gltfWarn(c.fileBase, "skinned mesh " + mName + ": no usable skin, using bind pose");
                 const bool ok = packPrimitive(*c.m, gm, p, pm, pwarn);
                 if (!pwarn.empty())
-                    warnT(c, "mesh " + mName + " primitive " + std::to_string(i) + ": " + pwarn);
+                    gltfWarn(c.fileBase, "mesh " + mName + " primitive " + std::to_string(i) + ": " + pwarn);
                 if (!ok || pm.vertexCount() == 0)
                     continue;
             }
@@ -1327,7 +1275,7 @@ bool gltfToData(const std::string& path, GltfTableData& out, std::string& err) {
             jointRefs.push_back(nit->second);
         }
         if (!complete) {
-            warnT(c, "skin " + std::to_string(skin) + ": a joint node is missing; skeleton skipped (bind pose)");
+            gltfWarn(c.fileBase, "skin " + std::to_string(skin) + ": a joint node is missing; skeleton skipped (bind pose)");
             continue;
         }
         const std::string key = uniqueNameT(c, s(sk.name).empty() ? "skin_" + std::to_string(skin) : s(sk.name));

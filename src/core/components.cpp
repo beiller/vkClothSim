@@ -6,318 +6,72 @@
 
 namespace {
 
-enum class Cmp {
-    Transform,
-    Material,
-    MaterialRef,
-    Camera,
-    Environment,
-    PointLight,
-    SoftBodyData,
-    RigidBody,
-    KinematicBody,
-    CapsuleShape,
-    BoxShape,
-    TaperedCapsule,
-    SphereShape,
-    ConvexHullShape,
-    Collider,
-    ControllerInput,
-    MouseInput,
-    Renderable,
-    Texture,
-    Geometry,
-    Skeleton,
-    Joint,
-    SixDofJoint,
-    Parent,
-    Bind,
-    None,
+struct CompReg {
+    const char* name;
+    const TypeDesc* desc;
+    void* (*tryGet)(const entt::registry&, entt::entity);
+    void (*emplace)(entt::registry&, entt::entity);
+    void (*remove)(entt::registry&, entt::entity);
+    bool (*afterWrite)(entt::registry&, entt::entity, std::string&);
 };
 
-const char* cmpName(Cmp c) {
-    switch (c) {
-    case Cmp::Transform:
-        return "Transform";
-    case Cmp::Material:
-        return "Material";
-    case Cmp::MaterialRef:
-        return "MaterialRef";
-    case Cmp::Camera:
-        return "Camera";
-    case Cmp::Environment:
-        return "Environment";
-    case Cmp::PointLight:
-        return "PointLight";
-    case Cmp::SoftBodyData:
-        return "SoftBodyData";
-    case Cmp::RigidBody:
-        return "RigidBody";
-    case Cmp::KinematicBody:
-        return "KinematicBody";
-    case Cmp::CapsuleShape:
-        return "CapsuleShape";
-    case Cmp::BoxShape:
-        return "BoxShape";
-    case Cmp::TaperedCapsule:
-        return "TaperedCapsule";
-    case Cmp::SphereShape:
-        return "SphereShape";
-    case Cmp::ConvexHullShape:
-        return "ConvexHullShape";
-    case Cmp::Collider:
-        return "Collider";
-    case Cmp::ControllerInput:
-        return "ControllerInput";
-    case Cmp::MouseInput:
-        return "MouseInput";
-    case Cmp::Renderable:
-        return "Renderable";
-    case Cmp::Texture:
-        return "Texture";
-    case Cmp::Geometry:
-        return "Geometry";
-    case Cmp::Skeleton:
-        return "Skeleton";
-    case Cmp::Joint:
-        return "Joint";
-    case Cmp::SixDofJoint:
-        return "SixDofJoint";
-    case Cmp::Parent:
-        return "Parent";
-    case Cmp::Bind:
-        return "Bind";
+template <typename T>
+struct CompT {
+    static void* tryGet(const entt::registry& reg, entt::entity e) { return const_cast<T*>(reg.try_get<T>(e)); }
+    static void emplace(entt::registry& reg, entt::entity e) { reg.emplace<T>(e); }
+    static void remove(entt::registry& reg, entt::entity e) { reg.remove<T>(e); }
+};
+
+bool validateTaperedCapsule(entt::registry& reg, entt::entity e, std::string& err) {
+    const auto& tc = reg.get<TaperedCapsule>(e);
+    if (tc.bottomRadius <= 0.0f || tc.topRadius <= 0.0f || tc.halfHeight < 0.0f) {
+        err = "TaperedCapsule: radii must be > 0 and halfHeight >= 0";
+        return false;
     }
+    return true;
+}
+
+bool validateSphereShape(entt::registry& reg, entt::entity e, std::string& err) {
+    if (reg.get<SphereShape>(e).radius <= 0.0f) {
+        err = "SphereShape: radius must be > 0";
+        return false;
+    }
+    return true;
+}
+
+bool validateConvexHullShape(entt::registry& reg, entt::entity e, std::string& err) {
+    if (reg.get<ConvexHullShape>(e).points.size() < 12) {
+        err = "ConvexHullShape: needs at least 4 points (12 xyz values)";
+        return false;
+    }
+    return true;
+}
+
+bool validateGeometry(entt::registry& reg, entt::entity e, std::string& err);
+bool bindSkeleton(entt::registry& reg, entt::entity e, std::string& err);
+
+#define CMP(T) \
+    { #T, refl::findType(#T), &CompT<T>::tryGet, &CompT<T>::emplace, &CompT<T>::remove, nullptr }
+#define CMPV(T, V) \
+    { #T, refl::findType(#T), &CompT<T>::tryGet, &CompT<T>::emplace, &CompT<T>::remove, &V }
+
+const CompReg kComps[] = {
+    CMP(Transform),     CMP(Material),      CMP(MaterialRef),  CMP(Camera),       CMP(Environment),
+    CMP(PointLight),    CMP(SoftBodyData), CMP(RigidBody),    CMP(KinematicBody), CMP(CapsuleShape),
+    CMP(BoxShape),      CMPV(TaperedCapsule, validateTaperedCapsule), CMPV(SphereShape, validateSphereShape),
+    CMPV(ConvexHullShape, validateConvexHullShape), CMP(Collider), CMP(ControllerInput), CMP(MouseInput),
+    CMP(Renderable),    CMP(Texture),       CMPV(Geometry, validateGeometry), CMPV(Skeleton, bindSkeleton),
+    CMP(Joint),         CMP(SixDofJoint),   CMP(Parent),        CMP(Bind),
+};
+
+#undef CMP
+#undef CMPV
+
+const CompReg* compFor(const std::string& name) {
+    for (const auto& c : kComps)
+        if (name == c.name)
+            return &c;
     return nullptr;
-}
-
-Cmp cmpFor(const std::string& name) {
-    for (int i = 0; i < (int)Cmp::None; ++i) {
-        const char* n = cmpName((Cmp)i);
-        if (name == n)
-            return (Cmp)i;
-    }
-    return Cmp::None;
-}
-
-void* base(const entt::registry& reg, entt::entity e, Cmp c) {
-    switch (c) {
-    case Cmp::Transform:
-        return const_cast<Transform*>(reg.try_get<Transform>(e));
-    case Cmp::Material:
-        return const_cast<Material*>(reg.try_get<Material>(e));
-    case Cmp::MaterialRef:
-        return const_cast<MaterialRef*>(reg.try_get<MaterialRef>(e));
-    case Cmp::Camera:
-        return const_cast<Camera*>(reg.try_get<Camera>(e));
-    case Cmp::Environment:
-        return const_cast<Environment*>(reg.try_get<Environment>(e));
-    case Cmp::PointLight:
-        return const_cast<PointLight*>(reg.try_get<PointLight>(e));
-    case Cmp::SoftBodyData:
-        return const_cast<SoftBodyData*>(reg.try_get<SoftBodyData>(e));
-    case Cmp::RigidBody:
-        return const_cast<RigidBody*>(reg.try_get<RigidBody>(e));
-    case Cmp::KinematicBody:
-        return const_cast<KinematicBody*>(reg.try_get<KinematicBody>(e));
-    case Cmp::CapsuleShape:
-        return const_cast<CapsuleShape*>(reg.try_get<CapsuleShape>(e));
-    case Cmp::BoxShape:
-        return const_cast<BoxShape*>(reg.try_get<BoxShape>(e));
-    case Cmp::TaperedCapsule:
-        return const_cast<TaperedCapsule*>(reg.try_get<TaperedCapsule>(e));
-    case Cmp::SphereShape:
-        return const_cast<SphereShape*>(reg.try_get<SphereShape>(e));
-    case Cmp::ConvexHullShape:
-        return const_cast<ConvexHullShape*>(reg.try_get<ConvexHullShape>(e));
-    case Cmp::Collider:
-        return const_cast<Collider*>(reg.try_get<Collider>(e));
-    case Cmp::ControllerInput:
-        return const_cast<ControllerInput*>(reg.try_get<ControllerInput>(e));
-    case Cmp::MouseInput:
-        return const_cast<MouseInput*>(reg.try_get<MouseInput>(e));
-    case Cmp::Renderable:
-        return const_cast<Renderable*>(reg.try_get<Renderable>(e));
-    case Cmp::Texture:
-        return const_cast<Texture*>(reg.try_get<Texture>(e));
-    case Cmp::Geometry:
-        return const_cast<Geometry*>(reg.try_get<Geometry>(e));
-    case Cmp::Skeleton:
-        return const_cast<Skeleton*>(reg.try_get<Skeleton>(e));
-    case Cmp::Joint:
-        return const_cast<Joint*>(reg.try_get<Joint>(e));
-    case Cmp::SixDofJoint:
-        return const_cast<SixDofJoint*>(reg.try_get<SixDofJoint>(e));
-    case Cmp::Parent:
-        return const_cast<Parent*>(reg.try_get<Parent>(e));
-    case Cmp::Bind:
-        return const_cast<Bind*>(reg.try_get<Bind>(e));
-    }
-    return nullptr;
-}
-
-bool hasComp(const entt::registry& reg, entt::entity e, Cmp c) {
-    return base(reg, e, c) != nullptr;
-}
-
-void emplaceDefault(entt::registry& reg, entt::entity e, Cmp c) {
-    switch (c) {
-    case Cmp::Transform:
-        reg.emplace<Transform>(e);
-        break;
-    case Cmp::Material:
-        reg.emplace<Material>(e);
-        break;
-    case Cmp::MaterialRef:
-        reg.emplace<MaterialRef>(e);
-        break;
-    case Cmp::Camera:
-        reg.emplace<Camera>(e);
-        break;
-    case Cmp::Environment:
-        reg.emplace<Environment>(e);
-        break;
-    case Cmp::PointLight:
-        reg.emplace<PointLight>(e);
-        break;
-    case Cmp::SoftBodyData:
-        reg.emplace<SoftBodyData>(e);
-        break;
-    case Cmp::RigidBody:
-        reg.emplace<RigidBody>(e);
-        break;
-    case Cmp::KinematicBody:
-        reg.emplace<KinematicBody>(e);
-        break;
-    case Cmp::CapsuleShape:
-        reg.emplace<CapsuleShape>(e);
-        break;
-    case Cmp::BoxShape:
-        reg.emplace<BoxShape>(e);
-        break;
-    case Cmp::TaperedCapsule:
-        reg.emplace<TaperedCapsule>(e);
-        break;
-    case Cmp::SphereShape:
-        reg.emplace<SphereShape>(e);
-        break;
-    case Cmp::ConvexHullShape:
-        reg.emplace<ConvexHullShape>(e);
-        break;
-    case Cmp::Collider:
-        reg.emplace<Collider>(e);
-        break;
-    case Cmp::ControllerInput:
-        reg.emplace<ControllerInput>(e);
-        break;
-    case Cmp::MouseInput:
-        reg.emplace<MouseInput>(e);
-        break;
-    case Cmp::Renderable:
-        reg.emplace<Renderable>(e);
-        break;
-    case Cmp::Texture:
-        reg.emplace<Texture>(e);
-        break;
-    case Cmp::Geometry:
-        reg.emplace<Geometry>(e);
-        break;
-    case Cmp::Skeleton:
-        reg.emplace<Skeleton>(e);
-        break;
-    case Cmp::Joint:
-        reg.emplace<Joint>(e);
-        break;
-    case Cmp::SixDofJoint:
-        reg.emplace<SixDofJoint>(e);
-        break;
-    case Cmp::Parent:
-        reg.emplace<Parent>(e);
-        break;
-    case Cmp::Bind:
-        reg.emplace<Bind>(e);
-        break;
-    }
-}
-
-void removeC(entt::registry& reg, entt::entity e, Cmp c) {
-    switch (c) {
-    case Cmp::Transform:
-        reg.remove<Transform>(e);
-        break;
-    case Cmp::Material:
-        reg.remove<Material>(e);
-        break;
-    case Cmp::MaterialRef:
-        reg.remove<MaterialRef>(e);
-        break;
-    case Cmp::Camera:
-        reg.remove<Camera>(e);
-        break;
-    case Cmp::Environment:
-        reg.remove<Environment>(e);
-        break;
-    case Cmp::PointLight:
-        reg.remove<PointLight>(e);
-        break;
-    case Cmp::SoftBodyData:
-        reg.remove<SoftBodyData>(e);
-        break;
-    case Cmp::RigidBody:
-        reg.remove<RigidBody>(e);
-        break;
-    case Cmp::KinematicBody:
-        reg.remove<KinematicBody>(e);
-        break;
-    case Cmp::CapsuleShape:
-        reg.remove<CapsuleShape>(e);
-        break;
-    case Cmp::BoxShape:
-        reg.remove<BoxShape>(e);
-        break;
-    case Cmp::TaperedCapsule:
-        reg.remove<TaperedCapsule>(e);
-        break;
-    case Cmp::SphereShape:
-        reg.remove<SphereShape>(e);
-        break;
-    case Cmp::ConvexHullShape:
-        reg.remove<ConvexHullShape>(e);
-        break;
-    case Cmp::Collider:
-        reg.remove<Collider>(e);
-        break;
-    case Cmp::ControllerInput:
-        reg.remove<ControllerInput>(e);
-        break;
-    case Cmp::MouseInput:
-        reg.remove<MouseInput>(e);
-        break;
-    case Cmp::Renderable:
-        reg.remove<Renderable>(e);
-        break;
-    case Cmp::Texture:
-        reg.remove<Texture>(e);
-        break;
-    case Cmp::Geometry:
-        reg.remove<Geometry>(e);
-        break;
-    case Cmp::Skeleton:
-        reg.remove<Skeleton>(e);
-        break;
-    case Cmp::Joint:
-        reg.remove<Joint>(e);
-        break;
-    case Cmp::SixDofJoint:
-        reg.remove<SixDofJoint>(e);
-        break;
-    case Cmp::Parent:
-        reg.remove<Parent>(e);
-        break;
-    case Cmp::Bind:
-        reg.remove<Bind>(e);
-        break;
-    }
 }
 
 bool fieldValue(const CompField& f, const float*& src, int& len) {
@@ -514,21 +268,23 @@ bool bindSkeleton(entt::registry& reg, entt::entity e, std::string& err) {
 
 bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typeName, const CompFields& fields,
                      bool strict, std::string& err) {
-    const Cmp c = cmpFor(typeName);
-    if (c == Cmp::None) {
+    const CompReg* c = compFor(typeName);
+    if (!c) {
         err = refl::findType(typeName.c_str())
                   ? "component '" + typeName + "' is engine state, not an entity component"
                   : "unknown component '" + typeName + "'";
         return false;
     }
-    const TypeDesc* t = refl::findType(cmpName(c));
-    if (strict && hasComp(reg, e, c)) {
+    const TypeDesc* t = c->desc;
+    void* b = c->tryGet(reg, e);
+    if (strict && b) {
         err = "component '" + typeName + "' already present on the entity";
         return false;
     }
-    if (!hasComp(reg, e, c))
-        emplaceDefault(reg, e, c);
-    void* b = base(reg, e, c);
+    if (!b) {
+        c->emplace(reg, e);
+        b = c->tryGet(reg, e);
+    }
     for (auto f : fields) {
         if (const FieldDesc* d = findField(t, f.name)) {
             if (f.isStr && d->kind == FieldKind::Ref) {
@@ -558,36 +314,14 @@ bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typ
         if (!writeField(t, b, f, err))
             return false;
     }
-    if (c == Cmp::Geometry && !validateGeometry(reg, e, err))
-        return false;
-    if (c == Cmp::Skeleton && !bindSkeleton(reg, e, err))
-        return false;
-    if (c == Cmp::TaperedCapsule) {
-        const auto& tc = reg.get<TaperedCapsule>(e);
-        if (tc.bottomRadius <= 0.0f || tc.topRadius <= 0.0f || tc.halfHeight < 0.0f) {
-            err = "TaperedCapsule: radii must be > 0 and halfHeight >= 0";
-            return false;
-        }
-    }
-    if (c == Cmp::SphereShape) {
-        if (reg.get<SphereShape>(e).radius <= 0.0f) {
-            err = "SphereShape: radius must be > 0";
-            return false;
-        }
-    }
-    if (c == Cmp::ConvexHullShape) {
-        if (reg.get<ConvexHullShape>(e).points.size() < 12) {
-            err = "ConvexHullShape: needs at least 4 points (12 xyz values)";
-            return false;
-        }
-    }
-    return true;
+    return !c->afterWrite || c->afterWrite(reg, e, err);
 }
 
 }
 
 bool hasComponentByName(const entt::registry& reg, entt::entity e, const std::string& name) {
-    return hasComp(reg, e, cmpFor(name));
+    const CompReg* c = compFor(name);
+    return c && c->tryGet(reg, e) != nullptr;
 }
 
 bool compEmplace(entt::registry& reg, entt::entity e, const std::string& type, const CompFields& fields,
@@ -601,14 +335,13 @@ bool compReplace(entt::registry& reg, entt::entity e, const std::string& type, c
 }
 
 bool compGet(const entt::registry& reg, entt::entity e, const std::string& type, CompFields& out) {
-    const Cmp c = cmpFor(type);
-    if (c == Cmp::None)
+    const CompReg* c = compFor(type);
+    if (!c)
         return false;
-    if (!hasComp(reg, e, c))
+    void* b = c->tryGet(reg, e);
+    if (!b)
         return false;
-    void* b = base(reg, e, c);
-    const TypeDesc* t = refl::findType(cmpName(c));
-    for (const auto& d : t->fields) {
+    for (const auto& d : c->desc->fields) {
         const char* src = (const char*)b + d.offset;
         CompField f{d.name, {}, 0};
         switch (d.kind) {
@@ -679,17 +412,17 @@ bool compGet(const entt::registry& reg, entt::entity e, const std::string& type,
 }
 
 bool compRemove(entt::registry& reg, entt::entity e, const std::string& type, std::string& err) {
-    const Cmp c = cmpFor(type);
-    if (c == Cmp::None) {
+    const CompReg* c = compFor(type);
+    if (!c) {
         err = refl::findType(type.c_str())
                   ? "component '" + type + "' is engine state, not an entity component"
                   : "unknown component '" + type + "'";
         return false;
     }
-    if (!hasComp(reg, e, c)) {
+    if (!c->tryGet(reg, e)) {
         err = "component '" + type + "' not present on the entity";
         return false;
     }
-    removeC(reg, e, c);
+    c->remove(reg, e);
     return true;
 }

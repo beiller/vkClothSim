@@ -1,6 +1,0 @@
-{
-    "name": "diag sword",
-    "objects": [
-        { "name": "probe", "script": "scenes/_diag_sword" }
-    ]
-}

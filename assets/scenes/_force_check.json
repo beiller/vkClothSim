@@ -1,7 +1,0 @@
-{
-    "name": "force check",
-    "objects": [
-        { "name": "cam", "components": { "Transform": { "pos": [0, 5, -12], "quat": [0, 0, 0, 1] }, "Camera": {} } },
-        { "name": "probe", "script": "scenes/_force_check" }
-    ]
-}

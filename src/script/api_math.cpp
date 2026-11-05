@@ -2,7 +2,6 @@
 #include "script/lua_util.hpp"
 #include <glm/ext/quaternion_trigonometric.hpp>
 
-// pure vector/quaternion math (the scene.* vadd..qfromto functions)
 void luaRegisterMath(lua_State* L, SceneScript* host) {
     const auto reg = [L, host](const char* name, lua_CFunction fn) {
         lua_pushlightuserdata(L, host);

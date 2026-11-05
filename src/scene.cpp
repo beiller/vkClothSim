@@ -157,6 +157,7 @@ void initEngine(Engine& w) {
         std::fprintf(stderr, "3dsim: geometry stdlib: %s\n", err.c_str());
         std::exit(1);
     }
+    w.script.loadTestStdlib();
     w.script.watch(w.reg);
     if (w.hasDevice)
         w.graphics.watch(w.reg);
@@ -176,6 +177,7 @@ void resetScene(Engine& w) {
     std::string err;
     if (!w.script.loadMeshStdlib(err))
         std::fprintf(stderr, "3dsim: geometry stdlib: %s\n", err.c_str());
+    w.script.loadTestStdlib();
     w.uiSeq = 0;
     w.showDemo = false;
     spawnFpsHud(w.reg, w.uiSeq, V3{0.45f, 1.72f, 2.8f}, V2{160.0f, 180.0f});

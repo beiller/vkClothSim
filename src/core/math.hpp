@@ -2,6 +2,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <cmath>
 #include <numbers>
 
 inline constexpr float kPi = std::numbers::pi_v<float>;
@@ -17,9 +18,13 @@ using V4 = glm::vec4;
 using Quat = glm::quat;
 using Mat4 = glm::mat4;
 
+// glTF color data is sRGB-encoded, lighting math is linear: decode sRGB -> linear
+inline float srgbToLinear(float s) {
+    return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+}
+
 // Note: the 4-arg Quat constructor is (w, x, y, z) — w first; memory stays [x,y,z,w].
 
-// a view frustum: position + orientation + per-edge tangent extents
 struct View {
     V3 pos{0, 0, 0};
     Quat quat{1.0f, 0.0f, 0.0f, 0.0f};

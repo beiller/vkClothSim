@@ -1,0 +1,7 @@
+{
+    "name": "dynquat check",
+    "objects": [
+        { "name": "cam", "components": { "Transform": { "pos": [0, 6, -12], "quat": [0, 0, 0, 1] }, "Camera": {} } },
+        { "name": "probe", "script": "dynquat_check" }
+    ]
+}

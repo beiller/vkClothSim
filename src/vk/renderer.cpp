@@ -8,93 +8,23 @@
 #include "tonemap_frag_spv.hpp"
 #include "tonemap_vert_spv.hpp"
 #include "ui.hpp"
+#include "vk/ubos.hpp"
 #include "vk/vkapp.hpp"
 #include "vk/vkutil.hpp"
+#include "util.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
 
 namespace {
 
-float msBetween(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
-    return std::chrono::duration<float, std::milli>(b - a).count();
-}
-
-struct ModelUbo {
-    float model[16];    // 0
-    float baseColor[3]; // 64
-    float metallic;     // 76
-    float roughness;    // 80
-    float baseAlpha;    // 84
-    float alphaCutoff;  // 88
-    float alphaMode;    // 92  0 opaque, 1 mask, 2 blend
-    float emissive[3];   // 96
-    float pad0;          // 108 (std140: the ssssWeight vec3 16-aligns to 112)
-    float ssssWeight[3]; // 112
-    float refraction;    // 124
-    float ior;           // 128
-    float normalScale;   // 132
-    float pad[6];        // 136 (the shader's vec3 pad sits at 144; block size 160)
-};
-static_assert(sizeof(ModelUbo) == 160, "ModelUbo must match the shader std140 layout");
-
-struct ViewUbo {
-    float viewProj[16]; // 0
-    float view[16];     // 64
-    float camPos[3];    // 128 (std140: a vec3 is 12 bytes; the next scalar lands at 140)
-    float envIntensity; // 140
-    float shadowTexels; // 144
-    float pad[3];       // 148 (pad so the 16-aligned frustum lands at 160)
-    float frustum[4];   // 160 tanL tanR tanU tanD
-    float zNear;        // 176
-    float zFar;         // 180
-    float screenSize[2];// 184
-    float pad2[4];      // 192
-};
-static_assert(sizeof(ViewUbo) == 208, "ViewUbo must match the shader std140 layout");
-
 std::vector<VkDescriptorSetLayoutBinding> uiQuadBinds() {
     return {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}};
 }
 
-// the SSS compute's push constants (std430: scalars are 4-byte aligned)
-struct SssPc {
-    float screenSize[2]; // 0
-    float zNear;         // 8
-    float zFar;          // 12
-    float unitSize;      // 16
-    float scale;         // 20
-    float depthScale;    // 24
-    float vertical;      // 28  1 = vertical pass (dir 0,1), 0 = horizontal
-};
-static_assert(sizeof(SssPc) == 32, "SssPc must match the shader std430 layout");
-
 float unitSizeOf(const CameraView& cv) {
     return 2.0f / (cv.tanR - cv.tanL);
 }
-
-struct LightGPU {
-    float pos[3];
-    float intensity;
-    float color[3];
-    float radius;
-    float on;
-    float shadowNear;
-    float shadowFar;
-    float shadowNormalBias;
-    float biasBase;
-    float biasSlope;
-    float searchScale;
-    float maxRadius;
-};
-static_assert(sizeof(LightGPU) == 64, "LightGPU must match the shader std430 layout");
-
-struct LightsUbo {
-    int count;
-    float pad[3];
-    LightGPU lights[Renderer::kMaxLights];
-};
-static_assert(sizeof(LightsUbo) == 16 + Renderer::kMaxLights * 64, "LightsUbo must match the shader std430 layout");
 
 ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float roughness, const V3& emissive,
                    float baseAlpha, float alphaCutoff, float alphaMode, const V3& ssssWeight, float refraction,
@@ -196,17 +126,7 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     nca.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     nca.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     nca.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    VkAttachmentReference ncr{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-    VkSubpassDescription ncs{};
-    ncs.colorAttachmentCount = 1;
-    ncs.pColorAttachments = &ncr;
-    VkRenderPassCreateInfo nrpc{};
-    nrpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    nrpc.attachmentCount = 1;
-    nrpc.pAttachments = &nca;
-    nrpc.subpassCount = 1;
-    nrpc.pSubpasses = &ncs;
-    VK(vkCreateRenderPass(m_dev, &nrpc, nullptr, &m_noClearRp));
+    m_noClearRp = makeSimpleRenderPass(m_dev, nca);
     rebuildTonemapSet(app);
     initShadow(app);
 }
@@ -215,10 +135,8 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
 void Renderer::releaseUi() {
     for (auto& [e, t] : m_uiTargs) {
         (void)e;
-        if (t.fb)
-            vkDestroyFramebuffer(m_dev, t.fb, nullptr);
-        if (t.rp)
-            vkDestroyRenderPass(m_dev, t.rp, nullptr);
+        vkFree(m_dev, &t.fb, vkDestroyFramebuffer);
+        vkFree(m_dev, &t.rp, vkDestroyRenderPass);
     }
 }
 
@@ -226,10 +144,8 @@ void Renderer::freeUiTarget(entt::entity e) {
     const auto it = m_uiTargs.find(e);
     if (it == m_uiTargs.end())
         return;
-    if (it->second.fb)
-        vkDestroyFramebuffer(m_dev, it->second.fb, nullptr);
-    if (it->second.rp)
-        vkDestroyRenderPass(m_dev, it->second.rp, nullptr);
+    vkFree(m_dev, &it->second.fb, vkDestroyFramebuffer);
+    vkFree(m_dev, &it->second.rp, vkDestroyRenderPass);
     m_uiTargs.erase(it);
 }
 
@@ -361,16 +277,12 @@ void Renderer::makeGpuTexture(entt::entity e, uint32_t w, uint32_t h) {
 }
 
 namespace {
-// glTF's sRGB-encoded 8-bit data -> linear (the lighting math is linear)
 void linearizeRgba(std::vector<uint8_t>& rgba) {
     for (size_t i = 0; i < rgba.size(); i += 4)
-        for (int c = 0; c < 3; ++c) {
-            const float s = rgba[i + c] / 255.0f;
-            rgba[i + c] = (uint8_t)((s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f)) * 255.0f + 0.5f);
-        }
+        for (int c = 0; c < 3; ++c)
+            rgba[i + c] = (uint8_t)(srgbToLinear(rgba[i + c] / 255.0f) * 255.0f + 0.5f);
 }
 
-// pack 3-channel float pixels into the 4-channel float storage (alpha = 1)
 void repackRgb32f(std::vector<uint8_t>& d) {
     const size_t n = d.size() / 12;
     std::vector<uint8_t> rgba(n * 16);
@@ -397,27 +309,24 @@ entt::entity Renderer::uploadTexture(entt::registry& reg, entt::entity texEnt) {
                       (t->path.size() > 4 && std::strcmp(t->path.c_str() + t->path.size() - 4, ".exr") == 0);
     if (data.empty()) {
         bool ok = false;
-        for (const std::string& dir : {std::string(exeDir() + "/../assets/"), std::string("assets/")}) {
-            if (isHdr) {
-                HdrData hd;
-                if (loadHdr(std::string(dir) + t->path, hd) && !hd.rgb.empty()) {
-                    data.resize(hd.rgb.size() * 4);
-                    std::memcpy(data.data(), hd.rgb.data(), hd.rgb.size() * 4);
-                    w = hd.w;
-                    h = hd.h;
-                    fmt = TexelFormat::RGB32F;
-                    ok = true;
-                    break;
-                }
-            } else {
-                TextureData td;
-                if (loadTexture(std::string(dir) + t->path, td, true) && !td.rgba.empty()) {
-                    data = std::move(td.rgba);
-                    w = td.w;
-                    h = td.h;
-                    ok = true;
-                    break;
-                }
+        const std::string dir = assetsRoot() + "/";
+        if (isHdr) {
+            HdrData hd;
+            if (loadHdr(dir + t->path, hd) && !hd.rgb.empty()) {
+                data.resize(hd.rgb.size() * 4);
+                std::memcpy(data.data(), hd.rgb.data(), hd.rgb.size() * 4);
+                w = hd.w;
+                h = hd.h;
+                fmt = TexelFormat::RGB32F;
+                ok = true;
+            }
+        } else {
+            TextureData td;
+            if (loadTexture(dir + t->path, td, true) && !td.rgba.empty()) {
+                data = std::move(td.rgba);
+                w = td.w;
+                h = td.h;
+                ok = true;
             }
         }
         if (!ok) {
@@ -485,29 +394,10 @@ void Renderer::uiEnsureTarget(const entt::registry& reg, entt::entity canvas) {
     att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkAttachmentReference ar{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-    VkSubpassDescription ss{};
-    ss.colorAttachmentCount = 1;
-    ss.pColorAttachments = &ar;
-    VkRenderPassCreateInfo rpc{};
-    rpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    rpc.attachmentCount = 1;
-    rpc.pAttachments = &att;
-    rpc.subpassCount = 1;
-    rpc.pSubpasses = &ss;
-    VkRenderPass rp;
-    VK(vkCreateRenderPass(m_dev, &rpc, nullptr, &rp));
-    VkFramebuffer fb;
-    VkFramebufferCreateInfo fci{};
-    fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    fci.renderPass = rp;
-    fci.attachmentCount = 1;
+    const VkRenderPass rp = makeSimpleRenderPass(m_dev, att);
     VkImageView view = t.view;
-    fci.pAttachments = &view;
-    fci.width = g->w;
-    fci.height = g->h;
-    fci.layers = 1;
-    VK(vkCreateFramebuffer(m_dev, &fci, nullptr, &fb));
+    VkFramebuffer fb;
+    makeFramebuffer(m_dev, rp, g->w, g->h, &view, 1, fb);
     m_uiTargs[canvas] = UiTarget{rp, fb};
 }
 
@@ -1033,20 +923,7 @@ void Renderer::initSss(VkApp& app) {
     };
     vkMakeDslPool(m_dev, sssBinds, 2, m_sss.dsl, m_sss.pool);
     m_sss.pl = vkMakePipelineLayoutPC(m_dev, m_sss.dsl, VK_SHADER_STAGE_COMPUTE_BIT, sizeof(SssPc));
-    {
-        VkShaderModule cm = vkMakeModule(m_dev, sss_blur_spv, sss_blur_spv_len / 4);
-        VkPipelineShaderStageCreateInfo cs{};
-        cs.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        cs.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-        cs.module = cm;
-        cs.pName = "main";
-        VkComputePipelineCreateInfo cpc{};
-        cpc.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-        cpc.stage = cs;
-        cpc.layout = m_sss.pl;
-        VK(vkCreateComputePipelines(m_dev, VK_NULL_HANDLE, 1, &cpc, nullptr, &m_sss.pipe));
-        vkDestroyShaderModule(m_dev, cm, nullptr);
-    }
+    m_sss.pipe = makeComputePipeline(m_dev, sss_blur_spv, sss_blur_spv_len / 4, m_sss.pl);
     VkDescriptorSetLayout sssLayouts[2] = {m_sss.dsl, m_sss.dsl};
     VkDescriptorSetAllocateInfo sa{};
     sa.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -1062,18 +939,13 @@ void Renderer::initSss(VkApp& app) {
 }
 
 void Renderer::releaseSss() {
-    if (m_sss.pool)
-        vkDestroyDescriptorPool(m_dev, m_sss.pool, nullptr);
-    if (m_sss.dsl)
-        vkDestroyDescriptorSetLayout(m_dev, m_sss.dsl, nullptr);
-    if (m_sss.pl)
-        vkDestroyPipelineLayout(m_dev, m_sss.pl, nullptr);
-    if (m_sss.pipe)
-        vkDestroyPipeline(m_dev, m_sss.pipe, nullptr);
+    vkFree(m_dev, &m_sss.pool, vkDestroyDescriptorPool);
+    vkFree(m_dev, &m_sss.dsl, vkDestroyDescriptorSetLayout);
+    vkFree(m_dev, &m_sss.pl, vkDestroyPipelineLayout);
+    vkFree(m_dev, &m_sss.pipe, vkDestroyPipeline);
     m_sssSet[0] = m_sssSet[1] = VK_NULL_HANDLE;
     for (VkSampler s : {m_sceneColorSampler, m_depthCopySampler})
-        if (s)
-            vkDestroySampler(m_dev, s, nullptr);
+        vkFree(m_dev, &s, vkDestroySampler);
     m_sceneColorSampler = m_depthCopySampler = VK_NULL_HANDLE;
 }
 
@@ -1390,15 +1262,7 @@ void Renderer::ensureNoClearFbs(VkApp& app) {
     m_noClearFbs.resize(app.imageCount());
     for (uint32_t i = 0; i < app.imageCount(); ++i) {
         const VkImageView att = app.view(i);
-        VkFramebufferCreateInfo fci{};
-        fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        fci.renderPass = m_noClearRp;
-        fci.attachmentCount = 1;
-        fci.pAttachments = &att;
-        fci.width = ext.width;
-        fci.height = ext.height;
-        fci.layers = 1;
-        VK(vkCreateFramebuffer(m_dev, &fci, nullptr, &m_noClearFbs[i]));
+        makeFramebuffer(m_dev, m_noClearRp, ext.width, ext.height, &att, 1, m_noClearFbs[i]);
     }
     m_noClearExt = ext;
 }
@@ -1458,17 +1322,7 @@ void Renderer::initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vect
     att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     att.finalLayout = VK_IMAGE_LAYOUT_GENERAL;
-    VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-    VkSubpassDescription sub{};
-    sub.colorAttachmentCount = 1;
-    sub.pColorAttachments = &ref;
-    VkRenderPassCreateInfo rpc{};
-    rpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    rpc.attachmentCount = 1;
-    rpc.pAttachments = &att;
-    rpc.subpassCount = 1;
-    rpc.pSubpasses = &sub;
-    VK(vkCreateRenderPass(m_dev, &rpc, nullptr, &m_xrRp));
+    m_xrRp = makeSimpleRenderPass(m_dev, att);
     m_xrPipe = makeGraphicsPipeline(m_dev, m_xrRp, tonemap_vert_spv, tonemap_vert_spv_len / 4, tonemap_frag_spv,
                                     tonemap_frag_spv_len / 4, m_tmPl, false);
     vkMakeBuffer(m_dev, m_pdev, m_xrTmUbuf, m_xrTmMem, 32, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
@@ -1479,22 +1333,8 @@ void Renderer::initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vect
         m_xrViews[i].resize(images[i].size());
         m_xrFbs[i].resize(images[i].size());
         for (size_t k = 0; k < images[i].size(); ++k) {
-            VkImageViewCreateInfo vci{};
-            vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            vci.image = images[i][k];
-            vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            vci.format = fmt;
-            vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            VK(vkCreateImageView(m_dev, &vci, nullptr, &m_xrViews[i][k]));
-            VkFramebufferCreateInfo fci{};
-            fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            fci.renderPass = m_xrRp;
-            fci.attachmentCount = 1;
-            fci.pAttachments = &m_xrViews[i][k];
-            fci.width = exts[i].width;
-            fci.height = exts[i].height;
-            fci.layers = 1;
-            VK(vkCreateFramebuffer(m_dev, &fci, nullptr, &m_xrFbs[i][k]));
+            m_xrViews[i][k] = makeImageView(m_dev, images[i][k], fmt);
+            makeFramebuffer(m_dev, m_xrRp, exts[i].width, exts[i].height, &m_xrViews[i][k], 1, m_xrFbs[i][k]);
         }
     }
     m_xrReady = true;
@@ -1546,12 +1386,9 @@ void Renderer::releaseEnv() {
     vkFreeImage2D(m_dev, m_envIrr.img, m_envIrr.mem, m_envIrr.view);
     for (VkImageView v : m_envPreMips)
         vkDestroyImageView(m_dev, v, nullptr);
-    if (m_envIrrArr)
-        vkDestroyImageView(m_dev, m_envIrrArr, nullptr);
-    if (m_eqSampler)
-        vkDestroySampler(m_dev, m_eqSampler, nullptr);
-    if (m_cubeSampler)
-        vkDestroySampler(m_dev, m_cubeSampler, nullptr);
+    vkFree(m_dev, &m_envIrrArr, vkDestroyImageView);
+    vkFree(m_dev, &m_eqSampler, vkDestroySampler);
+    vkFree(m_dev, &m_cubeSampler, vkDestroySampler);
     m_envReady = false;
 }
 
@@ -1574,26 +1411,19 @@ void Renderer::shutdown() {
         vkFreeImage2D(m_dev, t.img, t.mem, t.view);
     releaseSss();
     vkFreeImage2D(m_dev, m_white.img, m_white.mem, m_white.view);
-    if (m_texSampler)
-        vkDestroySampler(m_dev, m_texSampler, nullptr);
+    vkFree(m_dev, &m_texSampler, vkDestroySampler);
     releaseEnv();
     for (VkDescriptorPool p : m_meshPools)
         vkDestroyDescriptorPool(m_dev, p, nullptr);
     m_meshPools.clear();
-    if (m_dsl)
-        vkDestroyDescriptorSetLayout(m_dev, m_dsl, nullptr);
-    if (m_pl)
-        vkDestroyPipelineLayout(m_dev, m_pl, nullptr);
-    if (m_pipe)
-        vkDestroyPipeline(m_dev, m_pipe, nullptr);
-    if (m_pipeBlend)
-        vkDestroyPipeline(m_dev, m_pipeBlend, nullptr);
-    if (m_pipeBlendCull)
-        vkDestroyPipeline(m_dev, m_pipeBlendCull, nullptr);
+    vkFree(m_dev, &m_dsl, vkDestroyDescriptorSetLayout);
+    vkFree(m_dev, &m_pl, vkDestroyPipelineLayout);
+    vkFree(m_dev, &m_pipe, vkDestroyPipeline);
+    vkFree(m_dev, &m_pipeBlend, vkDestroyPipeline);
+    vkFree(m_dev, &m_pipeBlendCull, vkDestroyPipeline);
     for (auto* fb : m_noClearFbs)
         vkDestroyFramebuffer(m_dev, fb, nullptr);
-    if (m_noClearRp)
-        vkDestroyRenderPass(m_dev, m_noClearRp, nullptr);
+    vkFree(m_dev, &m_noClearRp, vkDestroyRenderPass);
     if (m_xrReady) {
         for (auto& eye : m_xrFbs)
             for (auto* fb : eye)
@@ -1601,20 +1431,14 @@ void Renderer::shutdown() {
         for (auto& eye : m_xrViews)
             for (auto* v : eye)
                 vkDestroyImageView(m_dev, v, nullptr);
-        if (m_xrPipe)
-            vkDestroyPipeline(m_dev, m_xrPipe, nullptr);
-        if (m_xrRp)
-            vkDestroyRenderPass(m_dev, m_xrRp, nullptr);
+        vkFree(m_dev, &m_xrPipe, vkDestroyPipeline);
+        vkFree(m_dev, &m_xrRp, vkDestroyRenderPass);
         vkFreeBuffer(m_dev, m_xrTmUbuf, m_xrTmMem);
     }
-    if (m_tmPool)
-        vkDestroyDescriptorPool(m_dev, m_tmPool, nullptr);
-    if (m_tmDsl)
-        vkDestroyDescriptorSetLayout(m_dev, m_tmDsl, nullptr);
-    if (m_tmPl)
-        vkDestroyPipelineLayout(m_dev, m_tmPl, nullptr);
-    if (m_tmPipe)
-        vkDestroyPipeline(m_dev, m_tmPipe, nullptr);
+    vkFree(m_dev, &m_tmPool, vkDestroyDescriptorPool);
+    vkFree(m_dev, &m_tmDsl, vkDestroyDescriptorSetLayout);
+    vkFree(m_dev, &m_tmPl, vkDestroyPipelineLayout);
+    vkFree(m_dev, &m_tmPipe, vkDestroyPipeline);
     vkFreeBuffer(m_dev, m_tmUbuf, m_tmMem);
     vkFreeBuffer(m_dev, m_vpUbuf, m_vpMem);
     for (uint32_t l = 0; l < kMaxLights * 6; ++l) {
@@ -1624,16 +1448,11 @@ void Renderer::shutdown() {
     for (uint32_t f = 0; f < 6; ++f)
         vkDestroyImageView(m_dev, m_shadowDepthFace[f], nullptr);
     vkFreeBuffer(m_dev, m_lightsUbuf, m_lightsMem);
-    if (m_shadowPipe)
-        vkDestroyPipeline(m_dev, m_shadowPipe, nullptr);
-    if (m_shadowPl)
-        vkDestroyPipelineLayout(m_dev, m_shadowPl, nullptr);
-    if (m_shadowRp)
-        vkDestroyRenderPass(m_dev, m_shadowRp, nullptr);
-    if (m_shadowSampler)
-        vkDestroySampler(m_dev, m_shadowSampler, nullptr);
-    if (m_shadowSampleView)
-        vkDestroyImageView(m_dev, m_shadowSampleView, nullptr);
+    vkFree(m_dev, &m_shadowPipe, vkDestroyPipeline);
+    vkFree(m_dev, &m_shadowPl, vkDestroyPipelineLayout);
+    vkFree(m_dev, &m_shadowRp, vkDestroyRenderPass);
+    vkFree(m_dev, &m_shadowSampler, vkDestroySampler);
+    vkFree(m_dev, &m_shadowSampleView, vkDestroyImageView);
     if (m_shadowCube) {
         vkDestroyImage(m_dev, m_shadowCube, nullptr);
         vkFreeMemory(m_dev, m_shadowCubeMem, nullptr);

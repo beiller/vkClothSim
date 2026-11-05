@@ -24,19 +24,6 @@ std::vector<VkDescriptorSetLayoutBinding> skelBinds() {
     return b;
 }
 
-VkBufferMemoryBarrier bufBarrier(VkBuffer buf) {
-    VkBufferMemoryBarrier b{};
-    b.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.buffer = buf;
-    b.offset = 0;
-    b.size = VK_WHOLE_SIZE;
-    b.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    return b;
-}
-
 float dot4(const float a[4], const float b[4]) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
 }
@@ -71,7 +58,7 @@ void Skin::sync(const entt::registry& reg) {
             c.dqStaging.resize(s.joints.size());
             c.prevQuat.resize(4 * s.joints.size(), 0.0f);
             for (size_t k = 0; k < s.joints.size(); ++k)
-                c.prevQuat[4 * k] = 1.0f; // seed with identity quaternion
+                c.prevQuat[4 * k] = 1.0f;
             const auto bytes = (VkDeviceSize)s.joints.size() * sizeof(DualQuat);
             if (bytes > 0)
                 vkMakeBuffer(m_dev, m_pdev, c.jointDQ.b, c.jointDQ.m, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
@@ -184,18 +171,7 @@ void Skin::build(const entt::registry& reg) {
     m_poolCap = (int)maxSets;
     m_poolUsed = 0;
     m_pl = vkMakePipelineLayoutPC(m_dev, m_dsl, VK_SHADER_STAGE_COMPUTE_BIT, 16);
-    VkShaderModule cm = vkMakeModule(m_dev, skeleton_spv, skeleton_spv_len / 4);
-    VkPipelineShaderStageCreateInfo cs{};
-    cs.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cs.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    cs.module = cm;
-    cs.pName = "main";
-    VkComputePipelineCreateInfo cpc{};
-    cpc.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    cpc.stage = cs;
-    cpc.layout = m_pl;
-    VK(vkCreateComputePipelines(m_dev, VK_NULL_HANDLE, 1, &cpc, nullptr, &m_pipe));
-    vkDestroyShaderModule(m_dev, cm, nullptr);
+    m_pipe = makeComputePipeline(m_dev, skeleton_spv, skeleton_spv_len / 4, m_pl);
     for (auto& st : m_states) {
         if (st.set != VK_NULL_HANDLE)
             continue;
@@ -226,6 +202,7 @@ void Skin::makeStateSet(MeshState& st) {
         {st.out.pos.buffer, 0, 12 * st.out.pos.count},
         {st.out.nrm.buffer, 0, 12 * st.out.nrm.count},
     };
+    st.pool = (int)m_pools.size() - 1;
     vkMakeSet(m_dev, m_pools.back(), m_dsl, skelBinds(), st.set, bi);
 }
 
@@ -245,9 +222,7 @@ void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
             for (int row = 0; row < 4; ++row)
                 mm[col][row] = M[col][row];
         dq::mat4ToDquat(&c.dqStaging[k], kIdentity4, mm);
-        // Pick the DQ's sign to be closest to the previous frame's (temporal continuity). This
-        // fixes each joint's contribution sign per-joint, so the per-vertex weighted sum stays
-        // continuous instead of flipping when bound joints' relative rotation crosses 180 deg.
+        // pick the DQ's sign closest to the previous frame's (temporal continuity); without it, contributions flip when relative rotation crosses 180°
         float* prev = c.prevQuat.data() + 4 * k;
         if (dot4(c.dqStaging[k].quat, prev) < 0.0f)
             negateDq(&c.dqStaging[k]);
@@ -351,6 +326,13 @@ void Skin::onMeshDestroyed(entt::registry&, entt::entity e) {
 }
 
 void Skin::releaseStateBufs(MeshState& st) {
+    // free the set before the buffers it references (the set holds refs to them)
+    if (st.set != VK_NULL_HANDLE && st.pool >= 0) {
+        VkDescriptorPool pool = m_pools[(size_t)st.pool];
+        vkFreeDescriptorSets(m_dev, pool, 1, &st.set);
+        st.set = VK_NULL_HANDLE;
+        st.pool = -1;
+    }
     Buf* bufs[5] = {&st.pos0, &st.nrm0, &st.joints, &st.weights, &st.activeMorphs};
     for (Buf* bp : bufs) {
         if (bp->b == VK_NULL_HANDLE)
@@ -364,8 +346,11 @@ void Skin::releaseStateBufs(MeshState& st) {
     ShapeSet& ss = m_shapeSets[(size_t)st.shapeSet];
     if (--ss.refs > 0)
         return;
-    if (ss.deltas.b)
+    if (ss.deltas.b) {
         vkFreeBuffer(m_dev, ss.deltas.b, ss.deltas.m);
+        ss.deltas.b = VK_NULL_HANDLE; // reset() re-frees any surviving shape sets: null so it is freed once
+        ss.deltas.m = VK_NULL_HANDLE;
+    }
     m_shapeKey.erase(ss.key);
     st.shapeSet = -1;
 }
@@ -403,19 +388,15 @@ void Skin::reset() {
     m_shapeSets.clear();
     m_shapeKey.clear();
     for (auto& p : m_pools)
-        if (p)
-            vkDestroyDescriptorPool(m_dev, p, nullptr);
+        vkFree(m_dev, &p, vkDestroyDescriptorPool);
     m_pools.clear();
     m_poolCap = 0;
     m_poolUsed = 0;
-    if (m_dsl)
-        vkDestroyDescriptorSetLayout(m_dev, m_dsl, nullptr);
+    vkFree(m_dev, &m_dsl, vkDestroyDescriptorSetLayout);
     m_dsl = VK_NULL_HANDLE;
-    if (m_pl)
-        vkDestroyPipelineLayout(m_dev, m_pl, nullptr);
+    vkFree(m_dev, &m_pl, vkDestroyPipelineLayout);
     m_pl = VK_NULL_HANDLE;
-    if (m_pipe)
-        vkDestroyPipeline(m_dev, m_pipe, nullptr);
+    vkFree(m_dev, &m_pipe, vkDestroyPipeline);
     m_pipe = VK_NULL_HANDLE;
 }
 

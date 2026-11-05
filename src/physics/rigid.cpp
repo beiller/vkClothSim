@@ -167,7 +167,6 @@ void RigidScene::removeBody(entt::entity e) {
             releaseJoint((int)i);
         }
     }
-    // drop collision exclusions involving e; surviving partners get re-synced
     if (const auto ex = m_excludes.find(e); ex != m_excludes.end())
         for (entt::entity other : ex->second) {
             m_excludes[other].erase(e);
@@ -252,11 +251,6 @@ void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const Quat& qua
     const JPH::BodyID id = it->second;
     const JPH::RVec3 old = bi.GetPosition(id);
     const JPH::RVec3 p(pos.x, pos.y, pos.z);
-    // Jolt integrates the kinematic velocity every step, so after a move the
-    // body drifts by the clamped delta. Re-applying a render-rate target at the
-    // physics rate with a fresh velocity therefore sawtooths the body every
-    // step; instead, hold: once the target is reached, zero the velocity so
-    // the body stays put until the next target update
     const auto kt = m_kinTarget.find(e);
     if (kt != m_kinTarget.end() && kt->second == p) {
         if (JPH::Vec3(p - old).Length() <= kMaxKinematicStep) {
@@ -270,12 +264,9 @@ void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const Quat& qua
     // velocity is what the constraint solver matches against; without it a
     // kinematic body only teleports and the joint gap is never chased
     JPH::RVec3 delta = p - old;
-    // clamp the step: teleport spikes (render hitches, VR recenter) would fling the chain
     const float stepLen = JPH::Vec3(delta).Length();
     if (stepLen > kMaxKinematicStep)
         delta = delta / stepLen * kMaxKinematicStep;
-    // move by the clamped delta, not to p: keeps position and velocity
-    // consistent so the constraint doesn't oscillate against a mismatch
     bi.SetPositionAndRotation(id, old + delta, jQuat(quat), JPH::EActivation::Activate);
     bi.SetLinearVelocity(id, delta / dt);
 }
@@ -368,7 +359,7 @@ bool RigidScene::makeSixDofJoint(entt::entity e, const SixDofJoint& j) {
     const float tmax[3] = {j.motorTorqueMax.x, j.motorTorqueMax.y, j.motorTorqueMax.z};
     for (int i = 0; i < 6; ++i) {
         if (mv(j.motorState, i, 0.f) <= 0.f)
-            continue; // off: defaults stay (unlimited, spring off)
+            continue;
         cs.mMotorSettings[i].mSpringSettings =
             JPH::SpringSettings((JPH::ESpringMode)(int)mv(j.motorMode, i, 0.f), mf[i % 3], md[i % 3]);
         if (i < 3 && (fmin[i] != 0.f || fmax[i] != 0.f))
@@ -402,9 +393,7 @@ void RigidScene::releaseJoint(int idx) {
     m_joints[idx].alive = false;
 }
 
-// FNV-1a over everything that goes into a Jolt body build: the collider
-// entities, their shape params and local transforms. A change here is a
-// structural change and forces a body rebuild.
+// FNV-1a over colliders' entity + shape params + local transform; a change is structural (forces rebuild)
 uint64_t RigidScene::shapeFingerprint(const entt::registry& reg, const std::vector<entt::entity>& cols) {
     uint64_t h = 14695981039346656037ull;
     const auto mix = [&h](const void* p, size_t n) {
@@ -449,8 +438,7 @@ RigidScene::Applied RigidScene::appliedFor(const RigidBody& rb, uint64_t shapeHa
     return a;
 }
 
-// scalar-only change (friction / restitution / damping / mass): apply in place,
-// no rebuild, velocity preserved. mass 0 = auto (the shape's own mass)
+// mass 0 = auto (the shape's own mass)
 void RigidScene::syncScalars(entt::entity e, const RigidBody& rb) {
     const auto it = m_body.find(e);
     if (it == m_body.end())
@@ -470,9 +458,6 @@ void RigidScene::syncScalars(entt::entity e, const RigidBody& rb) {
     mp->SetMassProperties(mp->GetAllowedDOFs(), mpp);
 }
 
-// structural change: remove + recreate the Jolt body, keeping pose and velocity
-// (a velocity-0 body keeps zero). removeBody() drops the attached joints, so
-// they are re-made afterwards.
 void RigidScene::rebuildBody(entt::entity e, const entt::registry& reg, const RigidBody& rb, const Transform& t) {
     JPH::Vec3 linV, angV;
     bool hasVel = false;
@@ -488,7 +473,6 @@ void RigidScene::rebuildBody(entt::entity e, const entt::registry& reg, const Ri
             hasVel = true;
         }
     }
-    // shape params may have changed: drop the cache so the rebuild re-bakes them
     for (entt::entity c : rb.colliders)
         if (const auto* col = reg.try_get<Collider>(c))
             m_shape.erase(col->shape);
@@ -548,7 +532,7 @@ void RigidScene::rejoinJoints(const std::vector<entt::entity>& list, const entt:
 void RigidScene::project(const entt::registry& reg) {
     for (auto [e, rb] : reg.view<RigidBody>().each()) {
         if (reg.try_get<KinematicBody>(e))
-            continue; // the kinematic body owns the Jolt body
+            continue;
         const auto* t = reg.try_get<Transform>(e);
         if (!t)
             continue;
@@ -562,13 +546,10 @@ void RigidScene::project(const entt::registry& reg) {
         } else if (a->second.body != rb) {
             syncScalars(e, rb);
             Applied up = appliedFor(rb, sh, false);
-            up.sleep = a->second.sleep; // the body persists; keep the last-applied sleep command
+            up.sleep = a->second.sleep;
             m_applied[e] = up;
         }
-        // forceSleep: true = keep the body asleep - re-deactivate it every frame and disable its
-        // welds (an enabled weld's island build re-activates its bodies, and the drag loop below
-        // would wake it); false = one-shot release on the true -> false edge: wake the body,
-        // re-enable its welds, then Jolt owns the state (it can sleep naturally again)
+        // forceSleep true = hold asleep (welds off); false = one-shot release on the true->false edge
         const auto bt = m_body.find(e);
         if (rb.forceSleep) {
             m_forceSleep.insert(e);
@@ -642,27 +623,27 @@ void RigidScene::step(entt::registry& reg, float dt) {
     auto& bi = m_phys->GetBodyInterface();
     for (auto& j : m_joints) {
         if (!j.alive || !j.constraint->GetEnabled())
-            continue; // disabled by a forceSleep body: nothing to drag across it
+            continue;
         auto* two = static_cast<JPH::TwoBodyConstraint*>(j.constraint.GetPtr());
         JPH::Body* a = two->GetBody1();
         JPH::Body* b = two->GetBody2();
         if (!a->GetMotionProperties() || !b->GetMotionProperties())
-            continue; // world-anchored side
+            continue;
         const float motion = a->GetLinearVelocity().LengthSq() + a->GetAngularVelocity().LengthSq()
                          + b->GetLinearVelocity().LengthSq() + b->GetAngularVelocity().LengthSq();
         if (motion < 1e-4f)
             continue;
         bi.ActivateConstraint(two);
     }
-    // apply user forces/impulses before the step; impulse is a one-shot command (consumed below)
+    // impulse is a one-shot command: applied, then cleared
     for (auto [e, rb] : reg.view<RigidBody>().each()) {
         if (!hasBody(e))
-            continue; // kinematic / no Jolt body: can't take force
+            continue;
         if (glm::length(rb.force) > 1e-9f)
             bi.AddForce(m_body[e], jVec(rb.force));
         if (glm::length(rb.impulse) > 1e-9f) {
             bi.AddImpulse(m_body[e], jVec(rb.impulse));
-            reg.get<RigidBody>(e).impulse = {}; // consume the command
+            reg.get<RigidBody>(e).impulse = {};
         }
     }
     m_phys->Update(dt, 1, m_temp, m_job);

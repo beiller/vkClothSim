@@ -4,10 +4,7 @@
 
 #include "vk/vkapp.hpp"
 #include "vk/vkutil.hpp"
-
-static float msBetween(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
-    return std::chrono::duration<float, std::milli>(b - a).count();
-}
+#include "util.hpp"
 
 void GraphicsServer::init(VkApp& app, bool withRenderer) {
     m_app = &app;

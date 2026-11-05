@@ -41,9 +41,7 @@ void stepXr(entt::registry& reg, const XrFrame& fr) {
     const entt::entity vrCam = findMarker<VrCamera>(reg);
     if (vrCam != entt::null)
         reg.get<Camera>(vrCam).active = havePose;
-    // the active camera is simply any non-VR Camera with active=true. While XR has a
-    // pose, all scene cameras are deactivated; when it goes away (safety), reactivate
-    // any inactive one if none is active.
+    // while XR has a pose, scene cameras are deactivated; on safety, reactivate any inactive one if none is active
     bool anySceneActive = false;
     entt::entity firstInactive = entt::null;
     reg.view<Camera>().each([&](entt::entity e, Camera& c) {

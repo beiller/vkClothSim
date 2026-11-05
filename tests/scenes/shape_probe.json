@@ -1,0 +1,14 @@
+{
+    "name": "shape probe",
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [0, 1, 2.5] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/camera"
+        },
+        { "name": "probe", "script": "shape_probe" }
+    ]
+}

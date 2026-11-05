@@ -1,0 +1,7 @@
+{
+    "name": "decomp check",
+    "objects": [
+        { "name": "cam", "components": { "Transform": { "pos": [0, 5, -12], "quat": [0, 0, 0, 1] }, "Camera": {} } },
+        { "name": "probe", "script": "decomp_check" }
+    ]
+}

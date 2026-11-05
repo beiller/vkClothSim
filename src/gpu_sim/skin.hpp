@@ -49,6 +49,7 @@ private:
         bool dead = false;
         bool freed = false;
         int shapeSet = -1;
+        int pool = -1; // m_pools index of `set`; sets must be freed before their pool is destroyed
         Buf pos0, nrm0, joints, weights, activeMorphs;
         MeshGpu out; // renderer-owned; the sim writes it, the renderer reads it
         VkDescriptorSet set = VK_NULL_HANDLE;

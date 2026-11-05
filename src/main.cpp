@@ -3,6 +3,7 @@
 #include <GLFW/glfw3.h>
 
 #include "scene.hpp"
+#include "assets.hpp"
 #include "systems.hpp"
 #include "vk/vkapp.hpp"
 #include "app/engine.hpp"
@@ -13,10 +14,7 @@
 #include <cstring>
 #include <thread>
 #include <imgui.h>
-
-static float msBetween(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
-    return std::chrono::duration<float, std::milli>(b - a).count();
-}
+#include "util.hpp"
 
 struct PhaseWatch {
     float poll = 0.0f, wait = 0.0f, cpu = 0.0f, jolt = 0.0f, skel = 0.0f, sim = 0.0f,
@@ -62,6 +60,14 @@ int main(int argc, char** argv) {
             maxFrames = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--scene") == 0)
             scenePath = argv[++i];
+        else if (std::strcmp(argv[i], "--scenes-dir") == 0)
+            setScenesDir(argv[++i]);
+    }
+    // --scene is a file path as-is, or a scene name (with or without .json) resolved against the scenes dir
+    if (!scenePath.empty() && !std::filesystem::exists(scenePath)) {
+        scenePath = scenesDir() + "/" + scenePath;
+        if (!std::filesystem::exists(scenePath) && std::filesystem::exists(scenePath + ".json"))
+            scenePath += ".json";
     }
     if (noGraphics && headless) {
         std::fprintf(stderr, "3dsim: --no-graphics and --headless conflict\n");
@@ -115,7 +121,7 @@ int main(int argc, char** argv) {
         std::printf("3dsim: vulkan+imgui | GPU soft-body sim | startup scene select (or --scene file.json) | "
                     "VR auto-detected, --no-vr for plain window | esc/close to quit\n");
 
-    const std::string kMenuPath = "assets/scenes/menu.json";
+    const std::string kMenuPath = scenesDir() + "/menu.json";
     int rc = 0;
     if (!loadScene(engine, scenePath.empty() ? kMenuPath : scenePath)) {
         std::fprintf(stderr, "3dsim: %s\n", engine.loadError.c_str());
@@ -231,10 +237,7 @@ int main(int argc, char** argv) {
             engine.graphics.simProf.reset();
         }
         frameJolt = engine.physics.takeJoltMs();
-        // Pace the loop to the sim rate when uncapped (NO_VSYNC): otherwise the
-        // render spins at full speed. The sim catch-up now happens inside the
-        // servers' accumulators, so this is pure render pacing. Under vsync
-        // (default) this is a no-op — vsync paces it.
+        // uncapped (NO_VSYNC): pace the loop to the sim rate (pure render pacing; no-op under vsync)
         if (engine.hasWindow && uncapped && dt < kFrameDt)
             std::this_thread::sleep_for(std::chrono::duration<double>(kFrameDt - dt));
         const auto tSim = std::chrono::steady_clock::now();
@@ -246,8 +249,7 @@ int main(int argc, char** argv) {
             cam = foundCam;
             engine.graphics.setViewProj(cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height));
         }
-        // UI pointer: world-space ray (VR: controller aim; window: camera through cursor)
-        // -> rigid-body raycast against each canvas collider -> uv of the hit point
+        // UI pointer: world-space ray (VR controller aim / camera-through-cursor) -> canvas collider hit -> uv
         std::vector<entt::entity> canvases;
         for (auto e : engine.reg.view<UICanvas>())
             canvases.push_back(e);
@@ -303,8 +305,6 @@ int main(int argc, char** argv) {
                 const V3 cd = {(x * 0.5f + 0.5f) * (cv.tanR - cv.tanL) + cv.tanL,
                               (y * 0.5f + 0.5f) * (cv.tanU - cv.tanD) + cv.tanD, -1.0f};
                 const V3 o = cv.pos;
-                // cv.view is world-to-camera (R^T); its columns are R's rows. The camera's
-                // world basis is the rows of R^T, i.e. the columns of the transposed rotation.
                 const Mat4 c2w = glm::transpose(cv.view);
                 const V3 right = c2w[0];
                 const V3 up = c2w[1];

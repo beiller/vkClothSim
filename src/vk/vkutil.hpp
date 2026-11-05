@@ -17,6 +17,21 @@
         }                                                                                                              \
     } while (0)
 
+// for calls that may legitimately return SUBOPTIMAL/OUT_OF_DATE (e.g. swapchain acquire)
+inline void vkCheck(VkResult r, const char* what) {
+    if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR || r == VK_ERROR_OUT_OF_DATE_KHR)
+        return;
+    std::fprintf(stderr, "vk %s error %d @%s:%d\n", what, (int)r, __FILE__, __LINE__);
+    std::abort();
+}
+
+// destroy + null-reset for persistent handles: the guard and the reset can no
+// longer be forgotten on a recreate path
+template <class H>
+inline void vkFree(VkDevice dev, H* h, void (*fn)(VkDevice, H, const VkAllocationCallbacks*)) {
+    if (*h) fn(dev, *h, nullptr), *h = VK_NULL_HANDLE;
+}
+
 inline uint32_t vkFindMemoryType(VkPhysicalDevice pdev, const VkMemoryRequirements& mr, VkMemoryPropertyFlags need) {
     VkPhysicalDeviceMemoryProperties mpp;
     vkGetPhysicalDeviceMemoryProperties(pdev, &mpp);
@@ -163,7 +178,20 @@ inline void vkFreeBuffer(VkDevice dev, VkBuffer buf, VkDeviceMemory mem) {
     }
 }
 
-// run one upload command on a transient queue and wait for it
+inline VkBufferMemoryBarrier bufBarrier(VkBuffer buf,
+                                       VkAccessFlags dst = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT) {
+    VkBufferMemoryBarrier b{};
+    b.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.buffer = buf;
+    b.offset = 0;
+    b.size = VK_WHOLE_SIZE;
+    b.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    b.dstAccessMask = dst;
+    return b;
+}
+
 inline VkShaderModule vkMakeModule(VkDevice dev, const void* code, uint32_t nwords) {
     VkShaderModuleCreateInfo smc{};
     smc.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -172,6 +200,66 @@ inline VkShaderModule vkMakeModule(VkDevice dev, const void* code, uint32_t nwor
     VkShaderModule m;
     VK(vkCreateShaderModule(dev, &smc, nullptr, &m));
     return m;
+}
+
+inline VkPipeline makeComputePipeline(VkDevice dev, const void* spv, uint32_t len, VkPipelineLayout pl) {
+    VkShaderModule cm = vkMakeModule(dev, spv, len);
+    VkPipelineShaderStageCreateInfo cs{};
+    cs.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cs.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    cs.module = cm;
+    cs.pName = "main";
+    VkComputePipelineCreateInfo cpc{};
+    cpc.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpc.stage = cs;
+    cpc.layout = pl;
+    VkPipeline pipe;
+    VK(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &cpc, nullptr, &pipe));
+    vkDestroyShaderModule(dev, cm, nullptr);
+    return pipe;
+}
+
+// single-color-attachment render pass with one subpass
+inline VkRenderPass makeSimpleRenderPass(VkDevice dev, const VkAttachmentDescription& att) {
+    VkAttachmentReference ar{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription ss{};
+    ss.colorAttachmentCount = 1;
+    ss.pColorAttachments = &ar;
+    VkRenderPassCreateInfo rpc{};
+    rpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    rpc.attachmentCount = 1;
+    rpc.pAttachments = &att;
+    rpc.subpassCount = 1;
+    rpc.pSubpasses = &ss;
+    VkRenderPass rp;
+    VK(vkCreateRenderPass(dev, &rpc, nullptr, &rp));
+    return rp;
+}
+
+inline void makeFramebuffer(VkDevice dev, VkRenderPass rp, uint32_t w, uint32_t h, const VkImageView* atts, uint32_t n,
+                           VkFramebuffer& out) {
+    VkFramebufferCreateInfo fci{};
+    fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fci.renderPass = rp;
+    fci.attachmentCount = n;
+    fci.pAttachments = atts;
+    fci.width = w;
+    fci.height = h;
+    fci.layers = 1;
+    VK(vkCreateFramebuffer(dev, &fci, nullptr, &out));
+}
+
+// standard 2D full-range color view
+inline VkImageView makeImageView(VkDevice dev, VkImage img, VkFormat fmt) {
+    VkImageViewCreateInfo vci{};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = img;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = fmt;
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkImageView view;
+    VK(vkCreateImageView(dev, &vci, nullptr, &view));
+    return view;
 }
 
 inline void vkMakeImage2DTarget(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint32_t h, VkImage& img,

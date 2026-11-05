@@ -1,0 +1,14 @@
+{
+    "name": "lua skin",
+    "objects": [
+        {
+            "name": "cam",
+            "components": {
+                "Transform": { "pos": [1.25, 0.5, 3] },
+                "Camera": { "fovDeg": 50, "active": true }
+            },
+            "script": "scenes/camera"
+        },
+        { "name": "probe", "script": "lua_skin" }
+    ]
+}

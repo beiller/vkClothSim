@@ -10,18 +10,7 @@ void Renderer::makeComputePass(const void* spv, uint32_t len, const std::vector<
     vkMakeDslPool(m_dev, binds, maxSets, out.dsl, out.pool);
     out.pl = pcSize > 0 ? vkMakePipelineLayoutPC(m_dev, out.dsl, VK_SHADER_STAGE_COMPUTE_BIT, pcSize)
                         : vkMakePipelineLayout(m_dev, out.dsl);
-    VkShaderModule cm = vkMakeModule(m_dev, spv, len);
-    VkPipelineShaderStageCreateInfo cs{};
-    cs.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cs.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    cs.module = cm;
-    cs.pName = "main";
-    VkComputePipelineCreateInfo cpc{};
-    cpc.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    cpc.stage = cs;
-    cpc.layout = out.pl;
-    VK(vkCreateComputePipelines(m_dev, VK_NULL_HANDLE, 1, &cpc, nullptr, &out.pipe));
-    vkDestroyShaderModule(m_dev, cm, nullptr);
+    out.pipe = makeComputePipeline(m_dev, spv, len, out.pl);
     VkDescriptorSetAllocateInfo sa{};
     sa.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     sa.descriptorPool = out.pool;

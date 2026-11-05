@@ -24,7 +24,6 @@ entt::entity spawnVrRoot(entt::registry& reg);
 void spawnControllers(Engine& w);
 void stepControllers(entt::registry& reg, const XrFrame& fr);
 
-// UI panel (UICanvas entity): pose, static placement, raycast hit point -> uv
 bool uiPanelUv(const entt::registry& reg, entt::entity canvas, const V3& hitPos, V2& uv);
 void stepMouse(Engine& w);
 void stepKeyboard(Engine& w);

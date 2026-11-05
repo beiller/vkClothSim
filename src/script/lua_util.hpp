@@ -6,7 +6,26 @@
 #include <string>
 #include <vector>
 
-// shared Lua value helpers for the API modules
+// A table on the Lua stack: named fields via set*, 1-based array elements via
+// append*. Sub-tables are attached by index (setTable/appendTable copy the
+// value; the sub-table stays on the stack for the caller to pop or re-attach).
+struct LuaTable {
+    lua_State* L;
+    int idx;
+    int arr = 0;
+    LuaTable(lua_State* L, int narr = 0, int nrec = 0) : L(L) {
+        lua_createtable(L, narr, nrec);
+        idx = lua_gettop(L);
+    }
+    void setStr(const char* k, const std::string& v) { lua_pushstring(L, v.c_str()); lua_setfield(L, idx, k); }
+    void setNum(const char* k, double v) { lua_pushnumber(L, v); lua_setfield(L, idx, k); }
+    void setBool(const char* k, bool v) { lua_pushboolean(L, v); lua_setfield(L, idx, k); }
+    void appendNum(double v) { lua_pushnumber(L, v); lua_rawseti(L, idx, ++arr); }
+    void appendStr(const std::string& v) { lua_pushstring(L, v.c_str()); lua_rawseti(L, idx, ++arr); }
+    void setTable(const char* k, int subIdx) { lua_pushvalue(L, subIdx); lua_setfield(L, idx, k); }
+    void appendTable(int subIdx) { lua_pushvalue(L, subIdx); lua_rawseti(L, idx, ++arr); }
+};
+
 inline entt::entity luaReadEnt(lua_State* L, int idx) {
     return static_cast<entt::entity>((uint32_t)luaL_checkinteger(L, idx));
 }
@@ -115,7 +134,6 @@ inline bool luaReadGeomField(lua_State* L, int tidx, const char* name, size_t pe
     return true;
 }
 
-// ---- raw component tables (components not attached to an entity) ----
 struct CompData {
     std::string type;
     CompFields fields;

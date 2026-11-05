@@ -5,7 +5,7 @@
 -- are spawned explicitly and referenced by handle from every copy.
 local M = {}
 
-local GLB_PATH  = "local/sword_collider.glb" -- place the glb in assets/local/
+local GLB_PATH  = "sword_collider.glb"
 local DRAWABLE  = "Mesh_0"      -- mesh name in the glb (rendered)
 local COLLIDER  = "Mesh_0.001"  -- mesh name in the glb (hull source, not rendered)
 local COUNT     = 100

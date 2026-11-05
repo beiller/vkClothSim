@@ -58,15 +58,7 @@ void Renderer::initShadow(VkApp& app) {
     for (uint32_t i = 0; i < kMaxLights; ++i)
         for (uint32_t f = 0; f < 6; ++f) {
             VkImageView atts[2] = {m_shadowColorFace[i * 6 + f], m_shadowDepthFace[f]};
-            VkFramebufferCreateInfo fbi{};
-            fbi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            fbi.renderPass = m_shadowRp;
-            fbi.attachmentCount = 2;
-            fbi.pAttachments = atts;
-            fbi.width = m_shadowSize;
-            fbi.height = m_shadowSize;
-            fbi.layers = 1;
-            VK(vkCreateFramebuffer(m_dev, &fbi, nullptr, &m_shadowFb[i * 6 + f]));
+            makeFramebuffer(m_dev, m_shadowRp, m_shadowSize, m_shadowSize, atts, 2, m_shadowFb[i * 6 + f]);
         }
 
     m_shadowPl = vkMakePipelineLayoutPC(m_dev, m_dsl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 80);

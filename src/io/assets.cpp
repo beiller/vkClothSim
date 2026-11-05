@@ -36,6 +36,16 @@ std::string assetsRoot() {
     return std::filesystem::exists("assets") ? "assets" : exeDir() + "/../assets";
 }
 
+static std::string g_scenesDir = "assets/scenes";
+
+std::string scenesDir() {
+    return g_scenesDir;
+}
+
+void setScenesDir(const std::string& dir) {
+    g_scenesDir = dir;
+}
+
 bool loadTexture(const std::string& path, TextureData& out, bool flip) {
     stbi_set_flip_vertically_on_load(flip ? 1 : 0);
     int w = 0, h = 0, ch = 0;

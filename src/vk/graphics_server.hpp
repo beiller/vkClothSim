@@ -40,13 +40,11 @@ public:
         m_renderer.initXrTarget(app, fmt, nEyes, images, exts);
     }
 
-    // canvas targets (ICanvasTarget for the UI layer)
     void uiEnsureTarget(const entt::registry& reg, entt::entity canvas) { m_renderer.uiEnsureTarget(reg, canvas); }
     VkRenderPass uiTargetPass(entt::entity canvas) const { return m_renderer.uiTargetPass(canvas); }
     VkFramebuffer uiTargetFb(entt::entity canvas) const { return m_renderer.uiTargetFb(canvas); }
     VkImage canvasImage(entt::entity e) const { return m_renderer.gpuTextureImage(e); }
 
-    // scene loader / script
     entt::entity uploadTexture(entt::registry& reg, entt::entity texEnt) { return m_renderer.uploadTexture(reg, texEnt); }
     void buildEnvironment(VkApp& app, entt::entity envEnt, entt::entity eqTex) {
         m_renderer.buildEnvironment(app, envEnt, eqTex);

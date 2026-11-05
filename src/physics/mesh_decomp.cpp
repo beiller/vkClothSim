@@ -52,9 +52,7 @@ std::vector<std::vector<float>> convexDecompose(const Mesh& mesh, const DecompPa
         std::fprintf(stderr, "3dsim: convex_decompose: CoACD failed on %d-vert mesh: %s\n", nV, e.what());
     }
 
-    // fallback: one convex hull of every vertex (mesh.pos is already flat xyz). Only sane for
-    // small meshes; a full-mesh hull on a large one makes Jolt's narrowphase unusably slow,
-    // so skip instead (the caller sees an empty result)
+    // fallback: one hull of every vertex; only sane for small meshes (a full-mesh hull makes Jolt's narrowphase unusably slow)
     if (nV > p.maxVertsPerHull)
         return {};
     return { mesh.pos };

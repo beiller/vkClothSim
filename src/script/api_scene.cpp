@@ -94,12 +94,10 @@ int lGet(lua_State* L) {
     return 1;
 }
 
-/// scene.scenes() -> table | list loadable scenes in assets/scenes as an array of {label, path} (label from the json "name" field when present)
+/// scene.scenes() -> table | list loadable scenes in the active scenes dir as an array of {label, path} (label from the json "name" field when present)
 int lScenes(lua_State* L) {
-    const std::string dir = std::filesystem::exists("assets/scenes") ? "assets/scenes"
-                                                                  : exeDir() + "/../assets/scenes";
-    lua_newtable(L);
-    int i = 0;
+    const std::string dir = scenesDir();
+    LuaTable arr(L);
     if (std::filesystem::exists(dir))
         for (const auto& e : std::filesystem::directory_iterator(dir)) {
             const auto f = e.path().filename().string();
@@ -113,12 +111,11 @@ int lScenes(lua_State* L) {
                     label = j.value("name", label);
             } catch (const std::exception&) {
             }
-            lua_newtable(L);
-            lua_pushstring(L, label.c_str());
-            lua_setfield(L, -2, "label");
-            lua_pushstring(L, ("assets/scenes/" + f).c_str());
-            lua_setfield(L, -2, "path");
-            lua_rawseti(L, -2, ++i);
+            LuaTable t(L);
+            t.setStr("label", label);
+            t.setStr("path", scenesDir() + "/" + f);
+            arr.appendTable(t.idx);
+            lua_pop(L, 1);
         }
     return 1;
 }
@@ -169,15 +166,16 @@ int lGltf(lua_State* L) {
     std::string err;
     if (!gltfToData(path, data, err))
         return luaL_error(L, "graphics.gltf: %s", err.c_str());
-    lua_createtable(L, 0, (int)data.keys.size());
+    LuaTable root(L, 0, (int)data.keys.size());
     for (const std::string& key : data.keys) {
         const auto& node = data.nodes[key];
-        lua_createtable(L, 0, (int)node.size());
+        LuaTable nt(L, 0, (int)node.size());
         for (const auto& [cn, fields] : node) {
             pushCompData(L, cn, fields);
-            lua_setfield(L, -2, cn.c_str());
+            lua_setfield(L, nt.idx, cn.c_str());
         }
-        lua_setfield(L, -2, key.c_str());
+        root.setTable(key.c_str(), nt.idx);
+        lua_pop(L, 1);
     }
     return 1;
 }
@@ -242,16 +240,14 @@ int lRaycast(lua_State* L) {
         return 1;
     }
     const entt::entity bodyEnt = w.physics.entityFor(hit.body);
-    lua_newtable(L);
-    lua_pushboolean(L, true);
-    lua_setfield(L, -2, "hit");
+    LuaTable t(L);
+    t.setBool("hit", true);
     luaPushV3(L, hit.pos);
-    lua_setfield(L, -2, "pos");
-    lua_pushnumber(L, glm::length(hit.pos - origin));
-    lua_setfield(L, -2, "dist");
+    lua_setfield(L, t.idx, "pos");
+    t.setNum("dist", glm::length(hit.pos - origin));
     if (bodyEnt != entt::null) {
         luaPushEnt(L, bodyEnt);
-        lua_setfield(L, -2, "entity");
+        lua_setfield(L, t.idx, "entity");
     }
     return 1;
 }
@@ -294,15 +290,13 @@ int lConvexDecompose(lua_State* L) {
     if (!lua_isnoneornil(L, 4))
         p.threshold = (float)luaL_checknumber(L, 4);
     const auto hulls = convexDecompose(mesh, p);
-    lua_createtable(L, (int)hulls.size(), 0);
-    for (size_t i = 0; i < hulls.size(); ++i) {
-        const auto& h = hulls[i];
-        lua_createtable(L, (int)h.size(), 0);
-        for (size_t j = 0; j < h.size(); ++j) {
-            lua_pushnumber(L, h[j]);
-            lua_seti(L, -2, (int)j + 1);
-        }
-        lua_seti(L, -2, (int)i + 1);
+    LuaTable arr(L, (int)hulls.size(), 0);
+    for (const auto& h : hulls) {
+        LuaTable ht(L, (int)h.size(), 0);
+        for (float v : h)
+            ht.appendNum(v);
+        arr.appendTable(ht.idx);
+        lua_pop(L, 1);
     }
     return 1;
 }
