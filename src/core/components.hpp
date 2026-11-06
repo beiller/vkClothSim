@@ -193,6 +193,8 @@ struct SettingsRoot {};
 struct RenderSettings {
     float bgColor[3] = {0.10f, 0.11f, 0.15f};
     float exposure = 1.0f;
+    float sssDepthReject = 2.0f; // SSS tap rejection across depth steps
+    float sssCurvScale = 1.0f;   // curvature LUT input scale
 };
 
 struct PhysicsSettings {
@@ -301,6 +303,8 @@ struct Material {
     float refraction = 0.0f; // 0 = off; the refraction scale (Godot refraction, 0..1)
     float ior = 1.5f;
     float normalScale = 1.0f; // gltf normalTexture.scale; 0 = normal map off
+    float ssssScale = 0.15f;  // per-material SSS scale (0..1, folded into the ssssWeight side channel; 1 = max blur)
+    float ssssSplit = 0.333f; // pre/post-scatter split exponent (0 = max detail, 1 = full blur)
 };
 
 struct MaterialRef {

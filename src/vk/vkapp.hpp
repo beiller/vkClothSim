@@ -40,6 +40,8 @@ public:
     VkImageView sssDiffuseView() const { return m_sssDiffuseView; }
     VkImage sssWeightImage() const { return m_sssWeight; }
     VkImageView sssWeightView() const { return m_sssWeightView; }
+    VkImage sssPostImage() const { return m_sssPost; }
+    VkImageView sssPostView() const { return m_sssPostView; }
     uint32_t sceneColorMips() const { return m_sceneColorMips; }
     VkImageView depthCopyView() const { return m_depthCopyView; }
     VkImage depthImage() const { return m_depth; }
@@ -103,6 +105,9 @@ private:
     VkImage m_sssWeight = VK_NULL_HANDLE; // the per-channel ssssWeight (RGB), written by the mesh pass
     VkDeviceMemory m_sssWeightMem = VK_NULL_HANDLE;
     VkImageView m_sssWeightView = VK_NULL_HANDLE;
+    VkImage m_sssPost = VK_NULL_HANDLE; // the post-scatter albedo half (A^(1-p)), written by the mesh pass
+    VkDeviceMemory m_sssPostMem = VK_NULL_HANDLE;
+    VkImageView m_sssPostView = VK_NULL_HANDLE;
     uint32_t m_sceneColorMips = 1;
     VkImage m_hdr = VK_NULL_HANDLE;
     VkDeviceMemory m_hdrMem = VK_NULL_HANDLE;

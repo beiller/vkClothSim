@@ -19,7 +19,9 @@ struct ModelUbo {
     float refraction;    // 124
     float ior;           // 128
     float normalScale;   // 132
-    float pad[6];        // 136 (the shader's vec3 pad sits at 144; block size 160)
+    float ssssScale;     // 136
+    float ssssSplit;     // 140 pre/post-scatter split exponent, 0..1
+    float pad[4];        // 144 (the shader's vec3 pad sits at 144; block size 160)
 };
 static_assert(sizeof(ModelUbo) == 160, "ModelUbo must match the shader std140 layout");
 
@@ -34,7 +36,8 @@ struct ViewUbo {
     float zNear;        // 176
     float zFar;         // 180
     float screenSize[2];// 184
-    float pad2[4];      // 192
+    float sssCurvScale; // 192 (was pad2[0]) curvature LUT input scale
+    float pad2[3];      // 196
 };
 static_assert(sizeof(ViewUbo) == 208, "ViewUbo must match the shader std140 layout");
 
@@ -43,12 +46,13 @@ struct SssPc {
     float screenSize[2]; // 0
     float zNear;         // 8
     float zFar;          // 12
-    float unitSize;      // 16
-    float scale;         // 20
+    float unitSizeH;     // 16  2/(tanR-tanL): world radius -> uv step, horizontal axis
+    float unitSizeV;     // 20  2/(tanU-tanD): vertical axis (per-axis: circular blur)
     float depthScale;    // 24
     float vertical;      // 28  1 = vertical pass (dir 0,1), 0 = horizontal
+    float depthReject;   // 32  tap rejection across depth steps (1 / world-space radius fraction)
 };
-static_assert(sizeof(SssPc) == 32, "SssPc must match the shader std430 layout");
+static_assert(sizeof(SssPc) == 36, "SssPc must match the shader std430 layout");
 
 struct LightGPU {
     float pos[3];

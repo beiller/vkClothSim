@@ -22,13 +22,9 @@ std::vector<VkDescriptorSetLayoutBinding> uiQuadBinds() {
     return {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}};
 }
 
-float unitSizeOf(const CameraView& cv) {
-    return 2.0f / (cv.tanR - cv.tanL);
-}
-
 ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float roughness, const V3& emissive,
                    float baseAlpha, float alphaCutoff, float alphaMode, const V3& ssssWeight, float refraction,
-                   float ior, float normalScale) {
+                   float ior, float normalScale, float ssssScale, float ssssSplit) {
     ModelUbo mb{};
     std::memcpy(mb.model, &model, 64); // mat4 is a trivial 16-float layout
     mb.baseColor[0] = baseColor.x;
@@ -48,6 +44,8 @@ ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float
     mb.refraction = refraction;
     mb.ior = ior;
     mb.normalScale = normalScale;
+    mb.ssssScale = ssssScale;
+    mb.ssssSplit = ssssSplit;
     return mb;
 }
 
@@ -97,11 +95,11 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     // 4 B push constant: the pass id (0 = opaque into sceneColor, 1 = transparent into HDR);
     m_pl = vkMakePipelineLayoutPC(m_dev, m_dsl, VK_SHADER_STAGE_FRAGMENT_BIT, 4);
     m_pipe = makeGraphicsPipeline(m_dev, app.sceneRenderPass(), mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
-                                  mesh_frag_spv_len / 4, m_pl, true, false, false, 3);
+                                 mesh_frag_spv_len / 4, m_pl, true, false, false, 4);
     m_pipeBlend = makeGraphicsPipeline(m_dev, app.sceneNoClearRenderPass(), mesh_vert_spv, mesh_vert_spv_len / 4,
-                                       mesh_frag_spv, mesh_frag_spv_len / 4, m_pl, true, false, true, 3);
+                                      mesh_frag_spv, mesh_frag_spv_len / 4, m_pl, true, false, true, 4);
     m_pipeBlendCull = makeGraphicsPipeline(m_dev, app.sceneNoClearRenderPass(), mesh_vert_spv, mesh_vert_spv_len / 4,
-                                          mesh_frag_spv, mesh_frag_spv_len / 4, m_pl, true, true, true, 3);
+                                          mesh_frag_spv, mesh_frag_spv_len / 4, m_pl, true, true, true, 4);
     initSss(app);
 
     const uint8_t white[4] = {255, 255, 255, 255};
@@ -218,7 +216,7 @@ int Renderer::allocInstance(int geom) {
     InstancedMesh inst;
     inst.geom = geom;
     const ModelUbo modelInit = packModel(Mat4(1.0f), V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, V3{0.0f, 0.0f, 0.0f}, 1.0f,
-                                        0.5f, 0.0f, V3{0.0f, 0.0f, 0.0f}, 0.0f, 1.5f, 1.0f);
+                                        0.5f, 0.0f, V3{0.0f, 0.0f, 0.0f}, 0.0f, 1.5f, 1.0f, 0.15f, 0.333f);
     vkMakeBuffer(m_dev, m_pdev, inst.modelUbuf, inst.modelMem, sizeof(ModelUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                  &modelInit);
     const VkDeviceSize attrSize = (VkDeviceSize)12 * g.vtxCount;
@@ -561,7 +559,7 @@ void Renderer::syncEnvironments(VkApp& app, entt::registry& reg) {
         buildEnvironment(app, e, resolveTex(reg, env.tex));
 }
 
-void Renderer::writeViewUbo(const CameraView& cv, float envIntensity, VkExtent2D ext) {
+void Renderer::writeViewUbo(const CameraView& cv, float envIntensity, VkExtent2D ext, float sssCurvScale) {
     ViewUbo u{};
     std::memcpy(u.viewProj, &cv.viewProj, 64);
     std::memcpy(u.view, &cv.view, 64);
@@ -570,6 +568,7 @@ void Renderer::writeViewUbo(const CameraView& cv, float envIntensity, VkExtent2D
     u.camPos[2] = cv.pos.z;
     u.envIntensity = envIntensity;
     u.shadowTexels = (float)m_shadowSize;
+    u.sssCurvScale = sssCurvScale;
     u.frustum[0] = cv.tanL;
     u.frustum[1] = cv.tanR;
     u.frustum[2] = cv.tanU;
@@ -594,7 +593,7 @@ void Renderer::prepBuffers(entt::registry& reg) {
         V3 base{1.0f, 1.0f, 1.0f}, emissive{0.0f, 0.0f, 0.0f};
         float metallic = 0.0f, roughness = 0.5f, baseAlpha = 1.0f, alphaCutoff = 0.5f;
         V3 ssssWeight{0.0f, 0.0f, 0.0f};
-        float refraction = 0.0f, ior = 1.5f, normalScale = 1.0f;
+        float refraction = 0.0f, ior = 1.5f, normalScale = 1.0f, ssssScale = 0.15f, ssssSplit = 0.333f;
         int alphaMode = 0;
         if (const auto* ref = reg.try_get<MaterialRef>(e))
             if (const auto* mat = reg.try_get<Material>(ref->mat)) {
@@ -609,6 +608,8 @@ void Renderer::prepBuffers(entt::registry& reg) {
                 refraction = mat->refraction;
                 ior = mat->ior;
                 normalScale = mat->normalScale;
+                ssssScale = mat->ssssScale;
+                ssssSplit = mat->ssssSplit;
                 const entt::entity slots[kTexChannels] = {mat->tex, mat->texMR, mat->texNormal, mat->texEmissive};
                 for (int c = 0; c < kTexChannels; ++c)
                     setTexture(inst, c, textureFor(slots[c], reg));
@@ -628,7 +629,7 @@ void Renderer::prepBuffers(entt::registry& reg) {
         if (alphaMode == 2 || refraction > 0.0f)
             m_hasTrans = true;
         const ModelUbo mb = packModel(model, base, metallic, roughness, emissive, baseAlpha, alphaCutoff, alphaMode,
-                                      ssssWeight, refraction, ior, normalScale);
+                                      ssssWeight, refraction, ior, normalScale, ssssScale, ssssSplit);
         vkWriteBuffer(m_dev, im.modelMem, &mb, sizeof(ModelUbo));
     }
 }
@@ -744,9 +745,10 @@ void Renderer::renderSssBlur(VkCommandBuffer cmd, VkApp& app, const CameraView& 
     pc.screenSize[1] = (float)ext.height;
     pc.zNear = cv.zNear;
     pc.zFar = cv.zFar;
-    pc.unitSize = unitSizeOf(cv);
-    pc.scale = m_sssScale;
+    pc.unitSizeH = 2.0f / (cv.tanR - cv.tanL);
+    pc.unitSizeV = 2.0f / (cv.tanU - cv.tanD);
     pc.depthScale = m_sssDepthScale;
+    pc.depthReject = m_sssDepthReject;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_sss.pipe);
     for (int pass = 0; pass < 2; ++pass) {
         pc.vertical = pass == 1 ? 1.0f : 0.0f;
@@ -782,14 +784,33 @@ void Renderer::renderSceneBuffers(VkCommandBuffer cmd, VkApp& app, const float b
                           VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_READ_BIT, mips - 1,
                           VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, 1);
             vkImgBarrier(cmd, app.sssDiffuseImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                      VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_READ_BIT, 1);
+                      VK_IMAGE_LAYOUT_GENERAL, 0,
+                      VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
+                      mips - 1);
             vkImgBarrier(cmd, app.sssWeightImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                      VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_READ_BIT, 1);
+            vkImgBarrier(cmd, app.sssPostImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                       VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_READ_BIT, 1);
         }
         if (needRead)
             vkImgBarrier(cmd, app.depthCopyImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                       VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT, 1);
     }
+    // the SSS taps' mip prefilter: generate sssDiffuse's chain before pass 0 reads it
+    if (m_hasSss && mips > 1)
+        for (uint32_t mip = 1; mip < mips; ++mip) {
+            const int sw = std::max(1, (int)(ext.width >> (mip - 1)));
+            const int sh = std::max(1, (int)(ext.height >> (mip - 1)));
+            const int dw = std::max(1, (int)(ext.width >> mip));
+            const int dh = std::max(1, (int)(ext.height >> mip));
+            VkImageBlit ib{};
+            ib.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip - 1, 0, 1};
+            ib.srcOffsets[1] = {sw, sh, 1};
+            ib.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, 1};
+            ib.dstOffsets[1] = {dw, dh, 1};
+            vkCmdBlitImage(cmd, app.sssDiffuseImage(), VK_IMAGE_LAYOUT_GENERAL, app.sssDiffuseImage(),
+                           VK_IMAGE_LAYOUT_GENERAL, 1, &ib, VK_FILTER_LINEAR);
+        }
     renderSssBlur(cmd, app, cv);
     const VkImageLayout sceneOld =
         m_hasSss ? VK_IMAGE_LAYOUT_GENERAL : needRead ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
@@ -861,7 +882,7 @@ void Renderer::ensureSceneSamplers(VkApp& app) {
     if (app.sceneColorView() != m_sssSceneView || app.sceneColorTempView() != m_sssTempView ||
         app.depthView() != m_sssDepthView || app.depthCopyView() != m_sssDepthCopyView ||
         app.sssDiffuseView() != m_sssDiffuseView || app.sssWeightView() != m_sssWeightView ||
-        m_samplersDirty) {
+        app.sssPostView() != m_sssPostView || m_samplersDirty) {
         updateSceneSamplers(app);
         m_samplersDirty = false;
     }
@@ -874,12 +895,14 @@ void Renderer::updateSceneSamplers(VkApp& app) {
     m_sssDepthCopyView = app.depthCopyView();
     m_sssDiffuseView = app.sssDiffuseView();
     m_sssWeightView = app.sssWeightView();
+    m_sssPostView = app.sssPostView();
     const VkDescriptorImageInfo sceneSam{m_sceneColorSampler, app.sceneColorView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo sceneStore{VK_NULL_HANDLE, app.sceneColorView(), VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo sceneRw{VK_NULL_HANDLE, app.sceneColorView(), VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo diffSam{m_sceneColorSampler, app.sssDiffuseView(), VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo diffRw{VK_NULL_HANDLE, app.sssDiffuseView(), VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo weightSam{m_sceneColorSampler, app.sssWeightView(), VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo postSam{m_sceneColorSampler, app.sssPostView(), VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo tempSam{m_sceneColorSampler, app.sceneColorTempView(),
                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo tempStore{VK_NULL_HANDLE, app.sceneColorTempView(), VK_IMAGE_LAYOUT_GENERAL};
@@ -898,6 +921,8 @@ void Renderer::updateSceneSamplers(VkApp& app) {
     w.image(m_sssSet[1], 4, diffRw, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
     w.image(m_sssSet[0], 5, weightSam);
     w.image(m_sssSet[1], 5, weightSam);
+    w.image(m_sssSet[0], 6, postSam);
+    w.image(m_sssSet[1], 6, postSam);
     w.update(m_dev);
     const VkDescriptorImageInfo neutral{m_texSampler, m_white.view, VK_IMAGE_LAYOUT_GENERAL};
     WriteDescs wi;
@@ -920,6 +945,7 @@ void Renderer::initSss(VkApp& app) {
         {3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
     };
     vkMakeDslPool(m_dev, sssBinds, 2, m_sss.dsl, m_sss.pool);
     m_sss.pl = vkMakePipelineLayoutPC(m_dev, m_sss.dsl, VK_SHADER_STAGE_COMPUTE_BIT, sizeof(SssPc));
@@ -1041,9 +1067,10 @@ void Renderer::rebuildTonemapSet(VkApp& app) {
 
 void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry& reg, const RenderSettings& rs) {
     m_exposure = rs.exposure;
+    m_sssDepthReject = rs.sssDepthReject;
     const VkExtent2D ext = app.extent();
     syncEnvironments(app, reg);
-    writeViewUbo(m_camView, envIntensity(reg), ext);
+    writeViewUbo(m_camView, envIntensity(reg), ext, rs.sssCurvScale);
     prepBuffers(reg);
     ensureSceneSamplers(app);
     const auto tUi = std::chrono::steady_clock::now();
@@ -1270,6 +1297,7 @@ void Renderer::ensureNoClearFbs(VkApp& app) {
 void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry& reg, const RenderSettings& rs,
                       entt::entity cam, const uint32_t* xrImg, int nXr) {
     m_exposure = rs.exposure;
+    m_sssDepthReject = rs.sssDepthReject;
     syncEnvironments(app, reg);
     prepBuffers(reg);
     const VkExtent2D ext = app.extent();
@@ -1292,7 +1320,7 @@ void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::regist
         cv.tanD = v.tanD;
         cv.zNear = 0.1f;
         cv.zFar = 300.0f;
-        writeViewUbo(cv, envIntensity(reg), ext);
+        writeViewUbo(cv, envIntensity(reg), ext, rs.sssCurvScale);
         renderSceneBuffers(cmd, app, rs.bgColor, cv);
         hdrBarrier(cmd, app);
         if (app.hdrView() != m_tmSrcView)

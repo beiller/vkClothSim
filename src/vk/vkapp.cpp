@@ -258,7 +258,7 @@ bool VkApp::initDevice(VkDevice dev) {
             m_fmt = f;
     m_scfmt = m_fmt.format;
 
-    VkAttachmentDescription satt[4]{};
+    VkAttachmentDescription satt[5]{};
     satt[0].format = m_hdrFmt;
     satt[0].samples = VK_SAMPLE_COUNT_1_BIT;
     satt[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -291,23 +291,25 @@ bool VkApp::initDevice(VkDevice dev) {
     satt[3].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     satt[3].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     satt[3].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    VkAttachmentReference scolor[3] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+    satt[4] = satt[3]; // the post-scatter albedo half (cleared, like the other side channels)
+    VkAttachmentReference scolor[4] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                                       {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                      {3, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+                                      {3, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                                      {4, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
     const VkAttachmentReference sdepth = {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
     VkSubpassDescription ssp{};
-    ssp.colorAttachmentCount = 3;
+    ssp.colorAttachmentCount = 4;
     ssp.pColorAttachments = scolor;
     ssp.pDepthStencilAttachment = &sdepth;
     VkRenderPassCreateInfo srpc{};
     srpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    srpc.attachmentCount = 4;
+    srpc.attachmentCount = 5;
     srpc.pAttachments = satt;
     srpc.subpassCount = 1;
     srpc.pSubpasses = &ssp;
     VK(vkCreateRenderPass(m_dev, &srpc, nullptr, &m_rpScene));
 
-    VkAttachmentDescription natt[4]{};
+    VkAttachmentDescription natt[5]{};
     natt[0].format = m_hdrFmt;
     natt[0].samples = VK_SAMPLE_COUNT_1_BIT;
     natt[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -340,17 +342,19 @@ bool VkApp::initDevice(VkDevice dev) {
     natt[3].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     natt[3].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; // SSS-blurred to GENERAL, or untouched (color-attachment)
     natt[3].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    VkAttachmentReference ncolor[3] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+    natt[4] = natt[3]; // the post-scatter albedo half (the transparent pass writes 0, like the others)
+    VkAttachmentReference ncolor[4] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                                       {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                                      {3, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+                                      {3, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                                      {4, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
     const VkAttachmentReference ndepth = {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
     VkSubpassDescription nss{};
-    nss.colorAttachmentCount = 3;
+    nss.colorAttachmentCount = 4;
     nss.pColorAttachments = ncolor;
     nss.pDepthStencilAttachment = &ndepth;
     VkRenderPassCreateInfo nrpc{};
     nrpc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    nrpc.attachmentCount = 4;
+    nrpc.attachmentCount = 5;
     nrpc.pAttachments = natt;
     nrpc.subpassCount = 1;
     nrpc.pSubpasses = &nss;
@@ -562,20 +566,24 @@ void VkApp::recreateSwapchain() {
     createAttachment(m_extent, m_hdrFmt, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sceneColorTemp, m_sceneColorTempMem, m_sceneColorTempView);
     createAttachment(m_extent, m_hdrFmt,
-                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                     VK_IMAGE_ASPECT_COLOR_BIT, m_sssDiffuse, m_sssDiffuseMem, m_sssDiffuseView);
+                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                         VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                     VK_IMAGE_ASPECT_COLOR_BIT, m_sssDiffuse, m_sssDiffuseMem, m_sssDiffuseView, mips); // mip chain: the SSS taps' prefilter
     createAttachment(m_extent, m_hdrFmt,
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sssWeight, m_sssWeightMem, m_sssWeightView);
+    createAttachment(m_extent, m_hdrFmt,
+                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     VK_IMAGE_ASPECT_COLOR_BIT, m_sssPost, m_sssPostMem, m_sssPostView);
     createAttachment(m_extent, m_hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                     VK_IMAGE_ASPECT_COLOR_BIT, m_hdr, m_hdrMem, m_hdrView);
+                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                      VK_IMAGE_ASPECT_COLOR_BIT, m_hdr, m_hdrMem, m_hdrView);
 
-    VkImageView satts[4] = {m_sceneColorAttView, m_depthView, m_sssDiffuseView, m_sssWeightView};
-    makeFramebuffer(m_dev, m_rpScene, m_extent.width, m_extent.height, satts, 4, m_sceneFb);
+    VkImageView satts[5] = {m_sceneColorAttView, m_depthView, m_sssDiffuseView, m_sssWeightView, m_sssPostView};
+    makeFramebuffer(m_dev, m_rpScene, m_extent.width, m_extent.height, satts, 5, m_sceneFb);
 
-    VkImageView natts[4] = {m_hdrView, m_depthView, m_sssDiffuseView, m_sssWeightView};
-    makeFramebuffer(m_dev, m_rpSceneNoClear, m_extent.width, m_extent.height, natts, 4, m_sceneFbNoClear);
+    VkImageView natts[5] = {m_hdrView, m_depthView, m_sssDiffuseView, m_sssWeightView, m_sssPostView};
+    makeFramebuffer(m_dev, m_rpSceneNoClear, m_extent.width, m_extent.height, natts, 5, m_sceneFbNoClear);
 
     m_views.resize(icnt);
     m_fbs.resize(icnt);
@@ -612,6 +620,9 @@ void VkApp::destroySwapchainResources() {
     vkDestroyImageView(m_dev, m_sssWeightView, nullptr);
     vkDestroyImage(m_dev, m_sssWeight, nullptr);
     vkFreeMemory(m_dev, m_sssWeightMem, nullptr);
+    vkDestroyImageView(m_dev, m_sssPostView, nullptr);
+    vkDestroyImage(m_dev, m_sssPost, nullptr);
+    vkFreeMemory(m_dev, m_sssPostMem, nullptr);
     vkDestroyImageView(m_dev, m_hdrView, nullptr);
     vkDestroyImage(m_dev, m_hdr, nullptr);
     vkFreeMemory(m_dev, m_hdrMem, nullptr);
@@ -639,6 +650,9 @@ void VkApp::destroySwapchainResources() {
     m_sssWeight = VK_NULL_HANDLE;
     m_sssWeightMem = VK_NULL_HANDLE;
     m_sssWeightView = VK_NULL_HANDLE;
+    m_sssPost = VK_NULL_HANDLE;
+    m_sssPostMem = VK_NULL_HANDLE;
+    m_sssPostView = VK_NULL_HANDLE;
     m_hdr = VK_NULL_HANDLE;
     m_hdrMem = VK_NULL_HANDLE;
     m_hdrView = VK_NULL_HANDLE;

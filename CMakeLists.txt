@@ -42,6 +42,7 @@ set(GEN_DIR ${CMAKE_BINARY_DIR}/gen)
 file(MAKE_DIRECTORY ${GEN_DIR})
 
 function(spirv base file)
+    # configure-time: generate so the headers exist for the first build
     execute_process(COMMAND ${GLSLC_BIN} ${GLSLC_ARGS} ${file} -o ${GEN_DIR}/${base}.spv RESULT_VARIABLE _r)
     if(NOT _r EQUAL 0)
         message(FATAL_ERROR "glslc failed for ${base}")
@@ -51,6 +52,16 @@ function(spirv base file)
     if(NOT _r EQUAL 0)
         message(FATAL_ERROR "xxd failed for ${base}")
     endif()
+    # build-time: regenerate when the shader source changes (the configure-time pass goes stale otherwise)
+    add_custom_command(
+        OUTPUT ${GEN_DIR}/${base}.spv ${GEN_DIR}/${base}_spv.hpp
+        COMMAND ${GLSLC_BIN} ${GLSLC_ARGS} ${file} -o ${GEN_DIR}/${base}.spv
+        COMMAND /bin/sh -c "${XXD} -i -n ${base}_spv ${GEN_DIR}/${base}.spv > ${GEN_DIR}/${base}_spv.hpp"
+        DEPENDS ${file}
+        COMMENT "glslc ${base}"
+        VERBATIM)
+    list(APPEND SPIRV_REGEN_OUTPUTS ${GEN_DIR}/${base}.spv ${GEN_DIR}/${base}_spv.hpp)
+    set(SPIRV_REGEN_OUTPUTS ${SPIRV_REGEN_OUTPUTS} PARENT_SCOPE)
 endfunction()
 
 spirv(mesh_vert ${CMAKE_SOURCE_DIR}/shaders/mesh_vert.vert)
@@ -65,6 +76,7 @@ spirv(skeleton ${CMAKE_SOURCE_DIR}/shaders/skeleton.comp)
 spirv(env_cube ${CMAKE_SOURCE_DIR}/shaders/env_cube.comp)
 spirv(env_prefilter ${CMAKE_SOURCE_DIR}/shaders/env_prefilter.comp)
 spirv(env_irradiance ${CMAKE_SOURCE_DIR}/shaders/env_irradiance.comp)
+add_custom_target(spirv_regen DEPENDS ${SPIRV_REGEN_OUTPUTS})
 
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/lib/imgui)
 set(IMGUI_SOURCES
@@ -168,6 +180,7 @@ add_library(3dsim_graphics STATIC
     src/gpu_sim/skin.cpp)
 target_compile_features(3dsim_graphics PRIVATE cxx_std_23)
 target_include_directories(3dsim_graphics PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/io ${CMAKE_SOURCE_DIR}/src/ui ${GEN_DIR})
+add_dependencies(3dsim_graphics spirv_regen)
 target_link_libraries(3dsim_graphics PUBLIC 3dsim_core 3dsim_ui PRIVATE glfw Vulkan::Vulkan)
 
 add_library(3dsim_script STATIC

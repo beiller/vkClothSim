@@ -73,6 +73,8 @@ static const FieldDesc kMaterial[] = {
     {"refraction", OFF(Material, refraction), FieldKind::SliderF, -1.0f, 1.0f},
     {"ior", OFF(Material, ior), FieldKind::SliderF, 1.0f, 1.8f},
     {"normalScale", OFF(Material, normalScale), FieldKind::SliderF, 0.0f, 3.0f},
+    {"ssssScale", OFF(Material, ssssScale), FieldKind::SliderF, 0.0f, 1.0f},
+    {"ssssSplit", OFF(Material, ssssSplit), FieldKind::SliderF, 0.0f, 1.0f},
 };
 /// MaterialRef | points an entity at the Material entity used for its rendering (`material` = material entity)
 static const FieldDesc kMaterialRef[] = {
@@ -263,10 +265,12 @@ static const FieldDesc kSkeleton[] = {
     {"placement", OFF(Skeleton, placement), FieldKind::Ref},
     {"meshes", OFF(Skeleton, meshes), FieldKind::EntArr},
 };
-/// RenderSettings | global render settings (emplace on a marker entity): bgColor (vec3), exposure
+/// RenderSettings | global render settings (emplace on a marker entity): bgColor (vec3), exposure, sssDepthReject, sssCurvScale
 static const FieldDesc kRenderSettings[] = {
     {"bgColor", OFF(RenderSettings, bgColor), FieldKind::Color},
     {"exposure", OFF(RenderSettings, exposure), FieldKind::SliderF, 0.1f, 3.0f},
+    {"sssDepthReject", OFF(RenderSettings, sssDepthReject), FieldKind::SliderF, 0.0f, 8.0f},
+    {"sssCurvScale", OFF(RenderSettings, sssCurvScale), FieldKind::SliderF, 0.0f, 10.0f},
 };
 /// PhysicsSettings | global physics solver steps (emplace on a marker entity): velocitySteps/positionSteps
 static const FieldDesc kPhysicsSettings[] = {

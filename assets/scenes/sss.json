@@ -22,7 +22,7 @@
         },
         {
             "name": "mat_sss",
-            "components": { "Material": { "baseColor": [0.95, 0.45, 0.35], "metallic": 0, "roughness": 0.35, "ssssWeight": 1.0 } }
+            "components": { "Material": { "baseColor": [0.95, 0.45, 0.35], "metallic": 0, "roughness": 0.35, "ssssWeight": [1.0, 1.0, 1.0] } }
         },
         { "name": "sss", "script": "scenes/sss" },
         { "name": "vr", "script": "scenes/vr_controller" }
@@ -35,7 +35,9 @@
                 "type": "section",
                 "label": "sss",
                 "children": [
-                    { "type": "slider-f", "label": "ssss weight", "bind": "mat_sss.Material.ssssWeight" }
+                    { "type": "color", "label": "sss weight", "bind": "mat_sss.Material.ssssWeight" },
+                    { "type": "slider-f", "label": "sss scale", "bind": "mat_sss.Material.ssssScale" },
+                    { "type": "slider-f", "label": "sss split", "bind": "mat_pat.Material.ssssSplit" }
                 ]
             },
             {

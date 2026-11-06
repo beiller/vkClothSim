@@ -1,68 +1,126 @@
 #version 450
-// Godot subsurface_scattering.glsl port: a separable two-pass 1D blur (the host dispatches
-// twice: horizontal over the diffuse into temp, vertical composites back into sceneColor).
-// Per-channel strength = the ssssWeight side channel (the opaque pass writes the RGB weight
-// into the weight attachment, max weight into the diffuse alpha); the blur breaks at alpha
-// < 0.001 so the background is never mixed in. The blur acts on the diffuse term only: the
-// vertical pass recomposes sceneColor = (scene - originalDiffuse) + blurredDiffuse, so
-// specular and transmission stay sharp. 11-sample kernel (6 taps, applied on both sides);
-// each color channel walks its own step (its own blur distance), a uniform weight shares
-// one sample across channels.
+// Jimenez-style separable SSS blur (the host dispatches twice: horizontal into temp, vertical
+// composites back into sceneColor). One channel-neutral kernel (a single normalized weight
+// profile for all channels); each color channel walks its own radius (material scale x its
+// ssssWeight, both in [0, 1], so the radius is bounded at 96 px), so the material's
+// per-channel weight determines how far that channel spreads (e.g. [1.0, 0.5, 0.3] gives the
+// classic skin look; a zero-weight channel stays sharp). Three adaptive variants (7/13/17 taps)
+// picked per channel by its projected radius; far taps are mip-prefiltered (footprint matches
+// the tap spacing, so no ghosting); the radius cap at 96 px and the fade out above it (to 0 by
+// 256 px) / below 0.5 px (the
+// sub-pixel regime is handed to the curvature LUT). Taps across a depth step fall back to the
+// center color (depthReject, scaled per channel), so silhouettes never bleed; grazing surfaces
+// shrink the radius by their depth slope (no normal buffer exists). Masked taps (alpha < 0.001)
+// are skipped. The blur acts on the pre-scatter half of the diffuse only: the vertical pass
+// recomposes sceneColor = sharp + post*f*(blurred - pre), so specular, transmission and the
+// post-scatter pigment stay sharp. Steps are per-axis in UV space (unitSizeH/V from the frustum
+// tangents) so the blur is circular in pixels and world space, including the asymmetric VR eye
+// frustums.
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(binding = 0) uniform sampler2D src; // pass 0: the diffuse; pass 1: temp
-layout(r16f, binding = 1) uniform writeonly image2D dst; // pass 0: temp (pass 1: unused, bound to sceneColor)
-layout(binding = 2) uniform sampler2D depthTex; // the R32 depth copy (raw 0..1 values)
-layout(r16f, binding = 3) uniform image2D sceneImg; // pass 1: sceneColor (own pixel: load then store)
-layout(r16f, binding = 4) uniform image2D diffImg; // pass 1: the original diffuse (own pixel)
+layout(binding = 0) uniform sampler2D src; // pass 0: the diffuse (mip chain); pass 1: temp (single mip)
+layout(rgba16f, binding = 1) uniform writeonly image2D dst; // pass 0: temp (pass 1: unused, bound to sceneColor)
+layout(binding = 2) uniform sampler2D depthTex; // the R32 depth copy (GL convention -1..1, cleared to 1)
+layout(rgba16f, binding = 3) uniform image2D sceneImg; // pass 1: sceneColor (own pixel: load then store)
+layout(rgba16f, binding = 4) uniform readonly image2D diffImg; // pass 1: the original pre-scatter half (own pixel)
 layout(binding = 5) uniform sampler2D weightTex; // the per-channel ssssWeight (RGB)
+layout(binding = 6) uniform sampler2D postTex; // the post-scatter albedo half (A^(1-p))
 
 layout(push_constant, std430) uniform Params {
     vec2 screenSize;
     float zNear;
     float zFar;
-    float unitSize;
-    float scale;
+    float unitSizeH;
+    float unitSizeV;
     float depthScale;
     bool vertical;
+    float depthReject;
 } params;
 
-const int KERNEL_SIZE = 6;
-const float kernel[KERNEL_SIZE] = float[](
-    0.560479, 0.0771802, 0.0821904, 0.03639, 0.0192831, 0.00471691);
-const float kernelDist[KERNEL_SIZE] = float[](
-    0.0, 0.08, 0.32, 0.72, 1.28, 2.0);
+// the shared kernel (channel-neutral): x = normalized weight of a sigma-0.5 Gaussian over
+// [0, 1], y = the offset in radius units; sums to 1 over the taps. Three adaptive variants:
+// 7 / 13 / 17 taps (center + N/2 offsets x2 sides)
+const vec2 k7[4] = vec2[](
+    vec2(0.436043, 0.000),
+    vec2(0.341293, 0.350),
+    vec2(0.163652, 0.700),
+    vec2(0.059012, 1.000)
+);
+const vec2 k13[7] = vec2[](
+    vec2(0.267885, 0.000),
+    vec2(0.251076, 0.180),
+    vec2(0.188247, 0.420),
+    vec2(0.124183, 0.620),
+    vec2(0.079341, 0.780),
+    vec2(0.053014, 0.900),
+    vec2(0.036254, 1.000)
+);
+const vec2 k17[9] = vec2[](
+    vec2(0.196454, 0.000),
+    vec2(0.190410, 0.125),
+    vec2(0.169802, 0.270),
+    vec2(0.138052, 0.420),
+    vec2(0.107279, 0.550),
+    vec2(0.077916, 0.680),
+    vec2(0.054622, 0.800),
+    vec2(0.038878, 0.900),
+    vec2(0.026587, 1.000)
+);
 
-void do_filter(inout vec3 color, inout float divisor, vec2 uv, vec2 step) {
-    for (int i = 1; i < KERNEL_SIZE; ++i) {
-        vec4 c = texture(src, uv + kernelDist[i] * step);
-        if (abs(c.a) < 0.001)
-            break; // mix no more
-        color += c.rgb * kernel[i];
-        divisor += kernel[i];
-    }
+// the engine's GL-convention depth (near = -1, far = 1, cleared to 1) -> linear view distance
+float linDist(float z) {
+    return (2.0 * params.zNear * params.zFar) / ((1.0 - z) * params.zFar + (1.0 + z) * params.zNear);
 }
 
-// per-channel: each color walks its own step (its own blur distance) and cuts on its own
-// sample's alpha; a zero-weight channel walks step 0 and returns its input unchanged
-void do_filter3(inout vec3 color, inout vec3 div, vec2 uv, vec2 stepR, vec2 stepG, vec2 stepB) {
-    for (int i = 1; i < KERNEL_SIZE; ++i) {
-        vec4 c = texture(src, uv + kernelDist[i] * stepR);
-        if (c.a >= 0.001) {
-            color.r += c.r * kernel[i];
-            div.r += kernel[i];
-        }
-        c = texture(src, uv + kernelDist[i] * stepG);
-        if (c.a >= 0.001) {
-            color.g += c.g * kernel[i];
-            div.g += kernel[i];
-        }
-        c = texture(src, uv + kernelDist[i] * stepB);
-        if (c.a >= 0.001) {
-            color.b += c.b * kernel[i];
-            div.b += kernel[i];
+// the blur strength fade: below 0.5 px it fades out (the curvature LUT takes over); above
+// 96 px (the cap) it fades to 0 by 256 px — a safety net: with the per-material scale and
+// the per-channel weights both in [0, 1], the radius is bounded at 96 px by construction
+float sssFade(float radiusPx) {
+    if (radiusPx < 0.5)
+        return radiusPx / 0.5;
+    if (radiusPx > 96.0)
+        return max(0.0, 1.0 - (radiusPx - 96.0) / 160.0);
+    return 1.0;
+}
+
+float px(vec4 c, int ch) {
+    return ch == 0 ? c.r : ch == 1 ? c.g : c.b;
+}
+
+// one channel's blur: its own radius (scale * wc), the shared profile, mip-prefiltered taps,
+// depth-aware rejection at its own world scale; returns the blurred value (the input when the
+// channel is inactive) and sets f to the fade for the recompose
+float blurCh(int ch, vec2 uv, vec2 scale, float wc, float maxW, float d, vec2 dir, float center, out float f) {
+    const vec2 step = scale * wc; // its own per-pixel radius (both axes)
+    const float radiusPx = max(step.x * params.screenSize.x, step.y * params.screenSize.y);
+    f = sssFade(radiusPx);
+    if (radiusPx <= 0.5 || f <= 0.0)
+        return center; // inactive: unchanged
+    vec2 st = step * dir * min(radiusPx, 96.0) / radiusPx; // cap the radius at 96 px
+    const float worldR = d * (96.0 / params.screenSize.x) * (wc / maxW); // its own rejection scale (tracks the radius)
+    const int n = radiusPx < 4.0 ? 4 : radiusPx < 12.0 ? 7 : 9; // variant entry counts
+    const vec2 kc = n == 4 ? k7[0] : n == 7 ? k13[0] : k17[0];
+    float color = center * kc.x;
+    float wsum = kc.x;
+    for (int i = 1; i < 9; ++i) {
+        if (i >= n)
+            break;
+        const vec2 k = n == 4 ? k7[i] : n == 7 ? k13[i] : k17[i];
+        const vec2 kp = n == 4 ? k7[i - 1] : n == 7 ? k13[i - 1] : k17[i - 1];
+        // mip prefilter: the tap's footprint matches its spacing (the first taps stay at LOD 0
+        // for the depth-rejection precision)
+        const float lod = i <= 1 ? 0.0 : max(0.0, log2((k.y - kp.y) * radiusPx) * 0.75);
+        for (int side = -1; side <= 1; side += 2) {
+            vec4 c = textureLod(src, uv + float(side) * k.y * st, lod);
+            if (c.a < 0.001)
+                continue; // masked tap: skip it (the wsum normalizes)
+            const float dTap = linDist(texture(depthTex, uv + float(side) * k.y * st).r);
+            const float kr = clamp(abs(dTap - d) / max(worldR, 1e-4) * params.depthReject, 0.0, 1.0);
+            color += mix(px(c, ch), center, kr) * k.x; // across a depth step: the center color
+            wsum += k.x;
         }
     }
+    return color / wsum;
 }
 
 void main() {
@@ -74,34 +132,34 @@ void main() {
     const vec3 w = texture(weightTex, uv).rgb;
     const float maxW = max(w.x, max(w.y, w.z));
     if (maxW > 0.0) {
-        // the engine's GL-convention depth (near = -1, far = 1, cleared to 1) -> linear view distance
         float z = texture(depthTex, uv).r;
-        if (z > -1.0) {
-            float d = (2.0 * params.zNear * params.zFar) / ((1.0 - z) * params.zFar + (1.0 + z) * params.zNear);
-            const float depthScale = params.unitSize / d;
-            const float scale = mix(params.scale, depthScale, params.depthScale);
+        vec3 f = vec3(1.0);
+        if (z < 1.0) {
+            const float d = linDist(z);
+            const float aspect = params.unitSizeV / params.unitSizeH; // (tanR-tanL)/(tanU-tanD): circular in px and world
+            // the per-material scale (in [0, 1], folded into wc) maps to a radius of 0..96 px
+            vec2 scr = (96.0 / params.screenSize.x) * vec2(1.0, aspect);
+            vec2 ds = vec2(params.unitSizeH, params.unitSizeV) / d; // world radius -> uv step, per axis
+            vec2 scale = mix(scr, ds, params.depthScale);
             vec2 dir = params.vertical ? vec2(0.0, 1.0) : vec2(1.0, 0.0);
-            const vec2 stepB0 = scale * dir / 3.0;
-            vec3 color = base.rgb * kernel[0];
-            vec3 div = vec3(kernel[0]);
-            if (w.x == w.y && w.y == w.z) { // uniform weight: one sample feeds all channels
-                vec2 step = stepB0 * w.x;
-                float divisor = div.x;
-                do_filter(color, divisor, uv, step);
-                do_filter(color, divisor, uv, -step);
-                div = vec3(divisor);
-            } else {
-                do_filter3(color, div, uv, stepB0 * w.x, stepB0 * w.y, stepB0 * w.z);
-                do_filter3(color, div, uv, -stepB0 * w.x, -stepB0 * w.y, -stepB0 * w.z);
-            }
-            base.rgb = vec3(color.r / div.r, color.g / div.g, color.b / div.b);
+            // grazing: a world-space radius covers many pixels along a glancing surface; shrink by slope
+            const vec2 go = dir / params.screenSize;
+            const float g = abs(linDist(texture(depthTex, uv + go).r) - linDist(texture(depthTex, uv - go).r)) * 0.5;
+            scale *= clamp(1.0 / (1.0 + g * 8.0), 0.25, 1.0);
+            float fR, fG, fB; // per-channel fade (each channel by its own radius)
+            base.r = blurCh(0, uv, scale, w.x, maxW, d, dir, base.r, fR);
+            base.g = blurCh(1, uv, scale, w.y, maxW, d, dir, base.g, fG);
+            base.b = blurCh(2, uv, scale, w.z, maxW, d, dir, base.b, fB);
+            f = vec3(fR, fG, fB);
         }
-        // z >= 1.0: background — keep the pass-0 result as-is
+        // z >= 1.0: background (weight is 0 there anyway) — keep the pass-0 result as-is
         if (params.vertical) {
-            // recompose: the sharp part (scene - original diffuse) + the blurred diffuse
+            // recompose: sharp + post*f*(blurred pre - original pre) — the pigment stays sharp,
+            // the light is blurred (f = the per-channel fade; 0 when a channel skipped the blur)
             vec4 sc = imageLoad(sceneImg, id);
             vec4 dif = imageLoad(diffImg, id);
-            base.rgb = sc.rgb - dif.rgb + base.rgb;
+            vec3 post = texture(postTex, uv).rgb;
+            base.rgb = sc.rgb + post * f * (base.rgb - dif.rgb);
             imageStore(sceneImg, id, base);
         } else {
             imageStore(dst, id, base);

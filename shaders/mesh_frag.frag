@@ -4,8 +4,9 @@ layout(location = 0) in vec3 vN;
 layout(location = 1) in vec2 vUv;
 layout(location = 2) in vec3 vWorldPos;
 layout(location = 0) out vec4 outColor;
-layout(location = 1) out vec4 outDiff; // the diffuse term (A = max ssssWeight): the SSS pass blurs only this
+layout(location = 1) out vec4 outDiff; // the pre-scatter half of the diffuse (A^p, A = max ssssWeight): the SSS pass blurs only this
 layout(location = 2) out vec4 outW; // the per-channel ssssWeight (R/G/B = blur distance per color channel)
+layout(location = 3) out vec4 outPost; // the post-scatter albedo half (A^(1-p)): re-applied by the SSS pass after the blur
 
 layout(binding = 3) uniform UBO {
     mat4 viewProj;
@@ -13,15 +14,13 @@ layout(binding = 3) uniform UBO {
     vec3 camPos;
     float envIntensity;
     float shadowTexels;
-    // no pad here: a std140 float array has 16-byte stride (it would shift frustum to 208);
-    // the vec4 below 16-aligns to 160 and leaves 148..160 unused, matching the C++ ViewUbo
     vec4 frustum; // tanL tanR tanU tanD (signed, supports the asymmetric VR frustums)
     float zNear;
     float zFar;
     vec2 screenSize;
     vec4 pad2;
 } ubo;
-layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; vec3 ssssWeight; float refraction; float ior; float normalScale; vec3 pad; }
+layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; vec3 ssssWeight; float refraction; float ior; float normalScale; float ssssScale; float ssssSplit; vec3 pad; }
     modelU;
 layout(binding = 6) uniform sampler2D albedoTex;
 layout(binding = 7) uniform sampler2D mrTex; // glTF metallicRoughness: G = roughness, B = metallic
@@ -219,11 +218,17 @@ void main() {
     a = sqrt(clamp(a * a + min(2.0 * variance, 0.18), 0.0, 1.0)); // normal-map variance widening
     vec3 F0 = mix(vec3(0.04), albedo, metal);
 
+    const float sssMax = max(modelU.ssssWeight.x, max(modelU.ssssWeight.y, modelU.ssssWeight.z));
+    // SSS: the albedo splits into a pre-scatter half (A^p — what the SSS pass blurs) and a
+    // post-scatter half (A^(1-p) — re-applied after the blur); p = 0 keeps the pigment fully
+    // sharp, p = 1 is the old full-blur behavior. Non-SSS: both halves are identity.
+    vec3 albSss = sssMax > 0.0 ? pow(albedo, vec3(modelU.ssssSplit)) : albedo;
+
     vec3 R = reflect(-V, Nv);
     vec3 irr = texture(envIrradiance, Nv).rgb;
     vec3 prefilt = textureLod(envPrefilter, R, rough * 4.0).rgb;
     vec3 specF = fSchlick(F0, NoV);
-    vec3 indirectDiffuse = irr * albedo * (1.0 - metal) * ubo.envIntensity / PI;
+    vec3 indirectDiffuse = irr * albSss * (1.0 - metal) * ubo.envIntensity / PI;
     vec3 indirectSpecular = prefilt * specF * ubo.envIntensity;
 
     // the diff/spec are accumulated separately: the glass scales the diffuse by (1 - refraction)
@@ -258,7 +263,7 @@ void main() {
         float norm = (a / aL) * (a / aL);
         vec3 spec = dGGX(NoH, aL) * vSmith(NoV, NoL, a) * F * norm;
         vec3 kd = (1.0 - F) * (1.0 - metal);
-        vec3 diff = kd * albedo / PI;
+        vec3 diff = kd * albSss / PI;
         float shadow = pcssShadow(Ngeo, L, dist, li, i);
         vec3 radiance = li.colorRadius.xyz * li.posIntensity.w / max(d2, 0.01);
         diffSum += radiance * NoL * diff * shadow;
@@ -272,8 +277,6 @@ void main() {
     // the hit is not clearly in front of the fragment; the refraction field (0..1) scales the
     // transmission energy; an off-screen or backwards ray falls back to the environment
     vec3 trans = vec3(0.0);
-    vec3 diffRaw = diffSum; // the SSS pass blurs this (the full diffuse, before the refraction
-                           // scaling) so a translucent surface scatters light and refracts at once
     float refAmount = modelU.refraction;
     if (refAmount > 0.0) {
         float refEnergy = refAmount;
@@ -329,12 +332,16 @@ void main() {
         }
     }
 
-    vec3 color = diffSum + specSum + trans;
+    // the pre-scatter half (glass-scaled, like the color) is what the SSS pass blurs; the post
+    // half is re-applied by the vertical pass: result = sharp + post * blur(pre) — the light is
+    // blurred, the pigment stays sharp
+    vec3 postHalf = sssMax > 0.0 ? pow(albedo, vec3(1.0 - modelU.ssssSplit)) : vec3(1.0);
+    vec3 color = diffSum * postHalf + specSum + trans;
     color += modelU.emissive * texture(emissiveTex, vUv).rgb; // unlit HDR emission, tonemapped with the rest
     // opaque pass: the alpha is the max ssssWeight side channel (the background clears to 0); the
     // transparent pass: the alpha is the blend factor (the glass self-composites over the scene)
-    const float sssMax = max(modelU.ssssWeight.x, max(modelU.ssssWeight.y, modelU.ssssWeight.z));
     outColor = vec4(color, passU.passId < 0.5 ? sssMax : alpha);
-    outDiff = passU.passId < 0.5 ? vec4(diffRaw, sssMax) : vec4(0.0);
-    outW = passU.passId < 0.5 ? vec4(modelU.ssssWeight, 1.0) : vec4(0.0);
+    outDiff = passU.passId < 0.5 ? vec4(diffSum, sssMax) : vec4(0.0);
+    outPost = passU.passId < 0.5 ? vec4(postHalf, 0.0) : vec4(0.0);
+    outW = passU.passId < 0.5 ? vec4(modelU.ssssWeight * modelU.ssssScale, 1.0) : vec4(0.0); // the per-material scale multiplies the per-channel weights
 }

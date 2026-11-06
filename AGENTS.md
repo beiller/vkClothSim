@@ -67,6 +67,7 @@ cmake --build build -j
 ./build/vksim --no-vr          # plain window (else OpenXR auto-detects)
 ./build/vksim --scene file.json
 DRI_PRIME=1 ./build/vksim      # force AMD iGPU (RADV) instead of the 4090
+./tests/run_tests.sh           # full suite: build + C++ unit binaries + headless scene tests (tex_check needs a display)
 ```
 
 ## Lua API docs (auto-generated)

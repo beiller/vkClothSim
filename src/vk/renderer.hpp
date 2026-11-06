@@ -131,7 +131,7 @@ private:
     void onGeometryDestroyed(entt::registry&, entt::entity e);
     void rebuildTonemapSet(VkApp& app);
     void releaseEnv();
-    void writeViewUbo(const CameraView& cv, float envIntensity, VkExtent2D ext);
+    void writeViewUbo(const CameraView& cv, float envIntensity, VkExtent2D ext, float sssCurvScale);
     void writeLights(const entt::registry& reg);
     void prepBuffers(entt::registry& reg);
     void renderSceneBuffers(VkCommandBuffer cmd, VkApp& app, const float bg[3], const CameraView& cv);
@@ -223,8 +223,8 @@ private:
 
     EnvPass m_sss;
     VkDescriptorSet m_sssSet[2] = {};
-    float m_sssScale = 0.05f;         // Godot subsurface_scattering_scale default
     float m_sssDepthScale = 0.01f;    // Godot subsurface_scattering_depth_scale default
+    float m_sssDepthReject = 2.0f;    // RenderSettings.sssDepthReject (set per frame)
     VkSampler m_sceneColorSampler = VK_NULL_HANDLE; // CLAMP + linear mip (roughness blur = rough * 8)
     VkSampler m_depthCopySampler = VK_NULL_HANDLE;
     VkImageView m_sssSceneView = VK_NULL_HANDLE;
@@ -233,6 +233,7 @@ private:
     VkImageView m_sssDepthCopyView = VK_NULL_HANDLE;
     VkImageView m_sssDiffuseView = VK_NULL_HANDLE;
     VkImageView m_sssWeightView = VK_NULL_HANDLE;
+    VkImageView m_sssPostView = VK_NULL_HANDLE;
     bool m_hasSss = false;
     bool m_hasGlass = false;
     bool m_hasTrans = false;
