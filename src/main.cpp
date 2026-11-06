@@ -49,6 +49,7 @@ int main(int argc, char** argv) {
     bool wantNoVr = false, noGraphics = false, headless = false;
     int maxFrames = -1;
     std::string scenePath;
+    bool scenesDirSet = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--no-vr") == 0)
             wantNoVr = true;
@@ -60,9 +61,15 @@ int main(int argc, char** argv) {
             maxFrames = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--scene") == 0)
             scenePath = argv[++i];
-        else if (std::strcmp(argv[i], "--scenes-dir") == 0)
+        else if (std::strcmp(argv[i], "--scenes-dir") == 0) {
             setScenesDir(argv[++i]);
+            scenesDirSet = true;
+        }
     }
+    // default scenes dir: cwd-relative, with the exe-relative fallback (like assetsRoot()) — an
+    // explicit --scenes-dir is left as-is so a bad flag stays visible
+    if (!scenesDirSet && !std::filesystem::exists("assets/scenes"))
+        setScenesDir(exeDir() + "/../assets/scenes");
     // --scene is a file path as-is, or a scene name (with or without .json) resolved against the scenes dir
     if (!scenePath.empty() && !std::filesystem::exists(scenePath)) {
         scenePath = scenesDir() + "/" + scenePath;
