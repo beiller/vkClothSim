@@ -95,7 +95,7 @@ int main(int argc, char** argv) {
     if (engine.hasWindow)
         app.initDevice(engine.xr ? engine.xr->device() : app.makeDevice());
     initEngine(engine);
-    engine.physics.setFixedStepHook([&engine](float sdt) { engine.script.physicsAll(sdt); });
+    engine.physics.setPhysicsHook([&engine](float sdt) { engine.script.physicsAll(sdt); });
     if (engine.xr) {
         engine.xrSession = engine.xr->init(app);
         if (engine.xrSession) {
@@ -244,7 +244,7 @@ int main(int argc, char** argv) {
             engine.graphics.simProf.reset();
         }
         frameJolt = engine.physics.takeJoltMs();
-        // uncapped (NO_VSYNC): pace the loop to the sim rate (pure render pacing; no-op under vsync)
+        // uncapped (NO_VSYNC): pace the loop to kFrameDt (pure render pacing; no-op under vsync)
         if (engine.hasWindow && uncapped && dt < kFrameDt)
             std::this_thread::sleep_for(std::chrono::duration<double>(kFrameDt - dt));
         const auto tSim = std::chrono::steady_clock::now();

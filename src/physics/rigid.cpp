@@ -23,8 +23,8 @@
 
 namespace {
 
-// max kinematic displacement per physics step (0.25 m = 15 m/s at 60 Hz)
-constexpr float kMaxKinematicStep = 0.25f;
+// max kinematic velocity: the per-frame displacement clamp is this * dt, so the cap holds at any frame rate
+constexpr float kMaxKinematicVel = 15.0f;
 
 // normalize at the Jolt boundary: Jolt asserts on non-unit quats (e.g. user-script values)
 JPH::Quat jQuat(Quat q) {
@@ -253,7 +253,7 @@ void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const Quat& qua
     const JPH::RVec3 p(pos.x, pos.y, pos.z);
     const auto kt = m_kinTarget.find(e);
     if (kt != m_kinTarget.end() && kt->second == p) {
-        if (JPH::Vec3(p - old).Length() <= kMaxKinematicStep) {
+        if (JPH::Vec3(p - old).Length() <= kMaxKinematicVel * dt) {
             bi.SetPositionAndRotation(id, p, jQuat(quat), JPH::EActivation::Activate);
             bi.SetLinearVelocity(id, JPH::Vec3::sZero());
             return;
@@ -265,8 +265,9 @@ void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const Quat& qua
     // kinematic body only teleports and the joint gap is never chased
     JPH::RVec3 delta = p - old;
     const float stepLen = JPH::Vec3(delta).Length();
-    if (stepLen > kMaxKinematicStep)
-        delta = delta / stepLen * kMaxKinematicStep;
+    const float maxStep = kMaxKinematicVel * dt;
+    if (stepLen > maxStep)
+        delta = delta / stepLen * maxStep;
     bi.SetPositionAndRotation(id, old + delta, jQuat(quat), JPH::EActivation::Activate);
     bi.SetLinearVelocity(id, delta / dt);
 }
@@ -609,7 +610,7 @@ void RigidScene::project(const entt::registry& reg) {
 }
 
 void RigidScene::step(entt::registry& reg, float dt) {
-    int vel = 10, pos = 10;
+    int vel = 500, pos = 500;
     for (auto [e, s] : reg.view<PhysicsSettings>().each()) {
         vel = s.velocitySteps;
         pos = s.positionSteps;

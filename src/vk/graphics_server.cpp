@@ -1,5 +1,6 @@
 #include "vk/graphics_server.hpp"
 
+#include <algorithm>
 #include <chrono>
 
 #include "vk/vkapp.hpp"
@@ -51,19 +52,14 @@ void GraphicsServer::updateSim(entt::registry& reg, float dt) {
     m_app->submit(skelCmd);
     simProf.skel += msBetween(tS, std::chrono::steady_clock::now());
 
-    m_softAcc += dt;
-    if (m_softAcc > 0.4f)
-        m_softAcc = 0.4f;
-    while (m_softAcc >= kSoftDt) {
-        const auto tC = std::chrono::steady_clock::now();
-        VkCommandBuffer softCmd = m_app->beginCommands();
-        m_soft.syncCapsules(reg);
-        m_soft.project(reg);
-        m_soft.record(softCmd, reg);
-        m_app->submit(softCmd);
-        simProf.soft += msBetween(tC, std::chrono::steady_clock::now());
-        m_softAcc -= kSoftDt;
-    }
+    // one soft step per frame at render rate; dt clamped so a stall can't produce a huge unstable cloth step
+    const auto tC = std::chrono::steady_clock::now();
+    VkCommandBuffer softCmd = m_app->beginCommands();
+    m_soft.syncCapsules(reg);
+    m_soft.project(reg);
+    m_soft.record(softCmd, reg, std::min(dt, kMaxPhysDt));
+    m_app->submit(softCmd);
+    simProf.soft += msBetween(tC, std::chrono::steady_clock::now());
 }
 
 void GraphicsServer::flushFrees() {

@@ -315,7 +315,7 @@ void Soft::flushFrees() {
     m_free.clear();
 }
 
-void Soft::record(VkCommandBuffer cmd, const entt::registry& reg) {
+void Soft::record(VkCommandBuffer cmd, const entt::registry& reg, float dt) {
     for (const GpuBody& b : m_body) {
         if (b.dead)
             continue;
@@ -324,7 +324,7 @@ void Soft::record(VkCommandBuffer cmd, const entt::registry& reg) {
             continue;
         PhysParams phys{};
         phys.nCaps = m_nCaps;
-        phys.dt = kSoftDt / (float)sb->steps; // one record spans kSoftDt (1/kSoftHz), split over sb->steps substeps
+        phys.dt = dt / (float)sb->steps; // one record spans the frame dt, split over sb->steps substeps
         phys.damping = std::pow(sb->damping, 1.0f / (float)sb->steps);
         phys.gravity = sim::kGravity * sb->mass;
         phys.friction = sb->friction;

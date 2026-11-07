@@ -4,13 +4,13 @@
 
 #include "physics/rigid.hpp"
 
-// CPU rigid-body server (Jolt). Owns the 120 Hz fixed-step accumulator; per internal
-// step: fixed-step hook (Lua _physics) -> project -> kinematic poses -> Jolt step -> pose writeback.
+// CPU rigid-body server (Jolt). One Jolt step per frame at render rate:
+// physics hook (Lua _physics) -> project -> kinematic poses -> Jolt step -> pose writeback.
 class PhysicsServer {
 public:
     RigidScene& scene() { return m_scene; }
     void init();
-    void setFixedStepHook(std::function<void(float)> fn) { m_hook = std::move(fn); }
+    void setPhysicsHook(std::function<void(float)> fn) { m_hook = std::move(fn); }
     void update(entt::registry& reg, float dt);
     RayHit raycast(const V3& origin, const V3& dir, float maxDist,
                    const std::vector<entt::entity>& excludes = {}) const;
@@ -27,6 +27,5 @@ public:
 private:
     RigidScene m_scene;
     std::function<void(float)> m_hook;
-    float m_acc = 0.0f;
     float m_joltMs = 0.0f;
 };

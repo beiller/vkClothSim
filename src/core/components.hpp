@@ -198,8 +198,8 @@ struct RenderSettings {
 };
 
 struct PhysicsSettings {
-    int velocitySteps = 10;
-    int positionSteps = 10;
+    int velocitySteps = 500;
+    int positionSteps = 500;
 };
 
 struct Camera {

@@ -274,8 +274,8 @@ static const FieldDesc kRenderSettings[] = {
 };
 /// PhysicsSettings | global physics solver steps (emplace on a marker entity): velocitySteps/positionSteps
 static const FieldDesc kPhysicsSettings[] = {
-    {"velocitySteps", OFF(PhysicsSettings, velocitySteps), FieldKind::SliderI, 1.0f, 64.0f},
-    {"positionSteps", OFF(PhysicsSettings, positionSteps), FieldKind::SliderI, 1.0f, 64.0f},
+    {"velocitySteps", OFF(PhysicsSettings, velocitySteps), FieldKind::SliderI, 1.0f, 512.0f},
+    {"positionSteps", OFF(PhysicsSettings, positionSteps), FieldKind::SliderI, 1.0f, 512.0f},
 };
 
 /// Bind | per-frame URL copy: source `url` -> `target` field (empty = widget value); `dir` 0=Both 1=Read 2=Write

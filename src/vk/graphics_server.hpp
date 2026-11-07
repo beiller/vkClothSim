@@ -16,7 +16,7 @@ static T readSetting(const entt::registry& reg, const T& def = {}) {
 }
 
 // GPU server: Vulkan renderer + GPU sim (soft PBD + DQ skinning) + canvas targets.
-// updateSim owns the 60 Hz soft accumulator and the sim command buffers/submits.
+// updateSim runs one skin + one soft step per frame at render rate, plus the sim command buffers/submits.
 class GraphicsServer {
 public:
     struct SimProfMs {
@@ -78,5 +78,4 @@ private:
     bool m_rendererOn = false;
     std::unordered_map<entt::entity, int> m_fbGeom;
     std::vector<FallbackGeom> m_fbGeoms;
-    float m_softAcc = 0.0f;
 };

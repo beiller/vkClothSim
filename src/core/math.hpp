@@ -6,11 +6,9 @@
 #include <numbers>
 
 inline constexpr float kPi = std::numbers::pi_v<float>;
-inline constexpr float kRigidHz = 120.0f; // Jolt (rigid) physics rate
-inline constexpr float kSoftHz = 60.0f;  // cloth (soft) sim rate
+inline constexpr float kRigidHz = 120.0f; // headless sim + uncapped render pacing rate
 inline constexpr float kFrameDt = 1.0f / kRigidHz;
-inline constexpr int kSoftSubdiv = (int)(kRigidHz / kSoftHz); // rigid steps per cloth step
-inline constexpr float kSoftDt = 1.0f / kSoftHz;
+inline constexpr float kMaxPhysDt = 1.0f / 30.0f; // max step: stall guard for per-frame physics/cloth
 
 using V2 = glm::vec2;
 using V3 = glm::vec3;

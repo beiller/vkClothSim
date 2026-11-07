@@ -28,7 +28,7 @@ public:
     void build();
     void reset();
     void shutdown();
-    void record(VkCommandBuffer cmd, const entt::registry& reg);
+    void record(VkCommandBuffer cmd, const entt::registry& reg, float dt);
     void watch(entt::registry& reg);
     void flushFrees();
 

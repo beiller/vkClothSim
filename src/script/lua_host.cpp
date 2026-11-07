@@ -69,6 +69,18 @@ bool safeIncludePath(const std::string& p, std::string& err) {
     }
 }
 
+// require: route through the engine's module loader (scenesDir + assets/scenes resolution, m_modules cache)
+int luaRequire(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    auto* self = (SceneScript*)lua_touserdata(L, lua_upvalueindex(1));
+    std::string err;
+    const int ref = self->includeModule(name, err);
+    if (ref < 0)
+        return luaL_error(L, "require '%s': %s", name, err.c_str());
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    return 1;
+}
+
 }
 
 SceneScript* SceneScript::sSelf(lua_State* L) {
@@ -80,10 +92,13 @@ void SceneScript::init(Engine& w) {
     L = luaL_newstate();
     lua_atpanic(L, scenePanic);
     luaL_openlibs(L);
-    for (const char* lib : {"io", "os", "debug", "package"}) {
-        lua_pushnil(L);
-        lua_setglobal(L, lib);
-    }
+    // for (const char* lib : {"io", "os", "debug", "package"}) {
+    //     lua_pushnil(L);
+    //     lua_setglobal(L, lib);
+    // }
+    lua_pushlightuserdata(L, this);
+    lua_pushcclosure(L, luaRequire, 1);
+    lua_setglobal(L, "require");
     lua_newtable(L);
     luaRegisterComponents(L, this);
     luaRegisterScene(L, this);
@@ -415,7 +430,7 @@ void SceneScript::onScriptDestroy(entt::registry& reg, entt::entity e) {
 /// script-instance | per-attach instance table passed as self to every hook; fields: entity (the attached entity), params (the table passed to scene.attach_script, when given); its __index metatable is the module, so module functions act as methods and inst fields hold per-instance state
 /// script-hook _on_ready(inst) | called once when the attached module has loaded
 /// script-hook _animate(inst, dt) | called every frame with the frame delta time in seconds
-/// script-hook _physics(inst, dt) | called every fixed physics step (120 Hz) before the Jolt step; the place to write kinematic poses
+/// script-hook _physics(inst, dt) | called once per frame (render rate) before the Jolt step, with the frame dt; the place to write kinematic poses
 void SceneScript::activateScripts() {
     if (!L)
         return;
