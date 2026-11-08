@@ -102,7 +102,6 @@ private:
     std::unordered_map<entt::entity, int> m_jointIdx;
     std::unordered_map<entt::entity, JPH::BodyID> m_body;
     std::unordered_map<entt::entity, JPH::ShapeRefC> m_shape;
-    std::unordered_map<entt::entity, JPH::RVec3> m_kinTarget;
     std::unordered_map<entt::entity, Applied> m_applied;
     std::unordered_set<entt::entity> m_forceSleep;
     JPH::Ref<ExcludeFilter> m_excludeFilter;

@@ -82,7 +82,6 @@ void RigidScene::reset() {
         m_phys->GetBodyInterface().RemoveBody(id);
     m_body.clear();
     m_shape.clear();
-    m_kinTarget.clear();
     m_applied.clear();
     m_forceSleep.clear();
     m_excludes.clear();
@@ -154,7 +153,6 @@ void RigidScene::removeBody(entt::entity e) {
         return;
     const JPH::BodyID id = it->second;
     m_body.erase(it);
-    m_kinTarget.erase(e);
     m_applied.erase(e);
     m_forceSleep.erase(e);
     m_phys->GetBodyInterface().RemoveBody(id);
@@ -251,25 +249,14 @@ void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const Quat& qua
     const JPH::BodyID id = it->second;
     const JPH::RVec3 old = bi.GetPosition(id);
     const JPH::RVec3 p(pos.x, pos.y, pos.z);
-    const auto kt = m_kinTarget.find(e);
-    if (kt != m_kinTarget.end() && kt->second == p) {
-        if (JPH::Vec3(p - old).Length() <= kMaxKinematicVel * dt) {
-            bi.SetPositionAndRotation(id, p, jQuat(quat), JPH::EActivation::Activate);
-            bi.SetLinearVelocity(id, JPH::Vec3::sZero());
-            return;
-        }
-    } else {
-        m_kinTarget[e] = p;
-    }
-    // velocity is what the constraint solver matches against; without it a
-    // kinematic body only teleports and the joint gap is never chased
+    // MoveKinematic sets velocity only (Jolt integrates and lands on target at step end);
+    // setting position too would move the body twice. Clamp to max travel per step.
     JPH::RVec3 delta = p - old;
     const float stepLen = JPH::Vec3(delta).Length();
     const float maxStep = kMaxKinematicVel * dt;
     if (stepLen > maxStep)
         delta = delta / stepLen * maxStep;
-    bi.SetPositionAndRotation(id, old + delta, jQuat(quat), JPH::EActivation::Activate);
-    bi.SetLinearVelocity(id, delta / dt);
+    bi.MoveKinematic(id, old + delta, jQuat(quat), dt);
 }
 
 bool RigidScene::makeJoint(entt::entity e, const Joint& j) {

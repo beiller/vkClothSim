@@ -191,6 +191,7 @@ local function grab()
             scene.replace(j, "SixDofJoint", {
                 bodyA = handAnchor, bodyB = hit.entity, grabPos = hit.pos,
                 relQuat = math.qmul(math.qinv(bq), aq),
+                excludeCollision = true, -- the anchor capsule overlaps the grabbed face; without this its contact fights the weld
                 limOn = 1,
                 limTransMin = { 0, 0, 0 }, limTransMax = { 0, 0, 0 },
                 limAngMin = { 0, 0, 0 }, limAngMax = { 0, 0, 0 } })
