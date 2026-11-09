@@ -277,8 +277,13 @@ bool RigidScene::makeJoint(entt::entity e, const Joint& j) {
     JPH::PointConstraintSettings cs;
     const JPH::RVec3 grab(j.grabPos.x, j.grabPos.y, j.grabPos.z);
     cs.mSpace = JPH::EConstraintSpace::LocalToBodyCOM;
-    cs.mPoint1 = bodyA->GetRotation().InverseRotate(grab - bodyA->GetPosition());
-    cs.mPoint2 = bodyB->GetRotation().InverseRotate(grab - bodyB->GetPosition());
+    // LocalToBodyCOM is relative to the center of mass, not the shape origin (GetPosition());
+    // baking from the origin leaves compound shapes with an off-origin centroid born-violated,
+    // so the solver pulls the body by the COM offset at creation
+    const JPH::RVec3 comA = bodyA->GetPosition() + bodyA->GetRotation() * bodyA->GetShape()->GetCenterOfMass();
+    const JPH::RVec3 comB = bodyB->GetPosition() + bodyB->GetRotation() * bodyB->GetShape()->GetCenterOfMass();
+    cs.mPoint1 = bodyA->GetRotation().InverseRotate(grab - comA);
+    cs.mPoint2 = bodyB->GetRotation().InverseRotate(grab - comB);
     JPH::TwoBodyConstraint* constraint = cs.Create(*bodyA, *bodyB);
     m_phys->AddConstraint(constraint);
     m_joints.push_back({e, constraint, true, j.bodyA, j.bodyB, j.excludeCollision});
@@ -307,8 +312,13 @@ bool RigidScene::makeSixDofJoint(entt::entity e, const SixDofJoint& j) {
         cs.mPosition1 = grab;
         cs.mPosition2 = grab;
     } else {
-        cs.mPosition1 = bodyA->GetRotation().InverseRotate(grab - bodyA->GetPosition());
-        cs.mPosition2 = bodyB->GetRotation().InverseRotate(grab - bodyB->GetPosition());
+        // LocalToBodyCOM is relative to the center of mass, not the shape origin (GetPosition());
+        // baking from the origin leaves compound shapes with an off-origin centroid born-violated,
+        // so the solver pulls the body by the COM offset at creation
+        const JPH::RVec3 comA = bodyA->GetPosition() + bodyA->GetRotation() * bodyA->GetShape()->GetCenterOfMass();
+        const JPH::RVec3 comB = bodyB->GetPosition() + bodyB->GetRotation() * bodyB->GetShape()->GetCenterOfMass();
+        cs.mPosition1 = bodyA->GetRotation().InverseRotate(grab - comA);
+        cs.mPosition2 = bodyB->GetRotation().InverseRotate(grab - comB);
     }
     cs.mAxisX2 = rel * JPH::Vec3::sAxisX();
     cs.mAxisY2 = rel * JPH::Vec3::sAxisY();

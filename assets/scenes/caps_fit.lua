@@ -371,9 +371,9 @@ function M._on_ready(self)
                              cap.origin[2] - f.com[2] + cap.axis[2] * (s[1] + s[2]) * 0.5,
                              cap.origin[3] - f.com[3] + cap.axis[3] * (s[1] + s[2]) * 0.5 }
                 -- visual segment; follows the falling bone
-                local e = scene.entity(f.name .. "_" .. c .. "_" .. i)
-                scene.replace(e, "Transform", { pos = off, quat = q })
-                scene.replace(e, "Parent", { e = bone })
+                -- local e = scene.entity(f.name .. "_" .. c .. "_" .. i)
+                -- scene.replace(e, "Transform", { pos = off, quat = q })
+                -- scene.replace(e, "Parent", { e = bone })
                 -- scene.replace(e, "Renderable", { geom = geom(mesh.taperedCapsule({
                 --    halfHeight = (s[2] - s[1]) * 0.5, bottomRadius = s[3], topRadius = s[4] })) })
                 -- scene.replace(e, "MaterialRef", { material = mat })
@@ -384,17 +384,15 @@ function M._on_ready(self)
                 local col = scene.entity()
                 scene.replace(col, "Transform", { pos = off, quat = q })
                 scene.replace(col, "Collider", { shape = shape })
-
-                -- reparent the bone
-                --scene.replace(scene.get_entity("basegen8/" .. f.name), "Parent", { e =  })
-                local parent = e
-                local child = scene.get_entity("hashimoto/" .. f.name)
-                print(f.name)
-                scene.add_child(parent, child, { keepWorld = true })
                 cols[#cols + 1] = col
             end
         end
         scene.replace(bone, "RigidBody", { colliders = cols, forceSleep = false })
+        -- reparent the bone the rigid body
+        local parent = bone
+        local child = scene.get_entity("hashimoto/" .. f.name)
+        print(f.name)
+        scene.add_child(parent, child, { keepWorld = true })
     end
     -- perfectly stiff 6DOF weld: each shaped bone is joined to its shaped parent at the
     -- bone's joint world position (kJoints); zero limits hold the rest-pose relative pose
@@ -436,7 +434,7 @@ function M._on_ready(self)
 end
 
 function M._physics(self, dt)
-  print(dt)
+  --print(dt)
 end
 
 return M
