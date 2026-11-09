@@ -131,6 +131,7 @@ struct SixDofJoint {
     V3 grabPos{};
     bool worldSpace = false; // anchor + frames in world space (default: baked body-local)
     Quat relQuat{1, 0, 0, 0}; // bodyB frame orientation relative to bodyA (identity = coincident)
+    Quat axisQuat{1, 0, 0, 0}; // world orientation of the limit frame at creation; identity = bodyA's axes
     // limits, relative to the creation pose (0 = body A at the anchor, in its +axis direction).
     // limOn = false -> all axes free; min > max on an axis fixes it at 0.
     bool limOn = false;

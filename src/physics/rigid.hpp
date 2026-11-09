@@ -41,6 +41,7 @@ public:
     entt::entity entityFor(JPH::BodyID id) const;
     const JPH::Shape* shape(const entt::registry& reg, entt::entity e);
     void watch(entt::registry& reg);
+    void setExcludes(entt::entity a, entt::entity b, bool on);
 
 private:
     struct Applied {
@@ -76,6 +77,7 @@ private:
         entt::entity a = entt::null;
         entt::entity b = entt::null;
         bool exclude = false;
+        SixDofJoint applied; // last-applied component (sixdof joints only); drives live sync/rebuild
     };
     // GroupFilter can't see bodies, so the entity id is smuggled through the group id
     struct ExcludeFilter final : public JPH::GroupFilter {
@@ -87,9 +89,9 @@ private:
         }
     };
     bool excludes(entt::entity a, entt::entity b) const;
-    void setExcludes(entt::entity a, entt::entity b, bool on);
     void syncExcludes(entt::entity e);
     void syncJointExclusion(JointEntry& en, bool on);
+    void syncSixDof(JointEntry& en, const SixDofJoint& j);
 
     JPH::PhysicsSettings m_settings;
     JPH::PhysicsSystem* m_phys = nullptr;

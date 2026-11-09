@@ -301,6 +301,19 @@ int lConvexDecompose(lua_State* L) {
     return 1;
 }
 
+/// physics.collision_exception(a: entity, b: entity, on?: bool) | toggle the collision exclusion between two bodies:
+/// on = true (default) = ignore collisions between them, false = restore; effective from the next physics step
+int lCollisionException(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    const entt::entity a = luaReadEnt(L, 1);
+    const entt::entity b = luaReadEnt(L, 2);
+    bool on = true;
+    if (!lua_isnoneornil(L, 3))
+        on = lua_toboolean(L, 3);
+    w.physics.scene().setExcludes(a, b, on);
+    return 0;
+}
+
 }
 
 void luaRegisterScene(lua_State* L, SceneScript* host) {
@@ -326,4 +339,5 @@ void luaRegisterSoftTable(lua_State* L, SceneScript* host) {
 void luaRegisterPhysicsTable(lua_State* L, SceneScript* host) {
     reg(L, host, "raycast", lRaycast);
     reg(L, host, "convex_decompose", lConvexDecompose);
+    reg(L, host, "collision_exception", lCollisionException);
 }

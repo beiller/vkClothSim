@@ -183,6 +183,7 @@ static const FieldDesc kSixDofJoint[] = {
     {"grabPos", OFF(SixDofJoint, grabPos), FieldKind::DragV3},
     {"worldSpace", OFF(SixDofJoint, worldSpace), FieldKind::Checkbox},
     {"relQuat", OFF(SixDofJoint, relQuat), FieldKind::Quat},
+    {"axisQuat", OFF(SixDofJoint, axisQuat), FieldKind::Quat},
     {"limOn", OFF(SixDofJoint, limOn), FieldKind::Checkbox},
     {"limTransMin", OFF(SixDofJoint, limTransMin), FieldKind::DragV3},
     {"limTransMax", OFF(SixDofJoint, limTransMax), FieldKind::DragV3},

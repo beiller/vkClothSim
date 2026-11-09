@@ -17,6 +17,7 @@
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <cstdio>
 #include <cstring>
 #include <thread>
@@ -286,6 +287,10 @@ bool RigidScene::makeJoint(entt::entity e, const Joint& j) {
     cs.mPoint2 = bodyB->GetRotation().InverseRotate(grab - comB);
     JPH::TwoBodyConstraint* constraint = cs.Create(*bodyA, *bodyB);
     m_phys->AddConstraint(constraint);
+    // joints are baked from the current pose (satisfied), so activate now:
+    // waiting for motion lets the first frame drift free, then the weld snaps back
+    if (constraint->GetEnabled())
+        m_phys->GetBodyInterface().ActivateConstraint(constraint);
     m_joints.push_back({e, constraint, true, j.bodyA, j.bodyB, j.excludeCollision});
     if (j.excludeCollision)
         setExcludes(j.bodyA, j.bodyB, true);
@@ -320,8 +325,25 @@ bool RigidScene::makeSixDofJoint(entt::entity e, const SixDofJoint& j) {
         cs.mPosition1 = bodyA->GetRotation().InverseRotate(grab - comA);
         cs.mPosition2 = bodyB->GetRotation().InverseRotate(grab - comB);
     }
-    cs.mAxisX2 = rel * JPH::Vec3::sAxisX();
-    cs.mAxisY2 = rel * JPH::Vec3::sAxisY();
+    const JPH::Quat axis = jQuat(j.axisQuat);
+    if (j.axisQuat.x != 0.0f || j.axisQuat.y != 0.0f || j.axisQuat.z != 0.0f) {
+        // custom limit frame: both bodies share the axisQuat world orientation at creation,
+        // so limits are measured in that frame (it follows body A as it moves)
+        if (j.worldSpace) {
+            cs.mAxisX1 = axis * JPH::Vec3::sAxisX();
+            cs.mAxisY1 = axis * JPH::Vec3::sAxisY();
+            cs.mAxisX2 = axis * JPH::Vec3::sAxisX();
+            cs.mAxisY2 = axis * JPH::Vec3::sAxisY();
+        } else {
+            cs.mAxisX1 = bodyA->GetRotation().InverseRotate(axis * JPH::Vec3::sAxisX());
+            cs.mAxisY1 = bodyA->GetRotation().InverseRotate(axis * JPH::Vec3::sAxisY());
+            cs.mAxisX2 = bodyB->GetRotation().InverseRotate(axis * JPH::Vec3::sAxisX());
+            cs.mAxisY2 = bodyB->GetRotation().InverseRotate(axis * JPH::Vec3::sAxisY());
+        }
+    } else {
+        cs.mAxisX2 = rel * JPH::Vec3::sAxisX();
+        cs.mAxisY2 = rel * JPH::Vec3::sAxisY();
+    }
     cs.mSwingType = j.pyramid ? JPH::ESwingType::Pyramid : JPH::ESwingType::Cone;
     cs.mConstraintPriority = (unsigned)j.priority;
     cs.mNumVelocityStepsOverride = (unsigned)j.velSteps;
@@ -377,10 +399,107 @@ bool RigidScene::makeSixDofJoint(entt::entity e, const SixDofJoint& j) {
     six->SetTargetOrientationCS(JPH::Quat(j.motorTargetQuat.x, j.motorTargetQuat.y, j.motorTargetQuat.z,
                                         j.motorTargetQuat.w).Conjugated());
     m_phys->AddConstraint(constraint);
+    if (constraint->GetEnabled())
+        m_phys->GetBodyInterface().ActivateConstraint(constraint);
     m_joints.push_back({e, constraint, true, j.bodyA, j.bodyB, j.excludeCollision});
+    m_joints.back().applied = j;
     if (j.excludeCollision)
         setExcludes(j.bodyA, j.bodyB, true);
     return true;
+}
+
+static bool sixDofStructuralDiffers(const SixDofJoint& a, const SixDofJoint& b) {
+    return a.bodyA != b.bodyA || a.bodyB != b.bodyB || a.worldSpace != b.worldSpace ||
+           a.grabPos != b.grabPos || a.relQuat != b.relQuat || a.axisQuat != b.axisQuat ||
+           a.pyramid != b.pyramid;
+}
+
+static bool sixDofDiffers(const SixDofJoint& a, const SixDofJoint& b) {
+    if (sixDofStructuralDiffers(a, b))
+        return true;
+    return a.limOn != b.limOn || a.limTransMin != b.limTransMin || a.limTransMax != b.limTransMax ||
+           a.limAngMin != b.limAngMin || a.limAngMax != b.limAngMax ||
+           a.softTransFreq != b.softTransFreq || a.softTransDamp != b.softTransDamp ||
+           a.frictionTrans != b.frictionTrans || a.frictionAng != b.frictionAng ||
+           a.motorState != b.motorState || a.motorMode != b.motorMode ||
+           a.motorFreq != b.motorFreq || a.motorDamp != b.motorDamp ||
+           a.motorForceMin != b.motorForceMin || a.motorForceMax != b.motorForceMax ||
+           a.motorTorqueMin != b.motorTorqueMin || a.motorTorqueMax != b.motorTorqueMax ||
+           a.motorTargetPos != b.motorTargetPos || a.motorTargetVel != b.motorTargetVel ||
+           a.motorTargetAngVel != b.motorTargetAngVel || a.motorTargetQuat != b.motorTargetQuat ||
+           a.priority != b.priority || a.velSteps != b.velSteps || a.posSteps != b.posSteps ||
+           a.enabled != b.enabled;
+}
+
+void RigidScene::syncSixDof(JointEntry& en, const SixDofJoint& j) {
+    if (!en.alive)
+        return;
+    auto* six = static_cast<JPH::SixDOFConstraint*>(en.constraint.GetPtr());
+    using Axis = JPH::SixDOFConstraintSettings::EAxis;
+    // Jolt measures translation along (pos2 - pos1), so negate to express body A's motion
+    if (j.limOn) {
+        six->SetTranslationLimits(JPH::Vec3(-j.limTransMax.x, -j.limTransMax.y, -j.limTransMax.z),
+                                 JPH::Vec3(-j.limTransMin.x, -j.limTransMin.y, -j.limTransMin.z));
+        six->SetRotationLimits(JPH::Vec3(j.limAngMin.x, j.limAngMin.y, j.limAngMin.z),
+                             JPH::Vec3(j.limAngMax.x, j.limAngMax.y, j.limAngMax.z));
+    } else {
+        const float inf = FLT_MAX;
+        six->SetTranslationLimits(JPH::Vec3(-inf, -inf, -inf), JPH::Vec3(inf, inf, inf));
+        six->SetRotationLimits(JPH::Vec3(-inf, -inf, -inf), JPH::Vec3(inf, inf, inf));
+    }
+    const float sf[3] = {j.softTransFreq.x, j.softTransFreq.y, j.softTransFreq.z};
+    const float sd[3] = {j.softTransDamp.x, j.softTransDamp.y, j.softTransDamp.z};
+    for (int i = 0; i < 3; ++i)
+        six->SetLimitsSpringSettings(Axis(i), JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping, sf[i], sd[i]));
+    const float ft[3] = {j.frictionTrans.x, j.frictionTrans.y, j.frictionTrans.z};
+    const float fa[3] = {j.frictionAng.x, j.frictionAng.y, j.frictionAng.z};
+    for (int i = 0; i < 3; ++i) {
+        six->SetMaxFriction(Axis(i), ft[i]);
+        six->SetMaxFriction(Axis(i + 3), fa[i]);
+    }
+    const auto mv = [](const std::vector<float>& v, int i, float def) {
+        return i < (int)v.size() ? v[i] : def;
+    };
+    const float mf[3] = {j.motorFreq.x, j.motorFreq.y, j.motorFreq.z};
+    const float md[3] = {j.motorDamp.x, j.motorDamp.y, j.motorDamp.z};
+    const float fmin[3] = {j.motorForceMin.x, j.motorForceMin.y, j.motorForceMin.z};
+    const float fmax[3] = {j.motorForceMax.x, j.motorForceMax.y, j.motorForceMax.z};
+    const float tmin[3] = {j.motorTorqueMin.x, j.motorTorqueMin.y, j.motorTorqueMin.z};
+    const float tmax[3] = {j.motorTorqueMax.x, j.motorTorqueMax.y, j.motorTorqueMax.z};
+    for (int i = 0; i < 6; ++i) {
+        six->SetMotorState(Axis(i), JPH::EMotorState((int)mv(j.motorState, i, 0.f)));
+        if (mv(j.motorState, i, 0.f) <= 0.f)
+            continue;
+        JPH::MotorSettings& ms = six->GetMotorSettings(Axis(i));
+        ms.mSpringSettings = JPH::SpringSettings((JPH::ESpringMode)(int)mv(j.motorMode, i, 0.f), mf[i % 3], md[i % 3]);
+        if (i < 3) {
+            if (fmin[i] == 0.f && fmax[i] == 0.f)
+                ms.SetForceLimits(-FLT_MAX, FLT_MAX);
+            else
+                ms.SetForceLimits(fmin[i], fmax[i]);
+        } else {
+            if (tmin[i - 3] == 0.f && tmax[i - 3] == 0.f)
+                ms.SetTorqueLimits(-FLT_MAX, FLT_MAX);
+            else
+                ms.SetTorqueLimits(tmin[i - 3], tmax[i - 3]);
+        }
+    }
+    // targets are in Jolt's (pos2 - pos1) space, negate to express body A's motion;
+    // orientation target is the relative frame rotation, so conjugate
+    six->SetTargetPositionCS(JPH::Vec3(-j.motorTargetPos.x, -j.motorTargetPos.y, -j.motorTargetPos.z));
+    six->SetTargetVelocityCS(JPH::Vec3(-j.motorTargetVel.x, -j.motorTargetVel.y, -j.motorTargetVel.z));
+    six->SetTargetAngularVelocityCS(JPH::Vec3(-j.motorTargetAngVel.x, -j.motorTargetAngVel.y, -j.motorTargetAngVel.z));
+    six->SetTargetOrientationCS(JPH::Quat(j.motorTargetQuat.x, j.motorTargetQuat.y, j.motorTargetQuat.z,
+                                        j.motorTargetQuat.w).Conjugated());
+    six->SetConstraintPriority((unsigned)j.priority);
+    six->SetNumVelocityStepsOverride((unsigned)j.velSteps);
+    six->SetNumPositionStepsOverride((unsigned)j.posSteps);
+    // forceSleep owns the enabled flag while it holds a body; don't fight it
+    if (m_forceSleep.count(en.a) == 0 && m_forceSleep.count(en.b) == 0)
+        six->SetEnabled(j.enabled);
+    // param changes don't wake sleeping bodies; re-activate so live tuning takes effect now
+    m_phys->GetBodyInterface().ActivateConstraint(six);
+    en.applied = j;
 }
 
 void RigidScene::releaseJoint(int idx) {
@@ -597,7 +716,18 @@ void RigidScene::project(const entt::registry& reg) {
     for (auto [e, j] : reg.view<SixDofJoint>().each()) {
         const auto it = m_jointIdx.find(e);
         if (it != m_jointIdx.end()) {
-            syncJointExclusion(m_joints[it->second], j.excludeCollision);
+            JointEntry& en = m_joints[it->second];
+            syncJointExclusion(en, j.excludeCollision);
+            if (sixDofStructuralDiffers(en.applied, j)) {
+                // frame-baked fields changed: rebuild the constraint (velocity lives on the bodies)
+                releaseJoint(it->second);
+                if (!makeSixDofJoint(e, j))
+                    continue;
+                setExcludes(j.bodyA, j.bodyB, j.excludeCollision); // makeSixDofJoint only ever adds excludes
+                m_jointIdx[e] = (int)m_joints.size() - 1;
+            } else if (sixDofDiffers(en.applied, j)) {
+                syncSixDof(en, j);
+            }
             continue;
         }
         if (!makeSixDofJoint(e, j))

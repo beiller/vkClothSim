@@ -3,10 +3,44 @@ json = require "json"
 
 local M = {}
 
+
+M.vars = { 
+    kToneFreq = 3.0, -- Hz; springback speed (higher = stiffer)
+    kToneDamp = 25.0,        -- damping ratio; 1 = critical (no oscillation)
+    kGripTorque = 1.0,  -- N m max friction torque per rotation axis
+    kBodyDamping = 0.05,
+    kBodyFriction = 10.0,
+}
+
+local joints = {}
+
+
 local function geom(t)
     local g = scene.entity()
     scene.replace(g, "Geometry", t)
     return g
+end
+
+-- Daz Genesis 8 per-bone rotation limits (degrees -> radians); missing file = joints stay fully stiff
+local RAD = math.pi / 180
+local function loadLimits()
+    for _, p in ipairs({ "assets/local/genesis8_bone_limits.json", "local/genesis8_bone_limits.json" }) do
+        local f = io.open(p)
+        if f then
+            local data = json.decode(f:read("*a"))
+            f:close()
+            local out = {}
+            for name, ax in pairs(data) do
+                -- Daz is left-handed: positive angles run opposite to the scene's right-handed axes, so flip all three
+                out[name] = { x = { -ax.x[2] * RAD, -ax.x[1] * RAD },
+                             y = { -ax.y[2] * RAD, -ax.y[1] * RAD },
+                             z = { -ax.z[2] * RAD, -ax.z[1] * RAD } }
+            end
+            return out
+        end
+    end
+    print("caps_fit: genesis8_bone_limits.json not found, joints stay fully stiff")
+    return {}
 end
 
 -- BEGIN GENERATED (solvers/update_caps_fit.sh) -- do not hand-edit
@@ -354,7 +388,11 @@ function M._on_ready(self)
     scene.replace(gCol, "Collider", { shape = gShape })
     scene.replace(ground, "KinematicBody", { colliders = { gCol } })
     local mat = scene.get_entity("mat_caps")
-    local n, nj = 0, 0
+    local n, nj, nlim = 0, 0, 0
+    local kLimits = loadLimits()
+    -- "alive at rest": static friction holds the pose, a small zero-target position motor
+    -- springs joints back to rest (muscle tone), linear damping settles the sway
+
     local boneEnt = {}
     for _, f in ipairs(kFits) do
         -- one RigidBody per bone; its collision is the compound of the bone's tapered capsule segments
@@ -387,7 +425,7 @@ function M._on_ready(self)
                 cols[#cols + 1] = col
             end
         end
-        scene.replace(bone, "RigidBody", { colliders = cols, forceSleep = false })
+        scene.replace(bone, "RigidBody", { colliders = cols, forceSleep = false, damping = self.vars.kBodyDamping, friction = self.vars.kBodyFriction })
         -- reparent the bone the rigid body
         local parent = bone
         local child = scene.get_entity("hashimoto/" .. f.name)
@@ -404,37 +442,118 @@ function M._on_ready(self)
         local j = jointBy[name]
         local parent = j and boneEnt[j.parent]
         if j and parent then
+            local bq = scene.world_pose(bone).quat
+            local pq = scene.world_pose(parent).quat
+            local relQuat = math.qmul(math.qinv(pq), bq)
+            local lim = kLimits[j.name]
+            if lim then
+                nlim = nlim + 1
+            end
             local w = scene.entity()
             scene.replace(w, "SixDofJoint", {
                 bodyA = bone,
                 bodyB = parent,
+                relQuat = relQuat,
+                axisQuat = j.quat,
                 grabPos = j.pos,
                 excludeCollision = 1,
                 limOn = 1,
+                pyramid = 1,
                 limTransMin = { 0, 0, 0 }, limTransMax = { 0, 0, 0 },
-                limAngMin = { 0, 0, 0 }, limAngMax = { 0, 0, 0 } })
+                limAngMin = lim and { lim.x[1], lim.y[1], lim.z[1] } or { 0, 0, 0 },
+                limAngMax = lim and { lim.x[2], lim.y[2], lim.z[2] } or { 0, 0, 0 },
+                motorState = { 0, 0, 0, 2, 2, 2 }, -- position motor on the rotation axes only
+                motorFreq = { self.vars.kToneFreq, self.vars.kToneFreq, self.vars.kToneFreq },
+                motorDamp = { self.vars.kToneDamp, self.vars.kToneDamp, self.vars.kToneDamp },
+                frictionAng = { self.vars.kGripTorque, self.vars.kGripTorque, self.vars.kGripTorque } })
+            joints[#joints + 1] = w
             nj = nj + 1
+            -- joint debug axis: parented to bone at the joint point, showing the LIMIT frame
+            -- (axisQuat = j.quat at creation; the frame follows body A as it moves)
+            -- local bp = scene.world_pose(bone).pos
+            -- local ax = mesh.createAxis({ len = 0.15 })
+            -- scene.replace(ax, "Transform", { pos = math.qrot(math.qinv(bq), { j.pos[1] - bp[1], j.pos[2] - bp[2], j.pos[3] - bp[3] }),
+            --                                quat = math.qmul(math.qinv(bq), j.quat) })
+            -- scene.replace(ax, "Parent", { e = bone })
         end
     end
 
     local w = scene.entity()
+    local bq = scene.world_pose(boneEnt["pelvis"]).quat
+    local pq = scene.world_pose(boneEnt["abdomenLower"]).quat
+    local relQuat = math.qmul(math.qinv(pq), bq)
+    local lim = kLimits["pelvis"]
+    if lim then
+        nlim = nlim + 1
+    end
     scene.replace(w, "SixDofJoint", {
         bodyA = boneEnt["pelvis"],
         bodyB = boneEnt["abdomenLower"],
+        relQuat = relQuat,
+        axisQuat = jointBy["hip"].quat,
         grabPos = jointBy["hip"].pos,
         excludeCollision = 1,
         limOn = 1,
+        pyramid = 1,
         limTransMin = { 0, 0, 0 }, limTransMax = { 0, 0, 0 },
-        limAngMin = { 0, 0, 0 }, limAngMax = { 0, 0, 0 } })
+        limAngMin = lim and { lim.x[1], lim.y[1], lim.z[1] } or { 0, 0, 0 },
+        limAngMax = lim and { lim.x[2], lim.y[2], lim.z[2] } or { 0, 0, 0 },
+        motorState = { 0, 0, 0, 2, 2, 2 }, -- position motor on the rotation axes only
+        motorFreq = { self.vars.kToneFreq, self.vars.kToneFreq, self.vars.kToneFreq },
+        motorDamp = { self.vars.kToneDamp, self.vars.kToneDamp, self.vars.kToneDamp },
+        frictionAng = { self.vars.kGripTorque, self.vars.kGripTorque, self.vars.kGripTorque } })
+    joints[#joints + 1] = w
+    local bp = scene.world_pose(boneEnt["pelvis"]).pos
+    local ax = mesh.createAxis({ len = 0.15 })
+    scene.replace(ax, "Transform", { pos = math.qrot(math.qinv(bq), { jointBy["hip"].pos[1] - bp[1], jointBy["hip"].pos[2] - bp[2], jointBy["hip"].pos[3] - bp[3] }),
+                                   quat = math.qmul(math.qinv(bq), jointBy["hip"].quat) })
+    scene.replace(ax, "Parent", { e = boneEnt["pelvis"] })
 
     -- hack to fix things that have "hip" weights (some grafts)
     scene.add_child(boneEnt["pelvis"], scene.get_entity("hashimoto/hip"), { keepWorld = true })
 
-    print("caps_fit: " .. n .. " capsule segments in " .. #kFits .. " bone bodies, " .. nj .. " stiff joints")
+
+    --- add collision exceptions
+    physics.collision_exception(boneEnt["rThighTwist"], boneEnt["pelvis"])          -- ignore
+    physics.collision_exception(boneEnt["lThighTwist"], boneEnt["pelvis"])          -- ignore
+
+    physics.collision_exception(boneEnt["pelvis"], boneEnt["abdomenUpper"])          -- ignore
+    physics.collision_exception(boneEnt["abdomenLower"], boneEnt["chestLower"])          -- ignore
+    physics.collision_exception(boneEnt["abdomenUpper"], boneEnt["chestUpper"])          -- ignore
+
+
+    print("caps_fit: " .. n .. " capsule segments in " .. #kFits .. " bone bodies, " .. nj .. " joints (" .. nlim .. " limited)")
+
+
+    -- the ui: one window, a text line, a spin-speed slider, and the scene editor
+    local win = ui.window("ragdoll demo", 320, 200)
+    local tab = ui.tab(win, "scene")
+    ui.text(tab, "Rig settings")
+    ui.slider_f(tab, "kToneFreq", "caps.LuaScript.kToneFreq", 0, 100.0, "%.2f")
+    ui.slider_f(tab, "kToneDamp", "caps.LuaScript.kToneDamp", 0, 100.0, "%.2f")
+    ui.slider_f(tab, "kGripTorque", "caps.LuaScript.kGripTorque", 0, 100.0, "%.2f")
+    ui.slider_f(tab, "kBodyDamping", "caps.LuaScript.kBodyDamping", 0, 100.0, "%.2f")
+    ui.slider_f(tab, "kBodyFriction", "caps.LuaScript.kBodyFriction", 0, 100.0, "%.2f")
+    ui.editor(ui.tab(win, "editor"))
+end
+
+-- slider handler, called only when a slider moves (or every frame — the diff no-ops if nothing changed)
+function applyTone(self)
+    local f, d, g = self.vars.kToneFreq, self.vars.kToneDamp, self.vars.kGripTorque
+    for _, w in ipairs(joints) do
+        scene.replace(w, "SixDofJoint", {
+            motorFreq = { f, f, f },
+            motorDamp = { d, d, d },
+            frictionAng = { g, g, g } })
+    end
+    -- for _, b in pairs(boneEnt) do
+    --     scene.replace(b, "RigidBody", { damping = self.vars.kBodyDamping, friction = self.vars.kBodyFriction })
+    -- end
 end
 
 function M._physics(self, dt)
   --print(dt)
+  applyTone(self)
 end
 
 return M

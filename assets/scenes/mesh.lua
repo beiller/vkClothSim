@@ -110,6 +110,82 @@ function m.taperedCapsule(p)
     return { pos = pos, nrm = nrm, uv = uv, idx = idx }
 end
 
+-- surface-of-revolution cone: base of radius `radius` at y = -halfLen, apex at y = +halfLen
+function m.cone(p)
+    local r, h = p.radius, p.halfLen
+    local S, M = p.S or 20, p.M or 16
+    local pos, nrm, uv, idx = {}, {}, {}, {}
+    local twoPi = 2 * math.pi
+    local nl = math.sqrt(4 * h * h + r * r)
+    for i = 0, M do
+        local y = h - i / M * 2 * h
+        local cr = r * i / M
+        for j = 0, S - 1 do
+            local phi = j / S * twoPi
+            local cp, sp = math.cos(phi), math.sin(phi)
+            local v = i * S + j
+            pos[3 * v + 1], pos[3 * v + 2], pos[3 * v + 3] = cr * cp, y, cr * sp
+            nrm[3 * v + 1], nrm[3 * v + 2], nrm[3 * v + 3] = 2 * h * cp / nl, r / nl, 2 * h * sp / nl
+            uv[2 * v + 1], uv[2 * v + 2] = j / S, i / M
+        end
+    end
+    for i = 0, M - 1 do
+        for j = 0, S - 1 do
+            local a = i * S + j
+            local b = i * S + ((j + 1) % S)
+            local c = (i + 1) * S + j
+            local d = (i + 1) * S + ((j + 1) % S)
+            local n = #idx
+            idx[n + 1], idx[n + 2], idx[n + 3] = a, b, d
+            idx[n + 4], idx[n + 5], idx[n + 6] = a, d, c
+        end
+    end
+    -- flat base cap at y = -halfLen, facing -Y
+    local center = #pos // 3
+    pos[#pos + 1], pos[#pos + 2], pos[#pos + 3] = 0, -h, 0
+    nrm[#nrm + 1], nrm[#nrm + 2], nrm[#nrm + 3] = 0, -1, 0
+    uv[#uv + 1], uv[#uv + 2] = 0.5, 0.5
+    for j = 0, S - 1 do
+        local phi = j / S * twoPi
+        pos[#pos + 1], pos[#pos + 2], pos[#pos + 3] = r * math.cos(phi), -h, r * math.sin(phi)
+        nrm[#nrm + 1], nrm[#nrm + 2], nrm[#nrm + 3] = 0, -1, 0
+        uv[#uv + 1], uv[#uv + 2] = j / S, 0
+    end
+    for j = 0, S - 1 do
+        local a, b = center + 1 + j, center + 1 + ((j + 1) % S)
+        local n = #idx
+        idx[n + 1], idx[n + 2], idx[n + 3] = center, a, b
+    end
+    return { pos = pos, nrm = nrm, uv = uv, idx = idx }
+end
+
+-- merge geometry table b into a (b's vertices appended after a's, indices offset)
+local function mergeGeo(a, b)
+    local nv = #a.pos // 3
+    for i = 1, #b.pos do a.pos[#a.pos + 1] = b.pos[i] end
+    for i = 1, #b.nrm do a.nrm[#a.nrm + 1] = b.nrm[i] end
+    for i = 1, #b.uv do a.uv[#a.uv + 1] = b.uv[i] end
+    for i = 1, #b.idx do a.idx[#a.idx + 1] = b.idx[i] + nv end
+    return a
+end
+
+-- arrow along +Y from y = 0 to y = len: capsule shaft + cone head
+function m.arrow(p)
+    local len = p.len or 1.0
+    local r = p.radius or len * 0.06
+    local headLen = p.headLen or len * 0.25
+    local hr = p.headRadius or math.max(r * 2.5, len * 0.1)
+    local shaft = m.capsule({ radius = r, halfLen = (len - headLen) * 0.5, S = p.S or 16, M = p.M or 8 })
+    for i = 2, #shaft.pos, 3 do
+        shaft.pos[i] = shaft.pos[i] + (len - headLen) * 0.5
+    end
+    local head = m.cone({ radius = hr, halfLen = headLen * 0.5, S = p.S or 16, M = p.M or 8 })
+    for i = 2, #head.pos, 3 do
+        head.pos[i] = head.pos[i] + (len - headLen * 0.5)
+    end
+    return mergeGeo(shaft, head)
+end
+
 -- icosphere (subdivided icosahedron), centered at the origin
 local function icoSphere(subdiv)
     local t = (1 + math.sqrt(5)) * 0.5
@@ -316,6 +392,33 @@ function m.ballCons(p)
         end
     end
     return cons
+end
+
+-- visual axis triad: three emissive arrows radiating from the origin (X red, Y green, Z blue);
+-- opts = { pos = {x,y,z}, quat = {x,y,z,w}, len }; returns the root entity (parent it to follow a body)
+function m.createAxis(opts)
+    local len = opts and opts.len or 0.4
+    local root = scene.entity()
+    scene.replace(root, "Transform", { pos = (opts and opts.pos) or { 0, 0, 0 },
+                                     quat = (opts and opts.quat) or { 0, 0, 0, 1 } })
+    local axes = {
+        { dir = { 1, 0, 0 }, col = { 1.0, 0.2, 0.2 } },
+        { dir = { 0, 1, 0 }, col = { 0.2, 1.0, 0.3 } },
+        { dir = { 0, 0, 1 }, col = { 0.3, 0.45, 1.0 } },
+    }
+    for _, a in ipairs(axes) do
+        local mat = scene.entity()
+        scene.replace(mat, "Material", { baseColor = a.col, emissive = a.col, metallic = 0, roughness = 0.5 })
+        local g = scene.entity()
+        scene.replace(g, "Geometry", m.arrow({ len = len }))
+        local e = scene.entity()
+        local q = (a.dir[2] > 0.999) and { 0, 0, 0, 1 } or math.qfromto({ 0, 1, 0 }, a.dir)
+        scene.replace(e, "Transform", { quat = q })
+        scene.replace(e, "Renderable", { geom = g, noShadow = true })
+        scene.replace(e, "MaterialRef", { material = mat })
+        scene.add_child(root, e)
+    end
+    return root
 end
 
 return m

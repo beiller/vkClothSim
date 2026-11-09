@@ -23,7 +23,7 @@ local function y(e)
     return scene.get_pose(e).pos[2]
 end
 
-local welded, slider, control, lim, motored
+local welded, slider, control, lim, motored, live, jlive
 local n = 0
 
 function M._on_ready(self)
@@ -79,13 +79,33 @@ function M._on_ready(self)
         motorState = { 0, 2, 0, 0, 0, 0 },
         motorFreq = { 0, 8, 0 }, motorDamp = { 0, 6, 0 },
         motorTargetPos = { 0, 0.5, 0 } })
+
+    -- live-sync: starts free (falls), fixed at frame 40 (pulled back to 1.0), freed at 80 (falls again)
+    live = boxBody("live", 8, 1.0, 0, scene.get_entity("mat_red"))
+    jlive = scene.entity()
+    scene.replace(jlive, "SixDofJoint", {
+        bodyA = live, grabPos = { 8, 1.0, 0 },
+        limOn = 1,
+        limTransMin = { -kFree, -kFree, -kFree }, limTransMax = { kFree, kFree, kFree },
+        limAngMin = { -kFree, -kFree, -kFree }, limAngMax = { kFree, kFree, kFree } })
 end
 
 function M._animate(self, dt)
     n = n + 1
     if n % 30 == 0 then
-        print(string.format("sixdof: weld=%.3f slide=%.3f free=%.3f lim=%.3f (want 1.000) mot=%.3f (want 1.500)",
-                          y(welded), y(slider), y(control), y(lim), y(motored)))
+        print(string.format("sixdof: weld=%.3f slide=%.3f free=%.3f lim=%.3f (want 1.000) mot=%.3f (want 1.500) live=%.3f",
+                          y(welded), y(slider), y(control), y(lim), y(motored), y(live)))
+    end
+    if n == 40 then
+        scene.replace(jlive, "SixDofJoint", {
+            limTransMin = { 0, 0, 0 }, limTransMax = { 0, 0, 0 } })
+    end
+    if n == 70 then
+        t.eq("live fixed live: pulled back to 1.0", y(live), 1.0, 0.05)
+    end
+    if n == 80 then
+        scene.replace(jlive, "SixDofJoint", {
+            limTransMin = { -kFree, -kFree, -kFree }, limTransMax = { kFree, kFree, kFree } })
     end
     if n == 150 then
         t.eq("weld held at 1.0", y(welded), 1.0, 0.05)
@@ -93,6 +113,7 @@ function M._animate(self, dt)
         t.check("free fell to ground", y(control) < 0.7)
         t.eq("lim held at 1.0", y(lim), 1.0, 0.05)
         t.eq("motor at target 1.5", y(motored), 1.5, 0.1)
+        t.check("live freed live: fell again", y(live) < 0.7)
         t.done()
     end
 end
