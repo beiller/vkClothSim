@@ -384,6 +384,18 @@ struct UITab {
     std::string label;
 };
 
+struct TypeDesc;  // defined in reflect.hpp
+
+// per-component type-erased access (kComps in components.cpp); static, outlives the registry
+struct CompReg {
+    const char* name;
+    const TypeDesc* desc;
+    void* (*tryGet)(const entt::registry&, entt::entity);
+    void (*emplace)(entt::registry&, entt::entity);
+    void (*remove)(entt::registry&, entt::entity);
+    bool (*afterWrite)(entt::registry&, entt::entity, std::string&);
+};
+
 struct CompField {
     std::string name;
     float v[4] = {};
@@ -405,4 +417,8 @@ bool compReplace(entt::registry& reg, entt::entity e, const std::string& type, c
                  std::string& err);
 bool compGet(const entt::registry& reg, entt::entity e, const std::string& type, CompFields& out);
 bool hasComponentByName(const entt::registry& reg, entt::entity e, const std::string& name);
+const CompReg* compFor(const std::string& name);
+// single-field write: auto-creates the component when absent; runs the afterWrite hook
+bool compWriteField(entt::registry& reg, entt::entity e, const std::string& typeName, const CompField& f,
+                    std::string& err);
 bool compRemove(entt::registry& reg, entt::entity e, const std::string& type, std::string& err);

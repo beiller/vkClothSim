@@ -11,7 +11,8 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [`scene.emplace(e: entity, type: string, fields?: table)`](#sceneemplacee-entity-type-string-fields-table)
   - [`scene.replace(e: entity, type: string, fields?: table)`](#scenereplacee-entity-type-string-fields-table)
   - [`scene.spawn(tbl: table, parent?: entity|string) -> table`](#scenespawntbl-table-parent-entitystring---table)
-  - [`scene.component(e: entity, type: string) -> table`](#scenecomponente-entity-type-string---table)
+  - [`scene.has(e: entity, type: string) -> bool`](#scenehase-entity-type-string---bool)
+  - [`scene.component(e: entity, type: string) -> table|nil`](#scenecomponente-entity-type-string---tablenil)
   - [`scene.remove(e: entity, type: string)`](#sceneremovee-entity-type-string)
   - [`scene.set_pose(e: entity|string, pos: vec3, quat: quat)`](#scenesetposee-entitystring-pos-vec3-quat-quat)
   - [`scene.get_pose(e: entity|string) -> table`](#scenegetposee-entitystring---table)
@@ -120,9 +121,13 @@ replace an existing component `type` on e from a field table (errors if the comp
 
 materialize a name→node map into live entities in one call; node = component-name → field table. Refs resolve by name: an integer passes through as-is; a string resolves to a same-spawn name first, then a world name. All `Transform`/`Parent` components are written before any other (so a `Skeleton` node binds against the complete hierarchy). Returns the name→entity map. Typical use: `scene.spawn(graphics.gltf(path))`
 
-### `scene.component(e: entity, type: string) -> table`
+### `scene.has(e: entity, type: string) -> bool`
 
-read component `type` from e as a field table (nil if absent or unknown type)
+whether e has component `type`
+
+### `scene.component(e: entity, type: string) -> table|nil`
+
+a live view of component `type` on e — nil if e does not have it (create with `scene.emplace` / `scene.replace`). Reads resolve the current value on every access; writing a field errors if the component has been removed. Prefer this over `scene.replace` for single-field writes
 
 ### `scene.remove(e: entity, type: string)`
 

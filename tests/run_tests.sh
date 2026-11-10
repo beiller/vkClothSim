@@ -33,6 +33,7 @@ for spec in \
     "tcap_check|300" \
     "rope_check|130" \
     "gltf_table_check|5" \
+    "view_check|5" \
     "decomp_check|600" \
     "sword_diag|5"
 do

@@ -11,7 +11,7 @@ kBodyDamping = 0.05
 kBodyFriction = 10.0
 
 local joints = {}
-
+local boneEnt = {}
 
 local function geom(t)
     local g = scene.entity()
@@ -391,7 +391,6 @@ function _on_ready(self)
     -- "alive at rest": static friction holds the pose, a small zero-target position motor
     -- springs joints back to rest (muscle tone), linear damping settles the sway
 
-    local boneEnt = {}
     for _, f in ipairs(kFits) do
         -- one RigidBody per bone; its collision is the compound of the bone's tapered capsule segments
         local bone = scene.entity(f.name)
@@ -539,14 +538,16 @@ end
 function applyTone(self)
     local f, d, g = kToneFreq, kToneDamp, kGripTorque
     for _, w in ipairs(joints) do
-        scene.replace(w, "SixDofJoint", {
-            motorFreq = { f, f, f },
-            motorDamp = { d, d, d },
-            frictionAng = { g, g, g } })
+        local j = scene.component(w, "SixDofJoint")
+        j.motorFreq = { f, f, f }
+        j.motorDamp = { d, d, d }
+        j.frictionAng = { g, g, g }
     end
-    -- for _, b in pairs(boneEnt) do
-    --     scene.replace(b, "RigidBody", { damping = kBodyDamping, friction = kBodyFriction })
-    -- end
+    for _, b in pairs(boneEnt) do
+        local rb = scene.component(b, "RigidBody")
+        rb.damping = kBodyDamping
+        rb.friction = kBodyFriction
+    end
 end
 
 function _physics(self, dt)

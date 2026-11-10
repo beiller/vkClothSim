@@ -6,21 +6,13 @@
 
 namespace {
 
-struct CompReg {
-    const char* name;
-    const TypeDesc* desc;
-    void* (*tryGet)(const entt::registry&, entt::entity);
-    void (*emplace)(entt::registry&, entt::entity);
-    void (*remove)(entt::registry&, entt::entity);
-    bool (*afterWrite)(entt::registry&, entt::entity, std::string&);
-};
-
 template <typename T>
 struct CompT {
     static void* tryGet(const entt::registry& reg, entt::entity e) { return const_cast<T*>(reg.try_get<T>(e)); }
     static void emplace(entt::registry& reg, entt::entity e) { reg.emplace<T>(e); }
     static void remove(entt::registry& reg, entt::entity e) { reg.remove<T>(e); }
 };
+}
 
 bool validateTaperedCapsule(entt::registry& reg, entt::entity e, std::string& err) {
     const auto& tc = reg.get<TaperedCapsule>(e);
@@ -317,8 +309,6 @@ bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typ
     return !c->afterWrite || c->afterWrite(reg, e, err);
 }
 
-}
-
 bool hasComponentByName(const entt::registry& reg, entt::entity e, const std::string& name) {
     const CompReg* c = compFor(name);
     return c && c->tryGet(reg, e) != nullptr;
@@ -409,6 +399,25 @@ bool compGet(const entt::registry& reg, entt::entity e, const std::string& type,
         out.push_back(std::move(f));
     }
     return true;
+}
+
+bool compWriteField(entt::registry& reg, entt::entity e, const std::string& typeName, const CompField& f,
+                    std::string& err) {
+    const CompReg* c = compFor(typeName);
+    if (!c) {
+        err = refl::findType(typeName.c_str())
+                  ? "component '" + typeName + "' is engine state, not an entity component"
+                  : "unknown component '" + typeName + "'";
+        return false;
+    }
+    void* b = c->tryGet(reg, e);
+    if (!b) {
+        err = "component '" + typeName + "' is not present on this entity";
+        return false;
+    }
+    if (!writeField(c->desc, b, f, err))
+        return false;
+    return !c->afterWrite || c->afterWrite(reg, e, err);
 }
 
 bool compRemove(entt::registry& reg, entt::entity e, const std::string& type, std::string& err) {

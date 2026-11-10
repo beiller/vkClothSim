@@ -45,11 +45,11 @@ end
 -- grabbable bodies are RigidBody (all rigid bodies are dynamic) or KinematicBody
 -- (grabbed by parenting in place - the parent chain drives the kinematic pose)
 local function isDynamic(e)
-    return scene.component(e, "RigidBody") ~= nil
+    return scene.has(e, "RigidBody")
 end
 
 local function isKinematic(e)
-    return scene.component(e, "KinematicBody") ~= nil
+    return scene.has(e, "KinematicBody")
 end
 
 function _on_ready(self)

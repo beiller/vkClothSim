@@ -147,6 +147,34 @@ int lButton(lua_State* L) {
     return 0;
 }
 
+// push CompFields as a plain Lua table (the shape scene.component snapshots used to have)
+static void pushFieldsTable(lua_State* L, const CompFields& fields) {
+    lua_newtable(L);
+    for (const auto& f : fields) {
+        if (f.isStr) {
+            lua_pushstring(L, f.str.c_str());
+        } else if (f.isStrArr) {
+            lua_createtable(L, f.n, 0);
+            for (int i = 0; i < f.n; ++i) {
+                lua_pushstring(L, f.strArr[i].c_str());
+                lua_seti(L, -2, i + 1);
+            }
+        } else if (f.hasEnt) {
+            luaPushEnt(L, f.ent);
+        } else if (!f.isArr && f.n == 1) {
+            lua_pushnumber(L, f.v[0]);
+        } else {
+            const float* src = f.isArr ? f.arr.data() : f.v;
+            lua_createtable(L, f.n, 0);
+            for (int i = 0; i < f.n; ++i) {
+                lua_pushnumber(L, src[i]);
+                lua_seti(L, -2, i + 1);
+            }
+        }
+        lua_setfield(L, -2, f.name.c_str());
+    }
+}
+
 /// graphics.gltf(path: string) -> table | parse a glTF file as a name->node map (node = component-name -> field table);
 /// no world entities are created; pass to scene.spawn to materialize. Compat: graphics.gltf(e, path) still loads
 /// straight into e
@@ -171,7 +199,7 @@ int lGltf(lua_State* L) {
         const auto& node = data.nodes[key];
         LuaTable nt(L, 0, (int)node.size());
         for (const auto& [cn, fields] : node) {
-            pushCompData(L, cn, fields);
+            pushFieldsTable(L, fields);
             lua_setfield(L, nt.idx, cn.c_str());
         }
         root.setTable(key.c_str(), nt.idx);
@@ -265,10 +293,11 @@ int lConvexDecompose(lua_State* L) {
             return luaL_error(L, "physics.convex_decompose: no such mesh");
         mesh = w.reg.get<Geometry>(e).mesh;
     } else {
-        CompData* cd = nullptr;
-        if (!asCompData(L, 1, &cd) || cd->type != "Geometry")
-            return luaL_error(L, "physics.convex_decompose: argument must be a mesh entity or a Geometry table");
-        for (const auto& f : cd->fields) {
+        CompFields fields;
+        std::string err;
+        if (!readCompFields(L, 1, fields, err, nullptr))
+            return luaL_error(L, "physics.convex_decompose: %s", err.c_str());
+        for (const auto& f : fields) {
             if (!f.isArr || f.arr.empty())
                 continue;
             if (f.name == "pos")

@@ -10,9 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace {
-
-void reg(lua_State* L, SceneScript* host, const char* name, lua_CFunction fn) {
+static void reg(lua_State* L, SceneScript* host, const char* name, lua_CFunction fn) {
     lua_pushlightuserdata(L, host);
     lua_pushcclosure(L, fn, 1);
     lua_setfield(L, -2, name);
@@ -188,16 +186,6 @@ int lEntity(lua_State* L) {
     return 1;
 }
 
-// read a component field table from idx (a plain table or a raw CompData userdata)
-bool readCompArg(lua_State* L, int idx, CompFields& out, std::string& err, const char* skipField) {
-    CompData* cd = nullptr;
-    if (asCompData(L, idx, &cd)) {
-        out = cd->fields;
-        return true;
-    }
-    return readCompFields(L, idx, out, err, skipField);
-}
-
 /// scene.emplace(e: entity, type: string, fields?: table) | create or replace component `type` on e from a field table (a Geometry table may carry a "shapes" array)
 int lCompEmplace(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
@@ -206,7 +194,7 @@ int lCompEmplace(lua_State* L) {
     const bool geom = type == "Geometry";
     CompFields fields;
     std::string err;
-    if ((lua_istable(L, 3) || asCompData(L, 3, nullptr)) && !readCompArg(L, 3, fields, err, geom ? "shapes" : nullptr))
+    if (lua_istable(L, 3) && !readCompFields(L, 3, fields, err, geom ? "shapes" : nullptr))
         return luaL_error(L, "scene.emplace %s: %s", type.c_str(), err.c_str());
     if (!compEmplace(w.reg, e, type, fields, err))
         return luaL_error(L, "scene.emplace %s: %s", type.c_str(), err.c_str());
@@ -223,7 +211,7 @@ int lCompReplace(lua_State* L) {
     const bool geom = type == "Geometry";
     CompFields fields;
     std::string err;
-    if ((lua_istable(L, 3) || asCompData(L, 3, nullptr)) && !readCompArg(L, 3, fields, err, geom ? "shapes" : nullptr))
+    if (lua_istable(L, 3) && !readCompFields(L, 3, fields, err, geom ? "shapes" : nullptr))
         return luaL_error(L, "scene.replace %s: %s", type.c_str(), err.c_str());
     if (!compReplace(w.reg, e, type, fields, err))
         return luaL_error(L, "scene.replace %s: %s", type.c_str(), err.c_str());
@@ -291,7 +279,7 @@ int lSpawn(lua_State* L) {
             const int fidx = lua_absindex(L, -1);
             CompFields fields;
             std::string err;
-            if (!readCompArg(L, fidx, fields, err, nullptr))
+            if (!readCompFields(L, fidx, fields, err, nullptr))
                 return luaL_error(L, "scene.spawn: %s.%s: %s", key.c_str(), cn, err.c_str());
             for (auto& f : fields)
                 if (f.isStr && f.name == "e") { // Parent's entity ref
@@ -319,8 +307,7 @@ int lSpawn(lua_State* L) {
         lua_pushnil(L);
         while (lua_next(L, node) != 0) {
             const std::string cn = lua_tostring(L, -2);
-            CompData* cd = nullptr;
-            if (!lua_istable(L, -1) && !asCompData(L, -1, &cd)) {
+            if (!lua_istable(L, -1)) {
                 lua_pop(L, 1);
                 return luaL_error(L, "scene.spawn: %s.%s must be a table", key.c_str(), cn.c_str());
             }
@@ -337,7 +324,7 @@ int lSpawn(lua_State* L) {
             const int fidx = lua_absindex(L, -1);
             CompFields fields;
             std::string err;
-            if (!readCompArg(L, fidx, fields, err, nullptr)) {
+            if (!readCompFields(L, fidx, fields, err, nullptr)) {
                 lua_pop(L, 1);
                 return luaL_error(L, "scene.spawn: %s.%s: %s", key.c_str(), cn.c_str(), err.c_str());
             }
@@ -408,40 +395,195 @@ int lSpawn(lua_State* L) {
     return 1;
 }
 
-/// scene.component(e: entity, type: string) -> table | read component `type` from e as a field table (nil if absent or unknown type)
+/// scene.has(e: entity, type: string) -> bool | whether e has component `type`
+int lHas(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    const entt::entity e = luaReadEnt(L, 1);
+    const std::string type = luaL_checkstring(L, 2);
+    lua_pushboolean(L, hasComponentByName(w.reg, e, type));
+    return 1;
+}
+
+// Live component view: __index/__newindex re-resolve the component on every access
+// (entt's vector storage can be reallocated, so no component data pointer is ever cached).
+// The view table carries its context under private keys "\1ent" (int) and "\1reg" (light userdata).
+static void compViewCtx(lua_State* L, entt::entity& e, const CompReg*& c) {
+    lua_pushstring(L, "\1ent");
+    lua_rawget(L, 1);
+    e = (entt::entity)(uint32_t)luaL_checkinteger(L, -1);
+    lua_pop(L, 1);
+    lua_pushstring(L, "\1reg");
+    lua_rawget(L, 1);
+    c = static_cast<const CompReg*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+}
+
+static int compViewIndex(lua_State* L) {
+    entt::entity e; const CompReg* c;
+    compViewCtx(L, e, c);
+    const char* name = luaL_checkstring(L, 2);
+    Engine& w = SceneScript::sSelf(L)->w();
+    void* b = c->tryGet(w.reg, e);
+    if (!b) { lua_pushnil(L); return 1; }
+    const FieldDesc* d = findField(c->desc, name);
+    if (!d) { lua_pushnil(L); return 1; }
+    const char* src = (const char*)b + d->offset;
+    switch (d->kind) {
+    case FieldKind::SliderF:
+        lua_pushnumber(L, *(const float*)src);
+        break;
+    case FieldKind::SliderI:
+        lua_pushnumber(L, (double)*(const int*)src);
+        break;
+    case FieldKind::Checkbox:
+        lua_pushboolean(L, *(const bool*)src);
+        break;
+    case FieldKind::Color:
+    case FieldKind::DragV3: {
+        const float* v = (const float*)src;
+        LuaTable t(L, 3, 0);
+        t.appendNum(v[0]); t.appendNum(v[1]); t.appendNum(v[2]);
+        break;
+    }
+    case FieldKind::Quat: {
+        const float* v = (const float*)src;
+        LuaTable t(L, 4, 0);
+        t.appendNum(v[0]); t.appendNum(v[1]); t.appendNum(v[2]); t.appendNum(v[3]);
+        break;
+    }
+    case FieldKind::Ref:
+        luaPushEnt(L, *(const entt::entity*)src);
+        break;
+    case FieldKind::Str:
+        lua_pushstring(L, (const char*)(*(const std::string*)src).c_str());
+        break;
+    case FieldKind::StrArr: {
+        const auto& a = *(const std::vector<std::string>*)src;
+        LuaTable t(L, (int)a.size(), 0);
+        for (const auto& s : a) t.appendStr(s);
+        break;
+    }
+    case FieldKind::FloatArr: {
+        const auto& a = *(const std::vector<float>*)src;
+        LuaTable t(L, (int)a.size(), 0);
+        for (float v : a) t.appendNum(v);
+        break;
+    }
+    case FieldKind::UIntArr: {
+        const auto& a = *(const std::vector<uint32_t>*)src;
+        LuaTable t(L, (int)a.size(), 0);
+        for (uint32_t v : a) t.appendNum(v);
+        break;
+    }
+    case FieldKind::EntArr: {
+        const auto& a = *(const std::vector<entt::entity>*)src;
+        LuaTable t(L, (int)a.size(), 0);
+        int i = 1;
+        for (entt::entity v : a) { luaPushEnt(L, v); lua_seti(L, t.idx, i++); }
+        break;
+    }
+    }
+    return 1;
+}
+
+static int compViewNewIndex(lua_State* L) {
+    entt::entity e; const CompReg* c;
+    compViewCtx(L, e, c);
+    Engine& w = SceneScript::sSelf(L)->w();
+    if (!w.reg.valid(e))
+        return luaL_error(L, "scene view: entity removed");
+    const char* name = luaL_checkstring(L, 2);
+    CompField f;
+    f.name = name;
+    if (lua_isboolean(L, 3)) {
+        f.v[0] = lua_toboolean(L, 3) ? 1.0f : 0.0f;
+        f.n = 1;
+    } else if (lua_isnumber(L, 3)) {
+        f.v[0] = (float)lua_tonumber(L, 3);
+        f.n = 1;
+        if (lua_isinteger(L, 3)) {
+            f.hasEnt = true;
+            f.ent = luaReadEnt(L, 3);
+        }
+    } else if (lua_isstring(L, 3)) {
+        f.isStr = true;
+        f.str = lua_tostring(L, 3);
+    } else if (lua_istable(L, 3)) {
+        const int t = lua_absindex(L, 3);
+        bool anyNum = false;
+        for (int i = 1;; ++i) {
+            lua_geti(L, t, i);
+            if (lua_isnoneornil(L, -1)) {
+                lua_pop(L, 1);
+                break;
+            }
+            if (lua_isnumber(L, -1)) {
+                f.arr.push_back((float)lua_tonumber(L, -1));
+                anyNum = true;
+            } else if (lua_isstring(L, -1)) {
+                f.strArr.push_back(lua_tostring(L, -1));
+            } else {
+                lua_pop(L, 2);
+                return luaL_error(L, "field '%s' must be an array of numbers or strings", name);
+            }
+            lua_pop(L, 1);
+            f.n = i;
+        }
+        if (f.n == 0)
+            return luaL_error(L, "field '%s' must be a non-empty array of numbers or strings", name);
+        if (anyNum && !f.strArr.empty())
+            return luaL_error(L, "field '%s' mixes numbers and strings", name);
+        f.isArr = anyNum;
+        f.isStrArr = !anyNum;
+    } else {
+        return luaL_error(L, "field '%s' must be a number, boolean, string, or array", name);
+    }
+    std::string err;
+    if (!compWriteField(w.reg, e, c->name, f, err))
+        return luaL_error(L, "scene view: %s", err.c_str());
+    return 0;
+}
+
+static void compViewMetaEnsure(lua_State* L, SceneScript* host) {
+    const char* key = "3dsim.CompView.meta";
+    lua_getfield(L, LUA_REGISTRYINDEX, key);
+    if (!lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_pop(L, 1);
+    luaL_newmetatable(L, "3dsim.CompView");
+    lua_pushlightuserdata(L, host);
+    lua_pushcclosure(L, compViewIndex, 1);
+    lua_setfield(L, -2, "__index");
+    lua_pushlightuserdata(L, host);
+    lua_pushcclosure(L, compViewNewIndex, 1);
+    lua_setfield(L, -2, "__newindex");
+    lua_setfield(L, LUA_REGISTRYINDEX, key);
+}
+
+/// scene.component(e: entity, type: string) -> table|nil | a live view of component `type` on e (nil if absent); reads resolve per access; writes require the component to exist (create via scene.emplace/replace)
 int lComponent(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
     const std::string type = luaL_checkstring(L, 2);
-    CompFields out;
-    if (!compGet(w.reg, e, type, out)) {
+    const CompReg* c = compFor(type);
+    if (!c) {
+        std::string msg = refl::findType(type.c_str()) ? "component '" + type + "' is engine state, not an entity component" : "unknown component '" + type + "'";
+        return luaL_error(L, "scene.component: %s", msg.c_str());
+    }
+    if (!c->tryGet(w.reg, e)) {
         lua_pushnil(L);
         return 1;
     }
+    compViewMetaEnsure(L, SceneScript::sSelf(L));
     lua_newtable(L);
-    for (const auto& f : out) {
-        if (f.isStr) {
-            lua_pushstring(L, f.str.c_str());
-        } else if (f.isStrArr) {
-            lua_createtable(L, f.n, 0);
-            for (int i = 0; i < f.n; ++i) {
-                lua_pushstring(L, f.strArr[i].c_str());
-                lua_seti(L, -2, i + 1);
-            }
-        } else if (f.hasEnt) {
-            luaPushEnt(L, f.ent);
-        } else if (!f.isArr && f.n == 1) {
-            lua_pushnumber(L, f.v[0]);
-        } else {
-            const float* src = f.isArr ? f.arr.data() : f.v;
-            lua_createtable(L, f.n, 0);
-            for (int i = 0; i < f.n; ++i) {
-                lua_pushnumber(L, src[i]);
-                lua_seti(L, -2, i + 1);
-            }
-        }
-        lua_setfield(L, -2, f.name.c_str());
-    }
+    lua_pushinteger(L, (lua_Integer)entt::to_integral(e));
+    lua_setfield(L, -2, "\1ent");
+    lua_pushlightuserdata(L, (void*)c);
+    lua_setfield(L, -2, "\1reg");
+    lua_getfield(L, LUA_REGISTRYINDEX, "3dsim.CompView.meta");
+    lua_setmetatable(L, -2);
     return 1;
 }
 
@@ -687,12 +829,11 @@ int lAddChild(lua_State* L) {
     return 0;
 }
 
-}
-
 void luaRegisterComponents(lua_State* L, SceneScript* host) {
     reg(L, host, "entity", lEntity);
     reg(L, host, "emplace", lCompEmplace);
     reg(L, host, "replace", lCompReplace);
+    reg(L, host, "has", lHas);
     reg(L, host, "component", lComponent);
     reg(L, host, "remove", lCompRemove);
     reg(L, host, "set_pose", lSetPose);
