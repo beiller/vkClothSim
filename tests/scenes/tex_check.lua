@@ -1,6 +1,5 @@
 -- runtime texture path test: load_texture (file), render_texture (standalone target),
 -- destroy (free), and an environment swap (forces a full env rebuild)
-local M = {}
 
 local function makeCube(name, pos, tex)
     local g = scene.entity()
@@ -13,7 +12,7 @@ local function makeCube(name, pos, tex)
     scene.replace(e, "MaterialRef", { material = m })
 end
 
-function M._on_ready(self)
+function _on_ready(self)
     makeCube("cube_png", { -3, 1, 0 }, graphics.load_texture("cloth_albedo.png", "tex_png"))
     makeCube("cube_rt", { 3, 1, 0 }, graphics.render_texture(256, 256, "rt"))
     local tmp = graphics.load_texture("cloth_albedo.png")
@@ -28,4 +27,3 @@ function M._on_ready(self)
     t.done()
 end
 
-return M

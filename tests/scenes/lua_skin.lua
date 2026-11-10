@@ -2,7 +2,6 @@
 -- scene.replace "Skeleton"), then animate the bones in _animate.
 -- A 5-bone chain of long thin boxes (0.5 each, along +X, at y = 0.5),
 -- each box weighted 100% to its own bone, driven by a subtle traveling wave.
-local M = {}
 
 local kN = 5
 local kLen = 0.5
@@ -19,7 +18,7 @@ local function section(xOff)
     return b
 end
 
-function M._on_ready()
+function _on_ready()
     -- support: light, all in Lua
     local light = scene.entity("light")
     scene.replace(light, "Transform", { pos = { 1.25, 2.5, 2 } })
@@ -87,7 +86,7 @@ function M._on_ready()
     t.done()
 end
 
-function M._animate(_, dt)
+function _animate(_, dt)
     time = time + dt
     for i = 1, kN do
         -- subtle traveling wave along the chain
@@ -98,4 +97,3 @@ function M._animate(_, dt)
     end
 end
 
-return M

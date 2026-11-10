@@ -1,19 +1,20 @@
 -- hello world: the scene json is blank (one object with this script attached); the camera,
 -- light, textured spinning cube and UI are all created here in lua.
-local M = {}
 
 -- script variables, bindable via "hello.LuaScript.<var>"
-M.vars = { 
-    spin_speed = 1.0 
-}
+spin_speed = 1.0
 
 -- executed once, when the script is ready
-function M._on_ready(self)
+function _on_ready(self)
     -- the fly camera: active=true is what makes it THE camera
     local camera = scene.entity("cam")
     scene.emplace(camera, "Transform", { pos = { 0, 1.2, 4 } })
     scene.emplace(camera, "Camera", { fovDeg = 50, active = true })
     scene.attach_script(camera, "scenes/camera") -- attaches the "fly camera movement" script which gives "look" and "wasd + qe" kb movement
+
+    -- attach the VR controller script (enables movement and pointing with a VR controller setup)
+    local vr = scene.entity("vr")
+    scene.attach_script(vr, "scenes/vr_controller")
 
     local light = scene.entity("light")
     scene.emplace(light, "Transform", { pos = { 0, 3, 4 } })
@@ -44,15 +45,14 @@ function M._on_ready(self)
 end
 
 -- runs every graphics frame
-function M._animate(self, dt)
-    local speed = self.vars.spin_speed
+function _animate(self, dt)
+    local speed = spin_speed
     local pose = scene.get_pose(self.cube)
     scene.set_pose(self.cube, pose.pos, math.qmul(math.qaxis({ 0.5, 0.5, 0 }, speed * dt), pose.quat))
 end
 
 -- runs every physics step
-function M._physics(self, dt)
+function _physics(self, dt)
     
 end
 
-return M

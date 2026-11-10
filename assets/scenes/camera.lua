@@ -1,7 +1,6 @@
 -- fly camera: WASD/QE + shift moves it, LMB drag rotates it. Attached to the camera object in
 -- the scene json (self.entity is the camera) - always runs; in VR this camera is a separate view
 -- object (the headset view is the "vr cam") and simply isn't the current camera.
-local M = {}
 
 local W, A, S, D, Q, E, SHIFT = 87, 65, 83, 68, 81, 69, 340
 
@@ -10,11 +9,11 @@ local prevMX, prevMY = 0, 0
 local kSpeed = 2.0
 local kSens = 0.0025
 
-function M._on_ready(self)
+function _on_ready(self)
     camH = self.entity
 end
 
-function M._physics(self, dt)
+function _physics(self, dt)
     if not kbH then
         kbH = scene.get_entity("keyboard")
     end
@@ -50,4 +49,3 @@ function M._physics(self, dt)
     scene.replace(camH, "Transform", { pos = pos, quat = q })
 end
 
-return M

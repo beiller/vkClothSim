@@ -52,13 +52,14 @@ struct VrRoot {};
 
 struct LuaScript {
     std::string file;
+    int mod = -1;
     int inst = -1;
     int params = -1;
     int onReady = -1;
     int animate = -1;
     int physics = -1;
     bool ready = false;
-    // C++ mirror of the script's `inst.vars` table: URL bind targets ("name.LuaScript.var").
+    // C++ mirror of the script module's top-level fields: URL bind targets ("name.LuaScript.var").
     // Numbers are stored as float (dotted keys for nested tables); 3/4-number tables get a
     // contiguous vec slot (subvars like "pos.x" resolve to member views into it). The
     // script host syncs these with the lua table each frame; pulls never erase entries,

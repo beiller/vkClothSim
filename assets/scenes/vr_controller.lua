@@ -4,7 +4,6 @@
 -- capsule this script drives from the aim pose - the rigid step pulls kinematic poses from
 -- the ECS before each step, so a pose written in _physics is live for that step.
 -- Always runs - without a headset the controller is simply inactive and nothing moves.
-local M = {}
 
 local ctrlH, ctrlL, rootH, headH
 local handAnchor = nil -- kinematic grab anchor (right hand); created on the first physics step
@@ -53,7 +52,7 @@ local function isKinematic(e)
     return scene.component(e, "KinematicBody") ~= nil
 end
 
-function M._on_ready(self)
+function _on_ready(self)
     markerMat = material("grab_marker", {1, 0.1, 0.1}, 0.0, 0.35)
     markerGeom = geom(mesh.sphere({ radius = kMarkerRadius, subdiv = 2 }))
     -- lasers: one very thin box per hand along its aim dir (aim = -z), lit by HDR emissive
@@ -249,7 +248,7 @@ local function updateLaser(hand, ctrl, matEnt)
 end
 
 -- per render frame: locomotion (the visual anchor steps at render rate) + laser tracking
-function M._animate(self, dt)
+function _animate(self, dt)
     if not ctrlH then
         ctrlH = scene.get_entity("controller R")
     end
@@ -269,7 +268,7 @@ function M._animate(self, dt)
     updateLaser("L", ctrlL, laserMatL)
 end
 
-function M._physics(self, dt)
+function _physics(self, dt)
     if not ctrlH or not rootH or not headH then
         return
     end
@@ -278,4 +277,3 @@ function M._physics(self, dt)
     grab()
 end
 
-return M

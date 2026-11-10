@@ -6,6 +6,7 @@
 #include "app/engine.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -96,6 +97,13 @@ void SceneScript::init(Engine& w) {
     //     lua_pushnil(L);
     //     lua_setglobal(L, lib);
     // }
+    // capture the global table (lua_pushvalue(LUA_RIDX_GLOBALS) is unreliable on some builds)
+    if (luaL_loadbuffer(L, "return _ENV", 11, "env") == LUA_OK) {
+        lua_pcall(L, 0, 1, 0);
+        if (lua_istable(L, -1))
+            m_globalsRef = newRef(L, -1);
+        lua_pop(L, 1);
+    }
     lua_pushlightuserdata(L, this);
     lua_pushcclosure(L, luaRequire, 1);
     lua_setglobal(L, "require");
@@ -159,18 +167,36 @@ int SceneScript::includeModule(const std::string& rel, std::string& err) {
         return -1;
     }
     const std::string code((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (luaL_loadbuffer(L, code.data(), code.size(), full.c_str()) != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
+    if (luaL_loadbuffer(L, code.data(), code.size(), full.c_str()) != LUA_OK) {
         err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
         std::fprintf(stderr, "3dsim: %s: %s\n", full.c_str(), err.c_str());
         lua_pop(L, 1);
         return -1;
     }
-    if (!lua_istable(L, -1)) {
-        err = "module must return a table";
+    // the module table is the chunk's environment: top-level non-locals become module fields
+    // (bindable vars and hooks); `local`s stay private. a returned table wins when present
+    // (vendored libraries like json.lua).
+    lua_newtable(L);
+    const int modRef = newRef(L, -1);
+    if (m_globalsRef > 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, m_globalsRef);
+        lua_setfield(L, -2, "_G");  // explicit _G access; lookups fall through via __index
+        lua_newtable(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, m_globalsRef);
+        lua_setfield(L, -2, "__index");
+        lua_setmetatable(L, -2);
+    }
+    lua_setupvalue(L, -2, 1);  // pops the module table onto the chunk's env upvalue
+    if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
+        err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
+        std::fprintf(stderr, "3dsim: %s: %s\n", full.c_str(), err.c_str());
+        dropRef(modRef);
         lua_pop(L, 1);
         return -1;
     }
-    const int ref = newRef(L, -1);
+    int ref = modRef;
+    if (lua_istable(L, -1))
+        ref = newRef(L, -1);
     lua_pop(L, 1);
     m_modules[full] = ref;
     return ref;
@@ -408,15 +434,11 @@ void SceneScript::setVarStr(const entt::registry& reg, const std::string& url, c
     auto* ls = const_cast<LuaScript*>(findVarScript(reg, name, err));  // storage is mutable
     if (!ls)
         return;
-    // write the lua table now (a mirror-only write would be clobbered by the next pull)
-    if (L) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, ls->inst);
-        lua_getfield(L, -1, "vars");
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, val.c_str());
-            setDotted(L, lua_gettop(L) - 1, path, lua_gettop(L));
-            lua_pop(L, 1);  // setDotted copied the value; drop the original
-        }
+    // write the module table now (a mirror-only write would be clobbered by the next pull)
+    if (L && ls->mod > 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ls->mod);
+        lua_pushstring(L, val.c_str());
+        setDotted(L, lua_gettop(L) - 1, path, lua_gettop(L));
         lua_pop(L, 2);
     }
     ls->varsS[path] = val;
@@ -493,7 +515,8 @@ void SceneScript::activateScripts() {
                 continue;
             }
             // inst is set before _on_ready so "name.LuaScript.var" binds resolve while it runs;
-            // the pull fills the vars mirror from (module-level) inst.vars defaults first.
+            // the pull fills the vars mirror from the module's top-level fields first.
+            ls->mod = mod;
             ls->inst = instRef;
             syncVars(w().reg, false);
             const bool ok = (onReadyRef <= 0) || callOnReady(onReadyRef, instRef);
@@ -515,7 +538,7 @@ void SceneScript::activateScripts() {
     }
 }
 
-/// script-instance | vars: a module-level `M.vars` table provides defaults (visible via __index); each instance's `self.vars` is mirrored into typed C++ maps every frame — pulled after every hook pass, pushed back before — and is bindable through `name.LuaScript.var` URLs; numbers map to float, booleans and strings stay typed, 3/4-number tables become vec3/quat slots, and dotted sub-paths address members (`hello.LuaScript.pos.x`)
+/// script-vars | a script's top-level non-locals are its vars (a `local` stays private); they are mirrored into typed C++ maps every frame — pulled after every hook pass, pushed back before — and are bindable through `name.LuaScript.var` URLs; numbers map to float, booleans and strings stay typed, 3/4-number tables become vec3/quat slots, and dotted sub-paths address members (`hello.LuaScript.pos.x`)
 // pull one lua value (at idx) into the mirror under dotted `key`. 3/4-number tables
 // become contiguous vec slots; other tables recurse with dotted keys. Stack-balanced.
 static void pullValue(lua_State* L, int idx, const std::string& key, LuaScript& ls) {
@@ -599,13 +622,11 @@ void SceneScript::syncVars(entt::registry& reg, bool pushToLua) {
     if (!L)
         return;
     for (auto [e, ls] : reg.view<LuaScript>().each()) {
-        if (ls.inst <= 0)
+        if (ls.mod <= 0)
             continue;
-        lua_rawgeti(L, LUA_REGISTRYINDEX, ls.inst);
-        lua_getfield(L, -1, "vars");
-        const bool hasTable = lua_istable(L, -1);
-        if (hasTable) {
-            const int varsAbs = lua_gettop(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ls.mod);
+        const int varsAbs = lua_gettop(L);
+        {
             if (pushToLua) {
                 for (const auto& [k, v] : ls.varsF) {
                     lua_pushnumber(L, v);
@@ -643,12 +664,13 @@ void SceneScript::syncVars(entt::registry& reg, bool pushToLua) {
                 lua_pushnil(L);
                 while (lua_next(L, varsAbs) != 0) {
                     if (const char* k = lua_tostring(L, -2))
-                        pullValue(L, -1, k, ls);
+                        if (std::strcmp(k, "_G") != 0)  // never walk the global environment
+                            pullValue(L, -1, k, ls);
                     lua_pop(L, 1);
                 }
             }
         }
-        lua_pop(L, 2);
+        lua_pop(L, 1);
     }
 }
 

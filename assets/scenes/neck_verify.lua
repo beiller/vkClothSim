@@ -6,7 +6,6 @@
 --   t < 16 : neckUpper yawed 25 deg (bone-local Y, post-multiplied)
 --   t < 24 : head yawed 25 deg, neck back to bind
 --   t >= 24: head yawed 90 deg (profile), neck back to bind
-local M = {}
 local bind = {}
 
 local function bindPose(name)
@@ -33,7 +32,7 @@ local function geom(t)
     return g
 end
 
-function M._on_ready(self)
+function _on_ready(self)
     local matGround = scene.entity("mat_ground")
     scene.replace(matGround, "Material", { baseColor = {0.35, 0.35, 0.38}, metallic = 0, roughness = 0.95 })
     local ground = scene.entity("ground")
@@ -66,7 +65,7 @@ function M._on_ready(self)
     end
 end
 
-function M._animate(self)
+function _animate(self)
     local t = scene.time()
     local neck, head = 0, 0
     if t >= 8 and t < 16 then
@@ -79,4 +78,3 @@ function M._animate(self)
     yaw("hashimoto/neckUpper", neck)
     yaw("hashimoto/head", head)
 end
-return M

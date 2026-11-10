@@ -1,5 +1,4 @@
 -- glass test: a refractive sphere in front of colored content (env, light, camera in glass.json)
-local M = {}
 
 local function put(geom, matName, pos)
     local g = scene.entity()
@@ -14,7 +13,7 @@ local function mat(name, comp)
     scene.replace(scene.entity(name), "Material", comp)
 end
 
-function M._on_ready(self)
+function _on_ready(self)
     mat("mat_ground", { baseColor = {0.4, 0.4, 0.45}, metallic = 0, roughness = 0.95 })
     mat("mat_red", { baseColor = {1, 0.1, 0.1}, metallic = 0, roughness = 0.6 })
     mat("mat_blue", { baseColor = {0.1, 0.2, 1}, metallic = 0, roughness = 0.6 })
@@ -33,4 +32,3 @@ function M._on_ready(self)
     scene.replace(e, "MaterialRef", { material = scene.get_entity("mat_glass") })
 end
 
-return M

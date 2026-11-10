@@ -1,7 +1,6 @@
 -- demo behavior: scattered rigid capsules + cloth/ball soft bodies + ground
 -- (mesh is the engine-loaded geometry stdlib global; lights/materials/UI live in demo.json)
 
-local M = {}
 
 local clothH
 local pinTime = 0.0
@@ -18,7 +17,7 @@ local function geom(t)
     return g
 end
 
-function M._on_ready(self)
+function _on_ready(self)
     -- ground: one entity with a visual box + static box collider; the soft sim's floor is explicit
     local ground = scene.entity("ground")
     scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
@@ -97,7 +96,7 @@ function M._on_ready(self)
     graphics.gltf(ch, "local/basegen8.glb")
 end
 
-function M._physics(self, dt)
+function _physics(self, dt)
     if released then
         return
     end
@@ -108,4 +107,3 @@ function M._physics(self, dt)
     end
 end
 
-return M

@@ -1,12 +1,11 @@
 -- gltf table check: graphics.gltf(path) -> table (no entities), scene.spawn materialization,
 -- physics.convex_decompose on a raw Geometry table vs an entity.
-local M = {}
 
 local MAX_HULLS = 6
 local MAX_VERTS = 12
 local THRESHOLD = 0.05
 
-function M._on_ready(self)
+function _on_ready(self)
     -- 1. parse as a table; zero world entities should be created by this call
     local ok, tbl = pcall(graphics.gltf, "sword_collider.glb")
     t.check("gltf table parse", ok, tostring(tbl))
@@ -97,4 +96,3 @@ function M._on_ready(self)
     t.done()
 end
 
-return M

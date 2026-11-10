@@ -1,5 +1,4 @@
-local M = {}
-function M._on_ready(self)
+function _on_ready(self)
     local mat = scene.entity("mat_ground")
     scene.replace(mat, "Material", { baseColor = {0.35, 0.35, 0.38}, metallic = 0, roughness = 0.95 })
     local g = scene.entity("ground_geom")
@@ -13,4 +12,3 @@ function M._on_ready(self)
     scene.spawn(graphics.gltf("local/castle/source/castle.glb"), ch)
     scene.set_pose("cam", { 0, 1.7, 7 }, { 0, 0, 0, 1 })
 end
-return M

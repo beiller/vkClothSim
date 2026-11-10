@@ -4,7 +4,6 @@
 -- patterned sphere checks the pre/post split: freckles/edges stay sharp at low sssSplit and
 -- smear at high. The small sphere in front of the big one is the silhouette-bleed test; the
 -- back light tests transmission (thin regions glow red when backlit)
-local M = {}
 
 local function put(geom, matRef, pos)
     local g = scene.entity()
@@ -19,7 +18,7 @@ local function mat(name, comp)
     scene.replace(scene.entity(name), "Material", comp)
 end
 
-function M._on_ready(self)
+function _on_ready(self)
     mat("mat_ground", { baseColor = {0.25, 0.25, 0.28}, metallic = 0, roughness = 0.95 })
 
     put(mesh.box({ 20, 1, 20 }), scene.get_entity("mat_ground"), { 0, -2.5, 0 })
@@ -47,4 +46,3 @@ function M._on_ready(self)
     scene.replace(bl, "PointLight", { color = { 1, 0.6, 0.4 }, intensity = 30, radius = 0.1 })
 end
 
-return M

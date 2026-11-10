@@ -1,22 +1,23 @@
 -- test verdict module; loaded as global `t` by the engine (see SceneScript::loadTestStdlib)
 local EPS = 1e-6 -- default tolerance for number comparisons (float round-trip noise)
-local T = { npass = 0, nfail = 0 }
+npass = 0
+nfail = 0
 
 local function numEq(g, w, tol)
     return type(g) == "number" and math.abs(g - w) <= (tol or EPS)
 end
 
-function T.check(name, cond, detail)
+function check(name, cond, detail)
     if cond then
-        T.npass = T.npass + 1
+        npass = npass + 1
         print("PASS " .. name)
     else
-        T.nfail = T.nfail + 1
+        nfail = nfail + 1
         print("FAIL " .. name .. (detail and (" (" .. tostring(detail) .. ")") or ""))
     end
 end
 
-function T.eq(name, got, want, tol)
+function eq(name, got, want, tol)
     if type(want) == "table" then
         local ok = type(got) == "table" and #got == #want
         if ok then
@@ -30,7 +31,7 @@ function T.eq(name, got, want, tol)
                 end
             end
         end
-        T.check(name, ok, string.format("got [%s] want [%s]", table.concat(got and got or {}, ","),
+        check(name, ok, string.format("got [%s] want [%s]", table.concat(got and got or {}, ","),
                                       table.concat(want, ",")))
     else
         local ok
@@ -39,12 +40,10 @@ function T.eq(name, got, want, tol)
         else
             ok = got == want
         end
-        T.check(name, ok, string.format("got %s want %s", tostring(got), tostring(want)))
+        check(name, ok, string.format("got %s want %s", tostring(got), tostring(want)))
     end
 end
 
-function T.done()
-    print(string.format("TTEST pass=%d fail=%d", T.npass, T.nfail))
+function done()
+    print(string.format("TTEST pass=%d fail=%d", npass, nfail))
 end
-
-return T

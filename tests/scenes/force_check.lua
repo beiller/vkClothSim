@@ -1,4 +1,3 @@
-local M = {}
 local tick = 0
 local maxImpY = -1e9
 
@@ -6,7 +5,7 @@ local function y(name)
     return scene.get_pose(name).pos[2]
 end
 
-function M._on_ready(self)
+function _on_ready(self)
     local shape = scene.entity()
     scene.replace(shape, "BoxShape", { half = { 0.5, 0.5, 0.5 } })
     local col = scene.entity()
@@ -28,7 +27,7 @@ function M._on_ready(self)
     print(string.format("FORCE_TEST t=0 imp_y=%.3f frc_y=%.3f", y("imp"), y("frc")))
 end
 
-function M._physics(self, dt)
+function _physics(self, dt)
     tick = tick + 1
     if tick % 30 == 0 then
         print(string.format("FORCE_TEST t=%d imp_y=%.3f frc_y=%.3f", tick, y("imp"), y("frc")))
@@ -46,4 +45,3 @@ function M._physics(self, dt)
     end
 end
 
-return M

@@ -1,7 +1,6 @@
 -- 20-link capsule rope: 25cm links (10cm diameter) chained with SixDofJoints,
 -- translation fixed (0, 0, 0), rotation limited to +/-20 deg. All links are
 -- dynamic; the rope starts horizontal at y = 2 and falls to the ground.
-local M = {}
 
 local kN = 20
 local kLen = 0.25
@@ -36,7 +35,7 @@ end
 
 local links = {}
 
-function M._on_ready(self)
+function _on_ready(self)
     local ground = scene.entity("ground")
     scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
     scene.replace(ground, "Renderable", { geom = (function()
@@ -87,7 +86,7 @@ function M._on_ready(self)
                                 grabPos = { kCx - kHandleR, kCy, 0 } })
 end
 
-function M._physics(self, dt)
+function _physics(self, dt)
     self.t = self.t + dt
     local a = kPhase + kW * self.t
     scene.set_pose(self.handle, { kCx + kHandleR * math.cos(a), kCy + kHandleR * math.sin(a), 0 },
@@ -101,4 +100,3 @@ function M._physics(self, dt)
     end
 end
 
-return M

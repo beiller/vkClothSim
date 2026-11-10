@@ -1,7 +1,6 @@
 -- Probe for the Mesh joints/weights + scene.skeleton Lua APIs.
-local M = {}
 
-function M._on_ready()
+function _on_ready()
     local skel = scene.entity("probe_skel")
     scene.replace(skel, "Skeleton", { boneNames = { "armA", "armB", "hand" } })
     local comp = scene.component(skel, "Skeleton")
@@ -34,4 +33,3 @@ function M._on_ready()
     t.done()
 end
 
-return M

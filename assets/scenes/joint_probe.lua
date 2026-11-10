@@ -1,7 +1,6 @@
 -- Joint inspector: puts a small sphere on every joint. Markers are children of the joint
 -- entities, so they follow the bones when posed. (The character mesh stays visible; to hide a
 -- prim, zero its Renderable's visible field.)
-local M = {}
 
 -- stdlib geometry tables are the Geometry struct itself: stash one in a geometry entity
 local function geom(t)
@@ -10,7 +9,7 @@ local function geom(t)
     return g
 end
 
-function M._on_ready(self)
+function _on_ready(self)
     local matGround = scene.entity("mat_ground")
     scene.replace(matGround, "Material", { baseColor = {0.35, 0.35, 0.38}, metallic = 0, roughness = 0.95 })
     local ground = scene.entity("ground")
@@ -36,4 +35,3 @@ function M._on_ready(self)
         scene.add_child(j, m)
     end
 end
-return M

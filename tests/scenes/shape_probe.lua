@@ -1,8 +1,7 @@
 -- Probe for Mesh.shapes: create via scene.replace, read back with scene.shapes,
 -- set via scene.set_morph (mesh target and skeleton target).
-local M = {}
 
-function M._on_ready()
+function _on_ready()
     local g = scene.entity()
     local ok, err = pcall(scene.replace, g, "Geometry", {
         pos = { 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1 },
@@ -49,4 +48,3 @@ function M._on_ready()
     t.done()
 end
 
-return M

@@ -1,5 +1,4 @@
-local M = {}
-function M._on_ready(self)
+function _on_ready(self)
     local mat = scene.entity("mat_ground")
     scene.replace(mat, "Material", { baseColor = {0.35, 0.35, 0.38}, metallic = 0, roughness = 0.95 })
     local g = scene.entity()
@@ -23,4 +22,3 @@ function M._on_ready(self)
     scene.set("basegen8/EyeMoisture.1.Material.ior", 1.0)
     scene.set("basegen8/EyeMoisture.1.Material.roughness", 0.0)
 end
-return M

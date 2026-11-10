@@ -65,6 +65,7 @@ private:
     std::vector<int> m_refs;
     std::vector<int> m_errored;
     std::map<std::string, int> m_modules;
+    int m_globalsRef = -1;  // the VM's global table (for script module environments)
     int m_geomModule = -1;
     int m_actionSeq = 0;
     float m_time = 0.0f;

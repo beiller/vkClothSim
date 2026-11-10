@@ -1,6 +1,5 @@
 -- SixDofJoint test: a box welded to the world (all axes fixed) must not fall;
 -- a Y-pinned box floats but is free in X/Z and rotation; a control box falls.
-local M = {}
 
 local kFree = 1e30
 
@@ -26,7 +25,7 @@ end
 local welded, slider, control, lim, motored, live, jlive
 local n = 0
 
-function M._on_ready(self)
+function _on_ready(self)
     local ground = scene.entity("ground")
     scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
     scene.replace(ground, "Renderable", { geom = (function()
@@ -90,7 +89,7 @@ function M._on_ready(self)
         limAngMin = { -kFree, -kFree, -kFree }, limAngMax = { kFree, kFree, kFree } })
 end
 
-function M._animate(self, dt)
+function _animate(self, dt)
     n = n + 1
     if n % 30 == 0 then
         print(string.format("sixdof: weld=%.3f slide=%.3f free=%.3f lim=%.3f (want 1.000) mot=%.3f (want 1.500) live=%.3f",
@@ -118,4 +117,3 @@ function M._animate(self, dt)
     end
 end
 
-return M

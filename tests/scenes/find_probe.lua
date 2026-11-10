@@ -1,7 +1,6 @@
 -- Probe: validate scene.find_components (subtree + whole-registry) and scene.get_entity.
-local M = {}
 
-function M._on_ready(self)
+function _on_ready(self)
     local root = scene.entity("froot")
     scene.replace(root, "Transform", {})
     local child = scene.entity("fchild")
@@ -32,4 +31,3 @@ function M._on_ready(self)
     t.done()
 end
 
-return M

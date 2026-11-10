@@ -1,16 +1,14 @@
 
-json = require "json"
-
-local M = {}
+local json = require "json"
 
 
-M.vars = { 
-    kToneFreq = 3.0, -- Hz; springback speed (higher = stiffer)
-    kToneDamp = 25.0,        -- damping ratio; 1 = critical (no oscillation)
-    kGripTorque = 1.0,  -- N m max friction torque per rotation axis
-    kBodyDamping = 0.05,
-    kBodyFriction = 10.0,
-}
+
+-- script variables, bindable via "caps.LuaScript.<var>"
+kToneFreq = 3.0 -- Hz; springback speed (higher = stiffer)
+kToneDamp = 25.0 -- damping ratio; 1 = critical (no oscillation)
+kGripTorque = 1.0 -- N m max friction torque per rotation axis
+kBodyDamping = 0.05
+kBodyFriction = 10.0
 
 local joints = {}
 
@@ -372,7 +370,7 @@ local kJoints = {
 }
 -- END GENERATED
 
-function M._on_ready(self)
+function _on_ready(self)
     local ch = scene.entity("char")
     scene.replace(ch, "Transform", { pos = { 0, 0, 0 } })
 -- entity-form gltf load: skinned model (the table API supports skinning too; kept on the entity path for full parity)
@@ -425,7 +423,7 @@ function M._on_ready(self)
                 cols[#cols + 1] = col
             end
         end
-        scene.replace(bone, "RigidBody", { colliders = cols, forceSleep = false, damping = self.vars.kBodyDamping, friction = self.vars.kBodyFriction })
+        scene.replace(bone, "RigidBody", { colliders = cols, forceSleep = false, damping = kBodyDamping, friction = kBodyFriction })
         -- reparent the bone the rigid body
         local parent = bone
         local child = scene.get_entity("hashimoto/" .. f.name)
@@ -463,9 +461,9 @@ function M._on_ready(self)
                 limAngMin = lim and { lim.x[1], lim.y[1], lim.z[1] } or { 0, 0, 0 },
                 limAngMax = lim and { lim.x[2], lim.y[2], lim.z[2] } or { 0, 0, 0 },
                 motorState = { 0, 0, 0, 2, 2, 2 }, -- position motor on the rotation axes only
-                motorFreq = { self.vars.kToneFreq, self.vars.kToneFreq, self.vars.kToneFreq },
-                motorDamp = { self.vars.kToneDamp, self.vars.kToneDamp, self.vars.kToneDamp },
-                frictionAng = { self.vars.kGripTorque, self.vars.kGripTorque, self.vars.kGripTorque } })
+                motorFreq = { kToneFreq, kToneFreq, kToneFreq },
+                motorDamp = { kToneDamp, kToneDamp, kToneDamp },
+                frictionAng = { kGripTorque, kGripTorque, kGripTorque } })
             joints[#joints + 1] = w
             nj = nj + 1
             -- joint debug axis: parented to bone at the joint point, showing the LIMIT frame
@@ -499,9 +497,9 @@ function M._on_ready(self)
         limAngMin = lim and { lim.x[1], lim.y[1], lim.z[1] } or { 0, 0, 0 },
         limAngMax = lim and { lim.x[2], lim.y[2], lim.z[2] } or { 0, 0, 0 },
         motorState = { 0, 0, 0, 2, 2, 2 }, -- position motor on the rotation axes only
-        motorFreq = { self.vars.kToneFreq, self.vars.kToneFreq, self.vars.kToneFreq },
-        motorDamp = { self.vars.kToneDamp, self.vars.kToneDamp, self.vars.kToneDamp },
-        frictionAng = { self.vars.kGripTorque, self.vars.kGripTorque, self.vars.kGripTorque } })
+        motorFreq = { kToneFreq, kToneFreq, kToneFreq },
+        motorDamp = { kToneDamp, kToneDamp, kToneDamp },
+        frictionAng = { kGripTorque, kGripTorque, kGripTorque } })
     joints[#joints + 1] = w
     local bp = scene.world_pose(boneEnt["pelvis"]).pos
     local ax = mesh.createAxis({ len = 0.15 })
@@ -530,7 +528,7 @@ function M._on_ready(self)
     local tab = ui.tab(win, "scene")
     ui.text(tab, "Rig settings")
     ui.slider_f(tab, "kToneFreq", "caps.LuaScript.kToneFreq", 0, 100.0, "%.2f")
-    ui.slider_f(tab, "kToneDamp", "caps.LuaScript.kToneDamp", 0, 100.0, "%.2f")
+    ui.slider_f(tab, "kToneDamp", "caps.LuaScript.kToneDamp", 0, 500.0, "%.1f")
     ui.slider_f(tab, "kGripTorque", "caps.LuaScript.kGripTorque", 0, 100.0, "%.2f")
     ui.slider_f(tab, "kBodyDamping", "caps.LuaScript.kBodyDamping", 0, 100.0, "%.2f")
     ui.slider_f(tab, "kBodyFriction", "caps.LuaScript.kBodyFriction", 0, 100.0, "%.2f")
@@ -539,7 +537,7 @@ end
 
 -- slider handler, called only when a slider moves (or every frame — the diff no-ops if nothing changed)
 function applyTone(self)
-    local f, d, g = self.vars.kToneFreq, self.vars.kToneDamp, self.vars.kGripTorque
+    local f, d, g = kToneFreq, kToneDamp, kGripTorque
     for _, w in ipairs(joints) do
         scene.replace(w, "SixDofJoint", {
             motorFreq = { f, f, f },
@@ -547,13 +545,12 @@ function applyTone(self)
             frictionAng = { g, g, g } })
     end
     -- for _, b in pairs(boneEnt) do
-    --     scene.replace(b, "RigidBody", { damping = self.vars.kBodyDamping, friction = self.vars.kBodyFriction })
+    --     scene.replace(b, "RigidBody", { damping = kBodyDamping, friction = kBodyFriction })
     -- end
 end
 
-function M._physics(self, dt)
+function _physics(self, dt)
   --print(dt)
   applyTone(self)
 end
 
-return M

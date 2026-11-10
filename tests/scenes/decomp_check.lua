@@ -1,8 +1,7 @@
-local M = {}
 local tick = 0
 local lastY = nil
 
-function M._on_ready(self)
+function _on_ready(self)
     -- ground (top at y=0)
     local ground = scene.entity("ground")
     scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
@@ -56,7 +55,7 @@ function M._on_ready(self)
     scene.replace(e, "RigidBody", { colliders = cols })
 end
 
-function M._physics(self, dt)
+function _physics(self, dt)
     tick = tick + 1
     if tick % 30 == 0 then
         local y = scene.get_pose("decompBody").pos[2]
@@ -71,4 +70,3 @@ function M._physics(self, dt)
     end
 end
 
-return M

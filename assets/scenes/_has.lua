@@ -1,6 +1,5 @@
 -- Hashimoto idle: subtle breathing/sway/look-around + one hand wave, on top of the file's
 -- frame-0 shape (static morph weights applied live by the GPU, FHMHashimoto pushed to 0.85).
-local M = {}
 local bind = {}
 
 -- capture a joint's bind-pose local TRS once, then compose the idle rotation onto it
@@ -25,7 +24,7 @@ local function geom(t)
     return g
 end
 
-function M._on_ready(self)
+function _on_ready(self)
     local mat = scene.entity("mat_ground")
     scene.replace(mat, "Material", { baseColor = {0.35, 0.35, 0.38}, metallic = 0, roughness = 0.95 })
     local ground = scene.entity("ground")
@@ -40,7 +39,7 @@ function M._on_ready(self)
     scene.set_morph(ch, "FHMHashimoto", 0.85) -- entity handle: the name "char" is ambiguous
 end
 
-function M._animate(self)
+function _animate(self)
     local t = scene.time()
     -- breathing: chest pitch, slow
     sway("hashimoto/chestUpper", math.qaxis({ 1, 0, 0 }, 0.03 * math.sin(t * 1.1)))
@@ -58,4 +57,3 @@ function M._animate(self)
     sway("hashimoto/rForearmBend", math.qaxis({ 1, 0, 0 }, 0.18 * math.sin(t * 1.7)))
     sway("hashimoto/rHand", math.qaxis({ 0, 0, 1 }, 0.15 * math.sin(t * 1.7 + 0.6)))
 end
-return M

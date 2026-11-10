@@ -1,4 +1,3 @@
-local M = {}
 local tick = 0
 
 local function qp(q)
@@ -8,7 +7,7 @@ end
 local Qh, Qo
 local bA, bB, bC
 
-function M._on_ready(self)
+function _on_ready(self)
     Qh = math.qaxis({ 0, 1, 0 }, 0.5)
     Qo = math.qaxis({ 1, 0, 0 }, 0.9)
     local function dyn(name, px, quat)
@@ -32,7 +31,7 @@ local function qclose(a, b)
     return math.abs(d) > 0.999
 end
 
-function M._physics(self, dt)
+function _physics(self, dt)
     tick = tick + 1
     if tick == 10 or tick == 40 then
         print(string.format("DYNQ t=%d bA ecs=%s world=%s (set Qh=%s)", tick,
@@ -54,4 +53,3 @@ function M._physics(self, dt)
     end
 end
 
-return M

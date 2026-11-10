@@ -3,7 +3,6 @@
 -- then spawn N rigid-body swords that all share one GPU mesh and one set of Jolt shapes.
 -- The parsed table is never materialized itself: the shared mesh/material/shape entities
 -- are spawned explicitly and referenced by handle from every copy.
-local M = {}
 
 local GLB_PATH  = "sword_collider.glb"
 local DRAWABLE  = "Mesh_0"      -- mesh name in the glb (rendered)
@@ -29,7 +28,7 @@ local function randQuat()
     return math.qaxis({ math.cos(a) * r, math.sin(a) * r, z }, 2 * math.pi * math.random())
 end
 
-function M._on_ready(self)
+function _on_ready(self)
     math.randomseed(20240501) -- fixed seed -> reproducible ball; delete for a different scatter each run
     -- ground: one entity with a visual box + static box collider; the soft sim's floor is explicit
     local ground = scene.entity("ground")
@@ -116,4 +115,3 @@ function M._on_ready(self)
     print("SWORDDBG bodies=" .. #scene.find_components("RigidBody") .. " renderables=" .. #scene.find_components("Renderable"))
 end
 
-return M

@@ -43,15 +43,16 @@ A PBR-lit UI: windows, tabs, text, sliders (f/i) and buttons are ECS widgets (en
 ```lua
 -- hello world: the scene json is blank (one object with this script attached); the camera,
 -- light, textured spinning cube and UI are all created here in lua.
-local M = {}
 
 -- script variables, bindable via "hello.LuaScript.<var>"
-M.vars = { 
-    spin_speed = 1.0 
-}
+-- "hello" is the name of this script entity (specified in hello_world.json)
+spin_speed = 1.0
+
+-- local vars are not exposed
+local my_local_var = nil
 
 -- executed once, when the script is ready
-function M._on_ready(self)
+function _on_ready(self)
     -- the fly camera: active=true is what makes it THE camera
     local camera = scene.entity("cam")
     scene.emplace(camera, "Transform", { pos = { 0, 1.2, 4 } })
@@ -78,6 +79,8 @@ function M._on_ready(self)
     local win = ui.window("hello world", 320, 200)
     local tab = ui.tab(win, "scene")
     ui.text(tab, "a spinning cube - everything created in lua")
+
+    -- hook up a slider to this scrip't spin_speed variable
     ui.slider_f(tab, "spin speed (rad/s)", "hello.LuaScript.spin_speed", 0, 10.0, "%.2f")
     ui.slider_f(tab, "cube metallic", "mat_cube.Material.metallic", 0, 1.0, "%.2f")
     ui.slider_f(tab, "cube refraction", "mat_cube.Material.refraction", 0, 1.0, "%.2f")
@@ -87,18 +90,18 @@ function M._on_ready(self)
 end
 
 -- runs every graphics frame
-function M._animate(self, dt)
-    local speed = self.vars.spin_speed
+function _animate(self, dt)
+    local speed = spin_speed
     local pose = scene.get_pose(self.cube)
     scene.set_pose(self.cube, pose.pos, math.qmul(math.qaxis({ 0.5, 0.5, 0 }, speed * dt), pose.quat))
 end
 
 -- runs every physics step
-function M._physics(self, dt)
+function _physics(self, dt)
     
 end
 
-return M
+
 ```
 
 [assets/scenes/hello_world.json](assets/scenes/hello_world.json)

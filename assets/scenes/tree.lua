@@ -2,7 +2,6 @@
 -- script to each; also spawns the ground (mesh is the engine-loaded geometry stdlib global;
 -- lights and UI live in tree.json). Branches are visual: the branch script drives their
 -- Transforms, no physics bodies.
-local M = {}
 
 local kMaxDepth = 5
 -- depth -> capsule size: thick trunk tapering to thin twigs
@@ -93,7 +92,7 @@ local function addBranch(parent, parentWQ, parentWPos, parentDir, depth)
     end
 end
 
-function M._on_ready(self)
+function _on_ready(self)
     -- static ground (visual only)
     local ground = scene.entity("ground")
     scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
@@ -109,4 +108,3 @@ function M._on_ready(self)
     addBranch(nil, { 0, 0, 0, 1 }, { 0, 0, 0 }, { 0, 1, 0 }, 0)
 end
 
-return M

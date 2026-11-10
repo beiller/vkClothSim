@@ -1,8 +1,7 @@
 -- the shared scene-ui builder: interprets a scene json "ui.widgets" spec (buildUi); the
 -- widget vocabulary lives here, not in C++
-local M = {}
 
-local function build(parent, spec)
+function build(parent, spec)
     for _, w in ipairs(spec) do
         local t = w.type
         if t == "section" then
@@ -34,7 +33,7 @@ end
 
 -- the per-scene main ui window: the engine calls this with the whole scene json;
 -- a scene with no "ui" block (or ui.hidden) gets no window
-local function main(spec)
+function main(spec)
     local u = spec.ui
     if not u or u.hidden then return end
     local size = u.size or { 320, 720 }
@@ -45,6 +44,3 @@ local function main(spec)
     ui.editor(ui.tab(win, "editor"))
 end
 
-M.build = build
-M.main = main
-return M

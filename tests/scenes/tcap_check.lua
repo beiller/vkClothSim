@@ -4,7 +4,6 @@
 -- so an upright body rests at y = halfHeight + bottomRadius and an inverted one at
 -- y = halfHeight + topRadius. A 45-deg-tilted drop rolls over to its side (min caliper
 -- ~2*bottomRadius), so it is only checked to rest on the ground without sinking or floating.
-local M = {}
 local tick = 0
 
 local kTapers = {
@@ -16,7 +15,7 @@ local kTapers = {
 local bodies = {}
 local y280 = {}
 
-function M._on_ready()
+function _on_ready()
     local ground = scene.entity("ground")
     scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
     local gs = scene.entity()
@@ -55,7 +54,7 @@ function M._on_ready()
     drop("tilt", kTapers[1], math.qaxis({ 1, 0, 0 }, math.pi / 4), -7) -- rolls to a side; loose band
 end
 
-function M._physics(self, dt)
+function _physics(self, dt)
     tick = tick + 1
     if tick == 280 then
         for n, b in pairs(bodies) do y280[n] = scene.world_pose(b).pos[2] end
@@ -77,4 +76,3 @@ function M._physics(self, dt)
     end
 end
 
-return M

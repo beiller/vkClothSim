@@ -5,7 +5,6 @@
 --   0-based, as in Vulkan, so `scene.replace(g, "Geometry", mesh.box({...}))` works as-is.
 -- constraints: flat array { a, b, rest, k, ... } (0-based vertex indices)
 
-local m = {}
 
 local function norm3(v)
     local l = math.sqrt(v[1] * v[1] + v[2] * v[2] + v[3] * v[3])
@@ -13,7 +12,7 @@ local function norm3(v)
 end
 
 -- surface-of-revolution capsule (radius x halfLen cylinder, hemispherical caps)
-function m.capsule(p)
+function capsule(p)
     local r, h = p.radius, p.halfLen
     local S, M = p.S or 20, p.M or 32
     local pos, nrm, uv, idx = {}, {}, {}, {}
@@ -63,7 +62,7 @@ end
 
 -- surface-of-revolution tapered capsule: the radius ramps linearly from bottomRadius
 -- (at y = -halfHeight) to topRadius (at y = +halfHeight), hemispherical cap at each end
-function m.taperedCapsule(p)
+function taperedCapsule(p)
     local h, rb, rt = p.halfHeight, p.bottomRadius, p.topRadius
     local S, M = p.S or 20, p.M or 32
     local pos, nrm, uv, idx = {}, {}, {}, {}
@@ -111,7 +110,7 @@ function m.taperedCapsule(p)
 end
 
 -- surface-of-revolution cone: base of radius `radius` at y = -halfLen, apex at y = +halfLen
-function m.cone(p)
+function cone(p)
     local r, h = p.radius, p.halfLen
     local S, M = p.S or 20, p.M or 16
     local pos, nrm, uv, idx = {}, {}, {}, {}
@@ -170,16 +169,16 @@ local function mergeGeo(a, b)
 end
 
 -- arrow along +Y from y = 0 to y = len: capsule shaft + cone head
-function m.arrow(p)
+function arrow(p)
     local len = p.len or 1.0
     local r = p.radius or len * 0.06
     local headLen = p.headLen or len * 0.25
     local hr = p.headRadius or math.max(r * 2.5, len * 0.1)
-    local shaft = m.capsule({ radius = r, halfLen = (len - headLen) * 0.5, S = p.S or 16, M = p.M or 8 })
+    local shaft = capsule({ radius = r, halfLen = (len - headLen) * 0.5, S = p.S or 16, M = p.M or 8 })
     for i = 2, #shaft.pos, 3 do
         shaft.pos[i] = shaft.pos[i] + (len - headLen) * 0.5
     end
-    local head = m.cone({ radius = hr, halfLen = headLen * 0.5, S = p.S or 16, M = p.M or 8 })
+    local head = cone({ radius = hr, halfLen = headLen * 0.5, S = p.S or 16, M = p.M or 8 })
     for i = 2, #head.pos, 3 do
         head.pos[i] = head.pos[i] + (len - headLen * 0.5)
     end
@@ -226,7 +225,7 @@ local function icoSphere(subdiv)
     return verts, tris
 end
 
-function m.sphere(p)
+function sphere(p)
     local subdiv = p.subdiv or 4
     local r = p.radius or 1.0
     local verts, tris = icoSphere(subdiv)
@@ -246,7 +245,7 @@ function m.sphere(p)
 end
 
 -- axis-aligned box centered at the origin; p = {hx, hy, hz} half-extents
-function m.box(p)
+function box(p)
     local hx, hy, hz = p[1], p[2], p[3]
     local pos, nrm, uv, idx = {}, {}, {}, {}
     -- each face: outward normal + 4 corners, wound CCW when viewed from outside
@@ -278,7 +277,7 @@ function m.box(p)
 end
 
 -- cw x ch vertex grid in the xz plane at the origin, spanning +/- span/2
-function m.plane(p)
+function plane(p)
     local cw, ch = p.cw, p.ch
     local span = p.span
     local pos, nrm, uv, idx = {}, {}, {}, {}
@@ -304,7 +303,7 @@ function m.plane(p)
 end
 
 -- structural + shear springs for the plane grid
-function m.planeCons(p)
+function planeCons(p)
     local cw, ch = p.cw, p.ch
     local spacing = p.span / (cw - 1)
     local diag = spacing * math.sqrt(2)
@@ -334,7 +333,7 @@ function m.planeCons(p)
 end
 
 -- edge springs + antipodal ties that hold a sphere's shape against gravity
-function m.ballCons(p)
+function ballCons(p)
     local pos, idx = p.pos, p.idx
     local n = #pos // 3
     local function vAt(i)
@@ -396,7 +395,7 @@ end
 
 -- visual axis triad: three emissive arrows radiating from the origin (X red, Y green, Z blue);
 -- opts = { pos = {x,y,z}, quat = {x,y,z,w}, len }; returns the root entity (parent it to follow a body)
-function m.createAxis(opts)
+function createAxis(opts)
     local len = opts and opts.len or 0.4
     local root = scene.entity()
     scene.replace(root, "Transform", { pos = (opts and opts.pos) or { 0, 0, 0 },
@@ -410,7 +409,7 @@ function m.createAxis(opts)
         local mat = scene.entity()
         scene.replace(mat, "Material", { baseColor = a.col, emissive = a.col, metallic = 0, roughness = 0.5 })
         local g = scene.entity()
-        scene.replace(g, "Geometry", m.arrow({ len = len }))
+        scene.replace(g, "Geometry", arrow({ len = len }))
         local e = scene.entity()
         local q = (a.dir[2] > 0.999) and { 0, 0, 0, 1 } or math.qfromto({ 0, 1, 0 }, a.dir)
         scene.replace(e, "Transform", { quat = q })
@@ -421,4 +420,3 @@ function m.createAxis(opts)
     return root
 end
 
-return m

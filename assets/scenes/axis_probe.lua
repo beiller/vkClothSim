@@ -1,7 +1,6 @@
 -- Bone axis probe: a thin green arrow along each bone's local +Y (shaft + tip), parented to the
 -- joint entity so it moves and turns with the bone.
 -- head + neckUpper yaw continuously (different frequencies) so the axis motion is watchable.
-local M = {}
 local bind = {}
 
 local function bindPose(name)
@@ -28,7 +27,7 @@ local function geom(t)
     return g
 end
 
-function M._on_ready(self)
+function _on_ready(self)
     local matGround = scene.entity("mat_ground")
     scene.replace(matGround, "Material", { baseColor = {0.35, 0.35, 0.38}, metallic = 0, roughness = 0.95 })
     local ground = scene.entity("ground")
@@ -61,7 +60,6 @@ function M._on_ready(self)
     end
 end
 
-function M._animate(self)
+function _animate(self)
     yaw("basegen8/head", 90 * math.pi / 180)
 end
-return M

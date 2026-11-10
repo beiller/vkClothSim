@@ -1,6 +1,5 @@
-local M = {}
 
-function M._on_ready(self)
+function _on_ready(self)
     local root = scene.entity("sword_root")
     scene.replace(root, "Transform", { pos = { 0, 12, 0 } })
     scene.spawn(graphics.gltf("sword.glb"), root)
@@ -31,4 +30,3 @@ function M._on_ready(self)
     t.done()
 end
 
-return M

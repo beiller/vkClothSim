@@ -1,4 +1,3 @@
-local M = {}
 local tick = 0
 
 local function qangle(a, b)
@@ -11,7 +10,7 @@ local Qh, Qo
 local obj, hand
 local r30, y30
 
-function M._on_ready(self)
+function _on_ready(self)
     Qh = math.qaxis({ 0, 1, 0 }, 0.5)
     hand = scene.entity("hand")
     scene.replace(hand, "Transform", { pos = { 0, 5, 0 }, quat = Qh })
@@ -31,7 +30,7 @@ function M._on_ready(self)
     scene.replace(obj, "RigidBody", { colliders = { c } })
 end
 
-function M._physics(self, dt)
+function _physics(self, dt)
     tick = tick + 1
     if tick == 5 then
         local relQ = math.qmul(math.qinv(Qo), Qh) -- qinv(bodyB)*bodyA
@@ -62,4 +61,3 @@ function M._physics(self, dt)
     end
 end
 
-return M

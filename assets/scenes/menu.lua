@@ -1,7 +1,6 @@
 -- the startup menu: one button per scene; a click loads that scene (a full reset)
-local M = {}
 
-function M._on_ready(self)
+function _on_ready(self)
     local win = ui.window("choose a scene", 290, 120)
     for _, s in ipairs(scene.scenes()) do
         -- filter by filename (the path prefix varies with cwd / --scenes-dir)
@@ -17,4 +16,3 @@ function M._on_ready(self)
     end
 end
 
-return M

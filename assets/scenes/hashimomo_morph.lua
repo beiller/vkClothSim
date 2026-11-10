@@ -1,6 +1,5 @@
 -- Hashimomo morph test: one slider drives one shape key through the skeleton.
 -- The write fans out to every mesh that has that key; a mesh without it is a no-op.
-local M = {}
 local SHAPES = { "FHMHashimoto", "FBMThin", "Youth Weight", "Kim Head" }
 local last = { i = 0, w = -1 }
 local ch = nil
@@ -11,7 +10,7 @@ local function geom(t)
     return g
 end
 
-function M._on_ready()
+function _on_ready()
     ch = scene.entity("char")
     scene.replace(ch, "Transform", { pos = { 0, 0, 0 } })
 -- entity-form gltf load: skinned model with morph targets (the table API drops shapes, so this stays on the entity path)
@@ -34,7 +33,7 @@ function M._on_ready()
     ui.slider_f(win, "weight", "ui_state.Material.roughness", 0, 1, "%.2f")
 end
 
-function M._animate()
+function _animate()
     local i = math.floor(scene.get("ui_state.Material.metallic"))
     i = math.max(1, math.min(#SHAPES, i))
     local w = scene.get("ui_state.Material.roughness")
@@ -46,4 +45,3 @@ function M._animate()
     print("morph: " .. SHAPES[i] .. " = " .. string.format("%.3f", w))
 end
 
-return M
