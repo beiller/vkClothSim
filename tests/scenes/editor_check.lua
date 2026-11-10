@@ -17,6 +17,14 @@ local function namedHas(name)
     return false
 end
 
+local function namesOfFields(comp)
+    local out = {}
+    for _, f in ipairs(scene.fields(comp)) do
+        table.insert(out, f.name)
+    end
+    return out
+end
+
 -- the first widget of `comp` whose Bind url is `url` (nil when none)
 local function findWidget(comp, url)
     for _, e in ipairs(scene.find_components(comp)) do
@@ -47,6 +55,15 @@ function _on_ready(self)
     t.check("components(rb) has RigidBody", inList(scene.components(rb), "RigidBody"))
     t.check("components(cam) has Camera", inList(scene.components(cam), "Camera"))
 
+    -- settings types (RenderSettings/PhysicsSettings) must resolve through scene.fields too,
+    -- not just kComps -- the editor is empty for them otherwise
+    local se = scene.get_entity("settings")
+    t.check("settings entity exists", se ~= nil)
+    if se then
+        t.check("components(settings) has RenderSettings", inList(scene.components(se), "RenderSettings"))
+    end
+    t.check("fields(RenderSettings) has exposure", inList(namesOfFields("RenderSettings"), "exposure"))
+
     -- build the editor into a tab (headless: no main() call, so this is the only invocation)
     local win = uib.make_window("editor test", 320, 200, { 0, 1.5, 2.8 })
     uib.editor(uib.tab(win, "editor"))
@@ -54,6 +71,7 @@ function _on_ready(self)
     -- one section per named entity that has components
     t.check("section rb", hasSection("rb"))
     t.check("section cam", hasSection("cam"))
+    t.check("section settings", hasSection("settings"))
 
     -- read-write value widgets carry a Bind with dir Both (0)
     local mass = findWidget("UISliderF", "rb.RigidBody.mass")
@@ -69,6 +87,11 @@ function _on_ready(self)
     local col = findWidget("UIText", "rb.RigidBody.colliders")
     t.check("colliders read-only text exists", col ~= nil)
     if col then t.eq("colliders dir Read", scene.component(col, "Bind").dir, 1) end
+
+    -- the global settings are editable too (the exposure widget that was missing)
+    local exp = findWidget("UISliderF", "settings.RenderSettings.exposure")
+    t.check("exposure slider exists", exp ~= nil)
+    if exp then t.eq("exposure dir Both", scene.component(exp, "Bind").dir, 0) end
 
     t.done()
 end

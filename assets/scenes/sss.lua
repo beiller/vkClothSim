@@ -5,6 +5,8 @@
 -- smear at high. The small sphere in front of the big one is the silhouette-bleed test; the
 -- back light tests transmission (thin regions glow red when backlit)
 
+local uib = require("ui")
+
 local function put(geom, matRef, pos)
     local g = scene.entity()
     scene.replace(g, "Geometry", geom)
@@ -44,5 +46,14 @@ function _on_ready(self)
     local bl = scene.entity()
     scene.replace(bl, "Transform", { pos = {-1.5, 0.5, -3} })
     scene.replace(bl, "PointLight", { color = { 1, 0.6, 0.4 }, intensity = 30, radius = 0.1 })
+
+    self.metricsText = uib.text(uib.make_window("metrics", 160, 180, { 0.45, 1.72, 2.8 }), "")
 end
 
+-- refresh the metrics window from the engine's performance string every frame
+function _animate(self, dt)
+    local t = scene.component(self.metricsText, "UIText")
+    if t then
+        t.label = engine.performance_metrics()
+    end
+end

@@ -35,7 +35,7 @@
                 "type": "section",
                 "label": "tone",
                 "children": [
-                    { "type": "slider-f", "label": "exposure", "bind": "render.exposure" },
+                    { "type": "slider-f", "label": "exposure", "bind": "settings.RenderSettings.exposure" },
                     { "type": "slider-f", "label": "hdri intensity", "bind": "env.Environment.intensity" }
                 ]
             },

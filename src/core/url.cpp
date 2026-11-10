@@ -116,22 +116,6 @@ bool resolveUrl(const entt::registry& reg, const std::string& url, UrlRef& out, 
         err = "expected 'name.Component.field'";
         return false;
     }
-    const std::string head = url.substr(0, dot);
-
-    if (head == "render" || head == "rigid") {
-        entt::entity settings = entt::null;
-        for (auto e : reg.view<SettingsRoot>()) {
-            settings = e;
-            break;
-        }
-        if (settings == entt::null) {
-            err = "no 'settings' entity";
-            return false;
-        }
-        const std::string cf = (head == "render" ? "RenderSettings." : "PhysicsSettings.") + url.substr(dot + 1);
-        return resolveEntityField(reg, settings, cf, head, out, err);
-    }
-
     // "name.LuaScript.varpath": the marker anchors the split even when the entity name
     // contains dots; on a miss, fall through to the generic split (an entity may be
     // literally named "X.LuaScript.Y").

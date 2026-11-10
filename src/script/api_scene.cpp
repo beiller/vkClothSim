@@ -159,13 +159,13 @@ const char* kindName(FieldKind k) {
 /// scene.fields(type: string) -> array of {name, kind, lo, hi} | reflected field metadata of component type (widget defaults + introspection)
 int lFields(lua_State* L) {
     const std::string type = luaL_checkstring(L, 1);
-    const CompReg* c = compFor(type);
-    if (!c || !c->desc) {
+    const TypeDesc* desc = refl::findType(type.c_str());
+    if (!desc) {
         lua_newtable(L); // unknown type -> empty array (introspection-friendly)
         return 1;
     }
     LuaTable arr(L);
-    for (const auto& f : c->desc->fields) {
+    for (const auto& f : desc->fields) {
         LuaTable t(L);
         t.setStr("name", f.name);
         t.setStr("kind", kindName(f.kind));

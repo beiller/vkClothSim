@@ -100,7 +100,7 @@
         "title": "3dsim",
         "size": [320, 800],
         "widgets": [
-            { "type": "color", "label": "background", "bind": "render.bgColor" },
+            { "type": "color", "label": "background", "bind": "settings.RenderSettings.bgColor" },
             { "type": "text", "label": "sim: GPU (cloth + ball)" },
             {
                 "type": "section",
@@ -133,7 +133,7 @@
                 "label": "jolt iterations",
                 "collapsible": false,
                 "children": [
-                    { "type": "slider-i", "label": "velocity", "bind": "rigid.velocitySteps" }
+                    { "type": "slider-i", "label": "velocity", "bind": "settings.PhysicsSettings.velocitySteps" }
                 ]
             },
             {
@@ -150,7 +150,7 @@
                 "type": "section",
                 "label": "tone",
                 "children": [
-                    { "type": "slider-f", "label": "exposure", "bind": "render.exposure" },
+                    { "type": "slider-f", "label": "exposure", "bind": "settings.RenderSettings.exposure" },
                     { "type": "slider-f", "label": "hdri intensity", "bind": "env.Environment.intensity" }
                 ]
             },
