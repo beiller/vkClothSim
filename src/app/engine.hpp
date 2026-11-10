@@ -4,6 +4,7 @@
 #include "vk/graphics_server.hpp"
 #include "xr/xr_backend.hpp"
 #include <entt/entt.hpp>
+#include <cstdio>
 #include <memory>
 #include <string>
 
@@ -37,4 +38,23 @@ struct Engine {
     std::string pendingScene;
     std::string scenePath;
     std::string loadError;
+    std::string perfText; // the engine's performance summary, written here and read by lua (engine.performance_metrics)
 };
+
+// writes the current fps + per-phase ms averages into w.perfText (the string a lua metrics window displays)
+inline void writePerfText(Engine& w) {
+    char buf[256];
+    const float fps = w.fps > 1.0f ? w.fps : 1.0f;
+    std::snprintf(buf, sizeof(buf), "%.1f fps  %.1f ms\n"
+                                  "poll  %6.1f\n"
+                                  "cpu   %6.1f\n"
+                                  "jolt  %6.1f\n"
+                                  "skel  %6.1f\n"
+                                  "sim   %6.1f\n"
+                                  "rend  %6.1f\n"
+                                  "xrend %6.1f\n"
+                                  "idle  %6.1f",
+                  w.fps, 1000.0f / fps, w.phase.poll, w.phase.cpu, w.phase.jolt,
+                  w.phase.skel, w.phase.sim, w.phase.render, w.phase.xrEnd, w.phase.idle);
+    w.perfText = buf;
+}

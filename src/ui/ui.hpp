@@ -21,7 +21,8 @@ struct UiHandles {
 
 void uiInit(const UiHandles& h);
 void uiShutdown();
-void uiSetButtonHook(std::function<void(const std::string&)> fn);
+void uiSetButtonHook(std::function<void(const std::string&, entt::entity)> fn);
+void uiSetChangeHook(std::function<void(const std::string&, entt::entity)> fn);
 
 template <typename C>
 entt::entity spawnWidget(entt::registry& reg, int& seq, entt::entity parent, C c) {
@@ -34,9 +35,6 @@ entt::entity spawnWidget(entt::registry& reg, int& seq, entt::entity parent, C c
     return e;
 }
 
-// canvas (own GPU texture + quad + collider + ImGui context) plus the window that fills it
-entt::entity spawnUiWindow(entt::registry& reg, int& seq, const std::string& title, const V2& px, const V3& pos);
-void spawnFpsHud(entt::registry& reg, int& seq, const V3& pos, const V2& px);
 void spawnFieldWidget(entt::registry& reg, int& seq, entt::entity parent, const char* label, const FieldDesc* f, const std::string& url);
 
 struct UiFeed {

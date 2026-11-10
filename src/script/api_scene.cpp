@@ -138,13 +138,44 @@ int lTime(lua_State* L) {
     return 1;
 }
 
-/// scene.button(name: string, fn: function) | register a named button callback; fired by ui.fire_button(name) or a UI widget bound to that action
-int lButton(lua_State* L) {
-    auto* self = SceneScript::sSelf(L);
-    const std::string name = luaL_checkstring(L, 1);
-    luaL_checktype(L, 2, LUA_TFUNCTION);
-    self->addButton(name, self->newRef(L, 2));
-    return 0;
+const char* kindName(FieldKind k) {
+    switch (k) {
+    case FieldKind::SliderF: return "slider_f";
+    case FieldKind::SliderI: return "slider_i";
+    case FieldKind::Checkbox: return "checkbox";
+    case FieldKind::Color: return "color";
+    case FieldKind::DragV3: return "drag_v3";
+    case FieldKind::Ref: return "ref";
+    case FieldKind::Str: return "str";
+    case FieldKind::StrArr: return "str_arr";
+    case FieldKind::Quat: return "quat";
+    case FieldKind::FloatArr: return "float_arr";
+    case FieldKind::UIntArr: return "uint_arr";
+    case FieldKind::EntArr: return "ent_arr";
+    }
+    return "?";
+}
+
+/// scene.fields(type: string) -> array of {name, kind, lo, hi} | reflected field metadata of component type (widget defaults + introspection)
+int lFields(lua_State* L) {
+    const std::string type = luaL_checkstring(L, 1);
+    const CompReg* c = compFor(type);
+    if (!c || !c->desc) {
+        lua_newtable(L); // unknown type -> empty array (introspection-friendly)
+        return 1;
+    }
+    LuaTable arr(L);
+    for (const auto& f : c->desc->fields) {
+        LuaTable t(L);
+        t.setStr("name", f.name);
+        t.setStr("kind", kindName(f.kind));
+        t.setNum("lo", f.lo);
+        t.setNum("hi", f.hi);
+        arr.appendTable(t.idx);
+        lua_pop(L, 1);
+    }
+    lua_pushvalue(L, arr.idx);
+    return 1;
 }
 
 // push CompFields as a plain Lua table (the shape scene.component snapshots used to have)
@@ -349,7 +380,7 @@ void luaRegisterScene(lua_State* L, SceneScript* host) {
     reg(L, host, "set", lSet);
     reg(L, host, "get", lGet);
     reg(L, host, "time", lTime);
-    reg(L, host, "button", lButton);
+    reg(L, host, "fields", lFields);
     reg(L, host, "scenes", lScenes);
     reg(L, host, "request_scene", lRequestScene);
     reg(L, host, "last_error", lLastError);

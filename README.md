@@ -44,12 +44,10 @@ A PBR-lit UI: windows, tabs, text, sliders (f/i) and buttons are ECS widgets (en
 -- hello world: the scene json is blank (one object with this script attached); the camera,
 -- light, textured spinning cube and UI are all created here in lua.
 
--- script variables, bindable via "hello.LuaScript.<var>"
--- "hello" is the name of this script entity (specified in hello_world.json)
-spin_speed = 1.0
+local uib = require("ui")
 
--- local vars are not exposed
-local my_local_var = nil
+-- script variables, bindable via "hello.LuaScript.<var>"
+spin_speed = 1.0
 
 -- executed once, when the script is ready
 function _on_ready(self)
@@ -58,6 +56,10 @@ function _on_ready(self)
     scene.emplace(camera, "Transform", { pos = { 0, 1.2, 4 } })
     scene.emplace(camera, "Camera", { fovDeg = 50, active = true })
     scene.attach_script(camera, "scenes/camera") -- attaches the "fly camera movement" script which gives "look" and "wasd + qe" kb movement
+
+    -- attach the VR controller script (enables movement and pointing with a VR controller setup)
+    local vr = scene.entity("vr")
+    scene.attach_script(vr, "scenes/vr_controller")
 
     local light = scene.entity("light")
     scene.emplace(light, "Transform", { pos = { 0, 3, 4 } })
@@ -76,17 +78,15 @@ function _on_ready(self)
     scene.emplace(self.cube, "MaterialRef", { material = mat })
 
     -- the ui: one window, a text line, a spin-speed slider, and the scene editor
-    local win = ui.window("hello world", 320, 200)
-    local tab = ui.tab(win, "scene")
-    ui.text(tab, "a spinning cube - everything created in lua")
-
-    -- hook up a slider to this scrip't spin_speed variable
-    ui.slider_f(tab, "spin speed (rad/s)", "hello.LuaScript.spin_speed", 0, 10.0, "%.2f")
-    ui.slider_f(tab, "cube metallic", "mat_cube.Material.metallic", 0, 1.0, "%.2f")
-    ui.slider_f(tab, "cube refraction", "mat_cube.Material.refraction", 0, 1.0, "%.2f")
-    ui.slider_f(tab, "cube ior", "mat_cube.Material.ior", 1.0, 3.0, "%.2f")
-    ui.slider_f(tab, "cube roughness", "mat_cube.Material.roughness", 0, 1.0, "%.2f")
-    ui.editor(ui.tab(win, "editor"))
+    local win = uib.make_window("hello world", 320, 200, { 0, 1.5, 2.8 })
+    local tab = uib.tab(win, "scene")
+    uib.text(tab, "a spinning cube - everything created in lua")
+    uib.bind_slider(tab, "spin speed (rad/s)", "hello.LuaScript.spin_speed", 0, 10.0, "%.2f")
+    uib.bind_slider(tab, "cube metallic", "mat_cube.Material.metallic", 0, 1.0, "%.2f")
+    uib.bind_slider(tab, "cube refraction", "mat_cube.Material.refraction", 0, 1.0, "%.2f")
+    uib.bind_slider(tab, "cube ior", "mat_cube.Material.ior", 1.0, 3.0, "%.2f")
+    uib.bind_slider(tab, "cube roughness", "mat_cube.Material.roughness", 0, 1.0, "%.2f")
+    ui.editor(uib.tab(win, "editor"))
 end
 
 -- runs every graphics frame

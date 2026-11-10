@@ -188,7 +188,8 @@ add_library(3dsim_script STATIC
     src/script/api_math.cpp
     src/script/api_components.cpp
     src/script/api_scene.cpp
-    src/script/api_ui.cpp)
+    src/script/api_ui.cpp
+    src/script/api_engine.cpp)
 target_compile_features(3dsim_script PRIVATE cxx_std_23)
 target_include_directories(3dsim_script PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/ui ${LUA_INCLUDE_DIR})
 target_link_libraries(3dsim_script PUBLIC 3dsim_core 3dsim_io 3dsim_graphics 3dsim_ui 3dsim_physics PRIVATE Jolt::Jolt ${LUA_LIBRARY})

@@ -18,8 +18,14 @@ struct UiCtx {
 
 UiHandles g_h;
 std::unordered_map<entt::entity, UiCtx> g_ctxs;
-std::function<void(const std::string&)> g_buttonHook;
+std::function<void(const std::string&, entt::entity)> g_buttonHook;
+std::function<void(const std::string&, entt::entity)> g_changeHook;
 bool g_demoOpen = false;
+
+void fireChange(const std::string& url, bool changed, entt::entity e) {
+    if (changed && !url.empty() && g_changeHook)
+        g_changeHook(url, e);
+}
 
 entt::entity canvasWindow(const entt::registry& reg, entt::entity canvas) {
     for (auto [e, w] : reg.view<UIWindow>().each())
@@ -104,8 +110,12 @@ void drawBoundText(const entt::registry& reg, const UrlRef& r) {
 }
 } // namespace
 
-void uiSetButtonHook(std::function<void(const std::string&)> fn) {
+void uiSetButtonHook(std::function<void(const std::string&, entt::entity)> fn) {
     g_buttonHook = std::move(fn);
+}
+
+void uiSetChangeHook(std::function<void(const std::string&, entt::entity)> fn) {
+    g_changeHook = std::move(fn);
 }
 
 void uiInit(const UiHandles& h) {
@@ -186,6 +196,7 @@ void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds) {
                 if (l.disabled)
                     ImGui::EndDisabled();
                 bindWriteBack(l, &s->value, changed, sizeof s->value);
+                fireChange(s->change_url, changed, e);
             } else if (auto* s = reg.try_get<UISliderI>(e)) {
                 bindSyncIn(l, &s->value, sizeof s->value);
                 if (l.disabled)
@@ -194,6 +205,7 @@ void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds) {
                 if (l.disabled)
                     ImGui::EndDisabled();
                 bindWriteBack(l, &s->value, changed, sizeof s->value);
+                fireChange(s->change_url, changed, e);
             } else if (auto* c = reg.try_get<UICheckbox>(e)) {
                 bindSyncIn(l, &c->value, sizeof c->value);
                 if (l.disabled)
@@ -202,6 +214,7 @@ void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds) {
                 if (l.disabled)
                     ImGui::EndDisabled();
                 bindWriteBack(l, &c->value, changed, sizeof c->value);
+                fireChange(c->change_url, changed, e);
             } else if (auto* c = reg.try_get<UIColorEdit>(e)) {
                 bindSyncIn(l, c->value, sizeof c->value);
                 if (l.disabled)
@@ -210,6 +223,7 @@ void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds) {
                 if (l.disabled)
                     ImGui::EndDisabled();
                 bindWriteBack(l, c->value, changed, sizeof c->value);
+                fireChange(c->change_url, changed, e);
             } else if (auto* d = reg.try_get<UIDragV3>(e)) {
                 bindSyncIn(l, d->value, sizeof d->value);
                 if (l.disabled)
@@ -218,14 +232,15 @@ void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds) {
                 if (l.disabled)
                     ImGui::EndDisabled();
                 bindWriteBack(l, d->value, changed, sizeof d->value);
+                fireChange(d->change_url, changed, e);
             } else if (auto* t = reg.try_get<UIText>(e)) {
                 if (reg.try_get<Bind>(e))
                     drawBoundText(reg, l.r);
                 else
-                    ImGui::TextUnformatted(t->text.c_str());
+                    ImGui::TextUnformatted(t->label.c_str());
             } else if (auto* b = reg.try_get<UIButton>(e)) {
                 if (ImGui::Button(b->label.c_str()) && g_buttonHook)
-                    g_buttonHook(b->action);
+                    g_buttonHook(b->target_url, e);
                 reg.get<UIButton>(e).pressed = ImGui::IsItemActive();
             } else if (auto* sec = reg.try_get<UISection>(e)) {
                 if (sec->collapsible) {
@@ -329,63 +344,6 @@ void uiRender(entt::entity canvas, VkCommandBuffer cmd) {
     bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
                          0, nullptr, 0, nullptr, 1, &bar);
-}
-
-namespace {
-Mesh quadMesh(const V2& ws) {
-    Mesh m;
-    const float x = ws.x * 0.5f, y = ws.y * 0.5f;
-    m.pos = {-x, -y, 0.0f, x, -y, 0.0f, -x, y, 0.0f, x, y, 0.0f};
-    m.nrm = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
-    m.uv = {0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f};
-    m.indices = {0, 1, 2, 2, 1, 3};
-    return m;
-}
-
-entt::entity spawnUiCanvas(entt::registry& reg, int& seq, const std::string& title, const V2& px, const V3& pos,
-                           int flags) {
-    const V2 ws{px.x * 0.0022f, px.y * 0.0022f}; // uniform m/px, preserves aspect
-    const entt::entity canvas = reg.create();
-    reg.emplace<UICanvas>(canvas, UICanvas{ws});
-    reg.emplace<GPUTexture>(canvas, GPUTexture{(uint32_t)px.x, (uint32_t)px.y});
-    reg.emplace<Transform>(canvas, Transform{pos});
-    const entt::entity geom = reg.create();
-    reg.emplace<Geometry>(geom, Geometry{quadMesh(ws)});
-    const entt::entity shape = reg.create();
-    reg.emplace<BoxShape>(shape, BoxShape{V3{ws.x * 0.5f, ws.y * 0.5f, 0.01f}});
-    const entt::entity col = reg.create();
-    reg.emplace<Collider>(col, Collider{shape});
-    reg.emplace<Renderable>(canvas, geom, true);
-    const entt::entity matEnt = reg.create();
-    Material m;
-    m.tex = canvas;
-    m.alphaMode = 2;
-    reg.emplace<Material>(matEnt, m);
-    reg.emplace<MaterialRef>(canvas, matEnt);
-    reg.emplace<KinematicBody>(canvas, KinematicBody{{col}});
-    const entt::entity win = reg.create();
-    UIWindow w;
-    w.title = title;
-    w.canvas = canvas;
-    w.size = px;
-    w.flags = flags;
-    w.order = seq++;
-    reg.emplace<UIWindow>(win, w);
-    return win;
-}
-} // namespace
-
-entt::entity spawnUiWindow(entt::registry& reg, int& seq, const std::string& title, const V2& px, const V3& pos) {
-    return spawnUiCanvas(reg, seq, title, px, pos, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
-                              ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
-}
-
-void spawnFpsHud(entt::registry& reg, int& seq, const V3& pos, const V2& px) {
-    const int flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                      ImGuiWindowFlags_NoBringToFrontOnFocus;
-    const entt::entity win = spawnUiCanvas(reg, seq, "##fps", px, pos, flags);
-    const entt::entity e = spawnWidget(reg, seq, win, UIText{});
-    reg.emplace<Name>(e, Name{"fps"});
 }
 
 void spawnFieldWidget(entt::registry& reg, int& seq, entt::entity parent, const char* label, const FieldDesc* f,

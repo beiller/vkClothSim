@@ -302,6 +302,25 @@ function plane(p)
     return { pos = pos, nrm = nrm, uv = uv, idx = idx }
 end
 
+-- a single quad (the UI canvas background); centered at the origin in the XY plane, facing +Z
+function quad(p)
+    local w, h = p.w / 2, p.h / 2
+    local pos, nrm, uv, idx = {}, {}, {}, {}
+    pos[1], pos[2], pos[3] = -w, -h, 0
+    pos[4], pos[5], pos[6] = w, -h, 0
+    pos[7], pos[8], pos[9] = -w, h, 0
+    pos[10], pos[11], pos[12] = w, h, 0
+    for i = 1, 4 do
+        nrm[3 * i - 2], nrm[3 * i - 1], nrm[3 * i] = 0, 0, 1
+    end
+    uv[1], uv[2] = 0, 1
+    uv[3], uv[4] = 1, 1
+    uv[5], uv[6] = 0, 0
+    uv[7], uv[8] = 1, 0
+    idx[1], idx[2], idx[3], idx[4], idx[5], idx[6] = 0, 1, 2, 2, 1, 3
+    return { pos = pos, nrm = nrm, uv = uv, idx = idx }
+end
+
 -- structural + shear springs for the plane grid
 function planeCons(p)
     local cw, ch = p.cw, p.ch

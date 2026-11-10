@@ -180,7 +180,7 @@ void resetScene(Engine& w) {
     w.script.loadTestStdlib();
     w.uiSeq = 0;
     w.showDemo = false;
-    spawnFpsHud(w.reg, w.uiSeq, V3{0.45f, 1.72f, 2.8f}, V2{160.0f, 180.0f});
+    writePerfText(w);
     spawnInputEntities(w);
     if (w.xr && w.xrSession) {
         spawnVrRoot(w.reg);

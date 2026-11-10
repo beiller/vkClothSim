@@ -1,5 +1,6 @@
 
 local json = require "json"
+local uib = require("ui")
 
 
 
@@ -522,16 +523,25 @@ function _on_ready(self)
     print("caps_fit: " .. n .. " capsule segments in " .. #kFits .. " bone bodies, " .. nj .. " joints (" .. nlim .. " limited)")
 
 
-    -- the ui: one window, a text line, a spin-speed slider, and the scene editor
-    local win = ui.window("ragdoll demo", 320, 200)
-    local tab = ui.tab(win, "scene")
-    ui.text(tab, "Rig settings")
-    ui.slider_f(tab, "kToneFreq", "caps.LuaScript.kToneFreq", 0, 100.0, "%.2f")
-    ui.slider_f(tab, "kToneDamp", "caps.LuaScript.kToneDamp", 0, 500.0, "%.1f")
-    ui.slider_f(tab, "kGripTorque", "caps.LuaScript.kGripTorque", 0, 100.0, "%.2f")
-    ui.slider_f(tab, "kBodyDamping", "caps.LuaScript.kBodyDamping", 0, 100.0, "%.2f")
-    ui.slider_f(tab, "kBodyFriction", "caps.LuaScript.kBodyFriction", 0, 100.0, "%.2f")
-    ui.editor(ui.tab(win, "editor"))
+    -- the ui: one window, a text line, sliders, and the scene editor
+    local win = uib.make_window("ragdoll demo", 320, 200, { 0, 1.5, 2.8 })
+    local tab = uib.tab(win, "scene")
+    uib.text(tab, "Rig settings")
+    uib.bind_slider(tab, "kToneFreq", "caps.LuaScript.kToneFreq", 0, 100.0, "%.2f")
+    uib.bind_slider(tab, "kToneDamp", "caps.LuaScript.kToneDamp", 0, 500.0, "%.1f")
+    uib.bind_slider(tab, "kGripTorque", "caps.LuaScript.kGripTorque", 0, 100.0, "%.2f")
+    uib.bind_slider(tab, "kBodyDamping", "caps.LuaScript.kBodyDamping", 0, 100.0, "%.2f")
+    uib.bind_slider(tab, "kBodyFriction", "caps.LuaScript.kBodyFriction", 0, 100.0, "%.2f")
+    ui.editor(uib.tab(win, "editor"))
+    self.metricsText = uib.text(uib.make_window("metrics", 160, 180, { 0.45, 1.72, 2.8 }), "")
+end
+
+-- refresh the metrics window from the engine's performance string every frame
+function _animate(self, dt)
+    local t = scene.component(self.metricsText, "UIText")
+    if t then
+        t.label = engine.performance_metrics()
+    end
 end
 
 -- slider handler, called only when a slider moves (or every frame — the diff no-ops if nothing changed)

@@ -237,7 +237,7 @@
                     }
                 ]
             },
-            { "type": "button", "label": "reset params", "action": "reset-params" },
+            { "type": "button", "label": "reset params", "action": "demo.LuaScript.reset_params" },
             { "type": "button", "label": "demo window", "action": "demo-window" }
         ]
     }

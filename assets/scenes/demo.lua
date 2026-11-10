@@ -3,6 +3,7 @@
 
 
 local clothH
+local ball
 local pinTime = 0.0
 local released = false
 local PIN_SECS = 3.0
@@ -66,24 +67,11 @@ function _on_ready(self)
                     pinned = 1, mass = 1.0 })
 
     local ballT = mesh.sphere({ subdiv = 3, radius = 1.5 * world_scale })
-    local ball = scene.entity("ball")
+    ball = scene.entity("ball")
     scene.replace(ball, "Transform", { pos = {0, 12, 0} })
     scene.replace(ball, "Renderable", { geom = geom(ballT) })
     scene.replace(ball, "MaterialRef", { material = scene.get_entity("mat_ball") })
     scene.replace(ball, "SoftBodyData", { cons = mesh.ballCons(ballT), mass = 2.0 })
-
-    -- struct defaults, as the JSON "reset-params" button expects
-    scene.button("reset-params", function()
-        for _, h in ipairs({ clothH, ball }) do
-            scene.set(h, "SoftBodyData.mass", 1.0)
-            scene.set(h, "SoftBodyData.damping", 0.96)
-            scene.set(h, "SoftBodyData.passes", 8)
-            scene.set(h, "SoftBodyData.stiffness", 1.0)
-            scene.set(h, "SoftBodyData.tension", 1.0)
-            scene.set(h, "SoftBodyData.friction", 2.0)
-            scene.set(h, "SoftBodyData.steps", 3)
-        end
-    end)
 
     -- glft tests
     -- local m = scene.entity("model")
@@ -94,6 +82,19 @@ function _on_ready(self)
     scene.replace(ch, "Transform", { pos = { -5, 0, 0 } })
 -- entity-form gltf load: skinned model (the table API supports skinning too; kept on the entity path for full parity)
     graphics.gltf(ch, "local/basegen8.glb")
+end
+
+-- struct defaults, as the JSON "reset params" button expects (demo.LuaScript.reset_params)
+function reset_params()
+    for _, h in ipairs({ clothH, ball }) do
+        scene.set(h, "SoftBodyData.mass", 1.0)
+        scene.set(h, "SoftBodyData.damping", 0.96)
+        scene.set(h, "SoftBodyData.passes", 8)
+        scene.set(h, "SoftBodyData.stiffness", 1.0)
+        scene.set(h, "SoftBodyData.tension", 1.0)
+        scene.set(h, "SoftBodyData.friction", 2.0)
+        scene.set(h, "SoftBodyData.steps", 3)
+    end
 end
 
 function _physics(self, dt)

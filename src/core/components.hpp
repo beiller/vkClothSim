@@ -329,37 +329,43 @@ struct UIWidget {
     int order = 0;
 };
 
+// change_url (value widgets): "name.LuaScript.fn" called with the widget entity as arg 1 when the user changes the value
 struct UISliderF {
     std::string label;
     float value = 0.0f;
     float lo = 0.0f, hi = 1.0f;
     std::string fmt = "%.2f";
+    std::string change_url;
 };
 
 struct UISliderI {
     std::string label;
     int value = 0;
     int lo = 0, hi = 1;
+    std::string change_url;
 };
 
 struct UICheckbox {
     std::string label;
     bool value = false;
+    std::string change_url;
 };
 
 struct UIColorEdit {
     std::string label;
     float value[3] = {0.0f, 0.0f, 0.0f};
+    std::string change_url;
 };
 
 struct UIDragV3 {
     std::string label;
     float value[3] = {0.0f, 0.0f, 0.0f};
     float speed = 0.1f;
+    std::string change_url;
 };
 
 struct UIText {
-    std::string text;
+    std::string label;
 };
 
 enum class BindDir : uint8_t { Both, Read, Write };
@@ -371,7 +377,7 @@ struct Bind {
 
 struct UIButton {
     std::string label;
-    std::string action;
+    std::string target_url; // "name.LuaScript.fn": the exported function called on click (arg 1 = this entity)
     bool pressed = false;
 };
 

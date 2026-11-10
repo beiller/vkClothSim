@@ -290,7 +290,7 @@ def main():
     regs, lambdas = parse_registrations(files)
     tables = parse_tables(SCRIPT_DIR / "lua_host.cpp")  # keys: 'Components', 'Math', ...
 
-    order = ["scene", "math", "graphics", "physics", "soft", "ui", "input"]
+    order = ["scene", "math", "graphics", "physics", "soft", "ui", "engine", "input"]
     lines = [
         "# Lua API reference (auto-generated)",
         "",

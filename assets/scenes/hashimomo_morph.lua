@@ -1,5 +1,7 @@
 -- Hashimomo morph test: one slider drives one shape key through the skeleton.
 -- The write fans out to every mesh that has that key; a mesh without it is a no-op.
+local uib = require("ui")
+
 local SHAPES = { "FHMHashimoto", "FBMThin", "Youth Weight", "Kim Head" }
 local last = { i = 0, w = -1 }
 local ch = nil
@@ -27,10 +29,10 @@ function _on_ready()
     -- its Material fields, which _animate reads back with scene.get
     local state = scene.entity("ui_state")
     scene.emplace(state, "Material", { metallic = 1, roughness = 0.85 })
-    local win = ui.window("morph", 300, 110)
-    ui.text(win, "shape key -> all meshes that have it")
-    ui.slider_f(win, "shape #", "ui_state.Material.metallic", 1, #SHAPES, "%.0f")
-    ui.slider_f(win, "weight", "ui_state.Material.roughness", 0, 1, "%.2f")
+    local win = uib.make_window("morph", 300, 110, { 0, 1.5, 2.8 })
+    uib.text(win, "shape key -> all meshes that have it")
+    uib.bind_slider(win, "shape #", "ui_state.Material.metallic", 1, #SHAPES, "%.0f")
+    uib.bind_slider(win, "weight", "ui_state.Material.roughness", 0, 1, "%.2f")
 end
 
 function _animate()

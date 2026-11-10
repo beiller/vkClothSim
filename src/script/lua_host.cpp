@@ -133,6 +133,10 @@ void SceneScript::init(Engine& w) {
     lua_setglobal(L, "ui");
 
     lua_newtable(L);
+    luaRegisterEngineTable(L, this);
+    lua_setglobal(L, "engine");
+
+    lua_newtable(L);
     luaRegisterInputTable(L, this);
     lua_setglobal(L, "input");
     m_time = 0.0f;
@@ -316,23 +320,6 @@ Mesh SceneScript::readGeom(lua_State* L, int idx, std::string& err) {
     return m;
 }
 
-void SceneScript::button(const std::string& name) {
-    if (name == "demo-window") { w().showDemo = true; return; }
-    if (!L)
-        return;
-    const auto it = m_buttons.find(name);
-    if (it == m_buttons.end()) {
-        std::fprintf(stderr, "3dsim: script has no handler for button '%s'\n", name.c_str());
-        return;
-    }
-    lua_rawgeti(L, LUA_REGISTRYINDEX, it->second);
-    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-        reportError(("button callback '" + name + "'").c_str());
-        dropRef(it->second);
-        m_buttons.erase(it);
-    }
-}
-
 bool SceneScript::callOnReady(int fnRef, int instRef) {
     lua_rawgeti(L, LUA_REGISTRYINDEX, fnRef);
     lua_rawgeti(L, LUA_REGISTRYINDEX, instRef);
@@ -442,6 +429,33 @@ void SceneScript::setVarStr(const entt::registry& reg, const std::string& url, c
         lua_pop(L, 2);
     }
     ls->varsS[path] = val;
+}
+
+void SceneScript::callUrl(const std::string& url, entt::entity arg) {
+    if (url == "demo-window") { w().showDemo = true; return; }  // engine state, not a script fn
+    if (!L)
+        return;
+    std::string name, path, err;
+    if (!parseVarUrl(url, name, path)) {
+        std::fprintf(stderr, "3dsim: bad target url '%s' (expected 'name.LuaScript.fn')\n", url.c_str());
+        return;
+    }
+    auto* ls = findVarScript(w().reg, name, err);
+    if (!ls) {
+        std::fprintf(stderr, "3dsim: target url '%s': %s\n", url.c_str(), err.c_str());
+        return;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ls->mod);
+    lua_getfield(L, -1, path.c_str());
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        std::fprintf(stderr, "3dsim: '%s' is not a function in the script of '%s'\n", path.c_str(), name.c_str());
+        return;
+    }
+    lua_pushinteger(L, entt::to_integral(arg));
+    if (lua_pcall(L, 1, 0, 0) != LUA_OK)
+        reportError("target url");  // pops traceback + message; the mod table is still below
+    lua_pop(L, 1);
 }
 
 void SceneScript::onScriptDestroy(entt::registry& reg, entt::entity e) {
@@ -717,7 +731,6 @@ void SceneScript::shutdown() {
     for (int ref : m_refs)
         luaL_unref(L, LUA_REGISTRYINDEX, ref);
     m_refs.clear();
-    m_buttons.clear();
     m_errored.clear();
     m_modules.clear();
     m_geomModule = -1;

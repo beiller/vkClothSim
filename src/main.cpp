@@ -118,7 +118,8 @@ int main(int argc, char** argv) {
     if (engine.hasWindow)
         uiInit({app.instance(), app.pdev(), app.device(), app.queueFamily(), app.queue(), (int)app.imageCount(),
                 [&engine](entt::entity c) -> VkImage { return engine.graphics.canvasImage(c); }});
-    uiSetButtonHook([&engine](const std::string& a) { engine.script.button(a); });
+    uiSetButtonHook([&engine](const std::string& u, entt::entity b) { engine.script.callUrl(u, b); });
+    uiSetChangeHook([&engine](const std::string& u, entt::entity w) { engine.script.callUrl(u, w); });
 
     if (noGraphics)
         std::printf("3dsim: CPU-only run (no graphics) | physics + scripts | --frames N to exit\n");
@@ -181,26 +182,7 @@ int main(int argc, char** argv) {
             fpsFrames = 0;
         }
         engine.fps = fps;
-
-        for (auto [e, n, t] : engine.reg.view<Name, UIText>().each())
-            if (n.id == "fps") {
-                char buf[256];
-                std::snprintf(buf, sizeof(buf), "%.1f fps  %.1f ms\n"
-                                              "poll  %6.1f\n"
-                                              "cpu   %6.1f\n"
-                                              "jolt  %6.1f\n"
-                                              "skel  %6.1f\n"
-                                              "sim   %6.1f\n"
-                                              "rend  %6.1f\n"
-                                              "xrend %6.1f\n"
-                                              "idle  %6.1f",
-                                              engine.fps, 1000.0f / (engine.fps > 1.0f ? engine.fps : 1.0f),
-                                              engine.phase.poll, engine.phase.cpu, engine.phase.jolt,
-                                              engine.phase.skel, engine.phase.sim, engine.phase.render,
-                                              engine.phase.xrEnd, engine.phase.idle);
-                t.text = buf;
-                break;
-            }
+        writePerfText(engine);
 
         float wait = 0.0f;
         if (engine.hasWindow) {

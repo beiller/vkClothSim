@@ -54,6 +54,10 @@ const CompReg kComps[] = {
     CMPV(ConvexHullShape, validateConvexHullShape), CMP(Collider), CMP(ControllerInput), CMP(MouseInput),
     CMP(Renderable),    CMP(Texture),       CMPV(Geometry, validateGeometry), CMPV(Skeleton, bindSkeleton),
     CMP(Joint),         CMP(SixDofJoint),   CMP(Parent),        CMP(Bind),
+    CMP(UIWidget),      CMP(UIButton),        CMP(UICanvas),     CMP(GPUTexture),
+    CMP(UIWindow),      CMP(UITab),          CMP(UIText),       CMP(UISection),
+    CMP(UISliderF),     CMP(UISliderI),      CMP(UICheckbox),   CMP(UIColorEdit),
+    CMP(UIDragV3),
 };
 
 #undef CMP

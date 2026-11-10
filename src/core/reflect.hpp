@@ -286,9 +286,100 @@ static const FieldDesc kBind[] = {
     {"dir", OFF(Bind, dir), FieldKind::SliderI, 0.0f, 2.0f},
 };
 
+/// UIWidget | marker for a drawable UI widget; `order` is its layout position among siblings
+static const FieldDesc kUIWidget[] = {
+    {"order", OFF(UIWidget, order), FieldKind::SliderI, 0.0f, 10000.0f},
+};
+/// UIButton | a clickable button; on click the exported function named by `target_url` is called with this entity as arg 1
+static const FieldDesc kUIButton[] = {
+    {"label", OFF(UIButton, label), FieldKind::Str},
+    {"target_url", OFF(UIButton, target_url), FieldKind::Str},
+};
+/// UICanvas | a UI canvas: its own GPU texture + quad; `w`/`h` are the full size in meters
+static const FieldDesc kUICanvas[] = {
+    {"w", OFF(UICanvas, worldSize), FieldKind::SliderF},
+    {"h", OFF(UICanvas, worldSize) + 4, FieldKind::SliderF},
+};
+/// GPUTexture | an allocated GPU texture (pixel size); created for canvas entities
+static const FieldDesc kGPUTexture[] = {
+    {"w", OFF(GPUTexture, w), FieldKind::SliderI, 0.0f, 16384.0f},
+    {"h", OFF(GPUTexture, h), FieldKind::SliderI, 0.0f, 16384.0f},
+};
+/// UIWindow | an ImGui window filling its canvas; `pos` comes from the canvas Transform (set it explicitly)
+static const FieldDesc kUIWindow[] = {
+    {"title", OFF(UIWindow, title), FieldKind::Str},
+    {"canvas", OFF(UIWindow, canvas), FieldKind::Ref},
+    {"w", OFF(UIWindow, size), FieldKind::SliderF},
+    {"h", OFF(UIWindow, size) + 4, FieldKind::SliderF},
+    {"flags", OFF(UIWindow, flags), FieldKind::SliderI, 0.0f, 1000000.0f},
+    {"order", OFF(UIWindow, order), FieldKind::SliderI, 0.0f, 10000.0f},
+};
+/// UITab | a tab page inside a UI window
+static const FieldDesc kUITab[] = {
+    {"label", OFF(UITab, label), FieldKind::Str},
+};
+/// UIText | a static (or bound) text line
+static const FieldDesc kUIText[] = {
+    {"label", OFF(UIText, label), FieldKind::Str},
+};
+/// UISection | a (collapsible by default) labeled section; its children are added to it
+static const FieldDesc kUISection[] = {
+    {"label", OFF(UISection, label), FieldKind::Str},
+    {"collapsible", OFF(UISection, collapsible), FieldKind::Checkbox},
+};
+/// UISliderF | a float slider; `change_url` is called with this entity as arg 1 while the user drags it
+static const FieldDesc kUISliderF[] = {
+    {"label", OFF(UISliderF, label), FieldKind::Str},
+    {"value", OFF(UISliderF, value), FieldKind::SliderF},
+    {"lo", OFF(UISliderF, lo), FieldKind::SliderF},
+    {"hi", OFF(UISliderF, hi), FieldKind::SliderF},
+    {"fmt", OFF(UISliderF, fmt), FieldKind::Str},
+    {"change_url", OFF(UISliderF, change_url), FieldKind::Str},
+};
+/// UISliderI | an integer slider; `change_url` is called with this entity as arg 1 while the user drags it
+static const FieldDesc kUISliderI[] = {
+    {"label", OFF(UISliderI, label), FieldKind::Str},
+    {"value", OFF(UISliderI, value), FieldKind::SliderI},
+    {"lo", OFF(UISliderI, lo), FieldKind::SliderI},
+    {"hi", OFF(UISliderI, hi), FieldKind::SliderI},
+    {"change_url", OFF(UISliderI, change_url), FieldKind::Str},
+};
+/// UICheckbox | a bool checkbox; `change_url` is called with this entity as arg 1 when toggled
+static const FieldDesc kUICheckbox[] = {
+    {"label", OFF(UICheckbox, label), FieldKind::Str},
+    {"value", OFF(UICheckbox, value), FieldKind::Checkbox},
+    {"change_url", OFF(UICheckbox, change_url), FieldKind::Str},
+};
+/// UIColorEdit | an RGB (0..1) color picker; `change_url` is called with this entity as arg 1 while the user edits it
+static const FieldDesc kUIColorEdit[] = {
+    {"label", OFF(UIColorEdit, label), FieldKind::Str},
+    {"value", OFF(UIColorEdit, value), FieldKind::Color},
+    {"change_url", OFF(UIColorEdit, change_url), FieldKind::Str},
+};
+/// UIDragV3 | a 3D drag gizmo; `change_url` is called with this entity as arg 1 while the user drags it
+static const FieldDesc kUIDragV3[] = {
+    {"label", OFF(UIDragV3, label), FieldKind::Str},
+    {"value", OFF(UIDragV3, value), FieldKind::DragV3},
+    {"speed", OFF(UIDragV3, speed), FieldKind::SliderF},
+    {"change_url", OFF(UIDragV3, change_url), FieldKind::Str},
+};
+
 static const TypeDesc kTypes[] = {
     {"Transform", kTransform},
     {"Bind", kBind},
+    {"UIWidget", kUIWidget},
+    {"UIButton", kUIButton},
+    {"UICanvas", kUICanvas},
+    {"GPUTexture", kGPUTexture},
+    {"UIWindow", kUIWindow},
+    {"UITab", kUITab},
+    {"UIText", kUIText},
+    {"UISection", kUISection},
+    {"UISliderF", kUISliderF},
+    {"UISliderI", kUISliderI},
+    {"UICheckbox", kUICheckbox},
+    {"UIColorEdit", kUIColorEdit},
+    {"UIDragV3", kUIDragV3},
     {"Material", kMaterial},
     {"MaterialRef", kMaterialRef},
     {"Parent", kParent},

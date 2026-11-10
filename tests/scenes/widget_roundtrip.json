@@ -1,0 +1,7 @@
+{
+    "name": "widget roundtrip",
+    "objects": [
+        { "name": "probe", "script": "widget_roundtrip" },
+        { "name": "rb", "components": { "RigidBody": { "mass": 2.0 } } }
+    ]
+}
