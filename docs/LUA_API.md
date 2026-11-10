@@ -1,4 +1,4 @@
-wrote /home/bill/src/3dsim/docs/LUA_API.md (49 functions): scene=25, math=12, graphics=3, physics=3, soft=1, ui=3, engine=1, input=1
+wrote /home/bill/src/3dsim/docs/LUA_API.md (50 functions): scene=27, math=12, graphics=3, physics=3, soft=1, ui=2, engine=1, input=1
 e component schema in `src/core/reflect.hpp`.
 Do not edit by hand; re-run the generator after API changes. Every function must carry a
 `/// table.name(args) -> ret | description` line above its handler (or reg() call).
@@ -20,6 +20,8 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [`scene.link_mesh(skel: entity|string, mesh: entity|string)`](#scenelinkmeshskel-entitystring-mesh-entitystring)
   - [`scene.spawn(tbl: table, parent?: entity|string) -> table`](#scenespawntbl-table-parent-entitystring---table)
   - [`scene.get_entity(name: string) -> entity`](#scenegetentityname-string---entity)
+  - [`scene.named() -> array of {name = string, entity = entity}`](#scenenamed---array-of-name--string-entity--entity)
+  - [`scene.components(e: entity) -> array of string`](#scenecomponentse-entity---array-of-string)
   - [`scene.find_components(component: string, root?: entity) -> table`](#scenefindcomponentscomponent-string-root-entity---table)
   - [`scene.attach_script(e: entity, file: string, params?: table)`](#sceneattachscripte-entity-file-string-params-table)
   - [`scene.destroy(e: entity)`](#scenedestroye-entity)
@@ -55,7 +57,6 @@ Do not edit by hand; re-run the generator after API changes. Every function must
 - [soft](#soft)
   - [`soft.set_floor(y: number)`](#softsetfloory-number)
 - [ui](#ui)
-  - [`ui.editor(tab: entity)`](#uieditortab-entity)
   - [`ui.seq() -> number`](#uiseq---number)
   - [`ui.fire_button(url: string)`](#uifirebuttonurl-string)
 - [engine](#engine)
@@ -166,6 +167,14 @@ materialize a name->node map into live entities (node = component-name -> field 
 ### `scene.get_entity(name: string) -> entity`
 
 look up a named entity (nil if not found)
+
+### `scene.named() -> array of {name = string, entity = entity}`
+
+every named entity, sorted by entity id (the editor's source)
+
+### `scene.components(e: entity) -> array of string`
+
+the reflected component type names on e (the editor's field source)
 
 ### `scene.find_components(component: string, root?: entity) -> table`
 
@@ -298,10 +307,6 @@ _no description_
 set the Y of the soft-body (cloth) floor plane (errors when the graphics server is disabled)
 
 ## ui
-
-### `ui.editor(tab: entity)`
-
-fill tab with the scene editor (entity tree + reflected field widgets for every selected entity)
 
 ### `ui.seq() -> number`
 

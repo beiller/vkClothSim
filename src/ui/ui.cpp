@@ -343,39 +343,5 @@ void uiRender(entt::entity canvas, VkCommandBuffer cmd) {
     bar.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
     bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
-                         0, nullptr, 0, nullptr, 1, &bar);
-}
-
-void spawnFieldWidget(entt::registry& reg, int& seq, entt::entity parent, const char* label, const FieldDesc* f,
-                      const std::string& url) {
-    auto withBind = [&reg, &url](entt::entity e, BindDir dir = BindDir::Both) {
-        reg.emplace<Bind>(e, Bind{url, "", static_cast<int>(dir)});
-    };
-    switch (f->kind) {
-    case FieldKind::SliderF:
-        withBind(spawnWidget(reg, seq, parent, UISliderF{label, 0.0f, f->lo, f->hi}));
-        break;
-    case FieldKind::SliderI:
-        withBind(spawnWidget(reg, seq, parent, UISliderI{label, 0, (int)f->lo, (int)f->hi}));
-        break;
-    case FieldKind::Checkbox:
-        withBind(spawnWidget(reg, seq, parent, UICheckbox{label, false}));
-        break;
-    case FieldKind::Color:
-        withBind(spawnWidget(reg, seq, parent, UIColorEdit{label}));
-        break;
-    case FieldKind::DragV3:
-        withBind(spawnWidget(reg, seq, parent, UIDragV3{label}));
-        break;
-    case FieldKind::Ref:
-    case FieldKind::Str:
-    case FieldKind::StrArr:
-    case FieldKind::FloatArr:
-    case FieldKind::UIntArr:
-    case FieldKind::EntArr:
-        withBind(spawnWidget(reg, seq, parent, UIText{}), BindDir::Read);
-        break;
-    case FieldKind::Quat:
-        break;
-    }
+                          0, nullptr, 0, nullptr, 1, &bar);
 }

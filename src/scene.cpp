@@ -4,7 +4,6 @@
 #include "components.hpp"
 #include "gltf.hpp"
 #include "json.hpp"
-#include "reflect.hpp"
 #include "systems.hpp"
 #include "ui.hpp"
 #include "url.hpp"
@@ -111,30 +110,6 @@ entt::entity buildObject(Engine& w, const json& o, const std::string& p, bool al
     return e;
 }
 
-}
-
-void spawnEditorUi(Engine& w, entt::entity tab) {
-    std::vector<std::pair<entt::entity, std::string>> named;
-    for (auto [e, n] : w.reg.view<Name>().each())
-        named.emplace_back(e, n.id);
-    std::ranges::sort(named, [](auto& a, auto& b) { return a.first < b.first; });
-    for (auto& [e, name] : named) {
-        auto comps = refl::entityFields(w.reg, e);
-        if (comps.empty())
-            continue;
-        entt::entity sec = spawnWidget(w.reg, w.uiSeq, tab, UISection{name, true});
-        for (const auto& c : comps) {
-            const TypeDesc* t = c.first;
-            for (const auto& f : t->fields) {
-                char label[128];
-                if (comps.size() > 1)
-                    std::snprintf(label, sizeof label, "%s.%s", t->name, f.name);
-                else
-                    std::snprintf(label, sizeof label, "%s", f.name);
-                spawnFieldWidget(w.reg, w.uiSeq, sec, label, &f, name + "." + t->name + "." + f.name);
-            }
-        }
-    }
 }
 
 // the singleton settings entity: RenderSettings + PhysicsSettings as components; short URLs

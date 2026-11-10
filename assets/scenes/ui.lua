@@ -120,6 +120,46 @@ function build(parent, spec)
     end
 end
 
+-- one editor field widget: value widgets are read-write (Bind Both); refs/strings/arrays are
+-- read-only text (Bind Read); quats are skipped (shown via their component-wise sliders)
+local function fieldWidget(parent, label, kind, f, bind)
+    if kind == "slider_f" then
+        return widget(parent, "UISliderF", { label = label, value = 0.0, lo = f.lo, hi = f.hi }, bind)
+    elseif kind == "slider_i" then
+        return widget(parent, "UISliderI", { label = label, value = 0, lo = f.lo, hi = f.hi }, bind)
+    elseif kind == "checkbox" then
+        return widget(parent, "UICheckbox", { label = label, value = false }, bind)
+    elseif kind == "color" then
+        return widget(parent, "UIColorEdit", { label = label }, bind)
+    elseif kind == "drag_v3" then
+        return widget(parent, "UIDragV3", { label = label }, bind)
+    elseif kind == "quat" then
+        return nil  -- shown via its component-wise sliders (qx..qw / hx..hz)
+    end
+    local e = scene.entity()
+    scene.replace(e, "Parent", { e = parent })
+    scene.emplace(e, "UIWidget", { order = ui.seq() })
+    scene.emplace(e, "UIText", {})
+    scene.emplace(e, "Bind", { url = bind, dir = 1 })
+    return e
+end
+
+-- the scene editor: one UISection per named entity, one widget per reflected field, each bound to
+-- "name.Component.field" (read-write for value widgets, read-only text for refs/strings/arrays)
+function editor(tab)
+    for _, ent in ipairs(scene.named()) do
+        local comps = scene.components(ent.entity)
+        if #comps > 0 then
+            local sec = widget(tab, "UISection", { label = ent.name, collapsible = true })
+            for _, comp in ipairs(comps) do
+                for _, f in ipairs(scene.fields(comp)) do
+                    fieldWidget(sec, (#comps > 1) and (comp .. "." .. f.name) or f.name, f.kind, f, ent.name .. "." .. comp .. "." .. f.name)
+                end
+            end
+        end
+    end
+end
+
 -- the per-scene main ui window: the engine calls this with the whole scene json;
 -- a scene with no "ui" block (or ui.hidden) gets no window
 function main(spec)
@@ -130,5 +170,5 @@ function main(spec)
     if u.widgets then
         build(tab(win, "scene"), u.widgets)
     end
-    ui.editor(tab(win, "editor"))
+    editor(tab(win, "editor"))
 end

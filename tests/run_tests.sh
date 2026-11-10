@@ -36,6 +36,7 @@ for spec in \
     "view_check|5" \
     "button_url|5" \
     "widget_roundtrip|5" \
+    "editor_check|5" \
     "decomp_check|600" \
     "sword_diag|5"
 do

@@ -13,4 +13,3 @@ void initEngine(Engine& w);
 bool createScene(Engine& w, const std::string& path, std::string& err);
 void resetScene(Engine& w);
 bool loadScene(Engine& w, const std::string& path);
-void spawnEditorUi(Engine& w, entt::entity tab);

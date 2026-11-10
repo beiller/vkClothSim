@@ -532,7 +532,7 @@ function _on_ready(self)
     uib.bind_slider(tab, "kGripTorque", "caps.LuaScript.kGripTorque", 0, 100.0, "%.2f")
     uib.bind_slider(tab, "kBodyDamping", "caps.LuaScript.kBodyDamping", 0, 100.0, "%.2f")
     uib.bind_slider(tab, "kBodyFriction", "caps.LuaScript.kBodyFriction", 0, 100.0, "%.2f")
-    ui.editor(uib.tab(win, "editor"))
+    uib.editor(uib.tab(win, "editor"))
     self.metricsText = uib.text(uib.make_window("metrics", 160, 180, { 0.45, 1.72, 2.8 }), "")
 end
 

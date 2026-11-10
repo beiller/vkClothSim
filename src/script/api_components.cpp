@@ -744,6 +744,39 @@ int lFindComponents(lua_State* L) {
     return 1;
 }
 
+/// scene.named() -> array of {name = string, entity = entity} | every named entity, sorted by entity id (the editor's source)
+int lNamed(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    std::vector<std::pair<entt::entity, std::string>> named;
+    for (auto [e, n] : w.reg.view<Name>().each())
+        named.emplace_back(e, n.id);
+    std::ranges::sort(named, [](auto& a, auto& b) { return a.first < b.first; });
+    LuaTable arr(L, (int)named.size(), 0);
+    for (const auto& [e, name] : named) {
+        LuaTable t(L);
+        t.setStr("name", name);
+        luaPushEnt(L, e);
+        lua_setfield(L, t.idx, "entity");
+        arr.appendTable(t.idx);
+        lua_pop(L, 1);
+    }
+    lua_pushvalue(L, arr.idx);
+    return 1;
+}
+
+/// scene.components(e: entity) -> array of string | the reflected component type names on e (the editor's field source)
+int lComponents(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    const entt::entity e = luaReadEnt(L, 1);
+    const auto comps = refl::entityFields(w.reg, e);
+    LuaTable arr(L, (int)comps.size(), 0);
+    for (const auto& [t, ref] : comps)
+        if (t)
+            arr.appendStr(t->name);
+    lua_pushvalue(L, arr.idx);
+    return 1;
+}
+
 /// input.key_down(kb: entity, code: number) -> bool | true if key `code` is held on the KeyboardInput entity kb (false for out-of-range codes)
 int lKeyDown(lua_State* L) {
     const Engine& w = SceneScript::sSelf(L)->w();
@@ -844,6 +877,8 @@ void luaRegisterComponents(lua_State* L, SceneScript* host) {
     reg(L, host, "link_mesh", lLinkMesh);
     reg(L, host, "spawn", lSpawn);
     reg(L, host, "get_entity", lFind);
+    reg(L, host, "named", lNamed);
+    reg(L, host, "components", lComponents);
     reg(L, host, "find_components", lFindComponents);
     reg(L, host, "attach_script", lAttachScript);
     reg(L, host, "destroy", lDestroy);

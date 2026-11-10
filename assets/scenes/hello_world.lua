@@ -43,7 +43,7 @@ function _on_ready(self)
     uib.bind_slider(tab, "cube refraction", "mat_cube.Material.refraction", 0, 1.0, "%.2f")
     uib.bind_slider(tab, "cube ior", "mat_cube.Material.ior", 1.0, 3.0, "%.2f")
     uib.bind_slider(tab, "cube roughness", "mat_cube.Material.roughness", 0, 1.0, "%.2f")
-    ui.editor(uib.tab(win, "editor"))
+    uib.editor(uib.tab(win, "editor"))
 end
 
 -- runs every graphics frame

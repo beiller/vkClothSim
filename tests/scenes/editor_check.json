@@ -1,0 +1,8 @@
+{
+    "name": "editor check",
+    "objects": [
+        { "name": "probe", "script": "editor_check" },
+        { "name": "rb", "components": { "RigidBody": { "mass": 2.0 } } },
+        { "name": "cam", "components": { "Camera": { "fovDeg": 60.0, "active": true } } }
+    ]
+}

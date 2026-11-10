@@ -1,6 +1,5 @@
 #pragma once
 #include "ecs.hpp"
-#include "reflect.hpp"
 #include <functional>
 #include <string>
 #include <vector>
@@ -23,19 +22,6 @@ void uiInit(const UiHandles& h);
 void uiShutdown();
 void uiSetButtonHook(std::function<void(const std::string&, entt::entity)> fn);
 void uiSetChangeHook(std::function<void(const std::string&, entt::entity)> fn);
-
-template <typename C>
-entt::entity spawnWidget(entt::registry& reg, int& seq, entt::entity parent, C c) {
-    entt::entity e = reg.create();
-    UIWidget mw;
-    mw.order = seq++;
-    reg.emplace<UIWidget>(e, mw);
-    reg.emplace<C>(e, c);
-    reg.emplace<Parent>(e, parent);
-    return e;
-}
-
-void spawnFieldWidget(entt::registry& reg, int& seq, entt::entity parent, const char* label, const FieldDesc* f, const std::string& url);
 
 struct UiFeed {
     entt::entity canvas = entt::null;
