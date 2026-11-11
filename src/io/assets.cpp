@@ -9,14 +9,14 @@
 #include <filesystem>
 #include <unistd.h>
 #include <unordered_map>
-#if defined(__APPLE__)
+#ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
 
 std::string exeDir() {
     char buf[4096];
     size_t n = 0;
-#if defined(__APPLE__)
+#ifdef __APPLE__
     uint32_t sz = sizeof(buf);
     if (_NSGetExecutablePath(buf, &sz) != 0)
         return "";
@@ -36,14 +36,20 @@ std::string assetsRoot() {
     return std::filesystem::exists("assets") ? "assets" : exeDir() + "/../assets";
 }
 
-static std::string g_scenesDir = "assets/scenes";
+static std::string g_scenesDir;
+static bool g_hasScenesDir = false;
 
 std::string scenesDir() {
+    if (!g_hasScenesDir) {
+        g_scenesDir = "assets/scenes";
+        g_hasScenesDir = true;
+    }
     return g_scenesDir;
 }
 
 void setScenesDir(const std::string& dir) {
     g_scenesDir = dir;
+    g_hasScenesDir = true;
 }
 
 bool loadTexture(const std::string& path, TextureData& out, bool flip) {

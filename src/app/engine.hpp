@@ -15,7 +15,7 @@ struct PhaseMs {
     float cpu = 0.0f;
     float jolt = 0.0f;
     float skel = 0.0f;
-    float sim = 0.0f; // cloth (soft) GPU time only
+    float sim = 0.0f;
     float render = 0.0f;
     float xrEnd = 0.0f;
     float idle = 0.0f;
@@ -28,8 +28,8 @@ struct Engine {
     GraphicsServer graphics;
     std::unique_ptr<IXrBackend> xr;
     SceneScript script;
-    bool hasDevice = false; // graphics server initialized (Vulkan device present)
-    bool hasWindow = false; // window + renderer draw path active
+    bool hasDevice = false;
+    bool hasWindow = false;
     float fps = 0.0f;
     PhaseMs phase;
     bool showDemo = false;
@@ -38,10 +38,9 @@ struct Engine {
     std::string pendingScene;
     std::string scenePath;
     std::string loadError;
-    std::string perfText; // the engine's performance summary, written here and read by lua (engine.performance_metrics)
+    std::string perfText;
 };
 
-// writes the current fps + per-phase ms averages into w.perfText (the string a lua metrics window displays)
 inline void writePerfText(Engine& w) {
     char buf[256];
     const float fps = w.fps > 1.0f ? w.fps : 1.0f;

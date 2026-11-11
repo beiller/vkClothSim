@@ -17,7 +17,7 @@
 
 struct RayHit {
     bool hit = false;
-    JPH::BodyID body{};
+    JPH::BodyID body;
     V3 pos{};
 };
 
@@ -45,14 +45,14 @@ public:
 
 private:
     struct Applied {
-        RigidBody body; // last-applied RigidBody; for kinematic, body.colliders is the collider list
+        RigidBody body;
         uint64_t shapeHash = 0;
         bool kinematic = false;
         int sleep = -1; // last-applied sleep command: -1 unknown (new body, active), 0 awake, 1 asleep
     };
     std::vector<ColliderDesc> colliderDescs(const entt::registry& reg,
                                             const std::vector<entt::entity>& cols);
-    JPH::ShapeRefC buildShape(const std::vector<ColliderDesc>& colliders, const V3& scale);
+    static JPH::ShapeRefC buildShape(const std::vector<ColliderDesc>& colliders, const V3& scale);
     void buildBody(entt::entity e, const std::vector<ColliderDesc>& colliders, const RigidBody& body,
                    const Transform& t);
     void buildKinematic(entt::entity e, const std::vector<ColliderDesc>& colliders, const Transform& t);
@@ -77,14 +77,13 @@ private:
         entt::entity a = entt::null;
         entt::entity b = entt::null;
         bool exclude = false;
-        SixDofJoint applied; // last-applied component (sixdof joints only); drives live sync/rebuild
+        SixDofJoint applied;
     };
-    // GroupFilter can't see bodies, so the entity id is smuggled through the group id
     struct ExcludeFilter final : public JPH::GroupFilter {
         RigidScene* s = nullptr;
         bool CanCollide(const JPH::CollisionGroup& a, const JPH::CollisionGroup& b) const override {
-            const entt::entity ea = static_cast<entt::entity>(a.GetGroupID());
-            const entt::entity eb = static_cast<entt::entity>(b.GetGroupID());
+            const auto ea = static_cast<entt::entity>(a.GetGroupID());
+            const auto eb = static_cast<entt::entity>(b.GetGroupID());
             return !s->excludes(ea, eb) && !s->excludes(eb, ea);
         }
     };

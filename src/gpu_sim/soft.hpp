@@ -53,7 +53,6 @@ private:
     };
 
     void makeBodySet(GpuBody& b);
-    void ensurePoolSlot();
     void freeBody(GpuBody& b);
     void onBodyDestroyed(entt::registry&, entt::entity e);
     std::function<GpuMeshRef(const entt::registry&, const Mesh&, entt::entity)> m_request;

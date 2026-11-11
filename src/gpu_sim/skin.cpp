@@ -13,17 +13,6 @@ const float kIdentity4[4][4] = {{1, 0, 0, 0},
                                 {0, 0, 1, 0},
                                 {0, 0, 0, 1}};
 
-std::vector<VkDescriptorSetLayoutBinding> skelBinds() {
-    std::vector<VkDescriptorSetLayoutBinding> b(9);
-    for (uint32_t i = 0; i < b.size(); ++i) {
-        b[i].binding = i;
-        b[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        b[i].descriptorCount = 1;
-        b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    }
-    return b;
-}
-
 float dot4(const float a[4], const float b[4]) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
 }
@@ -75,7 +64,7 @@ void Skin::sync(const entt::registry& reg) {
 }
 
 void Skin::adoptState(const entt::registry& reg, const Skeleton& s, entt::entity mesh, int skelGpu) {
-    if (m_meshState.count(mesh))
+    if (m_meshState.contains(mesh))
         return;
     if (s.joints.empty())
         return;
@@ -101,7 +90,7 @@ void Skin::adoptState(const entt::registry& reg, const Skeleton& s, entt::entity
     const int nT = (int)m.shapes.size();
     uint64_t hash = 0xcbf29ce484222325ULL;
     auto fnv = [&hash](const void* p, size_t n) {
-        const uint8_t* b = (const uint8_t*)p;
+        const auto* b = (const uint8_t*)p;
         for (size_t i = 0; i < n; ++i) {
             hash ^= b[i];
             hash *= 0x100000001b3ULL;
@@ -118,9 +107,9 @@ void Skin::adoptState(const entt::registry& reg, const Skeleton& s, entt::entity
     const auto hit = m_shapeKey.find(hash);
     const bool share = hit != m_shapeKey.end() && m_shapeSets[(size_t)hit->second].nV == nV &&
                        m_shapeSets[(size_t)hit->second].nT == nT;
-    if (share)
+    if (share) {
         st.shapeSet = hit->second;
-    else {
+    } else {
         ShapeSet ss;
         ss.key = hash;
         ss.nV = nV;
@@ -131,10 +120,11 @@ void Skin::adoptState(const entt::registry& reg, const Skeleton& s, entt::entity
                 if (!m.shapes[t].pos.empty())
                     std::memcpy(deltas.data() + (size_t)t * (size_t)nV * 3, m.shapes[t].pos.data(), (size_t)nV * 12);
             mkDev(ss.deltas, 12 * vn * (VkDeviceSize)nT, deltas.data());
-        } else
+        } else {
             mkDev(ss.deltas, 4, nullptr);
+        }
         ss.refs = 1;
-        m_shapeSets.push_back(std::move(ss));
+        m_shapeSets.push_back(ss);
         st.shapeSet = (int)m_shapeSets.size() - 1;
         m_shapeKey[hash] = st.shapeSet;
     }
@@ -142,16 +132,16 @@ void Skin::adoptState(const entt::registry& reg, const Skeleton& s, entt::entity
     mkDev(st.nrm0, 12 * vn, m.nrm.data());
     mkDev(st.joints, 16 * vn, m.joints.data());
     mkDev(st.weights, 16 * vn, m.weights.data());
-    vkMakeBuffer(m_dev, m_pdev, st.activeMorphs.b, st.activeMorphs.m, 8 * kMaxActiveMorphs,
+    vkMakeBuffer(m_dev, m_pdev, st.activeMorphs.b, st.activeMorphs.m, (VkDeviceSize)8 * kMaxActiveMorphs,
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
-    st.activeMorphs.sz = 8 * kMaxActiveMorphs;
+    st.activeMorphs.sz = (VkDeviceSize)8 * kMaxActiveMorphs;
     if (share)
         ++m_shapeSets[(size_t)st.shapeSet].refs;
-    m_states.push_back(std::move(st));
+    m_states.push_back(st);
     m_meshState[mesh] = (int)m_states.size() - 1;
     m_skels[(size_t)skelGpu].states.push_back((int)m_states.size() - 1);
     if (!m_pools.empty()) {
-        ensurePoolSlot();
+        ensurePoolSlot(m_dev, storageBinds(9), kPoolChunk, m_pools, m_poolCap, m_poolUsed);
         makeStateSet(m_states.back());
         ++m_poolUsed;
     }
@@ -161,7 +151,7 @@ void Skin::build(const entt::registry& reg) {
     if (m_dev == VK_NULL_HANDLE)
         return;
     sync(reg);
-    const auto binds = skelBinds();
+    const auto binds = storageBinds(9);
     auto maxSets = (uint32_t)m_states.size();
     if (maxSets == 0)
         maxSets = 1;
@@ -180,14 +170,6 @@ void Skin::build(const entt::registry& reg) {
     }
 }
 
-void Skin::ensurePoolSlot() {
-    if (m_poolUsed < m_poolCap)
-        return;
-    m_pools.push_back(vkMakePool(m_dev, skelBinds(), (uint32_t)kPoolChunk));
-    m_poolCap = kPoolChunk;
-    m_poolUsed = 0;
-}
-
 void Skin::makeStateSet(MeshState& st) {
     const Skel& c = m_skels[(size_t)st.skelGpu];
     const Buf& deltas = m_shapeSets[(size_t)st.shapeSet].deltas;
@@ -199,11 +181,11 @@ void Skin::makeStateSet(MeshState& st) {
         {deltas.b, 0, deltas.sz},
         {c.jointDQ.b, 0, c.jointDQ.sz},
         {st.activeMorphs.b, 0, st.activeMorphs.sz},
-        {st.out.pos.buffer, 0, 12 * st.out.pos.count},
-        {st.out.nrm.buffer, 0, 12 * st.out.nrm.count},
+        {st.out.pos.buffer, 0, (VkDeviceSize)12 * st.out.pos.count},
+        {st.out.nrm.buffer, 0, (VkDeviceSize)12 * st.out.nrm.count},
     };
     st.pool = (int)m_pools.size() - 1;
-    vkMakeSet(m_dev, m_pools.back(), m_dsl, skelBinds(), st.set, bi);
+    vkMakeSet(m_dev, m_pools.back(), m_dsl, storageBinds(9), st.set, bi);
 }
 
 void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
@@ -222,7 +204,6 @@ void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
             for (int row = 0; row < 4; ++row)
                 mm[col][row] = M[col][row];
         dq::mat4ToDquat(&c.dqStaging[k], kIdentity4, mm);
-        // pick the DQ's sign closest to the previous frame's (temporal continuity); without it, contributions flip when relative rotation crosses 180°
         float* prev = c.prevQuat.data() + 4 * k;
         if (dot4(c.dqStaging[k].quat, prev) < 0.0f)
             negateDq(&c.dqStaging[k]);
@@ -243,7 +224,7 @@ void Skin::packMorphs(const entt::registry& reg, MeshState& st) {
                 continue;
             uint32_t bits;
             std::memcpy(&bits, &wgt, 4);
-            pack[k * 2] = (uint32_t)t;
+            pack[(size_t)k * 2] = (uint32_t)t;
             pack[k * 2 + 1] = bits;
             ++k;
         }
@@ -294,7 +275,7 @@ void Skin::maybeFreeState(int stateId) {
         return;
     if (!m_skels[(size_t)st.skelGpu].dead)
         return;
-    if (m_meshState.count(st.mesh))
+    if (m_meshState.contains(st.mesh))
         return;
     st.freed = true;
     m_freeStates.push_back(stateId);
@@ -348,7 +329,7 @@ void Skin::releaseStateBufs(MeshState& st) {
         return;
     if (ss.deltas.b) {
         vkFreeBuffer(m_dev, ss.deltas.b, ss.deltas.m);
-        ss.deltas.b = VK_NULL_HANDLE; // reset() re-frees any surviving shape sets: null so it is freed once
+        ss.deltas.b = VK_NULL_HANDLE;
         ss.deltas.m = VK_NULL_HANDLE;
     }
     m_shapeKey.erase(ss.key);

@@ -101,7 +101,6 @@ bool Xr::createInstance() {
 }
 
 void Xr::createShadowInstance() {
-    // SteamVR refuses xrCreateSession unless the vulkan-enable2 device queries ran first; they need a shadow instance via xrCreateVulkanInstanceKHR
     PFN_xrCreateVulkanInstanceKHR createVkJ = nullptr;
     m_loader.xrGetInstanceProcAddr(m_inst, "xrCreateVulkanInstanceKHR", (PFN_xrVoidFunction*)&createVkJ);
     if (createVkJ) {
@@ -471,8 +470,8 @@ XrFrame Xr::poll() {
     li.space = m_refSpace;
     XrViewState vs{};
     vs.type = XR_TYPE_VIEW_STATE;
-    for (int i = 0; i < 2; ++i)
-        m_views[i].type = XR_TYPE_VIEW;
+    for (auto& v : m_views)
+        v.type = XR_TYPE_VIEW;
     uint32_t n = 0;
     xrafail(m_loader.xrLocateViews(m_session, &li, &vs, 2, &n, m_views), "locateViews");
     const int ne = (int)std::min<uint32_t>(n, 2);
@@ -586,7 +585,7 @@ void Xr::endFrame(bool render) {
         m_proj[i].subImage.imageArrayIndex = 0;
     }
     layer.views = m_proj;
-    XrCompositionLayerBaseHeader* lh = (XrCompositionLayerBaseHeader*)&layer;
+    auto* lh = (XrCompositionLayerBaseHeader*)&layer;
     XrFrameEndInfo fei{};
     fei.type = XR_TYPE_FRAME_END_INFO;
     fei.displayTime = m_fs.predictedDisplayTime;
@@ -610,7 +609,7 @@ void Xr::acquireImage(int eye) {
     }
     XrSwapchainImageWaitInfo wi{};
     wi.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO;
-    wi.timeout = 1000000000; // 1s
+    wi.timeout = 1000000000;
     XrResult wr = m_loader.xrWaitSwapchainImage(m_swaps[eye].sc, &wi);
     if (wr != XR_SUCCESS) {
         std::fprintf(stderr, "xr waitSwapchainImage: eye=%d res=%d (skipping)\n", eye, (int)wr);
@@ -636,7 +635,7 @@ void Xr::destroyActions() {
     for (auto& s : m_aimSpace)
         if (s != XR_NULL_HANDLE)
             m_loader.xrDestroySpace(s);
-    for (auto& a : {m_gripPose, m_aimPose, m_trigger, m_stick, m_squeeze, m_buttonA, m_buttonB})
+    for (const auto& a : {m_gripPose, m_aimPose, m_trigger, m_stick, m_squeeze, m_buttonA, m_buttonB})
         if (a != XR_NULL_HANDLE)
             m_loader.xrDestroyAction(a);
     if (m_actionSet != XR_NULL_HANDLE)

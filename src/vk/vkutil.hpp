@@ -17,7 +17,6 @@
         }                                                                                                              \
     } while (0)
 
-// for calls that may legitimately return SUBOPTIMAL/OUT_OF_DATE (e.g. swapchain acquire)
 inline void vkCheck(VkResult r, const char* what) {
     if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR || r == VK_ERROR_OUT_OF_DATE_KHR)
         return;
@@ -25,8 +24,6 @@ inline void vkCheck(VkResult r, const char* what) {
     std::abort();
 }
 
-// destroy + null-reset for persistent handles: the guard and the reset can no
-// longer be forgotten on a recreate path
 template <class H>
 inline void vkFree(VkDevice dev, H* h, void (*fn)(VkDevice, H, const VkAllocationCallbacks*)) {
     if (*h) fn(dev, *h, nullptr), *h = VK_NULL_HANDLE;
@@ -219,7 +216,6 @@ inline VkPipeline makeComputePipeline(VkDevice dev, const void* spv, uint32_t le
     return pipe;
 }
 
-// single-color-attachment render pass with one subpass
 inline VkRenderPass makeSimpleRenderPass(VkDevice dev, const VkAttachmentDescription& att) {
     VkAttachmentReference ar{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     VkSubpassDescription ss{};
@@ -249,7 +245,6 @@ inline void makeFramebuffer(VkDevice dev, VkRenderPass rp, uint32_t w, uint32_t 
     VK(vkCreateFramebuffer(dev, &fci, nullptr, &out));
 }
 
-// standard 2D full-range color view
 inline VkImageView makeImageView(VkDevice dev, VkImage img, VkFormat fmt) {
     VkImageViewCreateInfo vci{};
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -264,7 +259,6 @@ inline VkImageView makeImageView(VkDevice dev, VkImage img, VkFormat fmt) {
 
 inline void vkMakeImage2DTarget(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint32_t h, VkImage& img,
                                 VkDeviceMemory& mem, VkImageView& view) {
-    // render-target image: device-local, color-attachment + sampled, left in shader-read-only
     VkImageCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
@@ -341,7 +335,6 @@ inline void vkMakeImage2D(VkDevice dev, VkPhysicalDevice pdev, uint32_t w, uint3
     VK(vkCreateImageView(dev, &vci, nullptr, &view));
 }
 
-// optimal-tiling sampled image with a full GPU-generated mip chain (staging copy + blit ladder)
 inline void vkMakeImage2DMips(VkDevice dev, VkPhysicalDevice pdev, VkFormat fmt, uint32_t w, uint32_t h, const void* data,
                              VkDeviceSize bytes, bool mipGen, VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
     const uint32_t mx = w > h ? w : h;
@@ -466,7 +459,7 @@ inline void vkMakeCubeImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t size, 
     ici.arrayLayers = 6;
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
     ici.tiling = tiling;
-    ici.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT; // cube + 2D-array views on one image
+    ici.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
     ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VK(vkCreateImage(dev, &ici, nullptr, &img));
@@ -537,46 +530,27 @@ inline void vkMakeCubeArrayImage(VkDevice dev, VkPhysicalDevice pdev, uint32_t s
     VK(vkBindImageMemory(dev, img, mem, 0));
 }
 
-inline void vkMakeCubeArrayView(VkDevice dev, VkImage img, VkFormat fmt, VkImageAspectFlags aspect, uint32_t baseLayer,
-                                uint32_t layerCount, VkImageView& view) {
+inline void vkMakeSubresourceView(VkDevice dev, VkImage img, VkImageViewType type, VkFormat fmt, VkImageAspectFlags aspect,
+                                  uint32_t baseMip, uint32_t baseLayer, uint32_t layerCount, VkImageView& view) {
     VkImageViewCreateInfo vci{};
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = img;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
+    vci.viewType = type;
     vci.format = fmt;
-    vci.subresourceRange = {aspect, 0, 1, baseLayer, layerCount};
+    vci.subresourceRange = {aspect, baseMip, 1, baseLayer, layerCount};
     VK(vkCreateImageView(dev, &vci, nullptr, &view));
 }
 
-inline void vkMakeCubeFaceView(VkDevice dev, VkImage img, VkFormat fmt, VkImageAspectFlags aspect, uint32_t face,
-                               VkImageView& view) {
-    VkImageViewCreateInfo vci{};
-    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = img;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = fmt;
-    vci.subresourceRange = {aspect, 0, 1, face, 1};
-    VK(vkCreateImageView(dev, &vci, nullptr, &view));
-}
 
-inline void vkMakeCubeMipArrayView(VkDevice dev, VkImage img, uint32_t mip, VkImageView& view) {
-    VkImageViewCreateInfo vci{};
-    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = img;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-    vci.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, 0, 6};
-    VK(vkCreateImageView(dev, &vci, nullptr, &view));
-}
-
-inline void vkMakeCubeMipView(VkDevice dev, VkImage img, uint32_t mip, VkImageView& view) {
-    VkImageViewCreateInfo vci{};
-    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = img;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
-    vci.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, 0, 6};
-    VK(vkCreateImageView(dev, &vci, nullptr, &view));
+inline std::vector<VkDescriptorSetLayoutBinding> storageBinds(uint32_t n) {
+    std::vector<VkDescriptorSetLayoutBinding> b(n);
+    for (uint32_t i = 0; i < n; ++i) {
+        b[i].binding = i;
+        b[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        b[i].descriptorCount = 1;
+        b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    return b;
 }
 
 inline VkDescriptorPool vkMakePool(VkDevice dev, const std::vector<VkDescriptorSetLayoutBinding>& binds,
@@ -598,6 +572,16 @@ inline VkDescriptorPool vkMakePool(VkDevice dev, const std::vector<VkDescriptorS
     VkDescriptorPool pool;
     VK(vkCreateDescriptorPool(dev, &dpc, nullptr, &pool));
     return pool;
+}
+
+template <typename Pools>
+void ensurePoolSlot(VkDevice dev, const std::vector<VkDescriptorSetLayoutBinding>& binds, int chunk, Pools& pools,
+                    int& cap, int& used) {
+    if (used < cap)
+        return;
+    pools.push_back(vkMakePool(dev, binds, (uint32_t)chunk));
+    cap = chunk;
+    used = 0;
 }
 
 inline void vkMakeDslPool(VkDevice dev, const std::vector<VkDescriptorSetLayoutBinding>& binds, uint32_t maxSets,
@@ -731,7 +715,7 @@ inline VkPipeline makeGraphicsPipeline(VkDevice dev, VkRenderPass rp, const void
     VkPipelineDepthStencilStateCreateInfo ds{};
     ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     ds.depthTestEnable = depth ? VK_TRUE : VK_FALSE;
-    ds.depthWriteEnable = depth && !blend ? VK_TRUE : VK_FALSE; // transparent: test but don't write
+    ds.depthWriteEnable = depth && !blend ? VK_TRUE : VK_FALSE;
     ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     ds.minDepthBounds = 0.0f;
     ds.maxDepthBounds = 1.0f;

@@ -13,13 +13,13 @@ void Renderer::initShadow(VkApp& app) {
     vkMakeCubeArrayImage(m_dev, m_pdev, m_shadowSize, nLayers, VK_FORMAT_R32_SFLOAT, m_shadowCube, m_shadowCubeMem);
     vkMakeDepthCubeImage(m_dev, m_pdev, m_shadowSize, m_shadowDepth, m_shadowDepthMem);
     for (uint32_t l = 0; l < nLayers; ++l)
-        vkMakeCubeFaceView(m_dev, m_shadowCube, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, l,
-                           m_shadowColorFace[l]);
+        vkMakeSubresourceView(m_dev, m_shadowCube, VK_IMAGE_VIEW_TYPE_2D, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 0, l, 1,
+                              m_shadowColorFace[l]);
     for (uint32_t f = 0; f < 6; ++f)
-        vkMakeCubeFaceView(m_dev, m_shadowDepth, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT, f,
-                           m_shadowDepthFace[f]);
-    vkMakeCubeArrayView(m_dev, m_shadowCube, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 0, nLayers,
-                        m_shadowSampleView);
+        vkMakeSubresourceView(m_dev, m_shadowDepth, VK_IMAGE_VIEW_TYPE_2D, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT, 0, f, 1,
+                              m_shadowDepthFace[f]);
+    vkMakeSubresourceView(m_dev, m_shadowCube, VK_IMAGE_VIEW_TYPE_CUBE_ARRAY, VK_FORMAT_R32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 0, 0,
+                          nLayers, m_shadowSampleView);
     vkMakeSamplerEx(m_dev, m_pdev, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, false, 0.0f,
                     1.0f, m_shadowSampler);
     m_shadowInfo = {m_shadowSampler, m_shadowSampleView, VK_IMAGE_LAYOUT_GENERAL};

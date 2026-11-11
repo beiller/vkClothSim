@@ -11,7 +11,6 @@
 #include <cstdlib>
 #include <unordered_map>
 
-// multiple active cameras are allowed; the first one (by entity creation order) wins
 entt::entity findActiveCamera(const entt::registry& reg) {
     entt::entity cam = entt::null;
     reg.view<Camera>().each([&](entt::entity e, const Camera& c) {
@@ -41,7 +40,6 @@ void stepXr(entt::registry& reg, const XrFrame& fr) {
     const entt::entity vrCam = findMarker<VrCamera>(reg);
     if (vrCam != entt::null)
         reg.get<Camera>(vrCam).active = havePose;
-    // while XR has a pose, scene cameras are deactivated; on safety, reactivate any inactive one if none is active
     bool anySceneActive = false;
     entt::entity firstInactive = entt::null;
     reg.view<Camera>().each([&](entt::entity e, Camera& c) {
@@ -268,7 +266,7 @@ bool uiPanelUv(const entt::registry& reg, entt::entity canvas, const V3& hitPos,
     const float v = 0.5f + glm::dot(hitPos - t.pos, yh) / ws.y;
     if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f)
         return false;
-    uv = {u, v}; // v up-positive (1 = panel top), as the ImGui feed expects
+    uv = {u, v};
     return true;
 }
 

@@ -34,8 +34,8 @@ bool VkApp::initInstance(int width, int height, const char* title) {
     const char* want[] = {"VK_KHR_external_memory_capabilities", "VK_KHR_external_semaphore_capabilities",
                           "VK_KHR_portability_enumeration"};
     for (const char* w : want)
-        if (std::any_of(iexts.begin(), iexts.end(),
-                        [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
+        if (std::ranges::any_of(iexts,
+                                [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
             exts.push_back(w);
     std::vector<const char*> layers;
     if (std::getenv("VK_VALIDATE")) {
@@ -111,8 +111,8 @@ bool VkApp::initInstance(int width, int height, const char* title) {
         vkEnumerateDeviceExtensionProperties(m_pdev, nullptr, &nde, deexts.data());
     const char* dewant[] = {"VK_KHR_swapchain", "VK_KHR_external_memory_fd", "VK_KHR_external_semaphore_fd"};
     for (const char* w : dewant)
-        if (std::any_of(deexts.begin(), deexts.end(),
-                        [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
+        if (std::ranges::any_of(deexts,
+                                [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
             m_devExt.push_back(w);
 
     m_dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -132,8 +132,8 @@ bool VkApp::initHeadless() {
     const char* want[] = {"VK_KHR_external_memory_capabilities", "VK_KHR_external_semaphore_capabilities"};
     std::vector<const char*> exts;
     for (const char* w : want)
-        if (std::any_of(iexts.begin(), iexts.end(),
-                        [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
+        if (std::ranges::any_of(iexts,
+                                [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
             exts.push_back(w);
     std::vector<const char*> layers;
     if (std::getenv("VK_VALIDATE")) {
@@ -200,8 +200,8 @@ bool VkApp::initHeadless() {
         vkEnumerateDeviceExtensionProperties(m_pdev, nullptr, &nde, deexts.data());
     const char* dewant[] = {"VK_KHR_external_memory_fd", "VK_KHR_external_semaphore_fd"};
     for (const char* w : dewant)
-        if (std::any_of(deexts.begin(), deexts.end(),
-                        [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
+        if (std::ranges::any_of(deexts,
+                                [&](const VkExtensionProperties& p) { return std::string_view(p.extensionName) == w; }))
             m_devExt.push_back(w);
 
     m_dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -270,7 +270,7 @@ bool VkApp::initDevice(VkDevice dev) {
     satt[1].format = VK_FORMAT_D32_SFLOAT;
     satt[1].samples = VK_SAMPLE_COUNT_1_BIT;
     satt[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    satt[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE; // STORE: the noClear (glass/blend) pass LOADs this depth
+    satt[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     satt[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     satt[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     satt[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -291,7 +291,7 @@ bool VkApp::initDevice(VkDevice dev) {
     satt[3].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     satt[3].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     satt[3].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    satt[4] = satt[3]; // the post-scatter albedo half (cleared, like the other side channels)
+    satt[4] = satt[3];
     VkAttachmentReference scolor[4] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                                       {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                                       {3, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
@@ -332,7 +332,7 @@ bool VkApp::initDevice(VkDevice dev) {
     natt[2].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     natt[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     natt[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    natt[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; // SSS-blurred to GENERAL, or untouched (color-attachment)
+    natt[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     natt[2].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     natt[3].format = m_hdrFmt;
     natt[3].samples = VK_SAMPLE_COUNT_1_BIT;
@@ -340,9 +340,9 @@ bool VkApp::initDevice(VkDevice dev) {
     natt[3].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     natt[3].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     natt[3].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    natt[3].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; // SSS-blurred to GENERAL, or untouched (color-attachment)
+    natt[3].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     natt[3].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    natt[4] = natt[3]; // the post-scatter albedo half (the transparent pass writes 0, like the others)
+    natt[4] = natt[3];
     VkAttachmentReference ncolor[4] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                                       {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
                                       {3, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
@@ -535,7 +535,7 @@ void VkApp::recreateSwapchain() {
         const VkPresentModeKHR prefs[] = {VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR,
                                           VK_PRESENT_MODE_FIFO_RELAXED_KHR};
         for (VkPresentModeKHR p : prefs)
-            if (std::find(modes.begin(), modes.end(), p) != modes.end()) {
+            if (std::ranges::find(modes, p) != modes.end()) {
                 presentMode = p;
                 break;
             }
@@ -568,7 +568,7 @@ void VkApp::recreateSwapchain() {
     createAttachment(m_extent, m_hdrFmt,
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                     VK_IMAGE_ASPECT_COLOR_BIT, m_sssDiffuse, m_sssDiffuseMem, m_sssDiffuseView, mips); // mip chain: the SSS taps' prefilter
+                     VK_IMAGE_ASPECT_COLOR_BIT, m_sssDiffuse, m_sssDiffuseMem, m_sssDiffuseView, mips);
     createAttachment(m_extent, m_hdrFmt,
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sssWeight, m_sssWeightMem, m_sssWeightView);

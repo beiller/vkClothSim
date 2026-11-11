@@ -8,7 +8,6 @@
 
 void PhysicsServer::init() { m_scene.init(); }
 
-// one Jolt step per frame at render rate; dt is clamped so a stall can't produce a huge unstable step
 void PhysicsServer::update(entt::registry& reg, float dt) {
     const float pdt = std::min(dt, kMaxPhysDt);
     if (m_hook)

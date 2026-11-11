@@ -22,6 +22,17 @@ WarningsAsErrors: ''
 #     BodyLockRead::GetBody() returns *mBody on the "invalid body id" branch that the
 #     analyzer explores (the real null guard is a JPH_ASSERT it cannot see); our body ids
 #     are always valid, and the diagnostic lands in lib/jolt where no NOLINT can go
+#   - modernize-use-integer-sign-comparison: false positives under -std=c++23 — flags
+#     safe comparisons where an operand is a uint32_t or a signed value cast to unsigned
+#     (e.g. `i >= (uint32_t)nv` with i a uint32_t, bounds pre-checked). Verified against
+#     isolated repros on LLVM 23.
+#   - bugprone-signed-bitwise: false positives — the system vulkan_core.h / openxr.h
+#     define all flag bits as anonymous enums (type `int` in C++), so OR-ing VK_*_BIT
+#     constants involves a signed operand although every value is a positive flag bit; it
+#     also flags unsigned LHS shifts by signed amounts (e.g. `s >>= 1`,
+#     `ext.width >> slot`) where the shift amount is non-negative at every site. Verified
+#     with isolated repros under the project's compile flags on LLVM 23. Genuinely signed
+#     locals (b64Decode accumulator, glTF 16-bit loads, halfToFloat) were fixed to unsigned.
 Checks: >-
   bugprone-*,
   clang-analyzer-*,
@@ -48,6 +59,8 @@ Checks: >-
   -modernize-use-designated-initializers,
   -modernize-use-trailing-return-type,
   -modernize-use-nodiscard,
+  -modernize-use-integer-sign-comparison,
+  -bugprone-signed-bitwise,
   -bugprone-easily-swappable-parameters,
   -bugprone-invalid-enum-default-initialization,
   -clang-analyzer-core.uninitialized.UndefReturn

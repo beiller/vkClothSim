@@ -10,8 +10,8 @@ std::vector<std::string> vendoredPaths() {
     std::vector<std::string> p;
     const std::string exe = exeDir();
     if (!exe.empty())
-        p.push_back(exe + "/../lib/openxr/lib/libopenxr.so.1");
-    p.push_back("lib/openxr/lib/libopenxr.so.1");
+        p.emplace_back(exe + "/../lib/openxr/lib/libopenxr.so.1");
+    p.emplace_back("lib/openxr/lib/libopenxr.so.1");
     return p;
 }
 }
@@ -26,10 +26,13 @@ bool XrLoader::load() {
     if (!m_handle)
         return false;
     bool ok = true;
+// NOLINTNEXTLINE(bugprone-macro-parentheses): name is pasted into PFN_##name, cannot be parenthesized
 #define XR_LOAD(name)                                                                                                  \
-    name = (PFN_##name)dlsym(m_handle, #name);                                                                         \
-    if (!name)                                                                                                         \
-        ok = false;
+    do {                                                                                                               \
+        name = (PFN_##name)dlsym(m_handle, #name); /* NOLINT(bugprone-macro-parentheses) */                           \
+        if (!name) /* NOLINT(bugprone-macro-parentheses) */                                                            \
+            ok = false;                                                                                                \
+    } while (0);
     XR_FUNCS(XR_LOAD)
 #undef XR_LOAD
     if (!ok) {

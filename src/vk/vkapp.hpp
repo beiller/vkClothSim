@@ -9,7 +9,6 @@
 class VkApp {
 public:
     bool initInstance(int width, int height, const char* title);
-    // device-only (no window/surface): for --headless; creates instance + device + queue + cmd pool/fence
     bool initHeadless();
     bool initDevice(VkDevice dev);
     VkDevice makeDevice();
@@ -58,7 +57,7 @@ public:
     uint32_t acquireNextImage();
     VkCommandBuffer beginCommands();
     void submit(VkCommandBuffer cmd);
-    void present(uint32_t idx, bool wait); // wait = block until the display has presented (vsync)
+    void present(uint32_t idx, bool wait);
 
 private:
     void createAttachment(VkExtent2D ext, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlagBits aspect,
@@ -89,23 +88,23 @@ private:
     VkImage m_depth = VK_NULL_HANDLE;
     VkDeviceMemory m_depthMem = VK_NULL_HANDLE;
     VkImageView m_depthView = VK_NULL_HANDLE;
-    VkImage m_depthCopy = VK_NULL_HANDLE; // R32: the sampled depth for the glass refraction
+    VkImage m_depthCopy = VK_NULL_HANDLE;
     VkDeviceMemory m_depthCopyMem = VK_NULL_HANDLE;
     VkImageView m_depthCopyView = VK_NULL_HANDLE;
-    VkImage m_sceneColor = VK_NULL_HANDLE; // R16F RGBA: opaque scene, A = ssssWeight
+    VkImage m_sceneColor = VK_NULL_HANDLE;
     VkDeviceMemory m_sceneColorMem = VK_NULL_HANDLE;
     VkImageView m_sceneColorView = VK_NULL_HANDLE;
-    VkImageView m_sceneColorAttView = VK_NULL_HANDLE; // single-mip view for the framebuffers
-    VkImage m_sceneColorTemp = VK_NULL_HANDLE; // SSS-blurred scene color (ping-pong dest, mips for glass)
+    VkImageView m_sceneColorAttView = VK_NULL_HANDLE;
+    VkImage m_sceneColorTemp = VK_NULL_HANDLE;
     VkDeviceMemory m_sceneColorTempMem = VK_NULL_HANDLE;
     VkImageView m_sceneColorTempView = VK_NULL_HANDLE;
-    VkImage m_sssDiffuse = VK_NULL_HANDLE; // the diffuse term (A = max ssssWeight), SSS-blurred separately
+    VkImage m_sssDiffuse = VK_NULL_HANDLE;
     VkDeviceMemory m_sssDiffuseMem = VK_NULL_HANDLE;
     VkImageView m_sssDiffuseView = VK_NULL_HANDLE;
-    VkImage m_sssWeight = VK_NULL_HANDLE; // the per-channel ssssWeight (RGB), written by the mesh pass
+    VkImage m_sssWeight = VK_NULL_HANDLE;
     VkDeviceMemory m_sssWeightMem = VK_NULL_HANDLE;
     VkImageView m_sssWeightView = VK_NULL_HANDLE;
-    VkImage m_sssPost = VK_NULL_HANDLE; // the post-scatter albedo half (A^(1-p)), written by the mesh pass
+    VkImage m_sssPost = VK_NULL_HANDLE;
     VkDeviceMemory m_sssPostMem = VK_NULL_HANDLE;
     VkImageView m_sssPostView = VK_NULL_HANDLE;
     uint32_t m_sceneColorMips = 1;
@@ -117,9 +116,9 @@ private:
     VkFormat m_scfmt = VK_FORMAT_UNDEFINED;
     VkSurfaceFormatKHR m_fmt{};
     VkExtent2D m_extent{};
-    VkExtent2D m_pendingExtent{}; // last observed framebuffer size (tracked by pollEvents; resized in the frame loop)
+    VkExtent2D m_pendingExtent{};
     VkCommandPool m_pool = VK_NULL_HANDLE;
     VkCommandBuffer m_cmd = VK_NULL_HANDLE;
     VkFence m_fence = VK_NULL_HANDLE;
-    VkFence m_acqFence = VK_NULL_HANDLE; // swapchain acquire (distinct from the submit fence)
+    VkFence m_acqFence = VK_NULL_HANDLE;
 };

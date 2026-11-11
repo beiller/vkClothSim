@@ -55,7 +55,7 @@ void luaRegisterMath(lua_State* L, SceneScript* host) {
     });
     /// math.qaxis(axis: vec3, angle: number) -> quat | axis-angle to quaternion (angle in radians; axis is normalized internally)
     reg("qaxis", [](lua_State* L) {
-        const V3 axis = glm::normalize(luaReadV3(L, 1)); // the axis-angle form expects a unit axis
+        const V3 axis = glm::normalize(luaReadV3(L, 1));
         luaPushQuat(L, glm::angleAxis((float)luaL_checknumber(L, 2), axis));
         return 1;
     });
@@ -66,7 +66,7 @@ void luaRegisterMath(lua_State* L, SceneScript* host) {
     });
     /// math.qfromto(a: vec3, b: vec3) -> quat | shortest rotation mapping direction a onto b
     reg("qfromto", [](lua_State* L) {
-        luaPushQuat(L, Quat(luaReadV3(L, 1), luaReadV3(L, 2))); // GLM 2-vector ctor: the from->to rotation
+        luaPushQuat(L, Quat(luaReadV3(L, 1), luaReadV3(L, 2)));
         return 1;
     });
 }

@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-enum class FieldKind {
+enum class FieldKind : uint8_t {
     SliderF,
     SliderI,
     Checkbox,
@@ -50,7 +50,7 @@ namespace refl {
 static const FieldDesc kTransform[] = {
     {"pos", OFF(Transform, pos), FieldKind::DragV3},
     {"scale", OFF(Transform, scale), FieldKind::DragV3},
-    {"quat", OFF(Transform, quat), FieldKind::Quat}, // 4-value array (the editor uses qx..qw)
+    {"quat", OFF(Transform, quat), FieldKind::Quat},
     {"qx", OFF(Transform, quat), FieldKind::SliderF, -1.0f, 1.0f},
     {"qy", OFF(Transform, quat) + 4, FieldKind::SliderF, -1.0f, 1.0f},
     {"qz", OFF(Transform, quat) + 8, FieldKind::SliderF, -1.0f, 1.0f},
@@ -144,7 +144,7 @@ static const FieldDesc kCapsuleShape[] = {
 };
 /// BoxShape | box collider shape: `half` = {hx,hy,hz}, may also be written via hx..hz
 static const FieldDesc kBoxShape[] = {
-    {"half", OFF(BoxShape, half), FieldKind::DragV3}, // 3-value array (the editor uses hx..hz)
+    {"half", OFF(BoxShape, half), FieldKind::DragV3},
     {"hx", OFF(BoxShape, half), FieldKind::SliderF, 0.0f, 100.0f},
     {"hy", OFF(BoxShape, half) + 4, FieldKind::SliderF, 0.0f, 100.0f},
     {"hz", OFF(BoxShape, half) + 8, FieldKind::SliderF, 0.0f, 100.0f},
@@ -256,8 +256,6 @@ static const FieldDesc kGeometry[] = {
     {"joints", OFF(Geometry, mesh.joints), FieldKind::UIntArr},
     {"weights", OFF(Geometry, mesh.weights), FieldKind::FloatArr},
 };
-// invBinds is not a field: it is derived (the inverse of each joint's world
-// transform) whenever the component is written through createOrReplace
 /// Skeleton | skinning skeleton: name, boneNames string array, joints entity array, placement ref, meshes entity array; invBinds is derived on write
 static const FieldDesc kSkeleton[] = {
     {"name", OFF(Skeleton, name), FieldKind::Str},
@@ -414,11 +412,9 @@ inline const TypeDesc* findType(const char* name) {
     return nullptr;
 }
 
-// live per-use pointer to a component: entt storage can move (the pool reallocates
 // when new entities join, e.g. a glb load) and components can be re-emplaced, so
 // callers resolve on every draw instead of capturing once
-template <typename T>
-std::function<const void*(void)> liveRef(const entt::registry& reg, entt::entity e) {
+template <typename T> std::function<const void*()> liveRef(const entt::registry& reg, entt::entity e) {
     return [&reg, e] -> const void* {
         if (auto* p = reg.try_get<T>(e))
             return (const void*)p;
@@ -426,9 +422,10 @@ std::function<const void*(void)> liveRef(const entt::registry& reg, entt::entity
     };
 }
 
-inline std::vector<std::pair<const TypeDesc*, std::function<const void*(void)>>> entityFields(const entt::registry& reg, entt::entity e) {
-    std::vector<std::pair<const TypeDesc*, std::function<const void*(void)>>> out;
-    auto add = [&out](const char* tn, std::function<const void*(void)> fn) {
+inline std::vector<std::pair<const TypeDesc*, std::function<const void*()>>> entityFields(const entt::registry& reg,
+                                                                                          entt::entity e) {
+    std::vector<std::pair<const TypeDesc*, std::function<const void*()>>> out;
+    auto add = [&out](const char* tn, std::function<const void*()> fn) {
         out.emplace_back(findType(tn), std::move(fn));
     };
     if (reg.try_get<Transform>(e)) add("Transform", liveRef<Transform>(reg, e));
@@ -460,5 +457,4 @@ inline std::vector<std::pair<const TypeDesc*, std::function<const void*(void)>>>
     if (reg.try_get<Bind>(e)) add("Bind", liveRef<Bind>(reg, e));
     return out;
 }
-
 }

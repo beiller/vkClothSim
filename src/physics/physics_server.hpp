@@ -4,8 +4,6 @@
 
 #include "physics/rigid.hpp"
 
-// CPU rigid-body server (Jolt). One Jolt step per frame at render rate:
-// physics hook (Lua _physics) -> project -> kinematic poses -> Jolt step -> pose writeback.
 class PhysicsServer {
 public:
     RigidScene& scene() { return m_scene; }

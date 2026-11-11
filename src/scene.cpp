@@ -112,8 +112,6 @@ entt::entity buildObject(Engine& w, const json& o, const std::string& p, bool al
 
 }
 
-// the singleton settings entity: RenderSettings + PhysicsSettings as components; short URLs
-// ("render.*"/"rigid.*") and the editor UI resolve against it
 void spawnSettingsEntity(entt::registry& reg) {
     entt::entity e = reg.create();
     reg.emplace<Name>(e, "settings");
@@ -181,7 +179,6 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
     try {
         const json& objects = j.value("objects", json::array());
 
-        // at most one JSON-declared camera; scripts may create more (active=true selects)
         const json* camObj = nullptr;
         for (const auto& o : objects)
             if (o.contains("components") && o["components"].contains("Camera")) {
@@ -233,7 +230,6 @@ bool createScene(Engine& w, const std::string& path, std::string& err) {
     }
 }
 
-// upload every Texture to a GPUTexture and repoint materials at the GPU-side entity
 void publishTextures(Engine& w) {
     std::vector<std::pair<entt::entity, entt::entity>> ups;
     const auto isEnvTex = [&w](entt::entity e) {
@@ -245,7 +241,7 @@ void publishTextures(Engine& w) {
     for (auto [e, t] : w.reg.view<Texture>().each()) {
         (void)t;
         if (isEnvTex(e))
-            continue; // publishEnvironments uploads it
+            continue;
         const entt::entity g = w.graphics.uploadTexture(w.reg, e);
         if (g != entt::null)
             ups.emplace_back(e, g);
@@ -259,7 +255,6 @@ void publishTextures(Engine& w) {
     }
 }
 
-// upload each Environment's texture and feed it into the HDRI conversion pipeline
 void publishEnvironments(Engine& w) {
     for (auto [e, env] : w.reg.view<Environment>().each()) {
         entt::entity eq = entt::null;

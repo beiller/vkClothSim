@@ -63,7 +63,7 @@ using PFN_xrCreateVulkanDeviceKHR = XrResult (*)(XrInstance, const XrVulkanDevic
 
 class Xr : public IXrBackend {
 public:
-    ~Xr() override { shutdown(); } // idempotent, so an explicit shutdown() first is safe
+    ~Xr() override { shutdown(); }
     bool createDevice(VkApp& app) override;
     bool init(VkApp& app) override;
     void shutdown() override;
@@ -99,7 +99,7 @@ private:
     XrLoader m_loader;
     XrInstance m_inst = XR_NULL_HANDLE;
     VkInstance m_shadowInst = VK_NULL_HANDLE; // created via OpenXR so the runtime holds our vkGetInstanceProcAddr
-    VkDevice m_dev = VK_NULL_HANDLE; // created via xrCreateVulkanDeviceKHR so the compositor uses instance-proc
+    VkDevice m_dev = VK_NULL_HANDLE;
     XrSystemId m_system = XR_NULL_SYSTEM_ID;
     XrSession m_session = XR_NULL_HANDLE;
     XrSpace m_refSpace = XR_NULL_HANDLE;

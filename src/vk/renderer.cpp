@@ -18,15 +18,11 @@
 
 namespace {
 
-std::vector<VkDescriptorSetLayoutBinding> uiQuadBinds() {
-    return {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}};
-}
-
 ModelUbo packModel(const Mat4& model, const V3& baseColor, float metallic, float roughness, const V3& emissive,
                    float baseAlpha, float alphaCutoff, float alphaMode, const V3& ssssWeight, float refraction,
                    float ior, float normalScale, float ssssScale, float ssssSplit) {
     ModelUbo mb{};
-    std::memcpy(mb.model, &model, 64); // mat4 is a trivial 16-float layout
+    std::memcpy(mb.model, &model, 64);
     mb.baseColor[0] = baseColor.x;
     mb.baseColor[1] = baseColor.y;
     mb.baseColor[2] = baseColor.z;
@@ -64,8 +60,8 @@ std::vector<VkDescriptorSetLayoutBinding> meshBinds() {
         {14, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {13, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}, // scene depth copy (glass)
-        {15, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}, // scene color (glass refraction)
+        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {15, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     };
 }
 
@@ -92,7 +88,6 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     m_meshPools.push_back(pool);
     m_poolCap = nInstances;
     m_poolUsed = 0;
-    // 4 B push constant: the pass id (0 = opaque into sceneColor, 1 = transparent into HDR);
     m_pl = vkMakePipelineLayoutPC(m_dev, m_dsl, VK_SHADER_STAGE_FRAGMENT_BIT, 4);
     m_pipe = makeGraphicsPipeline(m_dev, app.sceneRenderPass(), mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
                                  mesh_frag_spv_len / 4, m_pl, true, false, false, 4);
@@ -104,7 +99,7 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
 
     const uint8_t white[4] = {255, 255, 255, 255};
     vkMakeImage2D(m_dev, m_pdev, 1, 1, white, m_white.img, m_white.mem, m_white.view);
-    const uint8_t neutralNrm[4] = {128, 128, 255, 255}; // tangent-space (0,0,1)
+    const uint8_t neutralNrm[4] = {128, 128, 255, 255};
     vkMakeImage2D(m_dev, m_pdev, 1, 1, neutralNrm, m_neutralNrm.img, m_neutralNrm.mem, m_neutralNrm.view);
     vkMakeSamplerEx(m_dev, m_pdev, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, true, 0.0f, 16.0f,
                     m_texSampler);
@@ -163,7 +158,7 @@ int Renderer::addMesh(const Mesh& mesh) {
     return (int)m_geoms.size() - 1;
 }
 
-GpuMeshRef Renderer::requestVerts(const entt::registry& reg, const Mesh& mesh, entt::entity keyEnt) {
+GpuMeshRef Renderer::requestVerts(const entt::registry&, const Mesh& mesh, entt::entity keyEnt) {
     const auto it = m_entGeom.find(keyEnt);
     if (it != m_entGeom.end()) {
         const GpuMesh& g = m_geoms[(size_t)it->second];
@@ -253,7 +248,6 @@ int Renderer::allocInstance(int geom) {
 }
 
 void Renderer::addGpuTexture(entt::entity e, const void* data, uint32_t w, uint32_t h, TexelFormat fmt) {
-    // floats are stored 4-channel (Metal rejects linear tiling for R32G32B32_SFLOAT)
     const VkFormat vf = fmt == TexelFormat::RGB32F ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
     const size_t bpt = fmt == TexelFormat::RGB32F ? 16 : 4;
     GpuTexture t;
@@ -275,12 +269,6 @@ void Renderer::makeGpuTexture(entt::entity e, uint32_t w, uint32_t h) {
 }
 
 namespace {
-void linearizeRgba(std::vector<uint8_t>& rgba) {
-    for (size_t i = 0; i < rgba.size(); i += 4)
-        for (int c = 0; c < 3; ++c)
-            rgba[i + c] = (uint8_t)(srgbToLinear(rgba[i + c] / 255.0f) * 255.0f + 0.5f);
-}
-
 void repackRgb32f(std::vector<uint8_t>& d) {
     const size_t n = d.size() / 12;
     std::vector<uint8_t> rgba(n * 16);
@@ -353,7 +341,6 @@ entt::entity Renderer::uploadTexture(entt::registry& reg, entt::entity texEnt) {
     return ge;
 }
 
-// resolve a texture ref (a Texture or a GPUTexture) to a GPUTexture entity, uploading on first use
 entt::entity Renderer::resolveTex(entt::registry& reg, entt::entity e) {
     if (e == entt::null)
         return entt::null;
@@ -374,7 +361,7 @@ entt::entity Renderer::resolveTex(entt::registry& reg, entt::entity e) {
 }
 
 void Renderer::uiEnsureTarget(const entt::registry& reg, entt::entity canvas) {
-    if (m_uiTargs.count(canvas))
+    if (m_uiTargs.contains(canvas))
         return;
     const auto* g = reg.try_get<GPUTexture>(canvas);
     if (!g)
@@ -392,7 +379,7 @@ void Renderer::uiEnsureTarget(const entt::registry& reg, entt::entity canvas) {
     att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    const VkRenderPass rp = makeSimpleRenderPass(m_dev, att);
+    VkRenderPass rp = makeSimpleRenderPass(m_dev, att);
     VkImageView view = t.view;
     VkFramebuffer fb;
     makeFramebuffer(m_dev, rp, g->w, g->h, &view, 1, fb);
@@ -495,13 +482,20 @@ void Renderer::flushFrees() {
 }
 
 void Renderer::setTexture(int inst, int channel, int texId) {
-    static const int kBinding[kTexChannels] = {6, 7, 11, 14}; // albedo, metallicRoughness, normal, emissive
+    static const int kBinding[kTexChannels] = {6, 7, 11, 14};
     InstancedMesh& im = m_insts[inst];
     if (im.tex[channel] == texId)
         return;
     im.tex[channel] = texId;
     const bool hasTex = texId >= 0 && (size_t)texId < m_texs.size() && m_texs[texId].img != VK_NULL_HANDLE;
-    const GpuTexture& t = hasTex ? m_texs[texId] : (channel == 2 ? m_neutralNrm : m_white);
+    const GpuTexture* tp;
+    if (hasTex)
+        tp = &m_texs[texId];
+    else if (channel == 2)
+        tp = &m_neutralNrm;
+    else
+        tp = &m_white;
+    const GpuTexture& t = *tp;
     const VkDescriptorImageInfo ii{m_texSampler, t.view, VK_IMAGE_LAYOUT_GENERAL};
     WriteDescs w;
     w.image(im.set, kBinding[channel], ii);
@@ -553,7 +547,6 @@ float Renderer::envIntensity(const entt::registry& reg) const {
     return 1.0f;
 }
 
-// keep the environment in sync with its resolved texture; a no-op unless the texture changed
 void Renderer::syncEnvironments(VkApp& app, entt::registry& reg) {
     for (auto [e, env] : reg.view<Environment>().each())
         buildEnvironment(app, e, resolveTex(reg, env.tex));
@@ -628,7 +621,7 @@ void Renderer::prepBuffers(entt::registry& reg) {
             m_hasGlass = true;
         if (alphaMode == 2 || refraction > 0.0f)
             m_hasTrans = true;
-        const ModelUbo mb = packModel(model, base, metallic, roughness, emissive, baseAlpha, alphaCutoff, alphaMode,
+        const ModelUbo mb = packModel(model, base, metallic, roughness, emissive, baseAlpha, alphaCutoff, (float)alphaMode,
                                       ssssWeight, refraction, ior, normalScale, ssssScale, ssssSplit);
         vkWriteBuffer(m_dev, im.modelMem, &mb, sizeof(ModelUbo));
     }
@@ -641,9 +634,10 @@ void setPassId(VkCommandBuffer cmd, VkPipelineLayout pl, float id) {
 }
 
 float halfToFloat(uint16_t h) {
-    const uint32_t sign = (uint32_t)(h & 0x8000) << 16;
-    const uint32_t exp = (h >> 10) & 0x1F;
-    const uint32_t mant = h & 0x3FF;
+    const uint32_t u = h;
+    const uint32_t sign = (u & 0x8000) << 16;
+    const uint32_t exp = (u >> 10) & 0x1F;
+    const uint32_t mant = u & 0x3FF;
     uint32_t out = sign;
     if (exp > 0 && exp < 31)
         out |= ((exp + 112) << 23) | (mant << 13);
@@ -708,7 +702,7 @@ void Renderer::renderTransparentPass(VkCommandBuffer cmd, VkApp& app, const V3& 
         if (m_insts[i].visible && !m_insts[i].dead &&
             (m_insts[i].alphaMode == 2 || m_insts[i].refraction > 0.0f))
             trans.push_back((int)i);
-    std::sort(trans.begin(), trans.end(), [&](int a, int b) {
+    std::ranges::sort(trans, [&](int a, int b) {
         const V3 da = camPos - m_insts[a].wpos, db = camPos - m_insts[b].wpos;
         return glm::dot(db, db) > glm::dot(da, da);
     });
@@ -792,11 +786,9 @@ void Renderer::renderSceneBuffers(VkCommandBuffer cmd, VkApp& app, const float b
             vkImgBarrier(cmd, app.sssPostImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                       VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_READ_BIT, 1);
         }
-        if (needRead)
-            vkImgBarrier(cmd, app.depthCopyImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                      VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT, 1);
+        vkImgBarrier(cmd, app.depthCopyImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT, 1);
     }
-    // the SSS taps' mip prefilter: generate sssDiffuse's chain before pass 0 reads it
     if (m_hasSss && mips > 1)
         for (uint32_t mip = 1; mip < mips; ++mip) {
             const int sw = std::max(1, (int)(ext.width >> (mip - 1)));
@@ -812,12 +804,18 @@ void Renderer::renderSceneBuffers(VkCommandBuffer cmd, VkApp& app, const float b
                            VK_IMAGE_LAYOUT_GENERAL, 1, &ib, VK_FILTER_LINEAR);
         }
     renderSssBlur(cmd, app, cv);
-    const VkImageLayout sceneOld =
-        m_hasSss ? VK_IMAGE_LAYOUT_GENERAL : needRead ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                                                     : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    const VkAccessFlags sceneSrc =
-        m_hasSss ? VK_ACCESS_SHADER_WRITE_BIT : needRead ? VK_ACCESS_SHADER_READ_BIT
-                                                        : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    VkImageLayout sceneOld;
+    VkAccessFlags sceneSrc;
+    if (m_hasSss) {
+        sceneOld = VK_IMAGE_LAYOUT_GENERAL;
+        sceneSrc = VK_ACCESS_SHADER_WRITE_BIT;
+    } else if (needRead) {
+        sceneOld = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sceneSrc = VK_ACCESS_SHADER_READ_BIT;
+    } else {
+        sceneOld = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        sceneSrc = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    }
     vkImgBarrier(cmd, app.sceneColorImage(), VK_IMAGE_ASPECT_COLOR_BIT, sceneOld, VK_IMAGE_LAYOUT_GENERAL, sceneSrc,
                VK_ACCESS_TRANSFER_READ_BIT | (m_hasGlass ? VK_ACCESS_TRANSFER_WRITE_BIT : 0), 1);
     if (m_hasGlass && mips > 1)
@@ -926,13 +924,13 @@ void Renderer::updateSceneSamplers(VkApp& app) {
     w.update(m_dev);
     const VkDescriptorImageInfo neutral{m_texSampler, m_white.view, VK_IMAGE_LAYOUT_GENERAL};
     WriteDescs wi;
-    for (size_t i = 0; i < m_insts.size(); ++i) {
-        if (m_insts[i].dead)
+    for (const auto& inst : m_insts) {
+        if (inst.dead)
             continue;
-        wi.image(m_insts[i].set, 2, neutral);
-        wi.image(m_insts[i].setTrans, 2, dcopySam);
-        wi.image(m_insts[i].set, 15, neutral);
-        wi.image(m_insts[i].setTrans, 15, sceneSam);
+        wi.image(inst.set, 2, neutral);
+        wi.image(inst.setTrans, 2, dcopySam);
+        wi.image(inst.set, 15, neutral);
+        wi.image(inst.setTrans, 15, sceneSam);
     }
     wi.update(m_dev);
 }
@@ -1034,7 +1032,7 @@ void Renderer::writeLights(const entt::registry& reg) {
     vkWriteBuffer(m_dev, m_lightsMem, &u, sizeof(LightsUbo));
 }
 
-void Renderer::drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const VkDescriptorSet set) {
+void Renderer::drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, VkDescriptorSet set) {
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pl, 0, 1, &set, 0, nullptr);
     vkCmdBindIndexBuffer(cmd, g.ibuf, 0, VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(cmd, g.idxCount, 1, 0, 0, 0);
@@ -1096,7 +1094,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
     const bool dbgHdr = std::getenv("VKSIM_DBG_HDR") != nullptr || std::getenv("VKSIM_DBG_SCENE") != nullptr;
     const bool dbgMips = std::getenv("VKSIM_DBG_MIPS") != nullptr;
     if ((dbgHdr || dbgMips) && m_dbgBuf == VK_NULL_HANDLE) {
-        m_dbgSize = (uint64_t)ext.width * ext.height * 32 + 16 * 1024 * 1024;
+        m_dbgSize = (uint64_t)ext.width * ext.height * 32 + (uint64_t)16 * 1024 * 1024;
         vkMakeBuffer(m_dev, m_pdev, m_dbgBuf, m_dbgMem, (VkDeviceSize)m_dbgSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                      nullptr);
     }
@@ -1122,7 +1120,13 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
             const bool hdr = slot == 2, dcp = slot == 3;
             const uint32_t mw = ext.width >> ((hdr || dcp) ? 0 : slot);
             const uint32_t mh = ext.height >> ((hdr || dcp) ? 0 : slot);
-            const VkImage src = hdr ? app.hdrImage() : dcp ? app.depthCopyImage() : app.sceneColorImage();
+            VkImage src;
+            if (hdr)
+                src = app.hdrImage();
+            else if (dcp)
+                src = app.depthCopyImage();
+            else
+                src = app.sceneColorImage();
             vkImgBarrier(cmd, src, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
                          VK_ACCESS_TRANSFER_READ_BIT, 1, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
@@ -1149,7 +1153,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
             vkCmdCopyImageToBuffer(cmd, m_envPre.img, VK_IMAGE_LAYOUT_GENERAL, m_dbgBuf, 1, &bic);
         }
         if (m_envReady) {
-            const size_t eqOff = (size_t)28 * ext.width * ext.height + 6 * 256 * 256 * 8;
+            const size_t eqOff = (size_t)28 * ext.width * ext.height + (size_t)6 * 256 * 256 * 8;
             vkImgBarrier(cmd, m_envEqImg, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL,
                          VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_READ_BIT, 1,
                          VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -1167,10 +1171,10 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
     if (dbgHdr) {
         void* p;
         VK(vkMapMemory(m_dev, m_dbgMem, 0, m_dbgSize, 0, &p));
-        const uint16_t* px = (const uint16_t*)p;
+        const auto* px = (const uint16_t*)p;
         std::fprintf(stderr, "DBG HDR:");
         for (int i = 0; i < 5; ++i) {
-            const uint16_t* q = px + ((int)ext.height / 2 * (int)ext.width + (i * (int)ext.width) / 5) * 4;
+            const uint16_t* q = px + (size_t)((int)ext.height / 2 * (int)ext.width + (i * (int)ext.width) / 5) * 4;
             std::fprintf(stderr, " (%.3f %.3f %.3f %.3f)", halfToFloat(q[0]), halfToFloat(q[1]), halfToFloat(q[2]),
                          halfToFloat(q[3]));
         }
@@ -1188,8 +1192,16 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
             const uint32_t mw = ext.width >> ((slot == 2 || slot == 3) ? 0 : slot);
             const uint32_t mh = ext.height >> ((slot == 2 || slot == 3) ? 0 : slot);
             char fn[64];
-            std::snprintf(fn, sizeof(fn), "/tmp/scene_%s.pgm", slot == 0 ? "mip0" : slot == 1 ? "mip1" :
-                                                                  slot == 2 ? "hdr" : "depth");
+            const char* tag;
+            if (slot == 0)
+                tag = "mip0";
+            else if (slot == 1)
+                tag = "mip1";
+            else if (slot == 2)
+                tag = "hdr";
+            else
+                tag = "depth";
+            std::snprintf(fn, sizeof(fn), "/tmp/scene_%s.pgm", tag);
             FILE* f = std::fopen(fn, "wb");
             if (slot == 3) {
                 const float* fp = (const float*)p + (size_t)3 * ext.width * ext.height * 2;
@@ -1237,7 +1249,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
             std::fprintf(stderr, "DBG MIP: wrote %s\n", fn);
         }
         if (m_envReady) {
-            const float* ef = (const float*)p + (size_t)7 * ext.width * ext.height + 6 * 256 * 256 * 2;
+            const float* ef = (const float*)p + (size_t)7 * ext.width * ext.height + (size_t)6 * 256 * 256 * 2;
             char fn[64];
             std::snprintf(fn, sizeof(fn), "/tmp/env_eq.pgm");
             FILE* f = std::fopen(fn, "wb");
@@ -1258,12 +1270,12 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
     }
 }
 
-Mat4 Renderer::eyeVP(const View& v) const {
+Mat4 Renderer::eyeVP(const View& v) {
     const Mat4 proj = projFov(v.tanL, v.tanR, v.tanU, v.tanD, 0.1f, 300.0f);
     return proj * poseView(v.pos, v.quat);
 }
 
-VkRect2D Renderer::eyeRegion(const View& v, VkExtent2D ext, int eye) const {
+VkRect2D Renderer::eyeRegion(const View& v, VkExtent2D ext, int eye) {
     const float aspect = (v.tanR - v.tanL) / (v.tanU - v.tanD);
     const uint32_t halfW = ext.width / 2;
     float rw, rh;
@@ -1274,7 +1286,7 @@ VkRect2D Renderer::eyeRegion(const View& v, VkExtent2D ext, int eye) const {
         rh = (float)ext.height;
         rw = rh * aspect;
     }
-    const float ox = eye * (float)halfW + ((float)halfW - rw) * 0.5f;
+    const float ox = (float)eye * (float)halfW + ((float)halfW - rw) * 0.5f;
     const float oy = ((float)ext.height - rh) * 0.5f;
     return {(int)ox, (int)oy, (uint32_t)rw, (uint32_t)rh};
 }
@@ -1288,7 +1300,7 @@ void Renderer::ensureNoClearFbs(VkApp& app) {
     m_noClearFbs.clear();
     m_noClearFbs.resize(app.imageCount());
     for (uint32_t i = 0; i < app.imageCount(); ++i) {
-        const VkImageView att = app.view(i);
+        VkImageView att = app.view(i);
         makeFramebuffer(m_dev, m_noClearRp, ext.width, ext.height, &att, 1, m_noClearFbs[i]);
     }
     m_noClearExt = ext;
@@ -1369,7 +1381,7 @@ void Renderer::initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vect
     rebuildTonemapSet(app);
 }
 
-void Renderer::drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx, const CameraView& cv) {
+void Renderer::drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx, const CameraView&) {
     if (!m_xrReady)
         return;
     if (app.hdrView() != m_tmSrcView)
@@ -1473,8 +1485,8 @@ void Renderer::shutdown() {
         vkDestroyFramebuffer(m_dev, m_shadowFb[l], nullptr);
         vkDestroyImageView(m_dev, m_shadowColorFace[l], nullptr);
     }
-    for (uint32_t f = 0; f < 6; ++f)
-        vkDestroyImageView(m_dev, m_shadowDepthFace[f], nullptr);
+    for (auto* face : m_shadowDepthFace)
+        vkDestroyImageView(m_dev, face, nullptr);
     vkFreeBuffer(m_dev, m_lightsUbuf, m_lightsMem);
     vkFree(m_dev, &m_shadowPipe, vkDestroyPipeline);
     vkFree(m_dev, &m_shadowPl, vkDestroyPipelineLayout);

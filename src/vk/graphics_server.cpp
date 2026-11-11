@@ -19,7 +19,7 @@ void GraphicsServer::init(VkApp& app, bool withRenderer) {
         auto it = m_fbGeom.find(key);
         if (it == m_fbGeom.end()) {
             FallbackGeom g;
-            const uint32_t n = (uint32_t)m.vertexCount();
+            const auto n = (uint32_t)m.vertexCount();
             g.vtxCount = n;
             vkMakeBufferDev(m_dev, m_pdev, g.pos, g.posMem, 12 * (VkDeviceSize)n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                            m.pos.data());
@@ -52,7 +52,6 @@ void GraphicsServer::updateSim(entt::registry& reg, float dt) {
     m_app->submit(skelCmd);
     simProf.skel += msBetween(tS, std::chrono::steady_clock::now());
 
-    // one soft step per frame at render rate; dt clamped so a stall can't produce a huge unstable cloth step
     const auto tC = std::chrono::steady_clock::now();
     VkCommandBuffer softCmd = m_app->beginCommands();
     m_soft.syncCapsules(reg);

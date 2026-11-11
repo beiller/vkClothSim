@@ -6,23 +6,20 @@
 #include <string>
 #include <vector>
 
-// A table on the Lua stack: named fields via set*, 1-based array elements via
-// append*. Sub-tables are attached by index (setTable/appendTable copy the
-// value; the sub-table stays on the stack for the caller to pop or re-attach).
 struct LuaTable {
     lua_State* L;
     int idx;
     int arr = 0;
-    LuaTable(lua_State* L, int narr = 0, int nrec = 0) : L(L) {
+    explicit LuaTable(lua_State* L, int narr = 0, int nrec = 0) : L(L) {
         lua_createtable(L, narr, nrec);
         idx = lua_gettop(L);
     }
-    void setStr(const char* k, const std::string& v) { lua_pushstring(L, v.c_str()); lua_setfield(L, idx, k); }
-    void setNum(const char* k, double v) { lua_pushnumber(L, v); lua_setfield(L, idx, k); }
-    void setBool(const char* k, bool v) { lua_pushboolean(L, v); lua_setfield(L, idx, k); }
+    void setStr(const char* k, const std::string& v) const { lua_pushstring(L, v.c_str()); lua_setfield(L, idx, k); }
+    void setNum(const char* k, double v) const { lua_pushnumber(L, v); lua_setfield(L, idx, k); }
+    void setBool(const char* k, bool v) const { lua_pushboolean(L, v); lua_setfield(L, idx, k); }
     void appendNum(double v) { lua_pushnumber(L, v); lua_rawseti(L, idx, ++arr); }
     void appendStr(const std::string& v) { lua_pushstring(L, v.c_str()); lua_rawseti(L, idx, ++arr); }
-    void setTable(const char* k, int subIdx) { lua_pushvalue(L, subIdx); lua_setfield(L, idx, k); }
+    void setTable(const char* k, int subIdx) const { lua_pushvalue(L, subIdx); lua_setfield(L, idx, k); }
     void appendTable(int subIdx) { lua_pushvalue(L, subIdx); lua_rawseti(L, idx, ++arr); }
 };
 
@@ -49,40 +46,32 @@ inline V3 luaReadV3(lua_State* L, int idx, const V3& def = {0, 0, 0}) {
 
 inline Quat luaReadQuat(lua_State* L, int idx) {
     if (!lua_istable(L, idx))
-        return Quat(1.0f, 0.0f, 0.0f, 0.0f); // identity (w first)
-    // table is [x, y, z, w]; the Quat constructor is (w, x, y, z)
+        return {1.0f, 0.0f, 0.0f, 0.0f};
     const float x = luaReadNum(L, idx, 1, 0);
     const float y = luaReadNum(L, idx, 2, 0);
     const float z = luaReadNum(L, idx, 3, 0);
     const float w = luaReadNum(L, idx, 4, 1);
-    return Quat(w, x, y, z);
+    return {w, x, y, z};
 }
 
-inline void luaPushV3(lua_State* L, V3 v) {
-    lua_createtable(L, 3, 0);
-    lua_pushnumber(L, v.x);
-    lua_seti(L, -2, 1);
-    lua_pushnumber(L, v.y);
-    lua_seti(L, -2, 2);
-    lua_pushnumber(L, v.z);
-    lua_seti(L, -2, 3);
+template <int N>
+void luaPushVecN(lua_State* L, const float* v) {
+    lua_createtable(L, N, 0);
+    for (int i = 0; i < N; ++i) {
+        lua_pushnumber(L, v[i]); // NOLINT(clang-analyzer-security.ArrayBound): caller guarantees N elements
+        lua_seti(L, -2, i + 1);
+    }
 }
 
+inline void luaPushV3(lua_State* L, V3 v) { luaPushVecN<3>(L, &v.x); }
 inline void luaPushV4(lua_State* L, V4 q) {
-    lua_createtable(L, 4, 0);
-    lua_pushnumber(L, q.x);
-    lua_seti(L, -2, 1);
-    lua_pushnumber(L, q.y);
-    lua_seti(L, -2, 2);
-    lua_pushnumber(L, q.z);
-    lua_seti(L, -2, 3);
-    lua_pushnumber(L, q.w);
-    lua_seti(L, -2, 4);
+    const float v[4] = {q.x, q.y, q.z, q.w};
+    luaPushVecN<4>(L, v);
 }
 
-// pushes a quat as an [x, y, z, w] table (the Quat ctor order is w-first, but the table is not)
 inline void luaPushQuat(lua_State* L, Quat q) {
-    luaPushV4(L, V4(q.x, q.y, q.z, q.w));
+    const float v[4] = {q.x, q.y, q.z, q.w};
+    luaPushVecN<4>(L, v);
 }
 
 template <class T>
@@ -134,11 +123,8 @@ inline bool luaReadGeomField(lua_State* L, int tidx, const char* name, size_t pe
     return true;
 }
 
-// reads a component field table (plain table) from idx into out; api_components.cpp
 bool readCompFields(lua_State* L, int idx, CompFields& out, std::string& err, const char* skipField);
 
-// Reads an optional 'shapes' key (a list of {name, weight, pos, nrm}) from the table at idx.
-// Leaves out untouched when the key is absent; otherwise out is the full list.
 inline bool luaReadShapesTable(lua_State* L, int idx, int nVerts, std::vector<SubMesh>& out, std::string& err) {
     lua_getfield(L, idx, "shapes");
     if (!lua_istable(L, -1)) {

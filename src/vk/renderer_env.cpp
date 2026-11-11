@@ -50,8 +50,10 @@ void Renderer::buildEnvironment(VkApp& app, entt::entity envEnt, entt::entity eq
     vkMakeCubeImage(m_dev, m_pdev, cubeSize, 1, m_envIrr.img, m_envIrr.mem, m_envIrr.view);
     m_envPreMips.resize(mips);
     for (uint32_t m = 0; m < mips; ++m)
-        vkMakeCubeMipArrayView(m_dev, m_envPre.img, m, m_envPreMips[m]);
-    vkMakeCubeMipArrayView(m_dev, m_envIrr.img, 0, m_envIrrArr);
+        vkMakeSubresourceView(m_dev, m_envPre.img, VK_IMAGE_VIEW_TYPE_2D_ARRAY, VK_FORMAT_R16G16B16A16_SFLOAT,
+                             VK_IMAGE_ASPECT_COLOR_BIT, m, 0, 6, m_envPreMips[m]);
+    vkMakeSubresourceView(m_dev, m_envIrr.img, VK_IMAGE_VIEW_TYPE_2D_ARRAY, VK_FORMAT_R16G16B16A16_SFLOAT,
+                         VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 6, m_envIrrArr);
 
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(m_pdev, &props);
@@ -68,7 +70,8 @@ void Renderer::buildEnvironment(VkApp& app, entt::entity envEnt, entt::entity eq
     // store through CUBE views (the same views the glass samples): on this driver the 2D_ARRAY view's layer mapping differs from the CUBE view's, mixing scrambles the faces
     VkImageView prefMipView[5] = {};
     for (uint32_t m = 0; m < mips; ++m)
-        vkMakeCubeMipView(m_dev, m_envPre.img, m, prefMipView[m]);
+        vkMakeSubresourceView(m_dev, m_envPre.img, VK_IMAGE_VIEW_TYPE_CUBE, VK_FORMAT_R16G16B16A16_SFLOAT,
+                             VK_IMAGE_ASPECT_COLOR_BIT, m, 0, 6, prefMipView[m]);
     const VkDescriptorImageInfo preImg{VK_NULL_HANDLE, prefMipView[0], VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo irrImg{VK_NULL_HANDLE, m_envIrr.view, VK_IMAGE_LAYOUT_GENERAL};
 

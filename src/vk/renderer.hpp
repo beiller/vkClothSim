@@ -30,7 +30,6 @@ public:
     static constexpr int kPoolChunk = 64;
 
     void init(VkApp& app, int nInstances, const Mat4& viewProj);
-    // sole owner of drawable vertex buffers; sim stages request a read-write store on adoption
     GpuMeshRef requestVerts(const entt::registry& reg, const Mesh& mesh, entt::entity keyEnt);
     int addMesh(const Mesh& mesh);
     int instFor(entt::entity e, entt::entity geomEnt, const entt::registry& reg);
@@ -121,7 +120,7 @@ private:
         VkDescriptorSet set = VK_NULL_HANDLE;
     };
 
-    static void drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, const VkDescriptorSet set);
+    static void drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, VkDescriptorSet set);
     int allocInstance(int geom);
     void queueFreeInst(int inst);
     int geomFor(entt::entity g, const entt::registry& reg);
@@ -141,14 +140,14 @@ private:
     void setTexture(int inst, int channel, int texId);
     void updateSceneSamplers(VkApp& app);
     void ensureSceneSamplers(VkApp& app);
-    void hdrBarrier(VkCommandBuffer cmd, VkApp& app);
+    static void hdrBarrier(VkCommandBuffer cmd, VkApp& app);
     void initSss(VkApp& app);
     void releaseSss();
     void writeTonemapUbo(float ox, float oy, float sx, float sy);
     void drawTonemapRegion(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const VkRect2D& region, bool clear);
     void ensureNoClearFbs(VkApp& app);
-    Mat4 eyeVP(const View& v) const;
-    VkRect2D eyeRegion(const View& v, VkExtent2D ext, int eye) const;
+    static Mat4 eyeVP(const View& v);
+    static VkRect2D eyeRegion(const View& v, VkExtent2D ext, int eye);
     void initShadow(VkApp& app);
     void renderShadowCubes(VkCommandBuffer cmd, const entt::registry& reg);
     void makeComputePass(const void* spv, uint32_t len, const std::vector<VkDescriptorSetLayoutBinding>& binds,
@@ -187,14 +186,14 @@ private:
     VkDeviceMemory m_tmMem = VK_NULL_HANDLE;
     VkImageView m_tmSrcView = VK_NULL_HANDLE;
 
-    static constexpr int kTexChannels = 4; // albedo, metallicRoughness, normal, emissive
+    static constexpr int kTexChannels = 4;
 
     std::vector<GpuMesh> m_geoms;
     std::vector<InstancedMesh> m_insts;
     std::vector<GpuTexture> m_texs;
     std::unordered_map<entt::entity, int> m_entInst;
     std::unordered_map<entt::entity, int> m_entTex;
-    std::unordered_map<entt::entity, entt::entity> m_texResolve; // Texture -> its GPUTexture child
+    std::unordered_map<entt::entity, entt::entity> m_texResolve;
     std::unordered_map<entt::entity, int> m_entGeom;
     std::unordered_set<entt::entity> m_geomWarned, m_texWarned;
     std::vector<int> m_freeInst, m_freeTex;
@@ -205,7 +204,7 @@ private:
     VkSampler m_texSampler = VK_NULL_HANDLE;
 
     GpuTexture m_envPre, m_envIrr;
-    VkImage m_envEqImg = VK_NULL_HANDLE; // non-owning: the equirect is the env's GPUTexture
+    VkImage m_envEqImg = VK_NULL_HANDLE;
     entt::entity m_envEnt = entt::null;
     entt::entity m_envEqEnt = entt::null;
     uint32_t m_envEqW = 0, m_envEqH = 0;
@@ -223,9 +222,9 @@ private:
 
     EnvPass m_sss;
     VkDescriptorSet m_sssSet[2] = {};
-    float m_sssDepthScale = 0.01f;    // Godot subsurface_scattering_depth_scale default
-    float m_sssDepthReject = 2.0f;    // RenderSettings.sssDepthReject (set per frame)
-    VkSampler m_sceneColorSampler = VK_NULL_HANDLE; // CLAMP + linear mip (roughness blur = rough * 8)
+    float m_sssDepthScale = 0.01f;
+    float m_sssDepthReject = 2.0f;
+    VkSampler m_sceneColorSampler = VK_NULL_HANDLE;
     VkSampler m_depthCopySampler = VK_NULL_HANDLE;
     VkImageView m_sssSceneView = VK_NULL_HANDLE;
     VkImageView m_sssTempView = VK_NULL_HANDLE;

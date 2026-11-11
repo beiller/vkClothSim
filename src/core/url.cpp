@@ -3,13 +3,8 @@
 #include <cstring>
 #include <entt/entt.hpp>
 
-// "LuaScript.var" -> a slot in the script's vars mirror. The var path may be nested
-// ("pos.x"); subvars of 3/4-number table slots resolve to member views into the
-// contiguous vec storage. Numbers are float, plus bool/vec3/quat; string vars are not
-// bindable (read/write them with scene.get/scene.set).
 template <typename M>
 static M& varMap(const M& m) {
-    // the registry view is const-only in interface; the storage is mutable
     return const_cast<M&>(m);
 }
 
@@ -25,7 +20,6 @@ static bool resolveVar(const entt::registry& reg, entt::entity ent, const std::s
     static const FieldDesc fV3{"var", 0, FieldKind::DragV3};
     static const FieldDesc fQ{"var", 0, FieldKind::Quat};
 
-    // "head.tail" where head is a vec slot: view into its members (no separate storage)
     const size_t dot = path.rfind('.');
     if (dot != std::string::npos) {
         const std::string head = path.substr(0, dot);
@@ -95,12 +89,18 @@ bool resolveEntityField(const entt::registry& reg, entt::entity ent, const std::
             continue;
         const FieldDesc* f = findField(t, fn);
         if (!f) {
-            err = "no field '" + fn + "' in " + cn;
+            err = "no field '";
+            err += fn;
+            err += "' in ";
+            err += cn;
             return false;
         }
         const void* bp = b();
         if (!bp) {
-            err = "entity '" + label + "' has no " + cn;
+            err = "entity '";
+            err += label;
+            err += "' has no ";
+            err += cn;
             return false;
         }
         out = {f, (char*)bp + f->offset};
@@ -116,9 +116,6 @@ bool resolveUrl(const entt::registry& reg, const std::string& url, UrlRef& out, 
         err = "expected 'name.Component.field'";
         return false;
     }
-    // "name.LuaScript.varpath": the marker anchors the split even when the entity name
-    // contains dots; on a miss, fall through to the generic split (an entity may be
-    // literally named "X.LuaScript.Y").
     const size_t marker = url.rfind(".LuaScript.");
     if (marker != std::string::npos && marker > 0 && marker + 11 < url.size()) {
         const std::string mname = url.substr(0, marker);
@@ -140,7 +137,6 @@ bool resolveUrl(const entt::registry& reg, const std::string& url, UrlRef& out, 
         }
     }
 
-    // entity names may contain dots: the last two dot segments are Component.field
     const auto lastDot = url.rfind('.');
     const auto splitDot = url.rfind('.', lastDot - 1);
     if (lastDot == std::string::npos || splitDot == std::string::npos) {
@@ -215,6 +211,8 @@ static bool applySet(const UrlRef& r, const float* vals, int n, std::string& err
     case FieldKind::EntArr:
         err = "field is an array (set it with scene.replace)";
         return false;
+    default:
+        break;
     }
     return false;
 }
@@ -262,6 +260,8 @@ static bool applyGet(const UrlRef& r, float* vals, int maxN, int& n, std::string
     case FieldKind::EntArr:
         err = "field is not a number (read it with scene.component)";
         return false;
+    default:
+        break;
     }
     return false;
 }

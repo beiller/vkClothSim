@@ -37,14 +37,15 @@ void pushJson(lua_State* L, const nlohmann::json& j) {
             pushJson(L, e);
             lua_rawseti(L, -2, ++i);
         }
-    } else if (j.is_string())
+    } else if (j.is_string()) {
         lua_pushstring(L, j.get<std::string>().c_str());
-    else if (j.is_boolean())
+    } else if (j.is_boolean()) {
         lua_pushboolean(L, j.get<bool>());
-    else if (j.is_number())
+    } else if (j.is_number()) {
         lua_pushnumber(L, j.get<double>());
-    else
+    } else {
         lua_pushnil(L);
+    }
 }
 
 int uiTraceback(lua_State* L) {
@@ -70,7 +71,6 @@ bool safeIncludePath(const std::string& p, std::string& err) {
     }
 }
 
-// require: route through the engine's module loader (scenesDir + assets/scenes resolution, m_modules cache)
 int luaRequire(lua_State* L) {
     const char* name = luaL_checkstring(L, 1);
     auto* self = (SceneScript*)lua_touserdata(L, lua_upvalueindex(1));
@@ -93,11 +93,6 @@ void SceneScript::init(Engine& w) {
     L = luaL_newstate();
     lua_atpanic(L, scenePanic);
     luaL_openlibs(L);
-    // for (const char* lib : {"io", "os", "debug", "package"}) {
-    //     lua_pushnil(L);
-    //     lua_setglobal(L, lib);
-    // }
-    // capture the global table (lua_pushvalue(LUA_RIDX_GLOBALS) is unreliable on some builds)
     if (luaL_loadbuffer(L, "return _ENV", 11, "env") == LUA_OK) {
         lua_pcall(L, 0, 1, 0);
         if (lua_istable(L, -1))
@@ -150,17 +145,15 @@ int SceneScript::includeModule(const std::string& rel, std::string& err) {
     if (!safeIncludePath(rel, err))
         return -1;
     // "scenes/..." refs are shipped scripts (camera, mesh, ...): always the assets root.
-    // Bare names resolve against the active scenes dir (--scenes-dir), then fall back
-    // to the shipped scene scripts.
-    std::string full = rel.rfind("scenes/", 0) == 0 ? assetsRoot() + "/" + rel : scenesDir() + "/" + rel;
-    if (full.size() < 4 || full.compare(full.size() - 4, 4, ".lua") != 0)
+    std::string full = rel.starts_with("scenes/") ? assetsRoot() + "/" + rel : scenesDir() + "/" + rel;
+    if (!full.ends_with(".lua"))
         full += ".lua";
     if (const auto it = m_modules.find(full); it != m_modules.end())
         return it->second;
     std::ifstream in(full);
-    if (!in && rel.rfind("scenes/", 0) != 0) {
+    if (!in && !rel.starts_with("scenes/")) {
         full = assetsRoot() + "/scenes/" + rel;
-        if (full.size() < 4 || full.compare(full.size() - 4, 4, ".lua") != 0)
+        if (!full.ends_with(".lua"))
             full += ".lua";
         if (const auto it2 = m_modules.find(full); it2 != m_modules.end())
             return it2->second;
@@ -177,20 +170,17 @@ int SceneScript::includeModule(const std::string& rel, std::string& err) {
         lua_pop(L, 1);
         return -1;
     }
-    // the module table is the chunk's environment: top-level non-locals become module fields
-    // (bindable vars and hooks); `local`s stay private. a returned table wins when present
-    // (vendored libraries like json.lua).
     lua_newtable(L);
     const int modRef = newRef(L, -1);
     if (m_globalsRef > 0) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, m_globalsRef);
-        lua_setfield(L, -2, "_G");  // explicit _G access; lookups fall through via __index
+        lua_setfield(L, -2, "_G");
         lua_newtable(L);
         lua_rawgeti(L, LUA_REGISTRYINDEX, m_globalsRef);
         lua_setfield(L, -2, "__index");
         lua_setmetatable(L, -2);
     }
-    lua_setupvalue(L, -2, 1);  // pops the module table onto the chunk's env upvalue
+    lua_setupvalue(L, -2, 1);
     if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
         err = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
         std::fprintf(stderr, "3dsim: %s: %s\n", full.c_str(), err.c_str());
@@ -220,7 +210,7 @@ void SceneScript::loadTestStdlib() {
     std::string err;
     const int ref = includeModule("t", err);
     if (ref < 0)
-        return; // no t.lua in the active scenes dir: test scenes fail with "t is nil"
+        return;
     lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
     lua_setglobal(L, "t");
 }
@@ -357,7 +347,6 @@ void SceneScript::destroyScript(int inst, int params, int onReady, int animate, 
             dropRef(ref);
 }
 
-// parse "name.LuaScript.varpath" (last marker occurrence; entity names may contain dots)
 static bool parseVarUrl(const std::string& url, std::string& name, std::string& path) {
     const size_t m = url.rfind(".LuaScript.");
     if (m == std::string::npos || m == 0 || m + 11 >= url.size())
@@ -386,7 +375,7 @@ static const LuaScript* findVarScript(const entt::registry& reg, const std::stri
         err = "unknown entity '" + name + "'";
         return nullptr;
     }
-    auto* ls = reg.try_get<LuaScript>(ent);
+    const auto* ls = reg.try_get<LuaScript>(ent);
     if (!ls || ls->inst < 0) {
         err = "entity '" + name + "' has no script";
         return nullptr;
@@ -400,7 +389,7 @@ bool SceneScript::varStr(const entt::registry& reg, const std::string& url, std:
         err = "expected 'name.LuaScript.var'";
         return false;
     }
-    auto* ls = findVarScript(reg, name, err);
+    const auto* ls = findVarScript(reg, name, err);
     if (!ls)
         return false;
     auto it = ls->varsS.find(path);
@@ -418,10 +407,9 @@ void SceneScript::setVarStr(const entt::registry& reg, const std::string& url, c
         err = "expected 'name.LuaScript.var'";
         return;
     }
-    auto* ls = const_cast<LuaScript*>(findVarScript(reg, name, err));  // storage is mutable
+    auto* ls = const_cast<LuaScript*>(findVarScript(reg, name, err));
     if (!ls)
         return;
-    // write the module table now (a mirror-only write would be clobbered by the next pull)
     if (L && ls->mod > 0) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, ls->mod);
         lua_pushstring(L, val.c_str());
@@ -432,7 +420,7 @@ void SceneScript::setVarStr(const entt::registry& reg, const std::string& url, c
 }
 
 void SceneScript::callUrl(const std::string& url, entt::entity arg) {
-    if (url == "demo-window") { w().showDemo = true; return; }  // engine state, not a script fn
+    if (url == "demo-window") { w().showDemo = true; return; }
     if (!L)
         return;
     std::string name, path, err;
@@ -440,7 +428,7 @@ void SceneScript::callUrl(const std::string& url, entt::entity arg) {
         std::fprintf(stderr, "3dsim: bad target url '%s' (expected 'name.LuaScript.fn')\n", url.c_str());
         return;
     }
-    auto* ls = findVarScript(w().reg, name, err);
+    const auto* ls = findVarScript(w().reg, name, err);
     if (!ls) {
         std::fprintf(stderr, "3dsim: target url '%s': %s\n", url.c_str(), err.c_str());
         return;
@@ -454,7 +442,7 @@ void SceneScript::callUrl(const std::string& url, entt::entity arg) {
     }
     lua_pushinteger(L, entt::to_integral(arg));
     if (lua_pcall(L, 1, 0, 0) != LUA_OK)
-        reportError("target url");  // pops traceback + message; the mod table is still below
+        reportError("target url");
     lua_pop(L, 1);
 }
 
@@ -528,8 +516,6 @@ void SceneScript::activateScripts() {
                 dropRef(physicsRef);
                 continue;
             }
-            // inst is set before _on_ready so "name.LuaScript.var" binds resolve while it runs;
-            // the pull fills the vars mirror from the module's top-level fields first.
             ls->mod = mod;
             ls->inst = instRef;
             syncVars(w().reg, false);
@@ -542,7 +528,7 @@ void SceneScript::activateScripts() {
                 dropRef(physicsRef);
                 ls->inst = ls->params = ls->onReady = ls->animate = ls->physics = -1;
             } else {
-                syncVars(w().reg, false);  // pick up vars (re)assigned inside _on_ready
+                syncVars(w().reg, false);
                 ls->onReady = onReadyRef;
                 ls->animate = animateRef;
                 ls->physics = physicsRef;
@@ -553,8 +539,6 @@ void SceneScript::activateScripts() {
 }
 
 /// script-vars | a script's top-level non-locals are its vars (a `local` stays private); they are mirrored into typed C++ maps every frame — pulled after every hook pass, pushed back before — and are bindable through `name.LuaScript.var` URLs; numbers map to float, booleans and strings stay typed, 3/4-number tables become vec3/quat slots, and dotted sub-paths address members (`hello.LuaScript.pos.x`)
-// pull one lua value (at idx) into the mirror under dotted `key`. 3/4-number tables
-// become contiguous vec slots; other tables recurse with dotted keys. Stack-balanced.
 static void pullValue(lua_State* L, int idx, const std::string& key, LuaScript& ls) {
     if (lua_isnumber(L, idx)) {
         ls.varsF[key] = (float)lua_tonumber(L, idx);
@@ -599,8 +583,6 @@ static void pullValue(lua_State* L, int idx, const std::string& key, LuaScript& 
     }
 }
 
-// store the value at absolute index valAbs into the table at absolute index baseIdx under
-// dotted `key`, creating intermediate tables. Stack-balanced (pops its own intermediates).
 static void setDotted(lua_State* L, int baseIdx, const std::string& key, int valAbs) {
     int cur = baseIdx;
     int pushed = 0;
@@ -610,7 +592,7 @@ static void setDotted(lua_State* L, int baseIdx, const std::string& key, int val
         const bool last = dot == std::string::npos;
         const std::string seg = key.substr(start, last ? std::string::npos : dot - start);
         if (last) {
-            lua_pushstring(L, seg.c_str());  // settable wants key on top, value below
+            lua_pushstring(L, seg.c_str());
             lua_pushvalue(L, valAbs);
             lua_settable(L, cur);
             break;
@@ -645,7 +627,7 @@ void SceneScript::syncVars(entt::registry& reg, bool pushToLua) {
                 for (const auto& [k, v] : ls.varsF) {
                     lua_pushnumber(L, v);
                     setDotted(L, varsAbs, k, lua_gettop(L));
-                    lua_pop(L, 1);  // setDotted copied the value; drop the original
+                    lua_pop(L, 1);
                 }
                 for (const auto& [k, v] : ls.varsB) {
                     lua_pushboolean(L, v);
@@ -748,7 +730,7 @@ int SceneScript::newRef(lua_State* L, int idx) {
 
 void SceneScript::dropRef(int ref) {
     luaL_unref(L, LUA_REGISTRYINDEX, ref);
-    m_refs.erase(std::remove(m_refs.begin(), m_refs.end(), ref), m_refs.end());
+    m_refs.erase(std::ranges::remove(m_refs, ref).begin(), m_refs.end());
 }
 
 void SceneScript::reportError(const char* what) {

@@ -12,7 +12,6 @@
 struct lua_State;
 struct Engine;
 
-// embedded Lua host: owns the VM, module cache, refs, and the per-entity hook lifecycle
 class SceneScript {
 public:
     SceneScript() = default;
@@ -30,18 +29,14 @@ public:
     float time() const { return m_time; }
 
     bool loadMeshStdlib(std::string& err);
-    // loads tests/t.lua as global `t` for scene test scripts; non-fatal when absent
     void loadTestStdlib();
     entt::entity callMeshGen(const std::string& gen, const std::vector<std::pair<std::string, double>>& params,
                              std::string& err);
     void buildUi(const nlohmann::json& spec);
-    // "name.LuaScript.fn": call the exported function fn of the named entity's script (arg 1 = arg)
     void callUrl(const std::string& url, entt::entity arg);
     void destroyScript(int inst, int params, int onReady, int animate, int physics);
-    // module loader shared by scene scripts, stdlib, and Lua's require
     int includeModule(const std::string& relPath, std::string& err);
-    // string script vars (not bindable via UrlRef; scene.get/scene.set only)
-    bool varStr(const entt::registry& reg, const std::string& url, std::string& out, std::string& err);
+    static bool varStr(const entt::registry& reg, const std::string& url, std::string& out, std::string& err);
     void setVarStr(const entt::registry& reg, const std::string& url, const std::string& val, std::string& err);
 
     static SceneScript* sSelf(lua_State* L);
@@ -56,14 +51,14 @@ private:
     void stepHook(float dt, int LuaScript::* hook);
     void syncVars(entt::registry& reg, bool pushToLua);
     void onScriptDestroy(entt::registry& reg, entt::entity e);
-    Mesh readGeom(lua_State* L, int idx, std::string& err);
+    static Mesh readGeom(lua_State* L, int idx, std::string& err);
 
     Engine* m_w = nullptr;
     lua_State* L = nullptr;
     std::vector<int> m_refs;
     std::vector<int> m_errored;
     std::map<std::string, int> m_modules;
-    int m_globalsRef = -1;  // the VM's global table (for script module environments)
+    int m_globalsRef = -1;
     int m_geomModule = -1;
     float m_time = 0.0f;
 };

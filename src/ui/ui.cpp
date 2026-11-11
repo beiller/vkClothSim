@@ -1,9 +1,9 @@
 #include "ui.hpp"
 
-#include <cstdio>
 #include "reflect.hpp"
 #include "url.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <imgui_impl_vulkan.h>
 #include <unordered_map>
@@ -64,6 +64,8 @@ void bindWriteBack(const BindLink& l, const void* value, bool changed, std::size
 }
 
 void drawBoundText(const entt::registry& reg, const UrlRef& r) {
+    if (!r.field)
+        return;
     const char* p = (const char*)r.base;
     char buf[32];
     switch (r.field->kind) {
@@ -99,7 +101,7 @@ void drawBoundText(const entt::registry& reg, const UrlRef& r) {
         break;
     case FieldKind::Color:
     case FieldKind::DragV3: {
-        const float* v = (const float*)p;
+        const auto* v = (const float*)p;
         std::snprintf(buf, sizeof buf, "%.2f %.2f %.2f", v[0], v[1], v[2]);
         break;
     }
@@ -108,7 +110,7 @@ void drawBoundText(const entt::registry& reg, const UrlRef& r) {
     }
     ImGui::TextUnformatted(buf);
 }
-} // namespace
+}
 
 void uiSetButtonHook(std::function<void(const std::string&, entt::entity)> fn) {
     g_buttonHook = std::move(fn);
@@ -176,9 +178,8 @@ void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds) {
         if (it == kids.end())
             return std::vector<entt::entity>{};
         auto v = it->second;
-        std::sort(v.begin(), v.end(), [&](entt::entity a, entt::entity b) {
-            return reg.get<UIWidget>(a).order < reg.get<UIWidget>(b).order;
-        });
+        std::ranges::sort(
+            v, [&](entt::entity a, entt::entity b) { return reg.get<UIWidget>(a).order < reg.get<UIWidget>(b).order; });
         return v;
     };
     std::function<void(entt::entity)> drawWidget;
@@ -286,7 +287,7 @@ void uiFrame(entt::registry& reg, const std::vector<UiFeed>& feeds) {
         ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, f.down);
         if (f.wheel != 0.0f)
             ImGui::GetIO().AddMouseWheelEvent(0.0f, f.wheel);
-        ImGui::GetIO().AddMousePosEvent(f.pos.x, f.pos.y); // queued last, wins
+        ImGui::GetIO().AddMousePosEvent(f.pos.x, f.pos.y);
         ImGui_ImplVulkan_NewFrame();
         ImGui::NewFrame();
         const entt::entity win = canvasWindow(reg, f.canvas);

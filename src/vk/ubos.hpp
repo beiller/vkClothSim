@@ -12,7 +12,7 @@ struct ModelUbo {
     float roughness;    // 80
     float baseAlpha;    // 84
     float alphaCutoff;  // 88
-    float alphaMode;    // 92  0 opaque, 1 mask, 2 blend
+    float alphaMode;
     float emissive[3];   // 96
     float pad0;          // 108 (std140: the ssssWeight vec3 16-aligns to 112)
     float ssssWeight[3]; // 112
@@ -20,8 +20,8 @@ struct ModelUbo {
     float ior;           // 128
     float normalScale;   // 132
     float ssssScale;     // 136
-    float ssssSplit;     // 140 pre/post-scatter split exponent, 0..1
-    float pad[4];        // 144 (the shader's vec3 pad sits at 144; block size 160)
+    float ssssSplit;
+    float pad[4];
 };
 static_assert(sizeof(ModelUbo) == 160, "ModelUbo must match the shader std140 layout");
 
@@ -31,26 +31,25 @@ struct ViewUbo {
     float camPos[3];    // 128 (std140: a vec3 is 12 bytes; the next scalar lands at 140)
     float envIntensity; // 140
     float shadowTexels; // 144
-    float pad[3];       // 148 (pad so the 16-aligned frustum lands at 160)
-    float frustum[4];   // 160 tanL tanR tanU tanD
+    float pad[3];
+    float frustum[4];
     float zNear;        // 176
     float zFar;         // 180
     float screenSize[2];// 184
-    float sssCurvScale; // 192 (was pad2[0]) curvature LUT input scale
+    float sssCurvScale;
     float pad2[3];      // 196
 };
 static_assert(sizeof(ViewUbo) == 208, "ViewUbo must match the shader std140 layout");
 
-// the SSS compute's push constants (std430: scalars are 4-byte aligned)
 struct SssPc {
     float screenSize[2]; // 0
     float zNear;         // 8
     float zFar;          // 12
-    float unitSizeH;     // 16  2/(tanR-tanL): world radius -> uv step, horizontal axis
-    float unitSizeV;     // 20  2/(tanU-tanD): vertical axis (per-axis: circular blur)
+    float unitSizeH;
+    float unitSizeV;
     float depthScale;    // 24
-    float vertical;      // 28  1 = vertical pass (dir 0,1), 0 = horizontal
-    float depthReject;   // 32  tap rejection across depth steps (1 / world-space radius fraction)
+    float vertical;
+    float depthReject;
 };
 static_assert(sizeof(SssPc) == 36, "SssPc must match the shader std430 layout");
 

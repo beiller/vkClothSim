@@ -15,8 +15,6 @@ static T readSetting(const entt::registry& reg, const T& def = {}) {
     return def;
 }
 
-// GPU server: Vulkan renderer + GPU sim (soft PBD + DQ skinning) + canvas targets.
-// updateSim runs one skin + one soft step per frame at render rate, plus the sim command buffers/submits.
 class GraphicsServer {
 public:
     struct SimProfMs {
@@ -62,7 +60,6 @@ public:
     void watch(entt::registry& reg);
 
 private:
-    // headless (no renderer): this server owns the drawable vertex buffers itself
     struct FallbackGeom {
         VkBuffer pos = VK_NULL_HANDLE, nrm = VK_NULL_HANDLE;
         VkDeviceMemory posMem = VK_NULL_HANDLE, nrmMem = VK_NULL_HANDLE;

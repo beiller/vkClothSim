@@ -6,8 +6,6 @@
 #include <vulkan/vulkan.h>
 #include <imgui.h>
 
-// ImGui host: one context per canvas (UICanvas entity). Canvas windows are pinned to
-// (0,0) and fill the canvas; input is routed per canvas by the app.
 struct UiHandles {
     VkInstance inst = VK_NULL_HANDLE;
     VkPhysicalDevice pdev = VK_NULL_HANDLE;

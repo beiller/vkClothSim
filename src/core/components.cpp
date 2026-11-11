@@ -1,3 +1,4 @@
+#include <span>
 #include "components.hpp"
 #include "ecs.hpp"
 
@@ -14,7 +15,7 @@ struct CompT {
 };
 }
 
-bool validateTaperedCapsule(entt::registry& reg, entt::entity e, std::string& err) {
+static bool validateTaperedCapsule(entt::registry& reg, entt::entity e, std::string& err) {
     const auto& tc = reg.get<TaperedCapsule>(e);
     if (tc.bottomRadius <= 0.0f || tc.topRadius <= 0.0f || tc.halfHeight < 0.0f) {
         err = "TaperedCapsule: radii must be > 0 and halfHeight >= 0";
@@ -23,7 +24,7 @@ bool validateTaperedCapsule(entt::registry& reg, entt::entity e, std::string& er
     return true;
 }
 
-bool validateSphereShape(entt::registry& reg, entt::entity e, std::string& err) {
+static bool validateSphereShape(entt::registry& reg, entt::entity e, std::string& err) {
     if (reg.get<SphereShape>(e).radius <= 0.0f) {
         err = "SphereShape: radius must be > 0";
         return false;
@@ -31,7 +32,7 @@ bool validateSphereShape(entt::registry& reg, entt::entity e, std::string& err) 
     return true;
 }
 
-bool validateConvexHullShape(entt::registry& reg, entt::entity e, std::string& err) {
+static bool validateConvexHullShape(entt::registry& reg, entt::entity e, std::string& err) {
     if (reg.get<ConvexHullShape>(e).points.size() < 12) {
         err = "ConvexHullShape: needs at least 4 points (12 xyz values)";
         return false;
@@ -39,15 +40,16 @@ bool validateConvexHullShape(entt::registry& reg, entt::entity e, std::string& e
     return true;
 }
 
-bool validateGeometry(entt::registry& reg, entt::entity e, std::string& err);
-bool bindSkeleton(entt::registry& reg, entt::entity e, std::string& err);
+static bool validateGeometry(entt::registry& reg, entt::entity e, std::string& err);
+static bool bindSkeleton(entt::registry& reg, entt::entity e, std::string& err);
 
 #define CMP(T) \
     { #T, refl::findType(#T), &CompT<T>::tryGet, &CompT<T>::emplace, &CompT<T>::remove, nullptr }
 #define CMPV(T, V) \
-    { #T, refl::findType(#T), &CompT<T>::tryGet, &CompT<T>::emplace, &CompT<T>::remove, &V }
+    { #T, refl::findType(#T), &CompT<T>::tryGet, &CompT<T>::emplace, &CompT<T>::remove, &(V) }
 
-const CompReg kComps[] = {
+static std::span<const CompReg> comps() {
+    static const CompReg kComps[] = {
     CMP(Transform),     CMP(Material),      CMP(MaterialRef),  CMP(Camera),       CMP(Environment),
     CMP(PointLight),    CMP(SoftBodyData), CMP(RigidBody),    CMP(KinematicBody), CMP(CapsuleShape),
     CMP(BoxShape),      CMPV(TaperedCapsule, validateTaperedCapsule), CMPV(SphereShape, validateSphereShape),
@@ -62,15 +64,17 @@ const CompReg kComps[] = {
 
 #undef CMP
 #undef CMPV
+    return kComps;
+}
 
 const CompReg* compFor(const std::string& name) {
-    for (const auto& c : kComps)
+    for (const auto& c : comps())
         if (name == c.name)
             return &c;
     return nullptr;
 }
 
-bool fieldValue(const CompField& f, const float*& src, int& len) {
+static bool fieldValue(const CompField& f, const float*& src, int& len) {
     if (f.isArr) {
         if (f.arr.empty()) {
             src = f.v;
@@ -89,7 +93,7 @@ bool fieldValue(const CompField& f, const float*& src, int& len) {
     return false;
 }
 
-bool checkShape(const CompField& f, const std::string& want, std::string& err) {
+static bool checkShape(const CompField& f, const std::string& want, std::string& err) {
     if (f.isStr) {
         err = "field '" + f.name + "' expects " + want + ", got a string";
         return false;
@@ -97,7 +101,7 @@ bool checkShape(const CompField& f, const std::string& want, std::string& err) {
     return true;
 }
 
-bool writeField(const TypeDesc* t, void* b, const CompField& f, std::string& err) {
+static bool writeField(const TypeDesc* t, void* b, const CompField& f, std::string& err) {
     const FieldDesc* d = findField(t, f.name);
     if (!d) {
         err = "no field '" + f.name + "' in " + t->name;
@@ -127,6 +131,8 @@ bool writeField(const TypeDesc* t, void* b, const CompField& f, std::string& err
             break;
         case FieldKind::Checkbox:
             *(bool*)dst = f.v[0] != 0.0f;
+            break;
+        default:
             break;
         }
         return true;
@@ -185,7 +191,7 @@ bool writeField(const TypeDesc* t, void* b, const CompField& f, std::string& err
         auto& dstArr = *(std::vector<uint32_t>*)dst;
         dstArr.resize(src.size());
         for (size_t i = 0; i < src.size(); ++i)
-            dstArr[i] = (uint32_t)src[i]; // exact for values < 2^24
+            dstArr[i] = (uint32_t)src[i];
         return true;
     }
     case FieldKind::EntArr: {
@@ -200,6 +206,8 @@ bool writeField(const TypeDesc* t, void* b, const CompField& f, std::string& err
             dstArr[i] = (entt::entity)src[i];
         return true;
     }
+    default:
+        break;
     }
     return true;
 }
@@ -228,11 +236,10 @@ bool validateGeometry(entt::registry& reg, entt::entity e, std::string& err) {
             err = "Geometry: index out of range";
             return false;
         }
-    if (!g.joints.empty() || !g.weights.empty()) {
-        if (g.joints.size() != (size_t)4 * nv || g.weights.size() != (size_t)4 * nv) {
-            err = "Geometry: joints and weights must each have 4 values per vertex";
-            return false;
-        }
+    if ((!g.joints.empty() || !g.weights.empty()) &&
+        (g.joints.size() != (size_t)4 * nv || g.weights.size() != (size_t)4 * nv)) {
+        err = "Geometry: joints and weights must each have 4 values per vertex";
+        return false;
     }
     for (const auto& sh : g.shapes)
         if (!sh.pos.empty() && sh.pos.size() != (size_t)3 * nv) {
@@ -242,8 +249,6 @@ bool validateGeometry(entt::registry& reg, entt::entity e, std::string& err) {
     return true;
 }
 
-// re-snapshot the bind pose on every Skeleton write: invBinds = the inverse of
-// each joint's current world transform (re-writing the component re-binds)
 bool bindSkeleton(entt::registry& reg, entt::entity e, std::string& err) {
     auto& s = reg.get<Skeleton>(e);
     if (!s.joints.empty() && s.joints.size() != s.boneNames.size()) {
@@ -262,8 +267,8 @@ bool bindSkeleton(entt::registry& reg, entt::entity e, std::string& err) {
     return true;
 }
 
-bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typeName, const CompFields& fields,
-                     bool strict, std::string& err) {
+static bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typeName, const CompFields& fields,
+                            bool strict, std::string& err) {
     const CompReg* c = compFor(typeName);
     if (!c) {
         err = refl::findType(typeName.c_str())
@@ -326,83 +331,6 @@ bool compEmplace(entt::registry& reg, entt::entity e, const std::string& type, c
 bool compReplace(entt::registry& reg, entt::entity e, const std::string& type, const CompFields& fields,
                  std::string& err) {
     return createOrReplace(reg, e, type, fields, false, err);
-}
-
-bool compGet(const entt::registry& reg, entt::entity e, const std::string& type, CompFields& out) {
-    const CompReg* c = compFor(type);
-    if (!c)
-        return false;
-    void* b = c->tryGet(reg, e);
-    if (!b)
-        return false;
-    for (const auto& d : c->desc->fields) {
-        const char* src = (const char*)b + d.offset;
-        CompField f{d.name, {}, 0};
-        switch (d.kind) {
-        case FieldKind::SliderF:
-            f.n = 1;
-            f.v[0] = *(const float*)src;
-            break;
-        case FieldKind::SliderI:
-            f.n = 1;
-            f.v[0] = (float)*(const int*)src;
-            break;
-        case FieldKind::Checkbox:
-            f.n = 1;
-            f.v[0] = *(const bool*)src ? 1.0f : 0.0f;
-            break;
-        case FieldKind::Color:
-        case FieldKind::DragV3:
-            f.n = 3;
-            std::memcpy(f.v, src, 12);
-            break;
-        case FieldKind::Quat:
-            f.n = 4;
-            std::memcpy(f.v, src, 16);
-            break;
-        case FieldKind::Ref:
-            f.n = 1;
-            f.hasEnt = true;
-            f.ent = *(const entt::entity*)src;
-            f.v[0] = (float)f.ent;
-            break;
-        case FieldKind::Str:
-            f.isStr = true;
-            f.str = *(const std::string*)src;
-            break;
-        case FieldKind::StrArr: {
-            f.isStrArr = true;
-            f.strArr = *(const std::vector<std::string>*)src;
-            f.n = (int)f.strArr.size();
-            break;
-        }
-        case FieldKind::FloatArr:
-            f.isArr = true;
-            f.arr = *(const std::vector<float>*)src;
-            f.n = (int)f.arr.size();
-            break;
-        case FieldKind::UIntArr: {
-            f.isArr = true;
-            const auto& a = *(const std::vector<uint32_t>*)src;
-            f.arr.resize(a.size());
-            for (size_t i = 0; i < a.size(); ++i)
-                f.arr[i] = (float)a[i];
-            f.n = (int)f.arr.size();
-            break;
-        }
-        case FieldKind::EntArr: {
-            f.isArr = true;
-            const auto& a = *(const std::vector<entt::entity>*)src;
-            f.arr.resize(a.size());
-            for (size_t i = 0; i < a.size(); ++i)
-                f.arr[i] = (float)a[i];
-            f.n = (int)f.arr.size();
-            break;
-        }
-        }
-        out.push_back(std::move(f));
-    }
-    return true;
 }
 
 bool compWriteField(entt::registry& reg, entt::entity e, const std::string& typeName, const CompField& f,

@@ -8,17 +8,6 @@
 
 namespace {
 
-std::vector<VkDescriptorSetLayoutBinding> softBinds() {
-    std::vector<VkDescriptorSetLayoutBinding> binds(14);
-    for (uint32_t i = 0; i < binds.size(); ++i) {
-        binds[i].binding = i;
-        binds[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        binds[i].descriptorCount = 1;
-        binds[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    }
-    return binds;
-}
-
 void stageBarrier(VkCommandBuffer cmd, VkPipelineStageFlags src, VkPipelineStageFlags dst,
                   const VkBufferMemoryBarrier* bmbs, uint32_t n) {
     vkCmdPipelineBarrier(cmd, src, dst, 0, 0, nullptr, n, bmbs, 0, nullptr);
@@ -48,7 +37,7 @@ void Soft::syncCapsules(const entt::registry& reg) {
             return;
         for (entt::entity c : cols) {
             const auto* col = reg.try_get<Collider>(c);
-            auto* cs = col ? reg.try_get<CapsuleShape>(col->shape) : nullptr;
+            const auto* cs = col ? reg.try_get<CapsuleShape>(col->shape) : nullptr;
             if (!cs || n >= kMaxCapsules)
                 continue;
             Transform t = *wt;
@@ -66,7 +55,7 @@ void Soft::syncCapsules(const entt::registry& reg) {
 
 void Soft::project(const entt::registry& reg) {
     for (auto [e, sb] : reg.view<SoftBodyData>().each()) {
-        if (m_ent.count(e))
+        if (m_ent.contains(e))
             continue;
         const auto fail = [this, &reg, e](const char* why) {
             if (m_warned.insert(e).second) {
@@ -87,7 +76,7 @@ void Soft::project(const entt::registry& reg) {
         }
         bool bad = false;
         for (size_t i = 0; i + 3 < sb.cons.size(); i += 4)
-            if (sb.cons[i] < 0 || sb.cons[i] >= nv || sb.cons[i + 1] < 0 || sb.cons[i + 1] >= nv) {
+            if (sb.cons[i] < 0.0f || sb.cons[i] >= (float)nv || sb.cons[i + 1] < 0.0f || sb.cons[i + 1] >= (float)nv) {
                 bad = true;
                 break;
             }
@@ -104,15 +93,15 @@ void Soft::project(const entt::registry& reg) {
         if (reg.try_get<Transform>(e))
             t = worldTransform(reg, e);
         for (int i = 0; i < nv; ++i) {
-            const V3 v = t.quat * V3{m.pos[3 * i], m.pos[3 * i + 1], m.pos[3 * i + 2]} + t.pos;
-            m.pos[3 * i] = v.x;
-            m.pos[3 * i + 1] = v.y;
-            m.pos[3 * i + 2] = v.z;
+            const V3 v = t.quat * V3{m.pos[(size_t)3 * i], m.pos[(size_t)3 * i + 1], m.pos[(size_t)3 * i + 2]} + t.pos;
+            m.pos[(size_t)3 * i] = v.x;
+            m.pos[(size_t)3 * i + 1] = v.y;
+            m.pos[(size_t)3 * i + 2] = v.z;
             if (m.nrm.size() == m.pos.size()) {
-                const V3 n = t.quat * V3{m.nrm[3 * i], m.nrm[3 * i + 1], m.nrm[3 * i + 2]};
-                m.nrm[3 * i] = n.x;
-                m.nrm[3 * i + 1] = n.y;
-                m.nrm[3 * i + 2] = n.z;
+                const V3 n = t.quat * V3{m.nrm[(size_t)3 * i], m.nrm[(size_t)3 * i + 1], m.nrm[(size_t)3 * i + 2]};
+                m.nrm[(size_t)3 * i] = n.x;
+                m.nrm[(size_t)3 * i + 1] = n.y;
+                m.nrm[(size_t)3 * i + 2] = n.z;
             }
         }
         if (!m_request) {
@@ -183,7 +172,7 @@ void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::
     m_body.push_back(std::move(b));
     m_ent[e] = (int)m_body.size() - 1;
     if (!m_softPools.empty()) {
-        ensurePoolSlot();
+        ensurePoolSlot(m_dev, storageBinds(14), kPoolChunk, m_softPools, m_softPoolCap, m_softPoolUsed);
         makeBodySet(m_body.back());
         ++m_softPoolUsed;
     }
@@ -191,9 +180,9 @@ void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::
 
 void Soft::build() {
     m_caps.resize(kMaxCapsules);
-    vkMakeBuffer(m_dev, m_pdev, m_capsInstances, m_capsInstancesMem, 48 * kMaxCapsules,
+    vkMakeBuffer(m_dev, m_pdev, m_capsInstances, m_capsInstancesMem, (VkDeviceSize)48 * kMaxCapsules,
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
-    const auto binds = softBinds();
+    const auto binds = storageBinds(14);
     auto maxSets = (uint32_t)m_body.size();
     if (maxSets == 0)
         maxSets = 1;
@@ -208,14 +197,6 @@ void Soft::build() {
         makeBodySet(b);
         ++m_softPoolUsed;
     }
-}
-
-void Soft::ensurePoolSlot() {
-    if (m_softPoolUsed < m_softPoolCap)
-        return;
-    m_softPools.push_back(vkMakePool(m_dev, softBinds(), (uint32_t)kPoolChunk));
-    m_softPoolCap = kPoolChunk;
-    m_softPoolUsed = 0;
 }
 
 void Soft::makeBodySet(GpuBody& b) {
@@ -236,7 +217,7 @@ void Soft::makeBodySet(GpuBody& b) {
         {b.triStart, 0, (VkDeviceSize)4 * (n + 1)},
         {b.triList, 0, (VkDeviceSize)4 * b.soft.triList.size()},
     };
-    vkMakeSet(m_dev, m_softPools.back(), m_softDsl, softBinds(), b.simSet, bi);
+    vkMakeSet(m_dev, m_softPools.back(), m_softDsl, storageBinds(14), b.simSet, bi);
 }
 
 void Soft::dispatch(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset) {
@@ -324,7 +305,7 @@ void Soft::record(VkCommandBuffer cmd, const entt::registry& reg, float dt) {
             continue;
         PhysParams phys{};
         phys.nCaps = m_nCaps;
-        phys.dt = dt / (float)sb->steps; // one record spans the frame dt, split over sb->steps substeps
+        phys.dt = dt / (float)sb->steps;
         phys.damping = std::pow(sb->damping, 1.0f / (float)sb->steps);
         phys.gravity = sim::kGravity * sb->mass;
         phys.friction = sb->friction;

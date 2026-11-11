@@ -16,15 +16,13 @@ static void reg(lua_State* L, SceneScript* host, const char* name, lua_CFunction
     lua_setfield(L, -2, name);
 }
 
-entt::entity entityOrName(const Engine& w, lua_State* L, int idx) {
+static entt::entity entityOrName(const Engine& w, lua_State* L, int idx) {
     if (lua_isnumber(L, idx))
         return luaReadEnt(L, idx);
     return findNamedEntity(w.reg, luaL_checkstring(L, idx));
 }
 
-// every entity in root's subtree (root + descendants) carrying `comp`; when root is null,
-// walks from every top-level entity (one that isn't a child of anyone)
-std::vector<entt::entity> findComponentEntities(const Engine& w, entt::entity root, const std::string& comp) {
+static std::vector<entt::entity> findComponentEntities(const Engine& w, entt::entity root, const std::string& comp) {
     const auto& reg = w.reg;
     std::vector<entt::entity> out;
     std::map<unsigned, std::vector<entt::entity>> children;
@@ -42,10 +40,10 @@ std::vector<entt::entity> findComponentEntities(const Engine& w, entt::entity ro
         enqueue(root);
     } else {
         for (auto [e, p] : reg.view<Parent>().each())
-            if (isChild.find(entt::to_integral(p.e)) == isChild.end())
+            if (!isChild.contains(entt::to_integral(p.e)))
                 enqueue(p.e);
         for (auto [e, n] : reg.view<Name>().each())
-            if (isChild.find(entt::to_integral(e)) == isChild.end())
+            if (!isChild.contains(entt::to_integral(e)))
                 enqueue(e);
     }
     while (!stack.empty()) {
@@ -60,7 +58,7 @@ std::vector<entt::entity> findComponentEntities(const Engine& w, entt::entity ro
     return out;
 }
 
-entt::entity skelEntity(const Engine& w, entt::entity e) {
+static entt::entity skelEntity(const Engine& w, entt::entity e) {
     const auto v = findComponentEntities(w, e, "Skeleton");
     return v.empty() ? entt::null : v.front();
 }
@@ -98,10 +96,10 @@ bool readCompFields(lua_State* L, int idx, CompFields& out, std::string& err, co
                     break;
                 }
                 if (lua_isnumber(L, -1)) {
-                    f.arr.push_back((float)lua_tonumber(L, -1));
+                    f.arr.emplace_back((float)lua_tonumber(L, -1));
                     anyNum = true;
                 } else if (lua_isstring(L, -1)) {
-                    f.strArr.push_back(lua_tostring(L, -1));
+                    f.strArr.emplace_back(lua_tostring(L, -1));
                 } else {
                     lua_pop(L, 1);
                     err = "field '" + std::string(name) + "' must be an array of numbers or strings";
@@ -134,7 +132,7 @@ bool readCompFields(lua_State* L, int idx, CompFields& out, std::string& err, co
     return true;
 }
 
-bool applyGeomShapes(Engine& w, entt::entity e, lua_State* L, std::string& err) {
+static bool applyGeomShapes(Engine& w, entt::entity e, lua_State* L, std::string& err) {
     lua_getfield(L, 3, "shapes");
     const bool present = lua_istable(L, -1);
     if (!present) {
@@ -151,14 +149,14 @@ bool applyGeomShapes(Engine& w, entt::entity e, lua_State* L, std::string& err) 
     return true;
 }
 
-void setShapeWeight(entt::registry& reg, entt::entity e, const std::string& name, float weight) {
+static void setShapeWeight(entt::registry& reg, entt::entity e, const std::string& name, float weight) {
     if (auto* gc = reg.try_get<Geometry>(e))
         for (auto& sh : gc->mesh.shapes)
             if (sh.name == name)
                 sh.weight = weight;
 }
 
-std::vector<entt::entity> subtreeEntities(entt::registry& reg, entt::entity root) {
+static std::vector<entt::entity> subtreeEntities(entt::registry& reg, entt::entity root) {
     std::map<unsigned, std::vector<entt::entity>> children;
     for (auto [c, p] : reg.view<Parent>().each())
         children[entt::to_integral(p.e)].push_back(c);
@@ -176,7 +174,7 @@ std::vector<entt::entity> subtreeEntities(entt::registry& reg, entt::entity root
 }
 
 /// scene.entity(name?: string) -> entity | create a new entity, optionally named
-int lEntity(lua_State* L) {
+static int lEntity(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = w.reg.create();
     const char* name = luaL_optstring(L, 1, nullptr);
@@ -187,7 +185,9 @@ int lEntity(lua_State* L) {
 }
 
 /// scene.emplace(e: entity, type: string, fields?: table) | create or replace component `type` on e from a field table (a Geometry table may carry a "shapes" array)
-int lCompEmplace(lua_State* L) {
+using CompMutateFn = bool (*)(entt::registry&, entt::entity, const std::string&, const CompFields&, std::string&);
+
+static int lCompMutate(lua_State* L, const char* op, CompMutateFn fn) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
     const std::string type = luaL_checkstring(L, 2);
@@ -195,33 +195,25 @@ int lCompEmplace(lua_State* L) {
     CompFields fields;
     std::string err;
     if (lua_istable(L, 3) && !readCompFields(L, 3, fields, err, geom ? "shapes" : nullptr))
-        return luaL_error(L, "scene.emplace %s: %s", type.c_str(), err.c_str());
-    if (!compEmplace(w.reg, e, type, fields, err))
-        return luaL_error(L, "scene.emplace %s: %s", type.c_str(), err.c_str());
+        return luaL_error(L, "scene.%s %s: %s", op, type.c_str(), err.c_str());
+    if (!fn(w.reg, e, type, fields, err))
+        return luaL_error(L, "scene.%s %s: %s", op, type.c_str(), err.c_str());
     if (geom && !applyGeomShapes(w, e, L, err))
-        return luaL_error(L, "scene.emplace %s: %s", type.c_str(), err.c_str());
+        return luaL_error(L, "scene.%s %s: %s", op, type.c_str(), err.c_str());
     return 0;
+}
+
+static int lCompEmplace(lua_State* L) {
+    return lCompMutate(L, "emplace", compEmplace);
 }
 
 /// scene.replace(e: entity, type: string, fields?: table) | replace an existing component `type` on e from a field table (errors if the component is absent; Geometry may carry "shapes")
-int lCompReplace(lua_State* L) {
-    Engine& w = SceneScript::sSelf(L)->w();
-    const entt::entity e = luaReadEnt(L, 1);
-    const std::string type = luaL_checkstring(L, 2);
-    const bool geom = type == "Geometry";
-    CompFields fields;
-    std::string err;
-    if (lua_istable(L, 3) && !readCompFields(L, 3, fields, err, geom ? "shapes" : nullptr))
-        return luaL_error(L, "scene.replace %s: %s", type.c_str(), err.c_str());
-    if (!compReplace(w.reg, e, type, fields, err))
-        return luaL_error(L, "scene.replace %s: %s", type.c_str(), err.c_str());
-    if (geom && !applyGeomShapes(w, e, L, err))
-        return luaL_error(L, "scene.replace %s: %s", type.c_str(), err.c_str());
-    return 0;
+static int lCompReplace(lua_State* L) {
+    return lCompMutate(L, "replace", compReplace);
 }
 
-entt::entity resolveRef(const std::unordered_map<std::string, entt::entity>& batch, const entt::registry& reg,
-                        const std::string& name) {
+static entt::entity resolveRef(const std::unordered_map<std::string, entt::entity>& batch, const entt::registry& reg,
+                               const std::string& name) {
     const auto it = batch.find(name);
     if (it != batch.end())
         return it->second;
@@ -229,7 +221,7 @@ entt::entity resolveRef(const std::unordered_map<std::string, entt::entity>& bat
 }
 
 /// scene.spawn(tbl: table, parent?: entity|string) -> table | materialize a name->node map into live entities (node = component-name -> field table). Refs: integer as-is; string = same-spawn name first, then world name. Returns the name->entity map.
-int lSpawn(lua_State* L) {
+static int lSpawn(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     luaL_checktype(L, 1, LUA_TTABLE);
     const int tbl = lua_absindex(L, 1);
@@ -244,7 +236,6 @@ int lSpawn(lua_State* L) {
     if (parent != entt::null && !w.reg.try_get<Transform>(parent))
         return luaL_error(L, "scene.spawn: parent must have a Transform");
 
-    // pass 1: create + Name; names deduped to world-unique (#N suffix)
     std::vector<std::string> keys;
     std::unordered_map<std::string, entt::entity> batch;
     lua_pushnil(L);
@@ -254,7 +245,7 @@ int lSpawn(lua_State* L) {
             lua_pop(L, 1);
             return luaL_error(L, "scene.spawn: node '%s' must be a table", key);
         }
-        keys.push_back(key);
+        keys.emplace_back(key);
         std::string wn = key;
         int n = 2;
         while (findNamedEntity(w.reg, wn) != entt::null)
@@ -265,7 +256,6 @@ int lSpawn(lua_State* L) {
         lua_pop(L, 1);
     }
 
-    // sub-pass: write all Transform + Parent first so a Skeleton's bindSkeleton sees a complete hierarchy
     for (const std::string& key : keys) {
         const entt::entity e = batch[key];
         lua_getfield(L, tbl, key.c_str());
@@ -273,7 +263,7 @@ int lSpawn(lua_State* L) {
         for (int ci = 0; ci < 2; ++ci) {
             const char* cn = ci == 0 ? "Transform" : "Parent";
             if (lua_getfield(L, node, cn) == 0) {
-                lua_pop(L, 1); // nil
+                lua_pop(L, 1);
                 continue;
             }
             const int fidx = lua_absindex(L, -1);
@@ -282,7 +272,7 @@ int lSpawn(lua_State* L) {
             if (!readCompFields(L, fidx, fields, err, nullptr))
                 return luaL_error(L, "scene.spawn: %s.%s: %s", key.c_str(), cn, err.c_str());
             for (auto& f : fields)
-                if (f.isStr && f.name == "e") { // Parent's entity ref
+                if (f.isStr && f.name == "e") {
                     const entt::entity r = resolveRef(batch, w.reg, f.str);
                     if (r == entt::null)
                         return luaL_error(L, "scene.spawn: %s.%s: unknown entity '%s'", key.c_str(), cn, f.str.c_str());
@@ -292,12 +282,11 @@ int lSpawn(lua_State* L) {
                 }
             if (!compEmplace(w.reg, e, cn, fields, err))
                 return luaL_error(L, "scene.spawn: %s.%s: %s", key.c_str(), cn, err.c_str());
-            lua_pop(L, 1); // component value
+            lua_pop(L, 1);
         }
-        lua_pop(L, 1); // node table
+        lua_pop(L, 1);
     }
 
-    // pass 2: emplace remaining components
     for (const std::string& key : keys) {
         const entt::entity e = batch[key];
         lua_getfield(L, tbl, key.c_str());
@@ -318,7 +307,7 @@ int lSpawn(lua_State* L) {
             lua_pop(L, 1);
         }
         for (const std::string& cn : comps) {
-            if (cn == "Transform" || cn == "Parent") // written in the sub-pass
+            if (cn == "Transform" || cn == "Parent")
                 continue;
             lua_getfield(L, node, cn.c_str());
             const int fidx = lua_absindex(L, -1);
@@ -396,7 +385,7 @@ int lSpawn(lua_State* L) {
 }
 
 /// scene.has(e: entity, type: string) -> bool | whether e has component `type`
-int lHas(lua_State* L) {
+static int lHas(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
     const std::string type = luaL_checkstring(L, 2);
@@ -404,9 +393,6 @@ int lHas(lua_State* L) {
     return 1;
 }
 
-// Live component view: __index/__newindex re-resolve the component on every access
-// (entt's vector storage can be reallocated, so no component data pointer is ever cached).
-// The view table carries its context under private keys "\1ent" (int) and "\1reg" (light userdata).
 static void compViewCtx(lua_State* L, entt::entity& e, const CompReg*& c) {
     lua_pushstring(L, "\1ent");
     lua_rawget(L, 1);
@@ -440,13 +426,13 @@ static int compViewIndex(lua_State* L) {
         break;
     case FieldKind::Color:
     case FieldKind::DragV3: {
-        const float* v = (const float*)src;
+        const auto* v = (const float*)src;
         LuaTable t(L, 3, 0);
         t.appendNum(v[0]); t.appendNum(v[1]); t.appendNum(v[2]);
         break;
     }
     case FieldKind::Quat: {
-        const float* v = (const float*)src;
+        const auto* v = (const float*)src;
         LuaTable t(L, 4, 0);
         t.appendNum(v[0]); t.appendNum(v[1]); t.appendNum(v[2]); t.appendNum(v[3]);
         break;
@@ -518,10 +504,10 @@ static int compViewNewIndex(lua_State* L) {
                 break;
             }
             if (lua_isnumber(L, -1)) {
-                f.arr.push_back((float)lua_tonumber(L, -1));
+                f.arr.emplace_back((float)lua_tonumber(L, -1));
                 anyNum = true;
             } else if (lua_isstring(L, -1)) {
-                f.strArr.push_back(lua_tostring(L, -1));
+                f.strArr.emplace_back(lua_tostring(L, -1));
             } else {
                 lua_pop(L, 2);
                 return luaL_error(L, "field '%s' must be an array of numbers or strings", name);
@@ -563,7 +549,7 @@ static void compViewMetaEnsure(lua_State* L, SceneScript* host) {
 }
 
 /// scene.component(e: entity, type: string) -> table|nil | a live view of component `type` on e (nil if absent); reads resolve per access; writes require the component to exist (create via scene.emplace/replace)
-int lComponent(lua_State* L) {
+static int lComponent(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
     const std::string type = luaL_checkstring(L, 2);
@@ -588,7 +574,7 @@ int lComponent(lua_State* L) {
 }
 
 /// scene.remove(e: entity, type: string) | remove component `type` from e (errors if absent or unknown type)
-int lCompRemove(lua_State* L) {
+static int lCompRemove(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
     const std::string type = luaL_checkstring(L, 2);
@@ -599,7 +585,7 @@ int lCompRemove(lua_State* L) {
 }
 
 /// scene.set_pose(e: entity|string, pos: vec3, quat: quat) | set the local Transform of e (errors if e has no Transform)
-int lSetPose(lua_State* L) {
+static int lSetPose(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = entityOrName(w, L, 1);
     if (e == entt::null || !w.reg.try_get<Transform>(e))
@@ -611,7 +597,7 @@ int lSetPose(lua_State* L) {
 }
 
 /// scene.get_pose(e: entity|string) -> table | local Transform of e as {pos = {x,y,z}, quat = {x,y,z,w}} (errors if e has no Transform)
-int lGetPose(lua_State* L) {
+static int lGetPose(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = entityOrName(w, L, 1);
     if (e == entt::null || !w.reg.try_get<Transform>(e))
@@ -640,7 +626,7 @@ int lGetPose(lua_State* L) {
 }
 
 /// scene.world_pose(e: entity|string) -> table | world-space pose of e as {pos = {x,y,z}, quat = {x,y,z,w}}; live Transform+Parent walk, always current (unlike the per-substep WorldTransform snapshot)
-int lWorldPose(lua_State* L) {
+static int lWorldPose(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = entityOrName(w, L, 1);
     if (e == entt::null || !w.reg.try_get<Transform>(e))
@@ -669,11 +655,11 @@ int lWorldPose(lua_State* L) {
 }
 
 /// scene.set_morph(e: entity|string, name: string, weight: number) | set the blend weight of shape key `name`; on a skinned character (no Geometry) it applies to all linked meshes
-int lSetMorph(lua_State* L) {
+static int lSetMorph(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = entityOrName(w, L, 1);
     const std::string name = luaL_checkstring(L, 2);
-    const float weight = (float)luaL_checknumber(L, 3);
+    const auto weight = (float)luaL_checknumber(L, 3);
     if (e != entt::null && w.reg.try_get<Geometry>(e)) {
         setShapeWeight(w.reg, e, name, weight);
         return 0;
@@ -687,7 +673,7 @@ int lSetMorph(lua_State* L) {
 }
 
 /// scene.shapes(e: entity|string) -> table | shape keys of mesh e as an array of {name, weight} (errors if e has no Geometry)
-int lShapes(lua_State* L) {
+static int lShapes(lua_State* L) {
     const Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = entityOrName(w, L, 1);
     if (e == entt::null || !w.reg.try_get<Geometry>(e))
@@ -706,7 +692,7 @@ int lShapes(lua_State* L) {
 }
 
 /// scene.link_mesh(skel: entity|string, mesh: entity|string) | attach mesh to skeleton skel's skinned meshes (errors if skel has no Skeleton)
-int lLinkMesh(lua_State* L) {
+static int lLinkMesh(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity skel = entityOrName(w, L, 1);
     const entt::entity mesh = entityOrName(w, L, 2);
@@ -719,7 +705,7 @@ int lLinkMesh(lua_State* L) {
 }
 
 /// scene.get_entity(name: string) -> entity | look up a named entity (nil if not found)
-int lFind(lua_State* L) {
+static int lFind(lua_State* L) {
     const std::string name = luaL_checkstring(L, 1);
     const entt::entity e = findNamedEntity(SceneScript::sSelf(L)->w().reg, name);
     if (e == entt::null) {
@@ -731,7 +717,7 @@ int lFind(lua_State* L) {
 }
 
 /// scene.find_components(component: string, root?: entity) -> table | every entity in root's subtree carrying `component` (all top-level entities when root is omitted), as an array of entities
-int lFindComponents(lua_State* L) {
+static int lFindComponents(lua_State* L) {
     const Engine& w = SceneScript::sSelf(L)->w();
     const std::string comp = luaL_checkstring(L, 1);
     const entt::entity root = lua_isnumber(L, 2) ? luaReadEnt(L, 2) : entt::null;
@@ -745,7 +731,7 @@ int lFindComponents(lua_State* L) {
 }
 
 /// scene.named() -> array of {name = string, entity = entity} | every named entity, sorted by entity id (the editor's source)
-int lNamed(lua_State* L) {
+static int lNamed(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     std::vector<std::pair<entt::entity, std::string>> named;
     for (auto [e, n] : w.reg.view<Name>().each())
@@ -765,7 +751,7 @@ int lNamed(lua_State* L) {
 }
 
 /// scene.components(e: entity) -> array of string | the reflected component type names on e (the editor's field source)
-int lComponents(lua_State* L) {
+static int lComponents(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
     const auto comps = refl::entityFields(w.reg, e);
@@ -778,7 +764,7 @@ int lComponents(lua_State* L) {
 }
 
 /// input.key_down(kb: entity, code: number) -> bool | true if key `code` is held on the KeyboardInput entity kb (false for out-of-range codes)
-int lKeyDown(lua_State* L) {
+static int lKeyDown(lua_State* L) {
     const Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
     const int code = (int)luaL_checknumber(L, 2);
@@ -792,7 +778,7 @@ int lKeyDown(lua_State* L) {
 }
 
 /// scene.attach_script(e: entity, file: string, params?: table) | attach (or re-attach, replacing any existing script) a Lua module to e; `params` is passed to its _on_ready
-int lAttachScript(lua_State* L) {
+static int lAttachScript(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     Engine& w = self->w();
     const entt::entity e = luaReadEnt(L, 1);
@@ -812,7 +798,7 @@ int lAttachScript(lua_State* L) {
 }
 
 /// scene.destroy(e: entity) | destroy e and its whole subtree; errors if e is a shape referenced by a collider, a texture referenced by a material, or a geometry referenced by a renderable outside the subtree
-int lDestroy(lua_State* L) {
+static int lDestroy(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
     if (!w.reg.valid(e))
@@ -837,7 +823,7 @@ int lDestroy(lua_State* L) {
 }
 
 /// scene.add_child(parent: entity, child: entity, opts?: table) | reparent child under parent (parent needs a Transform); opts.keepWorld = true re-expresses the child's local pose so its world position is unchanged
-int lAddChild(lua_State* L) {
+static int lAddChild(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity parent = luaReadEnt(L, 1);
     const entt::entity child = luaReadEnt(L, 2);

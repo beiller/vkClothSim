@@ -24,10 +24,8 @@
 
 namespace {
 
-// max kinematic velocity: the per-frame displacement clamp is this * dt, so the cap holds at any frame rate
 constexpr float kMaxKinematicVel = 15.0f;
 
-// normalize at the Jolt boundary: Jolt asserts on non-unit quats (e.g. user-script values)
 JPH::Quat jQuat(Quat q) {
     const float l = glm::length(q);
     if (l < 1e-8f)
@@ -175,7 +173,7 @@ void RigidScene::removeBody(entt::entity e) {
 }
 
 bool RigidScene::hasBody(entt::entity e) const {
-    return m_body.count(e) > 0;
+    return m_body.contains(e);
 }
 
 entt::entity RigidScene::entityFor(JPH::BodyID id) const {
@@ -190,21 +188,19 @@ const JPH::Shape* RigidScene::shape(const entt::registry& reg, entt::entity e) {
     if (it != m_shape.end())
         return it->second.GetPtr();
     JPH::ShapeRefC s;
-    if (const auto* cs = reg.try_get<CapsuleShape>(e))
+    if (const auto* cs = reg.try_get<CapsuleShape>(e)) {
         s = JPH::ShapeRefC(new JPH::CapsuleShape(cs->halfLen, cs->radius));
-    else if (const auto* bs = reg.try_get<BoxShape>(e))
+    } else if (const auto* bs = reg.try_get<BoxShape>(e)) {
         s = JPH::ShapeRefC(new JPH::BoxShape(JPH::Vec3(bs->half.x, bs->half.y, bs->half.z)));
-    else if (const auto* tc = reg.try_get<TaperedCapsule>(e)) {
-        // Create() may return a (rotated-translated) sphere for degenerate tapers
+    } else if (const auto* tc = reg.try_get<TaperedCapsule>(e)) {
         const JPH::TaperedCapsuleShapeSettings settings(tc->halfHeight, tc->topRadius, tc->bottomRadius);
         const JPH::Shape::ShapeResult r = settings.Create();
         if (!r.Get())
             return nullptr;
         s = r.Get();
-    }
-    else if (const auto* ss = reg.try_get<SphereShape>(e))
+    } else if (const auto* ss = reg.try_get<SphereShape>(e)) {
         s = JPH::ShapeRefC(new JPH::SphereShape(ss->radius));
-    else if (const auto* ch = reg.try_get<ConvexHullShape>(e)) {
+    } else if (const auto* ch = reg.try_get<ConvexHullShape>(e)) {
         const auto& pts = ch->points;
         JPH::ConvexHullShapeSettings settings;
         settings.mPoints.reserve(pts.size() / 3);
@@ -250,8 +246,6 @@ void RigidScene::setKinematicPose(entt::entity e, const V3& pos, const Quat& qua
     const JPH::BodyID id = it->second;
     const JPH::RVec3 old = bi.GetPosition(id);
     const JPH::RVec3 p(pos.x, pos.y, pos.z);
-    // MoveKinematic sets velocity only (Jolt integrates and lands on target at step end);
-    // setting position too would move the body twice. Clamp to max travel per step.
     JPH::RVec3 delta = p - old;
     const float stepLen = JPH::Vec3(delta).Length();
     const float maxStep = kMaxKinematicVel * dt;
@@ -268,7 +262,7 @@ bool RigidScene::makeJoint(entt::entity e, const Joint& j) {
     const auto ia = m_body.find(j.bodyA);
     if (ia == m_body.end())
         return false;
-    if (j.bodyB != entt::null && m_body.find(j.bodyB) == m_body.end())
+    if (j.bodyB != entt::null && !m_body.contains(j.bodyB))
         return false;
     JPH::Body* bodyA = m_phys->GetBodyLockInterface().TryGetBody(ia->second);
     JPH::Body* bodyB = j.bodyB == entt::null ? &JPH::Body::sFixedToWorld
@@ -287,8 +281,6 @@ bool RigidScene::makeJoint(entt::entity e, const Joint& j) {
     cs.mPoint2 = bodyB->GetRotation().InverseRotate(grab - comB);
     JPH::TwoBodyConstraint* constraint = cs.Create(*bodyA, *bodyB);
     m_phys->AddConstraint(constraint);
-    // joints are baked from the current pose (satisfied), so activate now:
-    // waiting for motion lets the first frame drift free, then the weld snaps back
     if (constraint->GetEnabled())
         m_phys->GetBodyInterface().ActivateConstraint(constraint);
     m_joints.push_back({e, constraint, true, j.bodyA, j.bodyB, j.excludeCollision});
@@ -301,7 +293,7 @@ bool RigidScene::makeSixDofJoint(entt::entity e, const SixDofJoint& j) {
     const auto ia = m_body.find(j.bodyA);
     if (ia == m_body.end())
         return false;
-    if (j.bodyB != entt::null && m_body.find(j.bodyB) == m_body.end())
+    if (j.bodyB != entt::null && !m_body.contains(j.bodyB))
         return false;
     JPH::Body* bodyA = m_phys->GetBodyLockInterface().TryGetBody(ia->second);
     JPH::Body* bodyB = j.bodyB == entt::null ? &JPH::Body::sFixedToWorld
@@ -327,8 +319,6 @@ bool RigidScene::makeSixDofJoint(entt::entity e, const SixDofJoint& j) {
     }
     const JPH::Quat axis = jQuat(j.axisQuat);
     if (j.axisQuat.x != 0.0f || j.axisQuat.y != 0.0f || j.axisQuat.z != 0.0f) {
-        // custom limit frame: both bodies share the axisQuat world orientation at creation,
-        // so limits are measured in that frame (it follows body A as it moves)
         if (j.worldSpace) {
             cs.mAxisX1 = axis * JPH::Vec3::sAxisX();
             cs.mAxisY1 = axis * JPH::Vec3::sAxisY();
@@ -350,7 +340,6 @@ bool RigidScene::makeSixDofJoint(entt::entity e, const SixDofJoint& j) {
     cs.mNumPositionStepsOverride = (unsigned)j.posSteps;
     cs.mEnabled = j.enabled;
     if (j.limOn) {
-        // Jolt measures translation along (pos2 - pos1), so negate to get body A's displacement
         cs.SetLimitedAxis(Axis::TranslationX, -j.limTransMax.x, -j.limTransMin.x);
         cs.SetLimitedAxis(Axis::TranslationY, -j.limTransMax.y, -j.limTransMin.y);
         cs.SetLimitedAxis(Axis::TranslationZ, -j.limTransMax.z, -j.limTransMin.z);
@@ -391,8 +380,6 @@ bool RigidScene::makeSixDofJoint(entt::entity e, const SixDofJoint& j) {
     auto* six = static_cast<JPH::SixDOFConstraint*>(constraint);
     for (int i = 0; i < 6; ++i)
         six->SetMotorState(Axis(i), JPH::EMotorState((int)mv(j.motorState, i, 0.f)));
-    // targets are in Jolt's (pos2 - pos1) space, negate to express body A's motion;
-    // orientation target is the relative frame rotation, so conjugate
     six->SetTargetPositionCS(JPH::Vec3(-j.motorTargetPos.x, -j.motorTargetPos.y, -j.motorTargetPos.z));
     six->SetTargetVelocityCS(JPH::Vec3(-j.motorTargetVel.x, -j.motorTargetVel.y, -j.motorTargetVel.z));
     six->SetTargetAngularVelocityCS(JPH::Vec3(-j.motorTargetAngVel.x, -j.motorTargetAngVel.y, -j.motorTargetAngVel.z));
@@ -436,7 +423,6 @@ void RigidScene::syncSixDof(JointEntry& en, const SixDofJoint& j) {
         return;
     auto* six = static_cast<JPH::SixDOFConstraint*>(en.constraint.GetPtr());
     using Axis = JPH::SixDOFConstraintSettings::EAxis;
-    // Jolt measures translation along (pos2 - pos1), so negate to express body A's motion
     if (j.limOn) {
         six->SetTranslationLimits(JPH::Vec3(-j.limTransMax.x, -j.limTransMax.y, -j.limTransMax.z),
                                  JPH::Vec3(-j.limTransMin.x, -j.limTransMin.y, -j.limTransMin.z));
@@ -484,8 +470,6 @@ void RigidScene::syncSixDof(JointEntry& en, const SixDofJoint& j) {
                 ms.SetTorqueLimits(tmin[i - 3], tmax[i - 3]);
         }
     }
-    // targets are in Jolt's (pos2 - pos1) space, negate to express body A's motion;
-    // orientation target is the relative frame rotation, so conjugate
     six->SetTargetPositionCS(JPH::Vec3(-j.motorTargetPos.x, -j.motorTargetPos.y, -j.motorTargetPos.z));
     six->SetTargetVelocityCS(JPH::Vec3(-j.motorTargetVel.x, -j.motorTargetVel.y, -j.motorTargetVel.z));
     six->SetTargetAngularVelocityCS(JPH::Vec3(-j.motorTargetAngVel.x, -j.motorTargetAngVel.y, -j.motorTargetAngVel.z));
@@ -494,10 +478,8 @@ void RigidScene::syncSixDof(JointEntry& en, const SixDofJoint& j) {
     six->SetConstraintPriority((unsigned)j.priority);
     six->SetNumVelocityStepsOverride((unsigned)j.velSteps);
     six->SetNumPositionStepsOverride((unsigned)j.posSteps);
-    // forceSleep owns the enabled flag while it holds a body; don't fight it
-    if (m_forceSleep.count(en.a) == 0 && m_forceSleep.count(en.b) == 0)
+    if (!m_forceSleep.contains(en.a) && !m_forceSleep.contains(en.b))
         six->SetEnabled(j.enabled);
-    // param changes don't wake sleeping bodies; re-activate so live tuning takes effect now
     m_phys->GetBodyInterface().ActivateConstraint(six);
     en.applied = j;
 }
@@ -510,11 +492,10 @@ void RigidScene::releaseJoint(int idx) {
     m_joints[idx].alive = false;
 }
 
-// FNV-1a over colliders' entity + shape params + local transform; a change is structural (forces rebuild)
 uint64_t RigidScene::shapeFingerprint(const entt::registry& reg, const std::vector<entt::entity>& cols) {
     uint64_t h = 14695981039346656037ull;
     const auto mix = [&h](const void* p, size_t n) {
-        const uint8_t* b = (const uint8_t*)p;
+        const auto* b = (const uint8_t*)p;
         for (size_t i = 0; i < n; ++i) {
             h ^= b[i];
             h *= 1099511628211ull;
@@ -526,16 +507,15 @@ uint64_t RigidScene::shapeFingerprint(const entt::registry& reg, const std::vect
         if (!col)
             continue;
         mix(&col->shape, sizeof(col->shape));
-        if (const auto* cs = reg.try_get<CapsuleShape>(col->shape))
+        if (const auto* cs = reg.try_get<CapsuleShape>(col->shape)) {
             mix(cs, sizeof(CapsuleShape));
-        else if (const auto* bs = reg.try_get<BoxShape>(col->shape))
+        } else if (const auto* bs = reg.try_get<BoxShape>(col->shape)) {
             mix(bs, sizeof(BoxShape));
-        else if (const auto* tc = reg.try_get<TaperedCapsule>(col->shape))
+        } else if (const auto* tc = reg.try_get<TaperedCapsule>(col->shape)) {
             mix(tc, sizeof(TaperedCapsule));
-        else if (const auto* ss = reg.try_get<SphereShape>(col->shape))
+        } else if (const auto* ss = reg.try_get<SphereShape>(col->shape)) {
             mix(ss, sizeof(SphereShape));
-        else if (const auto* ch = reg.try_get<ConvexHullShape>(col->shape)) {
-            // vector field: hash the count + actual data (sizeof would hit the unstable ptr)
+        } else if (const auto* ch = reg.try_get<ConvexHullShape>(col->shape)) {
             const size_t n = ch->points.size();
             mix(&n, sizeof(size_t));
             if (!ch->points.empty())
@@ -555,7 +535,6 @@ RigidScene::Applied RigidScene::appliedFor(const RigidBody& rb, uint64_t shapeHa
     return a;
 }
 
-// mass 0 = auto (the shape's own mass)
 void RigidScene::syncScalars(entt::entity e, const RigidBody& rb) {
     const auto it = m_body.find(e);
     if (it == m_body.end())
@@ -595,7 +574,7 @@ void RigidScene::rebuildBody(entt::entity e, const entt::registry& reg, const Ri
             m_shape.erase(col->shape);
     removeBody(e);
     buildBody(e, colliderDescs(reg, rb.colliders), rb, t);
-    if (hasVel && m_body.count(e)) {
+    if (hasVel && m_body.contains(e)) {
         auto& bi = m_phys->GetBodyInterface();
         bi.SetLinearVelocity(m_body[e], linV);
         bi.SetAngularVelocity(m_body[e], angV);
@@ -622,7 +601,7 @@ std::vector<entt::entity> RigidScene::affectedJoints(JPH::BodyID id) const {
     for (const auto& j : m_joints) {
         if (!j.alive)
             continue;
-        auto* two = static_cast<const JPH::TwoBodyConstraint*>(j.constraint.GetPtr());
+        const auto* two = static_cast<const JPH::TwoBodyConstraint*>(j.constraint.GetPtr());
         if (two->GetBody1()->GetID() == id || two->GetBody2()->GetID() == id)
             out.push_back(j.ent);
     }
@@ -636,7 +615,7 @@ void RigidScene::rejoinJoints(const std::vector<entt::entity>& list, const entt:
                 m_jointIdx[je] = (int)m_joints.size() - 1;
                 continue;
             }
-        } else if (const auto* s = reg.try_get<SixDofJoint>(je)) {
+        } else if (const auto* s = reg.try_get<SixDofJoint>(je)) { // NOLINT(readability-redundant-nested-if): s cannot be used in its own initializer
             if (makeSixDofJoint(je, *s)) {
                 m_jointIdx[je] = (int)m_joints.size() - 1;
                 continue;
@@ -666,7 +645,6 @@ void RigidScene::project(const entt::registry& reg) {
             up.sleep = a->second.sleep;
             m_applied[e] = up;
         }
-        // forceSleep true = hold asleep (welds off); false = one-shot release on the true->false edge
         const auto bt = m_body.find(e);
         if (rb.forceSleep) {
             m_forceSleep.insert(e);
@@ -694,7 +672,7 @@ void RigidScene::project(const entt::registry& reg) {
             continue;
         const auto a = m_applied.find(e);
         if (a != m_applied.end() && !a->second.kinematic)
-            continue; // a RigidBody owns the Jolt body
+            continue;
         const uint64_t sh = shapeFingerprint(reg, kb.colliders);
         if (a != m_applied.end() && a->second.body.colliders == kb.colliders && a->second.shapeHash == sh)
             continue;
@@ -719,11 +697,10 @@ void RigidScene::project(const entt::registry& reg) {
             JointEntry& en = m_joints[it->second];
             syncJointExclusion(en, j.excludeCollision);
             if (sixDofStructuralDiffers(en.applied, j)) {
-                // frame-baked fields changed: rebuild the constraint (velocity lives on the bodies)
                 releaseJoint(it->second);
                 if (!makeSixDofJoint(e, j))
                     continue;
-                setExcludes(j.bodyA, j.bodyB, j.excludeCollision); // makeSixDofJoint only ever adds excludes
+                setExcludes(j.bodyA, j.bodyB, j.excludeCollision);
                 m_jointIdx[e] = (int)m_joints.size() - 1;
             } else if (sixDofDiffers(en.applied, j)) {
                 syncSixDof(en, j);
@@ -763,7 +740,6 @@ void RigidScene::step(entt::registry& reg, float dt) {
             continue;
         bi.ActivateConstraint(two);
     }
-    // impulse is a one-shot command: applied, then cleared
     for (auto [e, rb] : reg.view<RigidBody>().each()) {
         if (!hasBody(e))
             continue;
@@ -793,7 +769,7 @@ RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist,
     RayHit out{};
     JPH::RRayCast ray(JPH::RVec3(origin.x, origin.y, origin.z), JPH::Vec3(dir.x, dir.y, dir.z) * maxDist);
     JPH::RayCastResult hit;
-    JPH::IgnoreMultipleBodiesFilter filter; // a ray from inside a convex body hits it at 0; skip ours
+    JPH::IgnoreMultipleBodiesFilter filter;
     for (const entt::entity x : excludes)
         if (const auto it = m_body.find(x); it != m_body.end())
             filter.IgnoreBody(it->second);
@@ -819,7 +795,7 @@ void RigidScene::onJointDestroyed(entt::registry&, entt::entity e) {
 
 bool RigidScene::excludes(entt::entity a, entt::entity b) const {
     const auto it = m_excludes.find(a);
-    return it != m_excludes.end() && it->second.count(b) > 0;
+    return it != m_excludes.end() && it->second.contains(b);
 }
 
 void RigidScene::syncExcludes(entt::entity e) {

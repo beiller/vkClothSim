@@ -3,8 +3,6 @@
 #include "core/math.hpp"
 #include <vector>
 
-// Convex-decomposition budget. maxHulls = -1 lets CoACD choose; threshold is the concavity
-// threshold in normalized units (smaller = more, tighter hulls).
 struct DecompParams {
     int maxHulls = -1;
     int maxVertsPerHull = 256;

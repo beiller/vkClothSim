@@ -1,6 +1,7 @@
 #include "gpu_sim/dualquat.hpp"
 
 #include <cmath>
+#include <numbers>
 #include <cstring>
 
 namespace dq {
@@ -11,8 +12,10 @@ float len_v3(const float v[3]) { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[
 float len_squared_v3(const float v[3]) { return v[0] * v[0] + v[1] * v[1] + v[2] * v[2]; }
 float dot_v3v3(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 
-void copy_m4_m4(float m1[4][4], const float m2[4][4]) { std::memcpy(m1, m2, sizeof(float[4][4])); }
-void copy_m3_m3(float m1[3][3], const float m2[3][3]) { std::memcpy(m1, m2, sizeof(float[3][3])); }
+template <int N>
+void copyMatN(float R[N][N], const float S[N][N]) {
+    std::memcpy(R, S, sizeof(float[N][N]));
+}
 void copy_v3_v3(float m1[3], const float m2[3]) { std::memcpy(m1, m2, sizeof(float[3])); }
 void copy_m3_m4(float m1[3][3], const float m2[4][4]) {
     for (int c = 0; c < 3; ++c)
@@ -47,33 +50,18 @@ void mul_qt_fl(float q[4], float f);
 void copy_qt_qt(float d[4], const float s[4]);
 void normalize_qt(float q[4]);
 
-void mul_m4_m4m4(float R[4][4], const float A[4][4], const float B[4][4]) {
+template <int N>
+void mulMatN(float R[N][N], const float A[N][N], const float B[N][N]) {
     if (R == A || R == B) {
-        float T[4][4];
-        mul_m4_m4m4(T, A, B);
-        copy_m4_m4(R, T);
+        float T[N][N];
+        mulMatN<N>(T, A, B);
+        copyMatN(R, T);
         return;
     }
-    for (int j = 0; j < 4; ++j)
-        for (int k = 0; k < 4; ++k) {
+    for (int j = 0; j < N; ++j)
+        for (int k = 0; k < N; ++k) {
             float s = 0.0f;
-            for (int i = 0; i < 4; ++i)
-                s += B[j][i] * A[i][k];
-            R[j][k] = s;
-        }
-}
-
-void mul_m3_m3m3(float R[3][3], const float A[3][3], const float B[3][3]) {
-    if (R == A || R == B) {
-        float T[3][3];
-        mul_m3_m3m3(T, A, B);
-        copy_m3_m3(R, T);
-        return;
-    }
-    for (int j = 0; j < 3; ++j)
-        for (int k = 0; k < 3; ++k) {
-            float s = 0.0f;
-            for (int i = 0; i < 3; ++i)
+            for (int i = 0; i < N; ++i)
                 s += B[j][i] * A[i][k];
             R[j][k] = s;
         }
@@ -117,8 +105,8 @@ void add_m4_m4m4(float R[4][4], const float A[4][4], const float B[4][4]) {
 }
 void mul_m4_series(float R[4][4], const float A[4][4], const float B[4][4], const float C[4][4]) {
     float T[4][4];
-    mul_m4_m4m4(T, A, B);
-    mul_m4_m4m4(R, T, C);
+    mulMatN<4>(T, A, B);
+    mulMatN<4>(R, T, C);
 }
 
 void mat4_to_size(float size[3], const float M[4][4]) {
@@ -138,7 +126,7 @@ float determinant_m4(const float m[4][4]) {
     const float a2 = m[1][0], b2 = m[1][1], c2 = m[1][2], d2 = m[1][3];
     const float a3 = m[2][0], b3 = m[2][1], c3 = m[2][2], d3 = m[2][3];
     const float a4 = m[3][0], b4 = m[3][1], c4 = m[3][2], d4 = m[3][3];
-    auto m3 = [](float a0, float a1, float a2, float a3, float a4, float a5, float a6, float a7, float a8) {
+    auto m3 = [](float a0, float a1, float, float a3, float a4, float a5, float a6, float a7, float a8) {
         return a0 * (a4 * a8 - a5 * a7) - a3 * (a1 * a8 - a5 * a0) + a6 * (a1 * a7 - a4 * a0);
     };
     return a1 * m3(b2, b3, b4, c2, c3, c4, d2, d3, d4) - b1 * m3(a2, a3, a4, c2, c3, c4, d2, d3, d4) +
@@ -342,8 +330,8 @@ void mat4_to_quat(float q[4], const float mat[4][4]) {
 }
 
 void quat_to_mat4(float m[4][4], const float q[4]) {
-    const double q0 = std::sqrt(2) * (double)q[0], q1 = std::sqrt(2) * (double)q[1];
-    const double q2 = std::sqrt(2) * (double)q[2], q3 = std::sqrt(2) * (double)q[3];
+    const double q0 = std::numbers::sqrt2 * (double)q[0], q1 = std::numbers::sqrt2 * (double)q[1];
+    const double q2 = std::numbers::sqrt2 * (double)q[2], q3 = std::numbers::sqrt2 * (double)q[3];
     const double qda = q0 * q1, qdb = q0 * q2, qdc = q0 * q3;
     const double qaa = q1 * q1, qab = q1 * q2, qac = q1 * q3;
     const double qbb = q2 * q2, qbc = q2 * q3, qcc = q3 * q3;
@@ -391,7 +379,7 @@ void mat4ToDquat(DualQuat* dq, const float basemat[4][4], const float mat[4][4])
     std::memset(dq->scale, 0, sizeof(dq->scale));
     std::memset(dq->trans, 0, sizeof(dq->trans));
 
-    mul_m4_m4m4(baseRS, mat, basemat);
+    mulMatN<4>(baseRS, mat, basemat);
     mat4_to_size(scale, baseRS);
     dscale[0] = scale[0] - 1.0f;
     dscale[1] = scale[1] - 1.0f;
@@ -402,21 +390,21 @@ void mat4ToDquat(DualQuat* dq, const float basemat[4][4], const float mat[4][4])
     if (!is_orthonormal_m3(mat3) || (determinant_m4(mat) < 0.0f) ||
         len_squared_v3(dscale) > square_f(1e-4f)) {
         float tmp[4][4];
-        copy_m4_m4(tmp, baseRS);
+        copyMatN<4>(tmp, baseRS);
         orthogonalize_m4(tmp, 1);
         mat4_to_quat(basequat, tmp);
         quat_to_mat4(baseR, basequat);
         copy_v3_v3(baseR[3], baseRS[3]);
 
         invert_m4_m4(baseinv, basemat);
-        mul_m4_m4m4(R, baseR, baseinv);
+        mulMatN<4>(R, baseR, baseinv);
         invert_m4_m4(baseRinv, baseR);
-        mul_m4_m4m4(S, baseRinv, baseRS);
+        mulMatN<4>(S, baseRinv, baseRS);
 
         mul_m4_series(dq->scale, basemat, S, baseinv);
         dq->scale_weight = 1.0f;
     } else {
-        copy_m4_m4(R, mat);
+        copyMatN<4>(R, mat);
         dq->scale_weight = 0.0f;
     }
 
@@ -428,27 +416,6 @@ void mat4ToDquat(DualQuat* dq, const float basemat[4][4], const float mat[4][4])
     dq->trans[1] = 0.5f * (t[0] * q[0] + t[1] * q[3] - t[2] * q[2]);
     dq->trans[2] = 0.5f * (-t[0] * q[3] + t[1] * q[0] + t[2] * q[1]);
     dq->trans[3] = 0.5f * (t[0] * q[2] - t[1] * q[1] + t[2] * q[0]);
-}
-
-void dquatToMat4(float R[4][4], const DualQuat* dq) {
-    float len, q0[4];
-    const float* t;
-
-    copy_qt_qt(q0, dq->quat);
-    len = std::sqrt(dot_qtqt(q0, q0));
-    if (len != 0.0f)
-        len = 1.0f / len;
-    mul_qt_fl(q0, len);
-
-    quat_to_mat4(R, q0);
-
-    t = dq->trans;
-    R[3][0] = 2.0f * (-t[0] * q0[1] + t[1] * q0[0] - t[2] * q0[3] + t[3] * q0[2]) * len;
-    R[3][1] = 2.0f * (-t[0] * q0[2] + t[1] * q0[3] + t[2] * q0[0] - t[3] * q0[1]) * len;
-    R[3][2] = 2.0f * (-t[0] * q0[3] - t[1] * q0[2] + t[2] * q0[1] + t[3] * q0[0]) * len;
-
-    if (dq->scale_weight)
-        mul_m4_m4m4(R, R, dq->scale);
 }
 
 void addWeightedDqDq(DualQuat* dq_sum, const DualQuat* dq, float weight) {
@@ -469,11 +436,11 @@ void addWeightedDqDq(DualQuat* dq_sum, const DualQuat* dq, float weight) {
     dq_sum->trans[2] += weight * dq->trans[2];
     dq_sum->trans[3] += weight * dq->trans[3];
 
-    if (dq->scale_weight) {
+    if (dq->scale_weight != 0.0f) {
         float wmat[4][4];
         if (flipped)
             weight = -weight;
-        copy_m4_m4(wmat, dq->scale);
+        copyMatN<4>(wmat, dq->scale);
         mul_m4_fl(wmat, weight);
         add_m4_m4m4(dq_sum->scale, dq_sum->scale, wmat);
         dq_sum->scale_weight += weight;
@@ -481,8 +448,8 @@ void addWeightedDqDq(DualQuat* dq_sum, const DualQuat* dq, float weight) {
 }
 
 void addWeightedDqDqPivot(DualQuat* dq_sum, const DualQuat* dq, const float pivot[3], float weight,
-                          bool compute_scale_matrix) {
-    if (dq->scale_weight) {
+                          bool computeScaleMatrix) {
+    if (dq->scale_weight != 0.0f) {
         DualQuat mdq = *dq;
 
         float dst[3];
@@ -494,7 +461,7 @@ void addWeightedDqDqPivot(DualQuat* dq_sum, const DualQuat* dq, const float pivo
         mdq.trans[2] += .5f * (mdq.quat[0] * dst[1] + mdq.quat[3] * dst[0] - mdq.quat[1] * dst[2]);
         mdq.trans[3] += .5f * (mdq.quat[0] * dst[2] + mdq.quat[1] * dst[1] - mdq.quat[2] * dst[0]);
 
-        if (compute_scale_matrix) {
+        if (computeScaleMatrix) {
             sub_v3_v3(mdq.scale[3], dst);
         } else {
             mdq.scale_weight = 0.0f;
@@ -511,9 +478,9 @@ void normalizeDq(DualQuat* dq, float totweight) {
     mul_qt_fl(dq->quat, scale);
     mul_qt_fl(dq->trans, scale);
 
-    if (dq->scale_weight) {
+    if (dq->scale_weight != 0.0f) {
         const float addweight = totweight - dq->scale_weight;
-        if (addweight) {
+        if (addweight != 0.0f) {
             dq->scale[0][0] += addweight;
             dq->scale[1][1] += addweight;
             dq->scale[2][2] += addweight;
@@ -547,7 +514,7 @@ void mulV3m3Dq(float r[3], float R[3][3], DualQuat* dq) {
     t[1] = 2 * (-t0 * y + t1 * z - x * t3 + w * t2);
     t[2] = 2 * (-t0 * z + x * t2 + w * t3 - t1 * y);
 
-    if (dq->scale_weight)
+    if (dq->scale_weight != 0.0f)
         mul_m4_v3(dq->scale, r);
 
     mul_m3_v3(M, r);
@@ -556,11 +523,11 @@ void mulV3m3Dq(float r[3], float R[3][3], DualQuat* dq) {
     r[2] = (r[2] + t[2]) * len2;
 
     if (R) {
-        if (dq->scale_weight) {
+        if (dq->scale_weight != 0.0f) {
             copy_m3_m4(scalemat, dq->scale);
-            mul_m3_m3m3(R, M, scalemat);
+            mulMatN<3>(R, M, scalemat);
         } else {
-            copy_m3_m3(R, M);
+            copyMatN<3>(R, M);
         }
         mul_m3_fl(R, len2);
     }

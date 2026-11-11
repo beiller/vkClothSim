@@ -49,7 +49,7 @@ int lSet(lua_State* L) {
         return 0;
     }
     const std::string url = luaL_checkstring(L, 1);
-    if (lua_isstring(L, 2) && url.find(".LuaScript.") != std::string::npos) {
+    if (lua_isstring(L, 2) && url.contains(".LuaScript.")) {
         self->setVarStr(w.reg, url, luaL_checkstring(L, 2), err);
         return 0;
     }
@@ -75,7 +75,7 @@ int lGet(lua_State* L) {
         const std::string url = luaL_checkstring(L, 1);
         if (!sceneGet(w.reg, url, vals, 4, n, err)) {
             std::string s;
-            if (url.find(".LuaScript.") != std::string::npos && self->varStr(w.reg, url, s, err)) {
+            if (url.contains(".LuaScript.") && SceneScript::varStr(w.reg, url, s, err)) {
                 lua_pushstring(L, s.c_str());
                 return 1;
             }
@@ -109,7 +109,7 @@ int lScenes(lua_State* L) {
                 nlohmann::json j;
                 if (in && in >> j)
                     label = j.value("name", label);
-            } catch (const std::exception&) {
+            } catch (const std::exception&) { // NOLINT(bugprone-empty-catch): malformed scene json falls back to the dir name
             }
             LuaTable t(L);
             t.setStr("label", label);
@@ -161,7 +161,7 @@ int lFields(lua_State* L) {
     const std::string type = luaL_checkstring(L, 1);
     const TypeDesc* desc = refl::findType(type.c_str());
     if (!desc) {
-        lua_newtable(L); // unknown type -> empty array (introspection-friendly)
+        lua_newtable(L);
         return 1;
     }
     LuaTable arr(L);
@@ -178,8 +178,7 @@ int lFields(lua_State* L) {
     return 1;
 }
 
-// push CompFields as a plain Lua table (the shape scene.component snapshots used to have)
-static void pushFieldsTable(lua_State* L, const CompFields& fields) {
+void pushFieldsTable(lua_State* L, const CompFields& fields) {
     lua_newtable(L);
     for (const auto& f : fields) {
         if (f.isStr) {
@@ -256,8 +255,8 @@ int lRenderTexture(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     if (!w.hasDevice)
         return luaL_error(L, "graphics.render_texture: graphics server disabled");
-    const uint32_t wpx = (uint32_t)luaL_checkinteger(L, 1);
-    const uint32_t hpx = (uint32_t)luaL_checkinteger(L, 2);
+    const auto wpx = (uint32_t)luaL_checkinteger(L, 1);
+    const auto hpx = (uint32_t)luaL_checkinteger(L, 2);
     const entt::entity e = w.reg.create();
     if (const char* name = luaL_optstring(L, 3, nullptr))
         w.reg.emplace<Name>(e, name);
@@ -281,7 +280,7 @@ int lRaycast(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const V3 origin = luaReadV3(L, 1);
     const V3 dir = luaReadV3(L, 2);
-    const float maxDist = (float)luaL_checknumber(L, 3);
+    const auto maxDist = (float)luaL_checknumber(L, 3);
     std::vector<entt::entity> excludes;
     if (lua_istable(L, 4))
         for (int i = 1;; ++i) {

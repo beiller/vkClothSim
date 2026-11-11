@@ -13,7 +13,7 @@
 
 class Skin {
 public:
-    static constexpr int kMaxActiveMorphs = 256; // a Daz character's full stack is 190-222 targets, all nonzero
+    static constexpr int kMaxActiveMorphs = 256;
     static constexpr int kPoolChunk = 16;
 
     void init(VkDevice dev, VkPhysicalDevice pdev);
@@ -32,15 +32,12 @@ private:
         VkDeviceMemory m = VK_NULL_HANDLE;
         VkDeviceSize sz = 0;
     };
-    // shared morph-delta buffer; character prims usually repeat the same vertex set + target stack,
-    // so states with content-identical shapes share one allocation (refcounted)
     struct ShapeSet {
         uint64_t key = 0;
         int nV = 0, nT = 0;
         int refs = 0;
         Buf deltas;
     };
-    // per linked-mesh GPU state, adopted lazily from the mesh's Geometry component
     struct MeshState {
         entt::entity mesh = entt::null;
         int skelGpu = -1;
@@ -51,7 +48,7 @@ private:
         int shapeSet = -1;
         int pool = -1; // m_pools index of `set`; sets must be freed before their pool is destroyed
         Buf pos0, nrm0, joints, weights, activeMorphs;
-        MeshGpu out; // renderer-owned; the sim writes it, the renderer reads it
+        MeshGpu out;
         VkDescriptorSet set = VK_NULL_HANDLE;
     };
     struct Skel {
@@ -59,12 +56,11 @@ private:
         std::vector<int> states;
         Buf jointDQ;
         std::vector<DualQuat> dqStaging;
-        std::vector<float> prevQuat; // 4 per joint; sign reference (prev frame) for the joint DQ
+        std::vector<float> prevQuat;
     };
 
     void adoptState(const entt::registry& reg, const Skeleton& s, entt::entity mesh, int skelGpu);
     void makeStateSet(MeshState& st);
-    void ensurePoolSlot();
     void stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c);
     void packMorphs(const entt::registry& reg, MeshState& st);
     void maybeFreeState(int stateId);

@@ -66,11 +66,8 @@ int main(int argc, char** argv) {
             scenesDirSet = true;
         }
     }
-    // default scenes dir: cwd-relative, with the exe-relative fallback (like assetsRoot()) — an
-    // explicit --scenes-dir is left as-is so a bad flag stays visible
     if (!scenesDirSet && !std::filesystem::exists("assets/scenes"))
         setScenesDir(exeDir() + "/../assets/scenes");
-    // --scene is a file path as-is, or a scene name (with or without .json) resolved against the scenes dir
     if (!scenePath.empty() && !std::filesystem::exists(scenePath)) {
         scenePath = scenesDir() + "/" + scenePath;
         if (!std::filesystem::exists(scenePath) && std::filesystem::exists(scenePath + ".json"))
@@ -154,17 +151,17 @@ int main(int argc, char** argv) {
         if (engine.hasWindow && app.windowShouldClose())
             break;
         const auto nowFrame = std::chrono::steady_clock::now();
-        // windowed: real frame dt (vsync-paced); serverless/headless: fixed step for determinism
         const float dt = engine.hasWindow ? std::chrono::duration<float>(nowFrame - lastFrame).count() : kFrameDt;
         lastFrame = nowFrame;
         fpsAccum += dt;
         ++fpsFrames;
         if (fpsAccum >= 0.5f) {
             fps = (float)fpsFrames / fpsAccum;
-            engine.phase = {(phaseMs.poll - phaseMs.wait) / fpsFrames, phaseMs.cpu / fpsFrames,
-                       phaseMs.jolt / fpsFrames, phaseMs.skel / fpsFrames, phaseMs.sim / fpsFrames,
-                       phaseMs.rend / fpsFrames, phaseMs.xend / fpsFrames,
-                       (phaseMs.wait + phaseMs.tail) / fpsFrames};
+            const float fframes = (float)fpsFrames;
+            engine.phase = {(phaseMs.poll - phaseMs.wait) / fframes, phaseMs.cpu / fframes,
+                       phaseMs.jolt / fframes, phaseMs.skel / fframes, phaseMs.sim / fframes,
+                       phaseMs.rend / fframes, phaseMs.xend / fframes,
+                       (phaseMs.wait + phaseMs.tail) / fframes};
             if (prof) {
                 auto& p = engine.graphics.prof();
                 std::printf("prof: %5.1ffps poll %5.2f cpu %5.2f jolt %5.2f skel %5.2f sim %5.2f "
@@ -226,7 +223,6 @@ int main(int argc, char** argv) {
             engine.graphics.simProf.reset();
         }
         frameJolt = engine.physics.takeJoltMs();
-        // uncapped (NO_VSYNC): pace the loop to kFrameDt (pure render pacing; no-op under vsync)
         if (engine.hasWindow && uncapped && dt < kFrameDt)
             std::this_thread::sleep_for(std::chrono::duration<double>(kFrameDt - dt));
         const auto tSim = std::chrono::steady_clock::now();
@@ -238,7 +234,6 @@ int main(int argc, char** argv) {
             cam = foundCam;
             engine.graphics.setViewProj(cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height));
         }
-        // UI pointer: world-space ray (VR controller aim / camera-through-cursor) -> canvas collider hit -> uv
         std::vector<entt::entity> canvases;
         for (auto e : engine.reg.view<UICanvas>())
             canvases.push_back(e);
@@ -249,8 +244,6 @@ int main(int argc, char** argv) {
             return V2{320.0f, 200.0f};
         };
         auto tryRay = [&](entt::entity canvas, const V3& o, const V3& d, UiFeed& f) {
-            // the hand's own bodies (anchor, controller) hug the ray origin and would win at t=0;
-            // exclude them by name so the canvas stays castable even when the hand is close
             std::vector<entt::entity> excl;
             engine.reg.view<Name>().each([&](entt::entity e, const Name& n) {
                 if (std::strstr(n.id.c_str(), "hand") || std::strstr(n.id.c_str(), "controller"))
@@ -277,9 +270,9 @@ int main(int argc, char** argv) {
                     const XrController& ctl = fr.controller[i];
                     if (!ctl.active)
                         continue;
-                    const V3 o = rootPos + ctl.aimPos; // the aim pose is in the vr-root (locomotion) frame
+                    const V3 o = rootPos + ctl.aimPos;
                     const V3 d = ctl.aimQuat * V3{0, 0, -1};
-                    f.down = ctl.buttons[0]; // A = click; hover below
+                    f.down = ctl.buttons[0];
                     f.wheel = -ctl.axis[1];
                     if (tryRay(c, o, d, f))
                         break;
@@ -288,7 +281,6 @@ int main(int argc, char** argv) {
                 const CameraView cv = cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height);
                 double mx, my;
                 glfwGetCursorPos(app.glfwWindow(), &mx, &my);
-                // cursor is in window pixels but the camera projects in framebuffer pixels
                 const float x = 2.0f * (float)mx / (float)app.extent().width - 1.0f;
                 const float y = 1.0f - 2.0f * (float)my / (float)app.extent().height;
                 const V3 cd = {(x * 0.5f + 0.5f) * (cv.tanR - cv.tanL) + cv.tanL,
@@ -348,7 +340,6 @@ int main(int argc, char** argv) {
         phaseMs.jolt += frameJolt;
         phaseMs.skel += frameSkel;
         phaseMs.sim += frameSoft;
-        // acquireNextImage's fence wait is vsync/pacing, not render work — keep it out of rend
         phaseMs.rend += msBetween(tSim, tRender) - frameAcq;
         phaseMs.xend += msBetween(tRender, tXrEnd);
         phaseMs.tail += msBetween(tXrEnd, std::chrono::steady_clock::now()) + frameAcq;
