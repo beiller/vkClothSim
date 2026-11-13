@@ -13,17 +13,6 @@ const float kIdentity4[4][4] = {{1, 0, 0, 0},
                                 {0, 0, 1, 0},
                                 {0, 0, 0, 1}};
 
-float dot4(const float a[4], const float b[4]) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-}
-void negateDq(DualQuat* dq) {
-    for (int i = 0; i < 4; ++i) {
-        dq->quat[i] = -dq->quat[i];
-        dq->trans[i] = -dq->trans[i];
-    }
-}
-void copy4(float d[4], const float s[4]) { std::memcpy(d, s, 16); }
-
 }
 
 void Skin::init(VkDevice dev, VkPhysicalDevice pdev) {
@@ -45,9 +34,6 @@ void Skin::sync(const entt::registry& reg) {
         if (skelGpu < 0) {
             Skel c;
             c.dqStaging.resize(s.joints.size());
-            c.prevQuat.resize(4 * s.joints.size(), 0.0f);
-            for (size_t k = 0; k < s.joints.size(); ++k)
-                c.prevQuat[4 * k] = 1.0f;
             const auto bytes = (VkDeviceSize)s.joints.size() * sizeof(DualQuat);
             if (bytes > 0)
                 vkMakeBuffer(m_dev, m_pdev, c.jointDQ.b, c.jointDQ.m, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
@@ -203,11 +189,10 @@ void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
         for (int col = 0; col < 4; ++col)
             for (int row = 0; row < 4; ++row)
                 mm[col][row] = M[col][row];
+        // Pure Blender scheme: no temporal sign tracking here. The w>=0 extraction convention is
+        // deterministic per frame; cross-bone sign consistency is handled per-vertex in the shader
+        // (addWeighted flip-against-partial-sum, mirroring dq::addWeightedDqDq).
         dq::mat4ToDquat(&c.dqStaging[k], kIdentity4, mm);
-        float* prev = c.prevQuat.data() + 4 * k;
-        if (dot4(c.dqStaging[k].quat, prev) < 0.0f)
-            negateDq(&c.dqStaging[k]);
-        copy4(prev, c.dqStaging[k].quat);
     }
     if (!c.jointDQ.sz)
         return;

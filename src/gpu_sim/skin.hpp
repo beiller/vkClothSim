@@ -56,7 +56,6 @@ private:
         std::vector<int> states;
         Buf jointDQ;
         std::vector<DualQuat> dqStaging;
-        std::vector<float> prevQuat;
     };
 
     void adoptState(const entt::registry& reg, const Skeleton& s, entt::entity mesh, int skelGpu);

@@ -1,8 +1,11 @@
 #version 450
 
-// Dual-quaternion skinning + shape keys. Mirrors the CPU port in sim/dualquat.cpp (Blender's
-// mat4_to_dquat [plus per-joint temporal sign canonicalization in Skin::stepSkeleton] ->
-// add_weighted_dq_dq_pivot -> normalize_dq -> mul_v3m3_dq). Note the CPU
+// Dual-quaternion skinning + shape keys. Mirrors Blender's armature DQ deform exactly:
+// mat4_to_dquat -> add_weighted_dq_dq_pivot [with per-vertex sign alignment] -> normalize_dq ->
+// mul_v3m3_dq. Stateless w>=0 extraction plus per-vertex flip-against-partial-sum keeps the
+// blended norm >= sqrt(sum(w^2))/W (no vertex corruption); the known limit is a bounded ~180 deg
+// blend jump if co-bound bones ever cross 180 deg relative rotation (does not occur in the
+// current collision-constrained ragdoll). Note the CPU
 // and GPU are NOT automatically equivalent: the CPU stores M as m[col][row] and applies it via an
 // explicit matrix*vector, while a GLSL mat3 literal built from the same source-ordered values is
 // transposed (see applyDq). Keep the two in lockstep and validate the kernel against the CPU.
@@ -39,17 +42,21 @@ layout(push_constant) uniform PC {
     int pad;
 } pc;
 
-// plain weighted accumulation. The joint DQ sign is already canonicalized per-joint on the CPU
-// (Skin::stepSkeleton: closest to the previous frame's quaternion), so the running sum is
-// continuous. A dot-against-partial-sum flip here would reintroduce a 180 deg flip whenever
-// bound joints' relative rotation crosses 180 deg.
+// mirrors dq::addWeightedDqDq (Blender): accumulates weight*dq into the running sum, flipping
+// the sign when it opposes the running real part, so all terms stay on one sheet of the S3 double
+// cover per vertex. This keeps the blended norm >= sqrt(sum(w^2))/W - the sum can never degenerate
+// to zero (no vertex corruption). Known limit: a bounded ~180 deg blend jump if two co-bound bones
+// cross 180 deg relative rotation.
 void addWeighted(inout vec4 q, inout vec4 tr, inout mat4 S, inout float sw,
                  vec4 jq, vec4 jt, mat4 js, float jsw, float weight) {
-    q += weight * jq;
-    tr += weight * jt;
+    float sgn = dot(jq, q) < 0.0 ? -1.0 : 1.0;
+    float w = sgn * weight;
+    q += w * jq;
+    tr += w * jt;
     if (jsw != 0.0) {
-        S += weight * js;
-        sw += weight;
+        float aw = abs(weight);
+        S += aw * js;
+        sw += aw;
     }
 }
 
