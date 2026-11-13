@@ -185,6 +185,7 @@ struct RenderSettings {
     float exposure = 1.0f;
     float sssDepthReject = 2.0f;
     float sssCurvScale = 1.0f;
+    float renderScale = 1.0f; // scene buffer size vs display size (window, or headset rect in VR)
 };
 
 struct PhysicsSettings {

@@ -52,6 +52,8 @@ public:
     VkImage hdrImage() const { return m_hdr; }
     VkFormat swapchainFormat() const { return m_scfmt; }
     VkExtent2D extent() const { return m_extent; }
+    VkExtent2D renderExtent() const { return m_renderExtent; } // offscreen scene buffers (scaled display size)
+    void setRenderExtent(VkExtent2D e);                        // pending until a resizeBuffers applies it
     uint32_t imageCount() const { return (uint32_t)m_images.size(); }
 
     uint32_t acquireNextImage();
@@ -117,6 +119,8 @@ private:
     VkSurfaceFormatKHR m_fmt{};
     VkExtent2D m_extent{};
     VkExtent2D m_pendingExtent{};
+    VkExtent2D m_renderExtent{};
+    VkExtent2D m_pendingRenderExtent{};
     VkCommandPool m_pool = VK_NULL_HANDLE;
     VkCommandBuffer m_cmd = VK_NULL_HANDLE;
     VkFence m_fence = VK_NULL_HANDLE;

@@ -651,7 +651,7 @@ float halfToFloat(uint16_t h) {
 }
 
 void Renderer::renderOpaquePass(VkCommandBuffer cmd, VkApp& app, const float bg[3]) {
-    const VkExtent2D ext = app.extent();
+    const VkExtent2D ext = app.renderExtent();
     VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
     VkRect2D sc{0, 0, ext.width, ext.height};
     VkClearValue scv[4]{};
@@ -682,7 +682,7 @@ void Renderer::renderOpaquePass(VkCommandBuffer cmd, VkApp& app, const float bg[
 void Renderer::renderTransparentPass(VkCommandBuffer cmd, VkApp& app, const V3& camPos) {
     if (!m_hasTrans)
         return;
-    const VkExtent2D ext = app.extent();
+    const VkExtent2D ext = app.renderExtent();
     VkViewport vpt{0, (float)ext.height, (float)ext.width, -(float)ext.height, 0, 1};
     VkRect2D sc{0, 0, ext.width, ext.height};
     m_dbgReadScene = std::getenv("VKSIM_DBG_SCENE") != nullptr;
@@ -717,7 +717,7 @@ void Renderer::renderTransparentPass(VkCommandBuffer cmd, VkApp& app, const V3& 
 }
 
 void Renderer::renderSssBlur(VkCommandBuffer cmd, VkApp& app, const CameraView& cv) {
-    const VkExtent2D ext = app.extent();
+    const VkExtent2D ext = app.renderExtent();
     if (m_hasGlass || m_hasSss) {
         VkImageCopy ic{};
         ic.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
@@ -756,7 +756,7 @@ void Renderer::renderSssBlur(VkCommandBuffer cmd, VkApp& app, const CameraView& 
 }
 
 void Renderer::renderSceneBuffers(VkCommandBuffer cmd, VkApp& app, const float bg[3], const CameraView& cv) {
-    const VkExtent2D ext = app.extent();
+    const VkExtent2D ext = app.renderExtent();
     const uint32_t mips = app.sceneColorMips();
     renderOpaquePass(cmd, app, bg);
     const bool needRead = m_hasSss || m_hasGlass;
@@ -1066,9 +1066,10 @@ void Renderer::rebuildTonemapSet(VkApp& app) {
 void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry& reg, const RenderSettings& rs) {
     m_exposure = rs.exposure;
     m_sssDepthReject = rs.sssDepthReject;
+    const VkExtent2D rend = app.renderExtent();
     const VkExtent2D ext = app.extent();
     syncEnvironments(app, reg);
-    writeViewUbo(m_camView, envIntensity(reg), ext, rs.sssCurvScale);
+    writeViewUbo(m_camView, envIntensity(reg), rend, rs.sssCurvScale);
     prepBuffers(reg);
     ensureSceneSamplers(app);
     const auto tUi = std::chrono::steady_clock::now();
@@ -1094,7 +1095,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
     const bool dbgHdr = std::getenv("VKSIM_DBG_HDR") != nullptr || std::getenv("VKSIM_DBG_SCENE") != nullptr;
     const bool dbgMips = std::getenv("VKSIM_DBG_MIPS") != nullptr;
     if ((dbgHdr || dbgMips) && m_dbgBuf == VK_NULL_HANDLE) {
-        m_dbgSize = (uint64_t)ext.width * ext.height * 32 + (uint64_t)16 * 1024 * 1024;
+        m_dbgSize = (uint64_t)rend.width * rend.height * 32 + (uint64_t)16 * 1024 * 1024;
         vkMakeBuffer(m_dev, m_pdev, m_dbgBuf, m_dbgMem, (VkDeviceSize)m_dbgSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                      nullptr);
     }
@@ -1108,7 +1109,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
         bic.bufferImageHeight = 1;
         bic.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         bic.imageOffset = {0, 0, 0};
-        bic.imageExtent = {ext.width, ext.height, 1};
+        bic.imageExtent = {rend.width, rend.height, 1};
         if (m_dbgReadScene)
             vkCmdCopyImageToBuffer(cmd, app.sceneColorImage(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, m_dbgBuf, 1,
                                   &bic);
@@ -1118,8 +1119,8 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
     if (dbgMips) {
         for (int slot = 0; slot < 4; ++slot) {
             const bool hdr = slot == 2, dcp = slot == 3;
-            const uint32_t mw = ext.width >> ((hdr || dcp) ? 0 : slot);
-            const uint32_t mh = ext.height >> ((hdr || dcp) ? 0 : slot);
+            const uint32_t mw = rend.width >> ((hdr || dcp) ? 0 : slot);
+            const uint32_t mh = rend.height >> ((hdr || dcp) ? 0 : slot);
             VkImage src;
             if (hdr)
                 src = app.hdrImage();
@@ -1132,7 +1133,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
                          VK_ACCESS_TRANSFER_READ_BIT, 1, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
                          VK_PIPELINE_STAGE_TRANSFER_BIT, hdr ? 0 : (uint32_t)slot);
             VkBufferImageCopy bic{};
-            bic.bufferOffset = (uint64_t)slot * ext.width * ext.height * 8;
+            bic.bufferOffset = (uint64_t)slot * rend.width * rend.height * 8;
             bic.bufferImageHeight = 1;
             bic.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, hdr ? 0 : (uint32_t)slot, 0, 1};
             bic.imageOffset = {0, 0, 0};
@@ -1145,7 +1146,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
                          VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT, 1,
                          VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 6);
             VkBufferImageCopy bic{};
-            bic.bufferOffset = (uint64_t)28 * ext.width * ext.height + (uint64_t)face * 256 * 256 * 8;
+            bic.bufferOffset = (uint64_t)28 * rend.width * rend.height + (uint64_t)face * 256 * 256 * 8;
             bic.bufferImageHeight = 1;
             bic.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, face, 1};
             bic.imageOffset = {0, 0, 0};
@@ -1153,7 +1154,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
             vkCmdCopyImageToBuffer(cmd, m_envPre.img, VK_IMAGE_LAYOUT_GENERAL, m_dbgBuf, 1, &bic);
         }
         if (m_envReady) {
-            const size_t eqOff = (size_t)28 * ext.width * ext.height + (size_t)6 * 256 * 256 * 8;
+            const size_t eqOff = (size_t)28 * rend.width * rend.height + (size_t)6 * 256 * 256 * 8;
             vkImgBarrier(cmd, m_envEqImg, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL,
                          VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_READ_BIT, 1,
                          VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -1174,7 +1175,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
         const auto* px = (const uint16_t*)p;
         std::fprintf(stderr, "DBG HDR:");
         for (int i = 0; i < 5; ++i) {
-            const uint16_t* q = px + (size_t)((int)ext.height / 2 * (int)ext.width + (i * (int)ext.width) / 5) * 4;
+            const uint16_t* q = px + (size_t)((int)rend.height / 2 * (int)rend.width + (i * (int)rend.width) / 5) * 4;
             std::fprintf(stderr, " (%.3f %.3f %.3f %.3f)", halfToFloat(q[0]), halfToFloat(q[1]), halfToFloat(q[2]),
                          halfToFloat(q[3]));
         }
@@ -1189,8 +1190,8 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
         void* p;
         VK(vkMapMemory(m_dev, m_dbgMem, 0, m_dbgSize, 0, &p));
         for (int slot = 0; slot < 4; ++slot) {
-            const uint32_t mw = ext.width >> ((slot == 2 || slot == 3) ? 0 : slot);
-            const uint32_t mh = ext.height >> ((slot == 2 || slot == 3) ? 0 : slot);
+            const uint32_t mw = rend.width >> ((slot == 2 || slot == 3) ? 0 : slot);
+            const uint32_t mh = rend.height >> ((slot == 2 || slot == 3) ? 0 : slot);
             char fn[64];
             const char* tag;
             if (slot == 0)
@@ -1204,7 +1205,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
             std::snprintf(fn, sizeof(fn), "/tmp/scene_%s.pgm", tag);
             FILE* f = std::fopen(fn, "wb");
             if (slot == 3) {
-                const float* fp = (const float*)p + (size_t)3 * ext.width * ext.height * 2;
+                const float* fp = (const float*)p + (size_t)3 * rend.width * rend.height * 2;
                 std::fprintf(f, "P5 %u %u 255\n", mw, mh);
                 for (uint32_t y = 0; y < mh; ++y)
                     for (uint32_t x = 0; x < mw; ++x) {
@@ -1212,7 +1213,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
                         std::fputc((int)(std::min(1.0f, v) * 255.0f), f);
                     }
             } else {
-                const uint16_t* px = (const uint16_t*)p + (size_t)slot * ext.width * ext.height * 4;
+                const uint16_t* px = (const uint16_t*)p + (size_t)slot * rend.width * rend.height * 4;
                 std::fprintf(f, "P6 %u %u 255\n", mw, mh);
                 for (uint32_t y = 0; y < mh; ++y)
                     for (uint32_t x = 0; x < mw; ++x) {
@@ -1228,7 +1229,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
             std::fprintf(stderr, "DBG MIP: wrote %s\n", fn);
         }
         if (m_envReady) {
-            const uint16_t* cp = (const uint16_t*)p + (size_t)14 * ext.width * ext.height;
+            const uint16_t* cp = (const uint16_t*)p + (size_t)14 * rend.width * rend.height;
             char fn[64];
             std::snprintf(fn, sizeof(fn), "/tmp/env_cube.pgm");
             FILE* f = std::fopen(fn, "wb");
@@ -1249,7 +1250,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
             std::fprintf(stderr, "DBG MIP: wrote %s\n", fn);
         }
         if (m_envReady) {
-            const float* ef = (const float*)p + (size_t)7 * ext.width * ext.height + (size_t)6 * 256 * 256 * 2;
+            const float* ef = (const float*)p + (size_t)7 * rend.width * rend.height + (size_t)6 * 256 * 256 * 2;
             char fn[64];
             std::snprintf(fn, sizeof(fn), "/tmp/env_eq.pgm");
             FILE* f = std::fopen(fn, "wb");
@@ -1312,6 +1313,7 @@ void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::regist
     m_sssDepthReject = rs.sssDepthReject;
     syncEnvironments(app, reg);
     prepBuffers(reg);
+    const VkExtent2D rend = app.renderExtent();
     const VkExtent2D ext = app.extent();
     ensureSceneSamplers(app);
     renderShadowCubes(cmd, reg);
@@ -1332,7 +1334,7 @@ void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::regist
         cv.tanD = v.tanD;
         cv.zNear = 0.1f;
         cv.zFar = 300.0f;
-        writeViewUbo(cv, envIntensity(reg), ext, rs.sssCurvScale);
+        writeViewUbo(cv, envIntensity(reg), rend, rs.sssCurvScale);
         renderSceneBuffers(cmd, app, rs.bgColor, cv);
         hdrBarrier(cmd, app);
         if (app.hdrView() != m_tmSrcView)

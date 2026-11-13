@@ -813,6 +813,7 @@ mesh data: pos/nrm/uv float arrays, idx/joints int arrays, weights float array (
 | exposure | number | [0.1, 3.0] |
 | sssDepthReject | number | [0.0, 8.0] |
 | sssCurvScale | number | [0.0, 10.0] |
+| renderScale | number | [0.25, 2.0] |
 
 ### PhysicsSettings
 

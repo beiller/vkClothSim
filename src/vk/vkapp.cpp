@@ -441,8 +441,17 @@ void VkApp::pollEvents() {
         m_pendingExtent = {(uint32_t)w, (uint32_t)h};
 }
 
+void VkApp::setRenderExtent(VkExtent2D e) {
+    if (e.width < 1)
+        e.width = 1;
+    if (e.height < 1)
+        e.height = 1;
+    m_pendingRenderExtent = e;
+}
+
 void VkApp::resizeBuffers() {
-    if (m_pendingExtent.width != m_extent.width || m_pendingExtent.height != m_extent.height)
+    if (m_pendingExtent.width != m_extent.width || m_pendingExtent.height != m_extent.height ||
+        m_pendingRenderExtent.width != m_renderExtent.width || m_pendingRenderExtent.height != m_renderExtent.height)
         recreateSwapchain();
 }
 
@@ -510,6 +519,9 @@ void VkApp::recreateSwapchain() {
         m_extent.width = 1;
     if (m_extent.height == 0)
         m_extent.height = 1;
+    if (m_pendingRenderExtent.width == 0 || m_pendingRenderExtent.height == 0)
+        m_pendingRenderExtent = m_extent;
+    m_renderExtent = m_pendingRenderExtent;
 
     uint32_t icnt = caps.minImageCount + 1;
     if (caps.maxImageCount && icnt > caps.maxImageCount)
@@ -549,41 +561,41 @@ void VkApp::recreateSwapchain() {
     vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, m_images.data());
 
     uint32_t mips = 1; // mip chain for the glass roughness blur (mip level = rough * 8)
-    for (uint32_t s = std::max(m_extent.width, m_extent.height); s > 1; s >>= 1)
+    for (uint32_t s = std::max(m_renderExtent.width, m_renderExtent.height); s > 1; s >>= 1)
         ++mips;
     m_sceneColorMips = mips;
 
-    createAttachment(m_extent, VK_FORMAT_D32_SFLOAT,
+    createAttachment(m_renderExtent, VK_FORMAT_D32_SFLOAT,
                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                      VK_IMAGE_ASPECT_DEPTH_BIT, m_depth, m_depthMem, m_depthView);
-    createAttachment(m_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+    createAttachment(m_renderExtent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_depthCopy, m_depthCopyMem, m_depthCopyView);
-    createAttachment(m_extent, m_hdrFmt,
+    createAttachment(m_renderExtent, m_hdrFmt,
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sceneColor, m_sceneColorMem, m_sceneColorView, mips);
     m_sceneColorAttView = makeImageView(m_dev, m_sceneColor, m_hdrFmt);
-    createAttachment(m_extent, m_hdrFmt, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+    createAttachment(m_renderExtent, m_hdrFmt, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sceneColorTemp, m_sceneColorTempMem, m_sceneColorTempView);
-    createAttachment(m_extent, m_hdrFmt,
+    createAttachment(m_renderExtent, m_hdrFmt,
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sssDiffuse, m_sssDiffuseMem, m_sssDiffuseView, mips);
-    createAttachment(m_extent, m_hdrFmt,
+    createAttachment(m_renderExtent, m_hdrFmt,
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sssWeight, m_sssWeightMem, m_sssWeightView);
-    createAttachment(m_extent, m_hdrFmt,
+    createAttachment(m_renderExtent, m_hdrFmt,
                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VK_IMAGE_ASPECT_COLOR_BIT, m_sssPost, m_sssPostMem, m_sssPostView);
-    createAttachment(m_extent, m_hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                      VK_IMAGE_ASPECT_COLOR_BIT, m_hdr, m_hdrMem, m_hdrView);
+    createAttachment(m_renderExtent, m_hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                                   VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                     VK_IMAGE_ASPECT_COLOR_BIT, m_hdr, m_hdrMem, m_hdrView);
 
     VkImageView satts[5] = {m_sceneColorAttView, m_depthView, m_sssDiffuseView, m_sssWeightView, m_sssPostView};
-    makeFramebuffer(m_dev, m_rpScene, m_extent.width, m_extent.height, satts, 5, m_sceneFb);
+    makeFramebuffer(m_dev, m_rpScene, m_renderExtent.width, m_renderExtent.height, satts, 5, m_sceneFb);
 
     VkImageView natts[5] = {m_hdrView, m_depthView, m_sssDiffuseView, m_sssWeightView, m_sssPostView};
-    makeFramebuffer(m_dev, m_rpSceneNoClear, m_extent.width, m_extent.height, natts, 5, m_sceneFbNoClear);
+    makeFramebuffer(m_dev, m_rpSceneNoClear, m_renderExtent.width, m_renderExtent.height, natts, 5, m_sceneFbNoClear);
 
     m_views.resize(icnt);
     m_fbs.resize(icnt);

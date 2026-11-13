@@ -269,12 +269,13 @@ static const FieldDesc kSkeleton[] = {
     {"meshes", OFF(Skeleton, meshes), FieldKind::EntArr},
 };
 /// RenderSettings | global render settings (emplace on a marker entity): bgColor (vec3), exposure, sssDepthReject,
-/// sssCurvScale
+/// sssCurvScale, renderScale (scene buffer size vs display; >1 supersamples)
 static const FieldDesc kRenderSettings[] = {
     {"bgColor", OFF(RenderSettings, bgColor), FieldKind::Color},
     {"exposure", OFF(RenderSettings, exposure), FieldKind::SliderF, 0.1f, 3.0f},
     {"sssDepthReject", OFF(RenderSettings, sssDepthReject), FieldKind::SliderF, 0.0f, 8.0f},
     {"sssCurvScale", OFF(RenderSettings, sssCurvScale), FieldKind::SliderF, 0.0f, 10.0f},
+    {"renderScale", OFF(RenderSettings, renderScale), FieldKind::SliderF, 0.25f, 2.0f},
 };
 /// PhysicsSettings | global physics solver steps (emplace on a marker entity): velocitySteps/positionSteps
 static const FieldDesc kPhysicsSettings[] = {

@@ -9,7 +9,9 @@
 #include "util.hpp"
 #include "vk/vkapp.hpp"
 #include "xr/xr.hpp"
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -186,16 +188,25 @@ int main(int argc, char** argv) {
         writePerfText(engine);
 
         float wait = 0.0f;
-        if (engine.hasWindow) {
-            app.pollEvents();
-            app.resizeBuffers();
-        }
         XrFrame fr;
         if (engine.xr) {
             const auto tWait = std::chrono::steady_clock::now();
             engine.xr->waitFrame();
             wait = msBetween(tWait, std::chrono::steady_clock::now());
             fr = engine.xr->poll();
+        }
+        if (engine.hasWindow) {
+            app.pollEvents();
+            VkExtent2D base = app.extent();
+            if (engine.xrSession && fr.running) { // in VR the display is the headset, not the window
+                const VkExtent2D e0 = engine.xr->extent(0);
+                const VkExtent2D e1 = engine.xr->extent(engine.xr->eyeCount() > 1 ? 1 : 0);
+                base = {std::max(e0.width, e1.width), std::max(e0.height, e1.height)};
+            }
+            const float scale = readSetting<RenderSettings>(engine.reg).renderScale;
+            auto q = [](float v) { return (uint32_t)std::max(16.0f, std::lround(v / 32.0f) * 32.0f); };
+            app.setRenderExtent({q((float)base.width * scale), q((float)base.height * scale)});
+            app.resizeBuffers();
         }
         if (engine.hasDevice)
             engine.graphics.flushFrees();
