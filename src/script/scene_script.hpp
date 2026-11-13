@@ -64,6 +64,7 @@ private:
 };
 
 void luaRegisterMath(lua_State* L, SceneScript* host);
+void luaRegisterFitTable(lua_State* L, SceneScript* host);
 void luaRegisterComponents(lua_State* L, SceneScript* host);
 void luaRegisterScene(lua_State* L, SceneScript* host);
 void luaRegisterUi(lua_State* L, SceneScript* host);

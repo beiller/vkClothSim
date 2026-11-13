@@ -117,6 +117,7 @@ void SceneScript::init(Engine& w) {
 
     lua_newtable(L);
     luaRegisterPhysicsTable(L, this);
+    luaRegisterFitTable(L, this);
     lua_setglobal(L, "physics");
 
     lua_newtable(L);

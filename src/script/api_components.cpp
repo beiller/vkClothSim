@@ -183,8 +183,6 @@ static int lEntity(lua_State* L) {
     return 1;
 }
 
-/// scene.emplace(e: entity, type: string, fields?: table) | create or replace component `type` on e from a field table
-/// (a Geometry table may carry a "shapes" array)
 using CompMutateFn = bool (*)(entt::registry&, entt::entity, const std::string&, const CompFields&, std::string&);
 
 static int lCompMutate(lua_State* L, const char* op, CompMutateFn fn) {
@@ -203,6 +201,8 @@ static int lCompMutate(lua_State* L, const char* op, CompMutateFn fn) {
     return 0;
 }
 
+/// scene.emplace(e: entity, type: string, fields?: table) | create or replace component `type` on e from a field table
+/// (a Geometry table may carry a "shapes" array)
 static int lCompEmplace(lua_State* L) {
     return lCompMutate(L, "emplace", compEmplace);
 }

@@ -69,23 +69,22 @@ def parse_handlers(files):
     for f in files:
         text = f.read_text()
         lines = text.splitlines()
-        for m in re.finditer(r"^(?:int|void)\s+(l[A-Z]\w*)\s*\(\s*lua_State\s*\*\s*L\s*\)\s*\{", text, re.M):
+        for m in re.finditer(r"^(?:(?:static\s+)?(?:int|void))\s+(l[A-Z]\w*)\s*\(\s*lua_State\s*\*\s*L\s*\)\s*\{", text, re.M):
             sym = m.group(1)
             line_no = text[: m.start()].count("\n")
-            # walk up: collect contiguous comment lines; the /// one is the annotation
-            doc_lines, ann = [], ""
+            # walk up: collect contiguous comment lines; the /// block is the annotation
+            doc_lines, ann_lines = [], []
             for ln in range(line_no - 1, -1, -1):
                 stripped = lines[ln].strip()
                 if stripped.startswith("///"):
-                    ann = stripped[3:].strip()
-                    break  # the /// line is the only one we take
-                if stripped.startswith("//"):
+                    ann_lines.append(stripped[3:].strip())
+                elif stripped.startswith("//"):
                     doc_lines.append(stripped[2:].strip())
                 elif stripped == "":
                     continue
                 else:
                     break
-            handlers[sym] = ("\n".join(reversed(doc_lines)), extract_body(text, m.start())[0], ann)
+            handlers[sym] = ("\n".join(reversed(doc_lines)), extract_body(text, m.start())[0], " ".join(reversed(ann_lines)))
     return handlers
 
 

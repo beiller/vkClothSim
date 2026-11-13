@@ -25,6 +25,7 @@ for spec in \
     "find_probe|5" \
     "skin_probe|5" \
     "shape_probe|5" \
+    "fit_probe|5" \
     "lua_skin|5" \
     "dynquat_check|45" \
     "force_check|245" \

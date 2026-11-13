@@ -93,7 +93,7 @@ Optional `--frames N` exits after N frames (CI). Serverless/headless use a fixed
 |-------|------|-----------|
 | `scene.*` | world / loader | entity emplace replace component remove set_pose get_pose world_pose set_morph shapes link_mesh get_entity find_components attach_script destroy add_child time button scenes request_scene last_error set get |
 | `math.*` | — | vadd vsub vscale vlen vnorm vcross vdot qmul qinv qaxis qrot qfromto |
-| `physics.*` | PhysicsServer | raycast |
+| `physics.*` | PhysicsServer / 3dsim_solvers | raycast convex_decompose collision_exception fit_capsule |
 | `soft.*` | GraphicsServer | set_floor |
 | `graphics.*` | GraphicsServer | gltf load_texture render_texture |
 | `ui.*` | UI | window tab editor button text section slider_f slider_i checkbox color drag_v3 fire_button |

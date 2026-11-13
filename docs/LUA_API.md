@@ -34,6 +34,7 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [`scene.scenes() -> table`](#scenescenes---table)
   - [`scene.request_scene(path: string)`](#scenerequestscenepath-string)
   - [`scene.last_error() -> string`](#scenelasterror---string)
+  - [`scene.animate(target, field, keys, opts) -> player entity`](#sceneanimatetarget-field-keys-opts---player-entity)
 - [math](#math)
   - [`math.vadd(a: vec3, b: vec3) -> vec3`](#mathvadda-vec3-b-vec3---vec3)
   - [`math.vsub(a: vec3, b: vec3) -> vec3`](#mathvsuba-vec3-b-vec3---vec3)
@@ -48,13 +49,14 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [`math.qrot(q: quat, v: vec3) -> vec3`](#mathqrotq-quat-v-vec3---vec3)
   - [`math.qfromto(a: vec3, b: vec3) -> quat`](#mathqfromtoa-vec3-b-vec3---quat)
 - [graphics](#graphics)
-  - [`graphics.gltf(entity|string, string) -> entity`](#graphicsgltfentitystring-string---entity)
+  - [`graphics.gltf(path: string) -> table`](#graphicsgltfpath-string---table)
   - [`graphics.load_texture(path: string, name?: string) -> entity`](#graphicsloadtexturepath-string-name-string---entity)
   - [`graphics.render_texture(w: int, h: int, name?: string) -> entity`](#graphicsrendertexturew-int-h-int-name-string---entity)
 - [physics](#physics)
+  - [`physics.fit_capsule(pos: number[], nrm?: number[], opts?: table) -> fit, err`](#physicsfitcapsulepos-number-nrm-number-opts-table---fit-err)
   - [`physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table`](#physicsraycastorigin-vec3-dir-vec3-maxdist-number-excludes-table---table)
-  - [`physics.convex_decompose(entity, number, number, number) -> none`](#physicsconvexdecomposeentity-number-number-number---none)
-  - [`physics.collision_exception(entity, entity) -> none`](#physicscollisionexceptionentity-entity---none)
+  - [`physics.convex_decompose(mesh: entity|Geometry-table, maxHulls?: number, maxVertsPerHull?: number, threshold?: number) -> table`](#physicsconvexdecomposemesh-entitygeometry-table-maxhulls-number-maxvertsperhull-number-threshold-number---table)
+  - [`physics.collision_exception(a: entity, b: entity, on?: bool)`](#physicscollisionexceptiona-entity-b-entity-on-bool)
 - [soft](#soft)
   - [`soft.set_floor(y: number)`](#softsetfloory-number)
 - [ui](#ui)
@@ -67,6 +69,8 @@ Do not edit by hand; re-run the generator after API changes. Every function must
 - [components (emplace / replace)](#components-emplace--replace)
   - [Transform](#transform)
   - [Bind](#bind)
+  - [AnimationClip](#animationclip)
+  - [AnimationPlayer](#animationplayer)
   - [UIWidget](#uiwidget)
   - [UIButton](#uibutton)
   - [UICanvas](#uicanvas)
@@ -221,6 +225,10 @@ queue a scene to load at the end of this frame (e.g. from a UI button)
 
 error message from the last failed scene load (empty when none)
 
+### `scene.animate(target, field, keys, opts) -> player entity`
+
+keyframe animation via a generated clip: target = named entity|string|{...} (one track per target, shared clock), field = "Component.field", keys = array of {t = time, v = number|{n1..n4}} (all with the same value count 1/3/4), opts = {loop = 0 once|1 loop|2 pingpong, speed = n, playing = bool}
+
 ## math
 
 _Vector/quaternion helpers added on top of Lua's standard `math` library_
@@ -275,9 +283,9 @@ shortest rotation mapping direction a onto b
 
 ## graphics
 
-### `graphics.gltf(entity|string, string) -> entity`
+### `graphics.gltf(path: string) -> table`
 
-_no description_
+parse a glTF file as a name->node map (node = component-name -> field table); no world entities are created; pass to scene.spawn to materialize. Compat: graphics.gltf(e, path) still loads straight into e
 
 ### `graphics.load_texture(path: string, name?: string) -> entity`
 
@@ -289,17 +297,21 @@ create a standalone GPUTexture render target (no Texture parent); render into it
 
 ## physics
 
+### `physics.fit_capsule(pos: number[], nrm?: number[], opts?: table) -> fit, err`
+
+fits a compound of tapered-capsule chains (spheres for blob-like clouds) to a vertex cloud; pos is flat xyz, nrm is flat xyz outward normals of the same length (positions-only fit when absent), opts overrides profile_bins, profile_percentile, profile_dilate, underfit_weight, overfit_weight, tolerance, max_segments, overhang_weight, overhang_percentile, sphere_aspect, sphere_percentile, max_clusters; returns nil + message when nothing fits; a part with length 0 and one taper r0 = r1 is a sphere
+
 ### `physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table`
 
 rigid-body raycast; returns {hit = true, pos = vec3, dist = number, entity = entity} or nil when nothing is hit; `excludes` is an array of entities to skip
 
-### `physics.convex_decompose(entity, number, number, number) -> none`
+### `physics.convex_decompose(mesh: entity|Geometry-table, maxHulls?: number, maxVertsPerHull?: number, threshold?: number) -> table`
 
-_no description_
+decompose a mesh into convex parts (CoACD); `mesh` is an entity with Geometry or a raw Geometry field table; returns an array of hulls, each a flat {x,y,z,...} point list ready for ConvexHullShape.points; falls back to one hull of all vertices on degenerate input
 
-### `physics.collision_exception(entity, entity) -> none`
+### `physics.collision_exception(a: entity, b: entity, on?: bool)`
 
-_no description_
+toggle the collision exclusion between two bodies: on = true (default) = ignore collisions between them, false = restore; effective from the next physics step
 
 ## soft
 
@@ -357,6 +369,28 @@ per-frame URL copy: source `url` -> `target` field (empty = widget value); `dir`
 | target | string |  |
 | dir | int | [0.0, 2.0] |
 
+### AnimationClip
+
+| field | type | range |
+|---|---|---|
+| duration | number | [0.0, 3600.0] |
+| targets | string[] |  |
+| interps | number[] |  |
+| trackStart | number[] |  |
+| times | number[] |  |
+| values | number[] |  |
+| tangents | number[] |  |
+
+### AnimationPlayer
+
+| field | type | range |
+|---|---|---|
+| clip | entity-ref |  |
+| time | number | [0.0, 3600.0] |
+| speed | number |  |
+| loop | int | [0.0, 2.0] |
+| playing | bool |  |
+
 ### UIWidget
 
 marker for a drawable UI widget; `order` is its layout position among siblings
@@ -366,8 +400,6 @@ marker for a drawable UI widget; `order` is its layout position among siblings
 | order | int | [0.0, 10000.0] |
 
 ### UIButton
-
-a clickable button; on click the exported function named by `target_url` is called with this entity as arg 1
 
 | field | type | range |
 |---|---|---|
@@ -488,8 +520,6 @@ a 3D drag gizmo; `change_url` is called with this entity as arg 1 while the user
 
 ### Material
 
-PBR material: baseColor/emissive (vec3), metallic/roughness [0,1], up to 4 texture refs (tex/texMR/texNormal/texEmissive), alphaMode 0=opaque 1=mask 2=blend, SSS and refraction
-
 | field | type | range |
 |---|---|---|
 | baseColor | vec3 |  |
@@ -528,8 +558,6 @@ scene hierarchy: `e` = parent entity
 
 ### Camera
 
-camera: fovDeg/nearP/farP; `active=true` makes it THE camera (first active wins); XR hand-off deactivates all non-VR cameras while the headset has a pose
-
 | field | type | range |
 |---|---|---|
 | fovDeg | number | [10.0, 120.0] |
@@ -565,8 +593,6 @@ point light: color (vec3), intensity, radius (falloff), on 0/1, shadow tuning fi
 | shadowMaxRadius | number | [1.0, 64.0] |
 
 ### SoftBodyData
-
-GPU PBD soft-body params: pinned (0=free, >0=pinned), solver steps/passes, mass/damping/stiffness/tension/friction, cons = constraint param array
 
 | field | type | range |
 |---|---|---|
@@ -659,8 +685,6 @@ links a shape entity to a body: `shape` = shape entity ref
 
 ### Joint
 
-physics joint between two bodies (bodyA/bodyB refs); type (only 0 = point is supported); grabPos; excludeCollision suppresses collision between the joined bodies
-
 | field | type | range |
 |---|---|---|
 | bodyA | entity-ref |  |
@@ -670,8 +694,6 @@ physics joint between two bodies (bodyA/bodyB refs); type (only 0 = point is sup
 | excludeCollision | bool |  |
 
 ### SixDofJoint
-
-6-DOF joint: bodyA/bodyB refs (null bodyB = fixed to world), translation/angle limits (lim*), soft limits, per-axis motors (motor*), priority/solver steps, enabled
 
 | field | type | range |
 |---|---|---|
@@ -775,8 +797,6 @@ mesh data: pos/nrm/uv float arrays, idx/joints int arrays, weights float array (
 
 ### Skeleton
 
-skinning skeleton: name, boneNames string array, joints entity array, placement ref, meshes entity array; invBinds is derived on write
-
 | field | type | range |
 |---|---|---|
 | name | string |  |
@@ -786,8 +806,6 @@ skinning skeleton: name, boneNames string array, joints entity array, placement 
 | meshes | entity[] |  |
 
 ### RenderSettings
-
-global render settings (emplace on a marker entity): bgColor (vec3), exposure, sssDepthReject, sssCurvScale
 
 | field | type | range |
 |---|---|---|

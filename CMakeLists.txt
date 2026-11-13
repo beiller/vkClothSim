@@ -186,13 +186,14 @@ target_link_libraries(3dsim_graphics PUBLIC 3dsim_core 3dsim_ui PRIVATE glfw Vul
 add_library(3dsim_script STATIC
     src/script/lua_host.cpp
     src/script/api_math.cpp
+    src/script/api_fit.cpp
     src/script/api_components.cpp
     src/script/api_scene.cpp
     src/script/api_ui.cpp
     src/script/api_engine.cpp)
 target_compile_features(3dsim_script PRIVATE cxx_std_23)
 target_include_directories(3dsim_script PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/ui ${LUA_INCLUDE_DIR})
-target_link_libraries(3dsim_script PUBLIC 3dsim_core 3dsim_io 3dsim_graphics 3dsim_ui 3dsim_physics PRIVATE Jolt::Jolt ${LUA_LIBRARY})
+target_link_libraries(3dsim_script PUBLIC 3dsim_core 3dsim_io 3dsim_solvers 3dsim_graphics 3dsim_ui 3dsim_physics PRIVATE Jolt::Jolt ${LUA_LIBRARY})
 
 # the app: glue (main loop, systems, scene loading) + all subsystems
 add_executable(vksim
@@ -224,10 +225,5 @@ target_include_directories(anim_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOU
 add_executable(collision_shape_solver_test solvers/collision_shape_solver_test.cpp)
 target_compile_features(collision_shape_solver_test PRIVATE cxx_std_23)
 target_link_libraries(collision_shape_solver_test PRIVATE 3dsim_solvers)
-
-# GPU-free probe: core + IO (GLTF loader) + collision shape solver (no Vulkan/GLFW/Jolt/ImGui).
-add_executable(bone_probe solvers/bone_probe.cpp)
-target_compile_features(bone_probe PRIVATE cxx_std_23)
-target_link_libraries(bone_probe PRIVATE 3dsim_io 3dsim_solvers)
 
 
