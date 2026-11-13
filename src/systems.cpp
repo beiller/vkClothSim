@@ -1,14 +1,14 @@
 #include "systems.hpp"
 
-#include "url.hpp"
-
+#include "anim.hpp"
 #include "assets.hpp"
 #include "ecs_ops.hpp"
+#include "url.hpp"
 #include "vk/vkapp.hpp"
 #include <cmath>
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <unordered_map>
 
 entt::entity findActiveCamera(const entt::registry& reg) {
@@ -31,8 +31,15 @@ CameraView cameraView(const entt::registry& reg, entt::entity cam, float aspect)
     const Mat4 view = poseView(wt.pos, wt.quat);
     const float tanU = std::tan(c.fovDeg * 0.5f * kPi / 180.0f);
     const float tanR = tanU * aspect;
-    return {glm::perspective(glm::radians(c.fovDeg), aspect, c.nearP, c.farP) * view, view, wt.pos, -tanR, tanR, tanU, -tanU,
-            c.nearP, c.farP};
+    return {glm::perspective(glm::radians(c.fovDeg), aspect, c.nearP, c.farP) * view,
+            view,
+            wt.pos,
+            -tanR,
+            tanR,
+            tanU,
+            -tanU,
+            c.nearP,
+            c.farP};
 }
 
 void stepXr(entt::registry& reg, const XrFrame& fr) {
@@ -78,9 +85,12 @@ void stepXr(entt::registry& reg, const XrFrame& fr) {
         const V3 right = q * V3{1, 0, 0};
         c.nViews = 2;
         for (int i = 0; i < 2; ++i)
-            c.views[i] = View{head + right * (i == 0 ? -0.032f : 0.032f), q,
-                             -std::tan(54.0f * kPi / 180.0f), std::tan(40.0f * kPi / 180.0f),
-                             std::tan(44.0f * kPi / 180.0f), -std::tan(55.0f * kPi / 180.0f)};
+            c.views[i] = View{head + right * (i == 0 ? -0.032f : 0.032f),
+                              q,
+                              -std::tan(54.0f * kPi / 180.0f),
+                              std::tan(40.0f * kPi / 180.0f),
+                              std::tan(44.0f * kPi / 180.0f),
+                              -std::tan(55.0f * kPi / 180.0f)};
     }
 }
 
@@ -92,13 +102,13 @@ entt::entity spawnVrRoot(entt::registry& reg) {
     entt::entity root = reg.create();
     reg.emplace<Transform>(root, V3{0, 0, 0}, Quat{1, 0, 0, 0});
     reg.emplace<VrRoot>(root);
-    reg.emplace<Name>(root, "vr root");
+    setName(reg, root, "vr root");
     entt::entity head = reg.create();
     reg.emplace<Transform>(head, V3{0, 0, 0}, Quat{1, 0, 0, 0});
     reg.emplace<Camera>(head, Camera{90.0f, 0.01f, 300.0f, false});
     reg.emplace<VrCamera>(head);
     reg.emplace<Parent>(head, root);
-    reg.emplace<Name>(head, "vr cam");
+    setName(reg, head, "vr cam");
     return root;
 }
 
@@ -118,7 +128,7 @@ void spawnControllers(Engine& w) {
         w.reg.emplace<ControllerInput>(e, ControllerInput{h});
         w.reg.emplace<Renderable>(e, geom);
         w.reg.emplace<MaterialRef>(e, gripMat);
-        w.reg.emplace<Name>(e, h == 0 ? "controller L" : "controller R");
+        setName(w.reg, e, h == 0 ? "controller L" : "controller R");
     }
 }
 
@@ -157,10 +167,10 @@ void stepControllers(entt::registry& reg, const XrFrame& fr) {
 void spawnInputEntities(Engine& w) {
     entt::entity m = w.reg.create();
     w.reg.emplace<MouseInput>(m);
-    w.reg.emplace<Name>(m, "mouse");
+    setName(w.reg, m, "mouse");
     entt::entity k = w.reg.create();
     w.reg.emplace<KeyboardInput>(k);
-    w.reg.emplace<Name>(k, "keyboard");
+    setName(w.reg, k, "keyboard");
 }
 
 void stepMouse(Engine& w) {
@@ -270,22 +280,21 @@ bool uiPanelUv(const entt::registry& reg, entt::entity canvas, const V3& hitPos,
     return true;
 }
 
-static int fieldBytes(FieldKind k) {
-    switch (k) {
-    case FieldKind::SliderF:
-    case FieldKind::SliderI:
-        return 4;
-    case FieldKind::Checkbox:
-        return 1;
-    case FieldKind::Color:
-    case FieldKind::DragV3:
-        return 12;
-    case FieldKind::Quat:
-        return 16;
-    case FieldKind::Ref:
-        return 8;
-    default:
-        return 0;
+// advance all players and sample their clips into the target fields (before world flattening, so
+// animated joints feed this frame's resolveWorldTransforms); lazy glTF parse on first step
+void stepAnimations(entt::registry& reg, float dt) {
+    for (auto [e, p] : reg.view<AnimationPlayer>().each()) {
+        if (!p.playing)
+            continue;
+        AnimationClip* c = reg.try_get<AnimationClip>(p.clip);
+        if (!c)
+            continue;
+        if (c->duration <= 0.0f)
+            c->duration = animDuration(c->trackStart, c->times);
+        if (c->duration <= 0.0f || c->targets.empty())
+            continue;
+        p.time += dt * p.speed;
+        animStepClip(reg, *c, animWrap(p.time, c->duration, p.loop));
     }
 }
 

@@ -1,14 +1,13 @@
 #pragma once
 #include <vulkan/vulkan.h>
 
+#include "app/engine.hpp"
 #include "ecs.hpp"
 #include "mesh.hpp"
 #include "ui.hpp"
-#include "app/engine.hpp"
 #include <vector>
 
-template <typename Marker>
-inline entt::entity findMarker(const entt::registry& reg) {
+template <typename Marker> inline entt::entity findMarker(const entt::registry& reg) {
     for (auto e : reg.view<Marker>())
         return e;
     return entt::null;
@@ -18,6 +17,8 @@ entt::entity findActiveCamera(const entt::registry& reg);
 CameraView cameraView(const entt::registry& reg, entt::entity cam, float aspect);
 
 void resolveWorldTransforms(entt::registry& reg);
+
+void stepAnimations(entt::registry& reg, float dt);
 
 void stepXr(entt::registry& reg, const XrFrame& fr);
 entt::entity spawnVrRoot(entt::registry& reg);

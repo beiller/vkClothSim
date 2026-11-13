@@ -15,9 +15,14 @@ struct UrlRef {
 // script's vars mirror (synced by the script host): numbers as float, booleans, 3/4-number
 // tables as vec3/quat (subvars like "pos.x" are member views); string vars go through
 // scene.get/scene.set instead.
+// Results are cached per URL: the entity/component liveness is re-checked on every hit and
+// the base pointer is derived from it, so dead targets self-heal. Call urlInvalidateAll()
+// when names change (Name writes) or the registry is cleared; .LuaScript. targets are never
+// cached (map-backed, no stable pointer).
 bool resolveUrl(const entt::registry& reg, const std::string& url, UrlRef& out, std::string& err);
+void urlInvalidateAll();
 bool resolveEntityField(const entt::registry& reg, entt::entity ent, const std::string& field, const std::string& label,
-                       UrlRef& out, std::string& err);
+                        UrlRef& out, std::string& err);
 bool sceneSet(const entt::registry& reg, const std::string& url, const float* vals, int n, std::string& err);
 bool sceneGet(const entt::registry& reg, const std::string& url, float* vals, int maxN, int& n, std::string& err);
 bool sceneSetEnt(const entt::registry& reg, entt::entity ent, const std::string& field, const float* vals, int n,

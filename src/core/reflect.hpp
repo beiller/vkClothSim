@@ -56,7 +56,8 @@ static const FieldDesc kTransform[] = {
     {"qz", OFF(Transform, quat) + 8, FieldKind::SliderF, -1.0f, 1.0f},
     {"qw", OFF(Transform, quat) + 12, FieldKind::SliderF, -1.0f, 1.0f},
 };
-/// Material | PBR material: baseColor/emissive (vec3), metallic/roughness [0,1], up to 4 texture refs (tex/texMR/texNormal/texEmissive), alphaMode 0=opaque 1=mask 2=blend, SSS and refraction
+/// Material | PBR material: baseColor/emissive (vec3), metallic/roughness [0,1], up to 4 texture refs
+/// (tex/texMR/texNormal/texEmissive), alphaMode 0=opaque 1=mask 2=blend, SSS and refraction
 static const FieldDesc kMaterial[] = {
     {"baseColor", OFF(Material, baseColor), FieldKind::Color},
     {"metallic", OFF(Material, metallic), FieldKind::SliderF, 0.0f, 1.0f},
@@ -84,7 +85,8 @@ static const FieldDesc kMaterialRef[] = {
 static const FieldDesc kParent[] = {
     {"e", OFF(Parent, e), FieldKind::Ref},
 };
-/// Camera | camera: fovDeg/nearP/farP; `active=true` makes it THE camera (first active wins); XR hand-off deactivates all non-VR cameras while the headset has a pose
+/// Camera | camera: fovDeg/nearP/farP; `active=true` makes it THE camera (first active wins); XR hand-off deactivates
+/// all non-VR cameras while the headset has a pose
 static const FieldDesc kCamera[] = {
     {"fovDeg", OFF(Camera, fovDeg), FieldKind::SliderF, 10.0f, 120.0f},
     {"nearP", OFF(Camera, nearP), FieldKind::SliderF, 0.01f, 5.0f},
@@ -110,7 +112,8 @@ static const FieldDesc kPointLight[] = {
     {"shadowSearchScale", OFF(PointLight, shadowSearchScale), FieldKind::SliderF, 0.5f, 16.0f},
     {"shadowMaxRadius", OFF(PointLight, shadowMaxRadius), FieldKind::SliderF, 1.0f, 64.0f},
 };
-/// SoftBodyData | GPU PBD soft-body params: pinned (0=free, >0=pinned), solver steps/passes, mass/damping/stiffness/tension/friction, cons = constraint param array
+/// SoftBodyData | GPU PBD soft-body params: pinned (0=free, >0=pinned), solver steps/passes,
+/// mass/damping/stiffness/tension/friction, cons = constraint param array
 static const FieldDesc kSoftBodyData[] = {
     {"pinned", OFF(SoftBodyData, pinned), FieldKind::SliderI, 0.0f, 2.0f},
     {"steps", OFF(SoftBodyData, steps), FieldKind::SliderI, 1.0f, 32.0f},
@@ -168,7 +171,8 @@ static const FieldDesc kConvexHullShape[] = {
 static const FieldDesc kCollider[] = {
     {"shape", OFF(Collider, shape), FieldKind::Ref},
 };
-/// Joint | physics joint between two bodies (bodyA/bodyB refs); type (only 0 = point is supported); grabPos; excludeCollision suppresses collision between the joined bodies
+/// Joint | physics joint between two bodies (bodyA/bodyB refs); type (only 0 = point is supported); grabPos;
+/// excludeCollision suppresses collision between the joined bodies
 static const FieldDesc kJoint[] = {
     {"bodyA", OFF(Joint, bodyA), FieldKind::Ref},
     {"bodyB", OFF(Joint, bodyB), FieldKind::Ref},
@@ -176,7 +180,8 @@ static const FieldDesc kJoint[] = {
     {"grabPos", OFF(Joint, grabPos), FieldKind::DragV3},
     {"excludeCollision", OFF(Joint, excludeCollision), FieldKind::Checkbox},
 };
-/// SixDofJoint | 6-DOF joint: bodyA/bodyB refs (null bodyB = fixed to world), translation/angle limits (lim*), soft limits, per-axis motors (motor*), priority/solver steps, enabled
+/// SixDofJoint | 6-DOF joint: bodyA/bodyB refs (null bodyB = fixed to world), translation/angle limits (lim*), soft
+/// limits, per-axis motors (motor*), priority/solver steps, enabled
 static const FieldDesc kSixDofJoint[] = {
     {"bodyA", OFF(SixDofJoint, bodyA), FieldKind::Ref},
     {"bodyB", OFF(SixDofJoint, bodyB), FieldKind::Ref},
@@ -256,15 +261,15 @@ static const FieldDesc kGeometry[] = {
     {"joints", OFF(Geometry, mesh.joints), FieldKind::UIntArr},
     {"weights", OFF(Geometry, mesh.weights), FieldKind::FloatArr},
 };
-/// Skeleton | skinning skeleton: name, boneNames string array, joints entity array, placement ref, meshes entity array; invBinds is derived on write
+/// Skeleton | skinning skeleton: name, boneNames string array, joints entity array, placement ref, meshes entity array;
+/// invBinds is derived on write
 static const FieldDesc kSkeleton[] = {
-    {"name", OFF(Skeleton, name), FieldKind::Str},
-    {"boneNames", OFF(Skeleton, boneNames), FieldKind::StrArr},
-    {"joints", OFF(Skeleton, joints), FieldKind::EntArr},
-    {"placement", OFF(Skeleton, placement), FieldKind::Ref},
+    {"name", OFF(Skeleton, name), FieldKind::Str},        {"boneNames", OFF(Skeleton, boneNames), FieldKind::StrArr},
+    {"joints", OFF(Skeleton, joints), FieldKind::EntArr}, {"placement", OFF(Skeleton, placement), FieldKind::Ref},
     {"meshes", OFF(Skeleton, meshes), FieldKind::EntArr},
 };
-/// RenderSettings | global render settings (emplace on a marker entity): bgColor (vec3), exposure, sssDepthReject, sssCurvScale
+/// RenderSettings | global render settings (emplace on a marker entity): bgColor (vec3), exposure, sssDepthReject,
+/// sssCurvScale
 static const FieldDesc kRenderSettings[] = {
     {"bgColor", OFF(RenderSettings, bgColor), FieldKind::Color},
     {"exposure", OFF(RenderSettings, exposure), FieldKind::SliderF, 0.1f, 3.0f},
@@ -283,12 +288,33 @@ static const FieldDesc kBind[] = {
     {"target", OFF(Bind, target), FieldKind::Str},
     {"dir", OFF(Bind, dir), FieldKind::SliderI, 0.0f, 2.0f},
 };
+/// AnimationClip | keyframe clip asset: duration + per-track target URLs and flat keyframe arrays
+/// (times/values concatenated; tangents for cubic). glTF clips are populated eagerly by loadGltf/gltfToData.
+static const FieldDesc kAnimationClip[] = {
+    {"duration", OFF(AnimationClip, duration), FieldKind::SliderF, 0.0f, 3600.0f},
+    {"targets", OFF(AnimationClip, targets), FieldKind::StrArr},
+    {"interps", OFF(AnimationClip, interps), FieldKind::FloatArr},
+    {"trackStart", OFF(AnimationClip, trackStart), FieldKind::FloatArr},
+    {"times", OFF(AnimationClip, times), FieldKind::FloatArr},
+    {"values", OFF(AnimationClip, values), FieldKind::FloatArr},
+    {"tangents", OFF(AnimationClip, tangents), FieldKind::FloatArr},
+};
+/// AnimationPlayer | plays an AnimationClip: `clip` = clip entity ref, time/speed, loop 0=once 1=loop 2=pingpong,
+/// playing start/stop
+static const FieldDesc kAnimationPlayer[] = {
+    {"clip", OFF(AnimationPlayer, clip), FieldKind::Ref},
+    {"time", OFF(AnimationPlayer, time), FieldKind::SliderF, 0.0f, 3600.0f},
+    {"speed", OFF(AnimationPlayer, speed), FieldKind::SliderF, -4.0f, 4.0f},
+    {"loop", OFF(AnimationPlayer, loop), FieldKind::SliderI, 0.0f, 2.0f},
+    {"playing", OFF(AnimationPlayer, playing), FieldKind::Checkbox},
+};
 
 /// UIWidget | marker for a drawable UI widget; `order` is its layout position among siblings
 static const FieldDesc kUIWidget[] = {
     {"order", OFF(UIWidget, order), FieldKind::SliderI, 0.0f, 10000.0f},
 };
-/// UIButton | a clickable button; on click the exported function named by `target_url` is called with this entity as arg 1
+/// UIButton | a clickable button; on click the exported function named by `target_url` is called with this entity as
+/// arg 1
 static const FieldDesc kUIButton[] = {
     {"label", OFF(UIButton, label), FieldKind::Str},
     {"target_url", OFF(UIButton, target_url), FieldKind::Str},
@@ -327,12 +353,9 @@ static const FieldDesc kUISection[] = {
 };
 /// UISliderF | a float slider; `change_url` is called with this entity as arg 1 while the user drags it
 static const FieldDesc kUISliderF[] = {
-    {"label", OFF(UISliderF, label), FieldKind::Str},
-    {"value", OFF(UISliderF, value), FieldKind::SliderF},
-    {"lo", OFF(UISliderF, lo), FieldKind::SliderF},
-    {"hi", OFF(UISliderF, hi), FieldKind::SliderF},
-    {"fmt", OFF(UISliderF, fmt), FieldKind::Str},
-    {"change_url", OFF(UISliderF, change_url), FieldKind::Str},
+    {"label", OFF(UISliderF, label), FieldKind::Str}, {"value", OFF(UISliderF, value), FieldKind::SliderF},
+    {"lo", OFF(UISliderF, lo), FieldKind::SliderF},   {"hi", OFF(UISliderF, hi), FieldKind::SliderF},
+    {"fmt", OFF(UISliderF, fmt), FieldKind::Str},     {"change_url", OFF(UISliderF, change_url), FieldKind::Str},
 };
 /// UISliderI | an integer slider; `change_url` is called with this entity as arg 1 while the user drags it
 static const FieldDesc kUISliderI[] = {
@@ -365,6 +388,8 @@ static const FieldDesc kUIDragV3[] = {
 static const TypeDesc kTypes[] = {
     {"Transform", kTransform},
     {"Bind", kBind},
+    {"AnimationClip", kAnimationClip},
+    {"AnimationPlayer", kAnimationPlayer},
     {"UIWidget", kUIWidget},
     {"UIButton", kUIButton},
     {"UICanvas", kUICanvas},
@@ -428,33 +453,64 @@ inline std::vector<std::pair<const TypeDesc*, std::function<const void*()>>> ent
     auto add = [&out](const char* tn, std::function<const void*()> fn) {
         out.emplace_back(findType(tn), std::move(fn));
     };
-    if (reg.try_get<Transform>(e)) add("Transform", liveRef<Transform>(reg, e));
-    if (reg.try_get<Material>(e)) add("Material", liveRef<Material>(reg, e));
-    if (reg.try_get<MaterialRef>(e)) add("MaterialRef", liveRef<MaterialRef>(reg, e));
-    if (reg.try_get<Parent>(e)) add("Parent", liveRef<Parent>(reg, e));
-    if (reg.try_get<Camera>(e)) add("Camera", liveRef<Camera>(reg, e));
-    if (reg.try_get<Environment>(e)) add("Environment", liveRef<Environment>(reg, e));
-    if (reg.try_get<PointLight>(e)) add("PointLight", liveRef<PointLight>(reg, e));
-    if (reg.try_get<SoftBodyData>(e)) add("SoftBodyData", liveRef<SoftBodyData>(reg, e));
-    if (reg.try_get<RigidBody>(e)) add("RigidBody", liveRef<RigidBody>(reg, e));
-    if (reg.try_get<KinematicBody>(e)) add("KinematicBody", liveRef<KinematicBody>(reg, e));
-    if (reg.try_get<CapsuleShape>(e)) add("CapsuleShape", liveRef<CapsuleShape>(reg, e));
-    if (reg.try_get<BoxShape>(e)) add("BoxShape", liveRef<BoxShape>(reg, e));
-    if (reg.try_get<TaperedCapsule>(e)) add("TaperedCapsule", liveRef<TaperedCapsule>(reg, e));
-    if (reg.try_get<SphereShape>(e)) add("SphereShape", liveRef<SphereShape>(reg, e));
-    if (reg.try_get<ConvexHullShape>(e)) add("ConvexHullShape", liveRef<ConvexHullShape>(reg, e));
-    if (reg.try_get<Collider>(e)) add("Collider", liveRef<Collider>(reg, e));
-    if (reg.try_get<Joint>(e)) add("Joint", liveRef<Joint>(reg, e));
-    if (reg.try_get<SixDofJoint>(e)) add("SixDofJoint", liveRef<SixDofJoint>(reg, e));
-    if (reg.try_get<ControllerInput>(e)) add("ControllerInput", liveRef<ControllerInput>(reg, e));
-    if (reg.try_get<Renderable>(e)) add("Renderable", liveRef<Renderable>(reg, e));
-    if (reg.try_get<Texture>(e)) add("Texture", liveRef<Texture>(reg, e));
-    if (reg.try_get<Geometry>(e)) add("Geometry", liveRef<Geometry>(reg, e));
-    if (reg.try_get<Skeleton>(e)) add("Skeleton", liveRef<Skeleton>(reg, e));
-    if (reg.try_get<MouseInput>(e)) add("MouseInput", liveRef<MouseInput>(reg, e));
-    if (reg.try_get<RenderSettings>(e)) add("RenderSettings", liveRef<RenderSettings>(reg, e));
-    if (reg.try_get<PhysicsSettings>(e)) add("PhysicsSettings", liveRef<PhysicsSettings>(reg, e));
-    if (reg.try_get<Bind>(e)) add("Bind", liveRef<Bind>(reg, e));
+    if (reg.try_get<Transform>(e))
+        add("Transform", liveRef<Transform>(reg, e));
+    if (reg.try_get<Material>(e))
+        add("Material", liveRef<Material>(reg, e));
+    if (reg.try_get<MaterialRef>(e))
+        add("MaterialRef", liveRef<MaterialRef>(reg, e));
+    if (reg.try_get<Parent>(e))
+        add("Parent", liveRef<Parent>(reg, e));
+    if (reg.try_get<Camera>(e))
+        add("Camera", liveRef<Camera>(reg, e));
+    if (reg.try_get<Environment>(e))
+        add("Environment", liveRef<Environment>(reg, e));
+    if (reg.try_get<PointLight>(e))
+        add("PointLight", liveRef<PointLight>(reg, e));
+    if (reg.try_get<SoftBodyData>(e))
+        add("SoftBodyData", liveRef<SoftBodyData>(reg, e));
+    if (reg.try_get<RigidBody>(e))
+        add("RigidBody", liveRef<RigidBody>(reg, e));
+    if (reg.try_get<KinematicBody>(e))
+        add("KinematicBody", liveRef<KinematicBody>(reg, e));
+    if (reg.try_get<CapsuleShape>(e))
+        add("CapsuleShape", liveRef<CapsuleShape>(reg, e));
+    if (reg.try_get<BoxShape>(e))
+        add("BoxShape", liveRef<BoxShape>(reg, e));
+    if (reg.try_get<TaperedCapsule>(e))
+        add("TaperedCapsule", liveRef<TaperedCapsule>(reg, e));
+    if (reg.try_get<SphereShape>(e))
+        add("SphereShape", liveRef<SphereShape>(reg, e));
+    if (reg.try_get<ConvexHullShape>(e))
+        add("ConvexHullShape", liveRef<ConvexHullShape>(reg, e));
+    if (reg.try_get<Collider>(e))
+        add("Collider", liveRef<Collider>(reg, e));
+    if (reg.try_get<Joint>(e))
+        add("Joint", liveRef<Joint>(reg, e));
+    if (reg.try_get<SixDofJoint>(e))
+        add("SixDofJoint", liveRef<SixDofJoint>(reg, e));
+    if (reg.try_get<ControllerInput>(e))
+        add("ControllerInput", liveRef<ControllerInput>(reg, e));
+    if (reg.try_get<Renderable>(e))
+        add("Renderable", liveRef<Renderable>(reg, e));
+    if (reg.try_get<Texture>(e))
+        add("Texture", liveRef<Texture>(reg, e));
+    if (reg.try_get<Geometry>(e))
+        add("Geometry", liveRef<Geometry>(reg, e));
+    if (reg.try_get<Skeleton>(e))
+        add("Skeleton", liveRef<Skeleton>(reg, e));
+    if (reg.try_get<MouseInput>(e))
+        add("MouseInput", liveRef<MouseInput>(reg, e));
+    if (reg.try_get<RenderSettings>(e))
+        add("RenderSettings", liveRef<RenderSettings>(reg, e));
+    if (reg.try_get<PhysicsSettings>(e))
+        add("PhysicsSettings", liveRef<PhysicsSettings>(reg, e));
+    if (reg.try_get<Bind>(e))
+        add("Bind", liveRef<Bind>(reg, e));
+    if (reg.try_get<AnimationClip>(e))
+        add("AnimationClip", liveRef<AnimationClip>(reg, e));
+    if (reg.try_get<AnimationPlayer>(e))
+        add("AnimationPlayer", liveRef<AnimationPlayer>(reg, e));
     return out;
 }
-}
+} // namespace refl

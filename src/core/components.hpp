@@ -1,6 +1,6 @@
 #pragma once
-#include "mesh.hpp"
 #include "math.hpp"
+#include "mesh.hpp"
 #include "params.hpp"
 #include <entt/entt.hpp>
 #include <string>
@@ -107,8 +107,8 @@ struct RigidBody {
     V3 impulse{};
 
     bool operator==(const RigidBody& o) const {
-        return friction == o.friction && restitution == o.restitution && damping == o.damping &&
-               mass == o.mass && colliders == o.colliders;
+        return friction == o.friction && restitution == o.restitution && damping == o.damping && mass == o.mass &&
+               colliders == o.colliders;
     }
 };
 
@@ -262,6 +262,25 @@ struct Skeleton {
     std::vector<entt::entity> meshes;
 };
 
+struct CompReg;
+
+struct AnimationClip {
+    float duration = 0.0f;            // computed on write when 0: max last keyframe time
+    std::vector<std::string> targets; // one full URL per track: "name.Component.field"
+    std::vector<float> interps;       // per track: 0=linear 1=step 2=cubic (empty = linear)
+    std::vector<float> trackStart;    // N+1 keyframe offsets into times
+    std::vector<float> times;         // concatenated in track order, ascending per track
+    std::vector<float> values;        // concatenated; segment = count * field width
+    std::vector<float> tangents;      // cubic only: 2*(n-1)*width per track [outT0, inT1, ...]
+};
+
+struct AnimationPlayer {
+    entt::entity clip = entt::null;
+    float time = 0.0f, speed = 1.0f;
+    int loop = 1;         // 0=once(clamp), 1=loop, 2=pingpong
+    bool playing = false; // paused by default: imported clips start only when explicitly started
+};
+
 struct Texture {
     std::string path;
     TexelFormat fmt = TexelFormat::RGBA8;
@@ -402,6 +421,10 @@ bool compReplace(entt::registry& reg, entt::entity e, const std::string& type, c
                  std::string& err);
 bool hasComponentByName(const entt::registry& reg, entt::entity e, const std::string& name);
 const CompReg* compFor(const std::string& name);
+// Name is not a registered CompReg (set directly via emplace), so route all name writes here:
+// they invalidate the URL cache, since a changed name remaps every cached target.
+void setName(entt::registry& reg, entt::entity e, const std::string& id);
+
 bool compWriteField(entt::registry& reg, entt::entity e, const std::string& typeName, const CompField& f,
                     std::string& err);
 bool compRemove(entt::registry& reg, entt::entity e, const std::string& type, std::string& err);

@@ -11,7 +11,7 @@ if ! cmake --build build -j8 > /tmp/vksim_build.log 2>&1; then
     exit 1
 fi
 
-for bin in dualquat_test view_proj_test collision_shape_solver_test; do
+for bin in dualquat_test view_proj_test anim_test collision_shape_solver_test; do
     if "./build/$bin" > "/tmp/${bin}.log" 2>&1; then
         echo "PASS $bin"
     else
@@ -33,6 +33,8 @@ for spec in \
     "tcap_check|300" \
     "rope_check|130" \
     "gltf_table_check|5" \
+    "anim_raw|80" \
+    "anim_gltf|80" \
     "view_check|5" \
     "button_url|5" \
     "widget_roundtrip|5" \

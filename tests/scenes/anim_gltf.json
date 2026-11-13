@@ -1,0 +1,7 @@
+{
+    "name": "anim gltf test",
+    "objects": [
+        { "name": "probe", "script": "anim_gltf" },
+        { "name": "model", "gltf": "anim_test.glb" }
+    ]
+}

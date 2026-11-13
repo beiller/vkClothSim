@@ -1,0 +1,6 @@
+{
+    "name": "anim raw test",
+    "objects": [
+        { "name": "probe", "script": "anim_raw" }
+    ]
+}

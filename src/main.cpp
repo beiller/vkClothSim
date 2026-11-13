@@ -2,23 +2,23 @@
 
 #include <GLFW/glfw3.h>
 
-#include "scene.hpp"
-#include "assets.hpp"
-#include "systems.hpp"
-#include "vk/vkapp.hpp"
 #include "app/engine.hpp"
+#include "assets.hpp"
+#include "scene.hpp"
+#include "systems.hpp"
+#include "util.hpp"
+#include "vk/vkapp.hpp"
 #include "xr/xr.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <thread>
 #include <imgui.h>
-#include "util.hpp"
+#include <thread>
 
 struct PhaseWatch {
-    float poll = 0.0f, wait = 0.0f, cpu = 0.0f, jolt = 0.0f, skel = 0.0f, sim = 0.0f,
-          rend = 0.0f, xend = 0.0f, tail = 0.0f;
+    float poll = 0.0f, wait = 0.0f, cpu = 0.0f, jolt = 0.0f, skel = 0.0f, sim = 0.0f, rend = 0.0f, xend = 0.0f,
+          tail = 0.0f;
     void reset() { poll = wait = cpu = jolt = skel = sim = rend = xend = tail = 0.0f; }
 };
 
@@ -158,19 +158,23 @@ int main(int argc, char** argv) {
         if (fpsAccum >= 0.5f) {
             fps = (float)fpsFrames / fpsAccum;
             const float fframes = (float)fpsFrames;
-            engine.phase = {(phaseMs.poll - phaseMs.wait) / fframes, phaseMs.cpu / fframes,
-                       phaseMs.jolt / fframes, phaseMs.skel / fframes, phaseMs.sim / fframes,
-                       phaseMs.rend / fframes, phaseMs.xend / fframes,
-                       (phaseMs.wait + phaseMs.tail) / fframes};
+            engine.phase = {(phaseMs.poll - phaseMs.wait) / fframes,
+                            phaseMs.cpu / fframes,
+                            phaseMs.jolt / fframes,
+                            phaseMs.skel / fframes,
+                            phaseMs.sim / fframes,
+                            phaseMs.rend / fframes,
+                            phaseMs.xend / fframes,
+                            (phaseMs.wait + phaseMs.tail) / fframes};
             if (prof) {
                 auto& p = engine.graphics.prof();
                 std::printf("prof: %5.1ffps poll %5.2f cpu %5.2f jolt %5.2f skel %5.2f sim %5.2f "
-                           "ui %5.2f acq %5.2f draw %5.2f (ui %5.2f shadow %5.2f scene %5.2f tonemap %5.2f) "
-                           "idle %5.2f\n",
-                           fps, engine.phase.poll, engine.phase.cpu, engine.phase.jolt, engine.phase.skel,
-                           engine.phase.sim, uiAccum / fpsFrames, acqAccum / fpsFrames, drawAccum / fpsFrames,
-                           p.ui / fpsFrames, p.shadow / fpsFrames, p.scene / fpsFrames, p.tonemap / fpsFrames,
-                           engine.phase.idle);
+                            "ui %5.2f acq %5.2f draw %5.2f (ui %5.2f shadow %5.2f scene %5.2f tonemap %5.2f) "
+                            "idle %5.2f\n",
+                            fps, engine.phase.poll, engine.phase.cpu, engine.phase.jolt, engine.phase.skel,
+                            engine.phase.sim, uiAccum / fpsFrames, acqAccum / fpsFrames, drawAccum / fpsFrames,
+                            p.ui / fpsFrames, p.shadow / fpsFrames, p.scene / fpsFrames, p.tonemap / fpsFrames,
+                            engine.phase.idle);
                 p.reset();
             }
             uiAccum = acqAccum = drawAccum = 0.0f;
@@ -215,6 +219,7 @@ int main(int argc, char** argv) {
 
         float frameJolt = 0.0f, frameSkel = 0.0f, frameSoft = 0.0f, frameAcq = 0.0f;
         engine.physics.update(engine.reg, dt);
+        stepAnimations(engine.reg, dt);
         resolveWorldTransforms(engine.reg);
         if (engine.hasDevice) {
             engine.graphics.updateSim(engine.reg, dt);
@@ -229,78 +234,80 @@ int main(int argc, char** argv) {
 
         entt::entity cam = entt::null;
         if (engine.hasWindow) {
-        const auto foundCam = findActiveCamera(engine.reg);
-        if (foundCam != entt::null) {
-            cam = foundCam;
-            engine.graphics.setViewProj(cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height));
-        }
-        std::vector<entt::entity> canvases;
-        for (auto e : engine.reg.view<UICanvas>())
-            canvases.push_back(e);
-        auto canvasPx = [&](entt::entity c) -> V2 {
-            for (auto [e, w] : engine.reg.view<UIWindow>().each())
-                if (w.canvas == c)
-                    return w.size;
-            return V2{320.0f, 200.0f};
-        };
-        auto tryRay = [&](entt::entity canvas, const V3& o, const V3& d, UiFeed& f) {
-            std::vector<entt::entity> excl;
-            engine.reg.view<Name>().each([&](entt::entity e, const Name& n) {
-                if (std::strstr(n.id.c_str(), "hand") || std::strstr(n.id.c_str(), "controller"))
-                    excl.push_back(e);
-            });
-            const RayHit h = engine.physics.raycast(o, d, 30.0f, excl);
-            if (!h.hit || engine.physics.entityFor(h.body) != canvas)
-                return false;
-            V2 uv;
-            if (!uiPanelUv(engine.reg, canvas, h.pos, uv))
-                return false;
-            const V2 px = canvasPx(canvas);
-            f.pos = {(float)uv.x * px.x, (1.0f - (float)uv.y) * px.y};
-            return true;
-        };
-        std::vector<UiFeed> feeds;
-        for (entt::entity c : canvases) {
-            engine.graphics.uiEnsureTarget(engine.reg, c);
-            UiFeed f{c, ImVec2{-1.0f, -1.0f}, false, 0.0f, false};
-            if (engine.xr && fr.running && fr.havePose) {
-                const entt::entity root = findMarker<VrRoot>(engine.reg);
-                const V3 rootPos = root != entt::null ? worldTransform(engine.reg, root).pos : V3{0, 0, 0};
-                for (int i = 0; i < 2; ++i) {
-                    const XrController& ctl = fr.controller[i];
-                    if (!ctl.active)
-                        continue;
-                    const V3 o = rootPos + ctl.aimPos;
-                    const V3 d = ctl.aimQuat * V3{0, 0, -1};
-                    f.down = ctl.buttons[0];
-                    f.wheel = -ctl.axis[1];
-                    if (tryRay(c, o, d, f))
-                        break;
-                }
-            } else if (cam != entt::null) {
-                const CameraView cv = cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height);
-                double mx, my;
-                glfwGetCursorPos(app.glfwWindow(), &mx, &my);
-                const float x = 2.0f * (float)mx / (float)app.extent().width - 1.0f;
-                const float y = 1.0f - 2.0f * (float)my / (float)app.extent().height;
-                const V3 cd = {(x * 0.5f + 0.5f) * (cv.tanR - cv.tanL) + cv.tanL,
-                              (y * 0.5f + 0.5f) * (cv.tanU - cv.tanD) + cv.tanD, -1.0f};
-                const V3 o = cv.pos;
-                const Mat4 c2w = glm::transpose(cv.view);
-                const V3 right = c2w[0];
-                const V3 up = c2w[1];
-                const V3 back = c2w[2];
-                const V3 d = glm::normalize(right * cd.x + up * cd.y + back * cd.z);
-                f.down = glfwGetMouseButton(app.glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-                tryRay(c, o, d, f);
+            const auto foundCam = findActiveCamera(engine.reg);
+            if (foundCam != entt::null) {
+                cam = foundCam;
+                engine.graphics.setViewProj(
+                    cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height));
             }
-            feeds.push_back(f);
-        }
-        if (!feeds.empty() && engine.showDemo)
-            feeds[0].demo = true;
-        for (entt::entity c : canvases)
-            uiEnsureContext(engine.reg, c, engine.graphics.uiTargetPass(c), engine.graphics.uiTargetFb(c));
-        uiFrame(engine.reg, feeds);
+            std::vector<entt::entity> canvases;
+            for (auto e : engine.reg.view<UICanvas>())
+                canvases.push_back(e);
+            auto canvasPx = [&](entt::entity c) -> V2 {
+                for (auto [e, w] : engine.reg.view<UIWindow>().each())
+                    if (w.canvas == c)
+                        return w.size;
+                return V2{320.0f, 200.0f};
+            };
+            auto tryRay = [&](entt::entity canvas, const V3& o, const V3& d, UiFeed& f) {
+                std::vector<entt::entity> excl;
+                engine.reg.view<Name>().each([&](entt::entity e, const Name& n) {
+                    if (std::strstr(n.id.c_str(), "hand") || std::strstr(n.id.c_str(), "controller"))
+                        excl.push_back(e);
+                });
+                const RayHit h = engine.physics.raycast(o, d, 30.0f, excl);
+                if (!h.hit || engine.physics.entityFor(h.body) != canvas)
+                    return false;
+                V2 uv;
+                if (!uiPanelUv(engine.reg, canvas, h.pos, uv))
+                    return false;
+                const V2 px = canvasPx(canvas);
+                f.pos = {(float)uv.x * px.x, (1.0f - (float)uv.y) * px.y};
+                return true;
+            };
+            std::vector<UiFeed> feeds;
+            for (entt::entity c : canvases) {
+                engine.graphics.uiEnsureTarget(engine.reg, c);
+                UiFeed f{c, ImVec2{-1.0f, -1.0f}, false, 0.0f, false};
+                if (engine.xr && fr.running && fr.havePose) {
+                    const entt::entity root = findMarker<VrRoot>(engine.reg);
+                    const V3 rootPos = root != entt::null ? worldTransform(engine.reg, root).pos : V3{0, 0, 0};
+                    for (int i = 0; i < 2; ++i) {
+                        const XrController& ctl = fr.controller[i];
+                        if (!ctl.active)
+                            continue;
+                        const V3 o = rootPos + ctl.aimPos;
+                        const V3 d = ctl.aimQuat * V3{0, 0, -1};
+                        f.down = ctl.buttons[0];
+                        f.wheel = -ctl.axis[1];
+                        if (tryRay(c, o, d, f))
+                            break;
+                    }
+                } else if (cam != entt::null) {
+                    const CameraView cv =
+                        cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height);
+                    double mx, my;
+                    glfwGetCursorPos(app.glfwWindow(), &mx, &my);
+                    const float x = 2.0f * (float)mx / (float)app.extent().width - 1.0f;
+                    const float y = 1.0f - 2.0f * (float)my / (float)app.extent().height;
+                    const V3 cd = {(x * 0.5f + 0.5f) * (cv.tanR - cv.tanL) + cv.tanL,
+                                   (y * 0.5f + 0.5f) * (cv.tanU - cv.tanD) + cv.tanD, -1.0f};
+                    const V3 o = cv.pos;
+                    const Mat4 c2w = glm::transpose(cv.view);
+                    const V3 right = c2w[0];
+                    const V3 up = c2w[1];
+                    const V3 back = c2w[2];
+                    const V3 d = glm::normalize(right * cd.x + up * cd.y + back * cd.z);
+                    f.down = glfwGetMouseButton(app.glfwWindow(), GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+                    tryRay(c, o, d, f);
+                }
+                feeds.push_back(f);
+            }
+            if (!feeds.empty() && engine.showDemo)
+                feeds[0].demo = true;
+            for (entt::entity c : canvases)
+                uiEnsureContext(engine.reg, c, engine.graphics.uiTargetPass(c), engine.graphics.uiTargetFb(c));
+            uiFrame(engine.reg, feeds);
         }
         stepBinds(engine.reg);
 
@@ -318,8 +325,8 @@ int main(int argc, char** argv) {
                         engine.xr->acquireImage(i);
                         imgIdx[i] = (uint32_t)engine.xr->imageIndex(i);
                     }
-                engine.graphics.drawVr(cmd, app, idx, engine.reg, cam,
-                                      fr.shouldRender ? imgIdx : nullptr, fr.shouldRender ? engine.xr->eyeCount() : 0);
+                engine.graphics.drawVr(cmd, app, idx, engine.reg, cam, fr.shouldRender ? imgIdx : nullptr,
+                                       fr.shouldRender ? engine.xr->eyeCount() : 0);
                 if (fr.shouldRender)
                     for (int i = 0; i < engine.xr->eyeCount(); ++i)
                         engine.xr->releaseImage(i);

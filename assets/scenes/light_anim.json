@@ -1,0 +1,6 @@
+{
+    "name": "light anim",
+    "objects": [
+        { "name": "anim_script", "script": "light_anim" }
+    ]
+}

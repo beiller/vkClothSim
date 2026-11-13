@@ -1,11 +1,11 @@
 #include "gltf.hpp"
 
+#include "anim.hpp"
 #include "assets.hpp"
 #include "ecs_ops.hpp"
 #include "math.hpp"
-#include "tiny_gltf_v3.h"
-
 #include "stb_image.h"
+#include "tiny_gltf_v3.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -52,8 +52,10 @@ std::vector<uint8_t> b64Decode(const std::string& in) {
             return c - 'a' + 26;
         if (c >= '0' && c <= '9')
             return c - '0' + 52;
-        if (c == '+') return 62;
-        if (c == '/') return 63;
+        if (c == '+')
+            return 62;
+        if (c == '/')
+            return 63;
         return -1;
     };
     std::vector<uint8_t> out;
@@ -255,9 +257,11 @@ float normInt(const uint8_t* p, int ct) {
     case TG3_COMPONENT_TYPE_UNSIGNED_BYTE:
         return p[0] / 255.0f; // NOLINT(bugprone-narrowing-conversions): small ints, exact in float
     case TG3_COMPONENT_TYPE_SHORT:
-        return (int16_t(uint16_t(p[0]) | uint16_t(p[1]) << 8) + 32768) / 32768.0f; // NOLINT(bugprone-narrowing-conversions): small ints, exact in float
+        return (int16_t(uint16_t(p[0]) | uint16_t(p[1]) << 8) + 32768) /
+               32768.0f; // NOLINT(bugprone-narrowing-conversions): small ints, exact in float
     case TG3_COMPONENT_TYPE_UNSIGNED_SHORT:
-        return uint16_t(uint16_t(p[0]) | uint16_t(p[1]) << 8) / 65535.0f; // NOLINT(bugprone-narrowing-conversions): small ints, exact in float
+        return uint16_t(uint16_t(p[0]) | uint16_t(p[1]) << 8) /
+               65535.0f; // NOLINT(bugprone-narrowing-conversions): small ints, exact in float
     default:
         break;
     }
@@ -275,7 +279,8 @@ bool readAccessor(const tg3_model& m, int32_t accIdx, int wantComps, std::vector
         out.assign((size_t)a.count * comps, 0.0f);
         return true;
     }
-    if ((uint32_t)a.buffer_view >= m.buffer_views_count || (uint32_t)m.buffer_views[a.buffer_view].buffer >= m.buffers_count)
+    if ((uint32_t)a.buffer_view >= m.buffer_views_count ||
+        (uint32_t)m.buffer_views[a.buffer_view].buffer >= m.buffers_count)
         return false;
     const tg3_buffer_view& bv = m.buffer_views[a.buffer_view];
     const tg3_buffer& buf = m.buffers[bv.buffer];
@@ -322,8 +327,7 @@ void computeNormals(const std::vector<float>& pos, const std::vector<uint32_t>& 
         }
     }
     for (size_t i = 0; i < nrm.size(); i += 3) {
-        V3 n{
-            nrm[i], nrm[i + 1], nrm[i + 2]};
+        V3 n{nrm[i], nrm[i + 1], nrm[i + 2]};
         if (glm::length(n) < 1e-12f)
             n = {0, 0, 1};
         n = glm::normalize(n);
@@ -504,7 +508,11 @@ struct MatVals {
     float refraction = 0.0f, ior = 0.0f;
     V3 ssssWeight = {0, 0, 0};
     bool hasSsss = false;
-    struct Slot { const char* field; int32_t idx, coord; bool srgb; };
+    struct Slot {
+        const char* field;
+        int32_t idx, coord;
+        bool srgb;
+    };
     std::array<Slot, 4> slots;
 };
 
@@ -528,9 +536,11 @@ MatVals matVals(const tg3_material& gm, const std::string& fileBase) {
     v.alphaCutoff = (float)gm.alpha_cutoff;
     const std::string am = s(gm.alpha_mode);
     int mode = 0;
-        if (am == "BLEND") mode = 2;
-        else if (am == "MASK") mode = 1;
-        v.alphaMode = mode;
+    if (am == "BLEND")
+        mode = 2;
+    else if (am == "MASK")
+        mode = 1;
+    v.alphaMode = mode;
     for (uint32_t i = 0; i < gm.ext.extensions_count; ++i) {
         if (s(gm.ext.extensions[i].name) != "KHR_materials_transmission")
             continue;
@@ -580,9 +590,11 @@ MatVals matVals(const tg3_material& gm, const std::string& fileBase) {
             if ((k == "baseColorTransmissionTexture" || k == "thicknessTexture") && od.value.type == TG3_VALUE_INT &&
                 od.value.int_val >= 0)
                 gltfWarn(fileBase, k + " is not supported (ignored)");
-            if ((k == "attenuationColor" || k == "attenuationColorExtinction" || k == "attenuationDistance" || k == "thickness") &&
+            if ((k == "attenuationColor" || k == "attenuationColorExtinction" || k == "attenuationDistance" ||
+                 k == "thickness") &&
                 !warnedAttenuation) {
-                gltfWarn(fileBase, "KHR_materials_volume attenuation/thickness are not supported (ignored; volume maps to ssssWeight only)");
+                gltfWarn(fileBase, "KHR_materials_volume attenuation/thickness are not supported (ignored; volume maps "
+                                   "to ssssWeight only)");
                 warnedAttenuation = true;
             }
         }
@@ -595,14 +607,13 @@ MatVals matVals(const tg3_material& gm, const std::string& fileBase) {
     return v;
 }
 
-template <typename Cb>
-void applyMatSlots(const MatVals& v, const std::string& fileBase, Cb&& cb) {
+template <typename Cb> void applyMatSlots(const MatVals& v, const std::string& fileBase, Cb&& cb) {
     for (const auto& t : v.slots) {
         if (t.idx < 0)
             continue;
         if (t.coord != 0) {
             gltfWarn(fileBase, std::string(t.field) + " uses uv channel " + std::to_string(t.coord) +
-                                " (only uv0 is packed); map skipped");
+                                   " (only uv0 is packed); map skipped");
             continue;
         }
         cb(t.field, t.idx, t.srgb);
@@ -625,10 +636,14 @@ entt::entity materialFor(GltfCtx& c, int32_t matIdx) {
     auto& mat = c.reg.get<Material>(e);
     applyMatSlots(v, c.fileBase, [&](const char* f, int32_t i, bool srgb) {
         entt::entity* p; // f is a null-terminated slot name
-        if (f == "tex") p = &mat.tex; // NOLINT(clang-diagnostic-string-compare)
-        else if (f == "texMR") p = &mat.texMR; // NOLINT(clang-diagnostic-string-compare)
-        else if (f == "texNormal") p = &mat.texNormal; // NOLINT(clang-diagnostic-string-compare)
-        else p = &mat.texEmissive;
+        if (f == "tex")
+            p = &mat.tex; // NOLINT(clang-diagnostic-string-compare)
+        else if (f == "texMR")
+            p = &mat.texMR; // NOLINT(clang-diagnostic-string-compare)
+        else if (f == "texNormal")
+            p = &mat.texNormal; // NOLINT(clang-diagnostic-string-compare)
+        else
+            p = &mat.texEmissive;
         *p = textureForTexture(c, i, srgb);
     });
     mat.alpha = v.alpha;
@@ -695,11 +710,12 @@ void finishSkinned(GltfCtx& c) {
                 jointEntities[i] = (uint32_t)ji < c.m->nodes_count ? c.nodeEntities[ji] : entt::null;
             }
             std::vector<float> ibf;
-            const bool haveIbm =
-                sk.inverse_bind_matrices >= 0 && readAccessor(*c.m, sk.inverse_bind_matrices, 16, ibf) &&
-                ibf.size() == (size_t)16 * sk.joints_count;
+            const bool haveIbm = sk.inverse_bind_matrices >= 0 &&
+                                 readAccessor(*c.m, sk.inverse_bind_matrices, 16, ibf) &&
+                                 ibf.size() == (size_t)16 * sk.joints_count;
             if (!haveIbm)
-                gltfWarn(c.fileBase, "skin " + std::to_string(skin) + ": missing or bad inverseBindMatrices (identity)");
+                gltfWarn(c.fileBase,
+                         "skin " + std::to_string(skin) + ": missing or bad inverseBindMatrices (identity)");
             std::vector<Mat4> invBinds;
             for (uint32_t i = 0; i < sk.joints_count; ++i) {
                 Mat4 m(1.0f);
@@ -712,20 +728,23 @@ void finishSkinned(GltfCtx& c) {
                 if ((uint32_t)ji >= c.m->nodes_count)
                     continue;
                 const tg3_node& jn = c.m->nodes[ji];
-                if (!jn.has_matrix && (std::fabs(jn.scale[0] - jn.scale[1]) > 1e-4 || std::fabs(jn.scale[1] - jn.scale[2]) > 1e-4)) {
-                    gltfWarn(c.fileBase, "joint " + s(jn.name) + " has non-uniform scale (approximated by the DQ scale blend)");
+                if (!jn.has_matrix &&
+                    (std::fabs(jn.scale[0] - jn.scale[1]) > 1e-4 || std::fabs(jn.scale[1] - jn.scale[2]) > 1e-4)) {
+                    gltfWarn(c.fileBase,
+                             "joint " + s(jn.name) + " has non-uniform scale (approximated by the DQ scale blend)");
                     break;
                 }
             }
             Skeleton skelComp;
             skelComp.name = skelName;
             for (uint32_t i = 0; i < sk.joints_count; ++i)
-                skelComp.boneNames.push_back((uint32_t)sk.joints[i] < c.m->nodes_count ? s(c.m->nodes[sk.joints[i]].name) : "");
+                skelComp.boneNames.push_back(
+                    (uint32_t)sk.joints[i] < c.m->nodes_count ? s(c.m->nodes[sk.joints[i]].name) : "");
             skelComp.joints = std::move(jointEntities);
             skelComp.invBinds = std::move(invBinds);
             skelComp.placement = c.nodeEntities[pp.nodeIdx];
             const entt::entity skelEnt = c.reg.create();
-            c.reg.emplace<Name>(skelEnt, skelName);
+            setName(c.reg, skelEnt, skelName);
             c.reg.emplace<Skeleton>(skelEnt, std::move(skelComp));
             c.reg.emplace<Parent>(skelEnt, c.root);
             c.skinChars[skin] = skelEnt;
@@ -755,7 +774,8 @@ void finishSkinned(GltfCtx& c) {
             computeNormals(pm.pos, idx, pm.nrm);
         }
         const int32_t ja = jointAcc(p);
-        const int32_t wa = attrAccessor(p, "WEIGHTS_0") >= 0 ? attrAccessor(p, "WEIGHTS_0") : attrAccessor(p, "WEIGHT_0");
+        const int32_t wa =
+            attrAccessor(p, "WEIGHTS_0") >= 0 ? attrAccessor(p, "WEIGHTS_0") : attrAccessor(p, "WEIGHT_0");
         std::vector<float> jf, wf;
         if (!readAccessor(*c.m, ja, 4, jf) || jf.size() != (size_t)4 * nV) {
             gltfWarn(c.fileBase, "skinned prim: bad JOINTS_0");
@@ -835,7 +855,8 @@ void finishSkinned(GltfCtx& c) {
                 if (readAccessor(*c.m, acc, 3, d) && d.size() == (size_t)nV * 3)
                     sh.pos = std::move(d);
                 else
-                    gltfWarn(c.fileBase, "skinned prim " + cname + ": target " + std::to_string(t) + " POSITION delta mismatch (slot zeroed)");
+                    gltfWarn(c.fileBase, "skinned prim " + cname + ": target " + std::to_string(t) +
+                                             " POSITION delta mismatch (slot zeroed)");
             } else if (hasNrm) {
                 gltfWarn(c.fileBase, "skinned prim " + cname + ": target " + std::to_string(t) +
                                          " has no POSITION delta (slot zeroed)");
@@ -843,7 +864,7 @@ void finishSkinned(GltfCtx& c) {
             pm.shapes.push_back(std::move(sh));
         }
         const entt::entity child = c.reg.create();
-        c.reg.emplace<Name>(child, cname);
+        setName(c.reg, child, cname);
         c.reg.emplace<Geometry>(child, Geometry{std::move(pm)});
         addMesh(c.reg, child, child, materialFor(c, p.material), c.nodeEntities[pp.nodeIdx]);
         c.reg.get<Skeleton>(skelEnt).meshes.push_back(child);
@@ -861,7 +882,7 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
     }
     entt::entity e = c.reg.create();
     const std::string name = s(n.name).empty() ? "node" + std::to_string(nodeIdx) : s(n.name);
-    c.reg.emplace<Name>(e, c.fileBase + "/" + name);
+    setName(c.reg, e, c.fileBase + "/" + name);
     c.reg.emplace<Transform>(e, t);
     c.nodeEntities[nodeIdx] = e;
     if (parent != entt::null)
@@ -902,7 +923,7 @@ entt::entity buildNode(GltfCtx& c, int32_t nodeIdx, entt::entity parent) {
                 cname += "_";
                 cname += std::to_string(i);
             }
-            c.reg.emplace<Name>(child, cname);
+            setName(c.reg, child, cname);
             entt::entity geomEnt = c.reg.create();
             c.reg.emplace<Geometry>(geomEnt, Geometry{pm});
             addMesh(c.reg, child, geomEnt, materialFor(c, p.material), e);
@@ -1251,7 +1272,101 @@ void nodeToTable(GltfTblCtx& c, int32_t nodeIdx, const std::string& parentKey, G
         nodeToTable(c, n.children[i], key, out);
 }
 
+// one animation's channels into a clip's flat arrays; targetName(nodeIdx) returns "" to skip a channel.
+// glTF CUBICSPLINE output layout is [outT_i, v_i, inT_{i+1}] (count = 3*n*comps).
+template <typename NameFn>
+void extractAnim(const tg3_model& m, uint32_t animIdx, const std::string& fileBase, NameFn&& targetName,
+                 AnimationClip& clip) {
+    const tg3_animation& a = m.animations[animIdx];
+    for (uint32_t ci = 0; ci < a.channels_count; ++ci) {
+        const tg3_animation_channel& ch = a.channels[ci];
+        const std::string pth = s(ch.target.path);
+        const char* field = nullptr;
+        int comps = 0;
+        if (pth == "translation") {
+            field = "pos";
+            comps = 3;
+        } else if (pth == "rotation") {
+            field = "quat";
+            comps = 4;
+        } else if (pth == "scale") {
+            field = "scale";
+            comps = 3;
+        } else {
+            gltfWarn(fileBase, "animation channel path '" + pth + "' is not supported (skipped)");
+            continue;
+        }
+        if (ch.sampler < 0 || (uint32_t)ch.sampler >= a.samplers_count) {
+            gltfWarn(fileBase, "animation channel has no sampler (skipped)");
+            continue;
+        }
+        const tg3_animation_sampler& sm = a.samplers[ch.sampler];
+        std::vector<float> tin, tout;
+        if (!readAccessor(m, sm.input, 1, tin) || tin.empty() ||
+            std::adjacent_find(tin.begin(), tin.end(), [](float x, float y) { return x >= y; }) != tin.end()) {
+            gltfWarn(fileBase, "animation channel: bad or non-ascending input times (skipped)");
+            continue;
+        }
+        const int nKeys = (int)tin.size();
+        const std::string ip = s(sm.interpolation);
+        int iv = 0;
+        if (ip == "STEP")
+            iv = 1;
+        else if (ip == "CUBICSPLINE")
+            iv = 2;
+        else if (!ip.empty() && ip != "LINEAR")
+            gltfWarn(fileBase, "animation channel: unknown interpolation '" + ip + "' (using linear)");
+        const size_t want = (size_t)nKeys * (size_t)comps * (iv == 2 ? 3 : 1);
+        if (!readAccessor(m, sm.output, comps, tout) || tout.size() != want) {
+            gltfWarn(fileBase, "animation channel: bad output accessor (skipped)");
+            continue;
+        }
+        const std::string tn = targetName(ch.target.node);
+        if (tn.empty()) {
+            gltfWarn(fileBase, "animation channel: target node has no usable name (skipped)");
+            continue;
+        }
+        clip.targets.push_back(tn + ".Transform." + field);
+        clip.interps.push_back((float)iv);
+        if (clip.trackStart.empty())
+            clip.trackStart.push_back(0.0f);
+        clip.times.insert(clip.times.end(), tin.begin(), tin.end());
+        if (iv == 2) {
+            std::vector<float> vals;
+            vals.reserve((size_t)nKeys * (size_t)comps);
+            for (int k = 0; k < nKeys - 1; ++k) {
+                const float* seg = tout.data() + (size_t)3 * k * (size_t)comps;
+                clip.tangents.insert(clip.tangents.end(), seg, seg + comps);                 // outT_k
+                vals.insert(vals.end(), seg + comps, seg + 2 * comps);                       // v_k
+                clip.tangents.insert(clip.tangents.end(), seg + 2 * comps, seg + 3 * comps); // inT_{k+1}
+            }
+            const float* last = tout.data() + (size_t)3 * (nKeys - 1) * (size_t)comps;
+            vals.insert(vals.end(), last + comps, last + 2 * comps); // v_{n-1}
+            clip.values.insert(clip.values.end(), vals.begin(), vals.end());
+        } else {
+            clip.values.insert(clip.values.end(), tout.begin(), tout.end());
+        }
+        clip.trackStart.push_back((float)clip.times.size());
+    }
 }
+
+std::string nodeNameOrIdx(const tg3_model& m, int32_t ni) {
+    if (ni < 0 || (uint32_t)ni >= m.nodes_count)
+        return "";
+    const std::string nn = s(m.nodes[ni].name);
+    return nn.empty() ? "node" + std::to_string(ni) : nn;
+}
+
+int32_t skinOfNode(const tg3_model& m, int32_t ni) {
+    if (ni < 0 || (uint32_t)ni >= m.nodes_count)
+        return -1;
+    const int32_t sk = m.nodes[ni].skin;
+    if (sk >= 0)
+        return sk;
+    return m.skins_count == 1 ? 0 : -1;
+}
+
+} // namespace
 
 entt::entity loadGltf(entt::registry& reg, entt::entity e, const std::string& path, std::string& err) {
     tg3_model model;
@@ -1275,6 +1390,36 @@ entt::entity loadGltf(entt::registry& reg, entt::entity e, const std::string& pa
     for (uint32_t i = 0; i < scene.nodes_count; ++i)
         buildNode(c, scene.nodes[i], e);
     finishSkinned(c);
+    const std::string prefix = fileBase + "/";
+    for (uint32_t ai = 0; ai < model.animations_count; ++ai) {
+        AnimationClip clip;
+        extractAnim(
+            model, ai, fileBase,
+            [&](int32_t ni) { return nodeNameOrIdx(model, ni).empty() ? "" : prefix + nodeNameOrIdx(model, ni); },
+            clip);
+        if (clip.targets.empty())
+            continue;
+        const std::string aname =
+            s(model.animations[ai].name).empty() ? "anim" + std::to_string(ai) : s(model.animations[ai].name);
+        clip.duration = animDuration(clip.trackStart, clip.times);
+        entt::entity ce = reg.create();
+        setName(reg, ce, prefix + aname + "_clip");
+        reg.emplace<AnimationClip>(ce, std::move(clip));
+        // player: child of the first skinned target node's placement (or the root when none)
+        entt::entity anchor = entt::null;
+        const tg3_animation& a = model.animations[ai];
+        for (uint32_t ci = 0; ci < a.channels_count && anchor == entt::null; ++ci) {
+            const int32_t sk = skinOfNode(model, a.channels[ci].target.node);
+            if (sk >= 0 && c.skinChars[sk] != entt::null)
+                anchor = reg.get<Skeleton>(c.skinChars[sk]).placement;
+        }
+        if (anchor == entt::null)
+            anchor = e;
+        entt::entity pe = reg.create();
+        setName(reg, pe, prefix + aname);
+        reg.emplace<Parent>(pe, anchor);
+        reg.emplace<AnimationPlayer>(pe, AnimationPlayer{ce});
+    }
     tg3_model_free(&model);
     return e;
 }
@@ -1314,7 +1459,8 @@ bool gltfToData(const std::string& path, GltfTableData& out, std::string& err) {
             jointRefs.push_back(nit->second);
         }
         if (!complete) {
-            gltfWarn(c.fileBase, "skin " + std::to_string(skin) + ": a joint node is missing; skeleton skipped (bind pose)");
+            gltfWarn(c.fileBase,
+                     "skin " + std::to_string(skin) + ": a joint node is missing; skeleton skipped (bind pose)");
             continue;
         }
         const std::string key = uniqueNameT(c, s(sk.name).empty() ? "skin_" + std::to_string(skin) : s(sk.name));
@@ -1328,6 +1474,46 @@ bool gltfToData(const std::string& path, GltfTableData& out, std::string& err) {
         sf.push_back(fStrArr("meshes", meshKeys));
         out.nodes[key]["Skeleton"] = std::move(sf);
         out.keys.push_back(key);
+    }
+    for (uint32_t ai = 0; ai < model.animations_count; ++ai) {
+        AnimationClip clip;
+        extractAnim(
+            model, ai, c.fileBase,
+            [&](int32_t ni) {
+                const auto it = c.nodeKeys.find(ni);
+                return it != c.nodeKeys.end() ? it->second : "";
+            },
+            clip);
+        if (clip.targets.empty())
+            continue;
+        const std::string aname =
+            s(model.animations[ai].name).empty() ? "anim" + std::to_string(ai) : s(model.animations[ai].name);
+        const std::string ck = uniqueNameT(c, aname + "_clip");
+        CompFields cf;
+        cf.push_back(fStrArr("targets", clip.targets));
+        cf.push_back(fArr("interps", clip.interps));
+        cf.push_back(fArr("trackStart", clip.trackStart));
+        cf.push_back(fArr("times", clip.times));
+        cf.push_back(fArr("values", clip.values));
+        if (!clip.tangents.empty())
+            cf.push_back(fArr("tangents", clip.tangents));
+        out.nodes[ck]["AnimationClip"] = std::move(cf);
+        out.keys.push_back(ck);
+        const std::string pk = uniqueNameT(c, aname);
+        auto& pn = out.nodes[pk];
+        const tg3_animation& a = model.animations[ai];
+        for (uint32_t ci = 0; ci < a.channels_count; ++ci) { // parent under the first skinned target's placement
+            const int32_t sk = skinOfNode(model, a.channels[ci].target.node);
+            if (sk < 0)
+                continue;
+            const auto pit = c.skinPlacement.find(sk);
+            if (pit != c.skinPlacement.end()) {
+                pn["Parent"] = {fStr("e", pit->second)};
+                break;
+            }
+        }
+        pn["AnimationPlayer"] = {fStr("clip", ck)};
+        out.keys.push_back(pk);
     }
     tg3_model_free(&model);
     return true;

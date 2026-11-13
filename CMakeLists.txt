@@ -216,6 +216,10 @@ add_executable(view_proj_test tests/view_proj_test.cpp)
 target_compile_features(view_proj_test PRIVATE cxx_std_23)
 target_include_directories(view_proj_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/core ${CMAKE_SOURCE_DIR}/lib/glm)
 
+add_executable(anim_test tests/anim_test.cpp src/core/url.cpp src/core/components.cpp)
+target_compile_features(anim_test PRIVATE cxx_std_23)
+target_include_directories(anim_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/core ${CMAKE_SOURCE_DIR}/lib/glm ${CMAKE_SOURCE_DIR}/lib/entt/single_include)
+
 # CPU self-test for the tapered-capsule collision shape fitter.
 add_executable(collision_shape_solver_test solvers/collision_shape_solver_test.cpp)
 target_compile_features(collision_shape_solver_test PRIVATE cxx_std_23)

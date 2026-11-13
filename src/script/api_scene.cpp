@@ -1,11 +1,11 @@
-#include "script/scene_script.hpp"
-#include "script/lua_util.hpp"
-
 #include "app/engine.hpp"
 #include "assets.hpp"
 #include "gltf.hpp"
-#include "url.hpp"
 #include "physics/mesh_decomp.hpp"
+#include "script/lua_util.hpp"
+#include "script/scene_script.hpp"
+#include "url.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -18,7 +18,9 @@ void reg(lua_State* L, SceneScript* host, const char* name, lua_CFunction fn) {
     lua_setfield(L, -2, name);
 }
 
-/// scene.set(target: entity|string, field: string, value: number|table|string) | set a reflected field (URL form "Entity.field" or entity + field name); value is a number, an array of up to 4 numbers, or a string for "name.LuaScript.var" targets
+/// scene.set(target: entity|string, field: string, value: number|table|string) | set a reflected field (URL form
+/// "Entity.field" or entity + field name); value is a number, an array of up to 4 numbers, or a string for
+/// "name.LuaScript.var" targets
 int lSet(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     Engine& w = self->w();
@@ -59,7 +61,9 @@ int lSet(lua_State* L) {
     return 0;
 }
 
-/// scene.get(target: entity|string, field?: string) -> number|vec3|vec4|string | read a reflected field (URL form "Entity.field", or entity + field name); returns a scalar, {x,y,z}, {x,y,z,w}, or a string for "name.LuaScript.var" targets
+/// scene.get(target: entity|string, field?: string) -> number|vec3|vec4|string | read a reflected field (URL form
+/// "Entity.field", or entity + field name); returns a scalar, {x,y,z}, {x,y,z,w}, or a string for "name.LuaScript.var"
+/// targets
 int lGet(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     Engine& w = self->w();
@@ -94,7 +98,8 @@ int lGet(lua_State* L) {
     return 1;
 }
 
-/// scene.scenes() -> table | list loadable scenes in the active scenes dir as an array of {label, path} (label from the json "name" field when present)
+/// scene.scenes() -> table | list loadable scenes in the active scenes dir as an array of {label, path} (label from the
+/// json "name" field when present)
 int lScenes(lua_State* L) {
     const std::string dir = scenesDir();
     LuaTable arr(L);
@@ -109,7 +114,8 @@ int lScenes(lua_State* L) {
                 nlohmann::json j;
                 if (in && in >> j)
                     label = j.value("name", label);
-            } catch (const std::exception&) { // NOLINT(bugprone-empty-catch): malformed scene json falls back to the dir name
+            } catch (const std::exception&) { // NOLINT(bugprone-empty-catch): malformed scene json falls back to the
+                                              // dir name
             }
             LuaTable t(L);
             t.setStr("label", label);
@@ -140,23 +146,36 @@ int lTime(lua_State* L) {
 
 const char* kindName(FieldKind k) {
     switch (k) {
-    case FieldKind::SliderF: return "slider_f";
-    case FieldKind::SliderI: return "slider_i";
-    case FieldKind::Checkbox: return "checkbox";
-    case FieldKind::Color: return "color";
-    case FieldKind::DragV3: return "drag_v3";
-    case FieldKind::Ref: return "ref";
-    case FieldKind::Str: return "str";
-    case FieldKind::StrArr: return "str_arr";
-    case FieldKind::Quat: return "quat";
-    case FieldKind::FloatArr: return "float_arr";
-    case FieldKind::UIntArr: return "uint_arr";
-    case FieldKind::EntArr: return "ent_arr";
+    case FieldKind::SliderF:
+        return "slider_f";
+    case FieldKind::SliderI:
+        return "slider_i";
+    case FieldKind::Checkbox:
+        return "checkbox";
+    case FieldKind::Color:
+        return "color";
+    case FieldKind::DragV3:
+        return "drag_v3";
+    case FieldKind::Ref:
+        return "ref";
+    case FieldKind::Str:
+        return "str";
+    case FieldKind::StrArr:
+        return "str_arr";
+    case FieldKind::Quat:
+        return "quat";
+    case FieldKind::FloatArr:
+        return "float_arr";
+    case FieldKind::UIntArr:
+        return "uint_arr";
+    case FieldKind::EntArr:
+        return "ent_arr";
     }
     return "?";
 }
 
-/// scene.fields(type: string) -> array of {name, kind, lo, hi} | reflected field metadata of component type (widget defaults + introspection)
+/// scene.fields(type: string) -> array of {name, kind, lo, hi} | reflected field metadata of component type (widget
+/// defaults + introspection)
 int lFields(lua_State* L) {
     const std::string type = luaL_checkstring(L, 1);
     const TypeDesc* desc = refl::findType(type.c_str());
@@ -238,19 +257,22 @@ int lGltf(lua_State* L) {
     return 1;
 }
 
-/// graphics.load_texture(path: string, name?: string) -> entity | create a path-only Texture (file loaded and uploaded on first use), optionally named
+/// graphics.load_texture(path: string, name?: string) -> entity | create a path-only Texture (file loaded and uploaded
+/// on first use), optionally named
 int lLoadTexture(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const std::string path = luaL_checkstring(L, 1);
     const entt::entity e = w.reg.create();
     if (const char* name = luaL_optstring(L, 2, nullptr))
-        w.reg.emplace<Name>(e, name);
+        setName(w.reg, e, name);
     w.reg.emplace<Texture>(e).path = path;
     luaPushEnt(L, e);
     return 1;
 }
 
-/// graphics.render_texture(w: int, h: int, name?: string) -> entity | create a standalone GPUTexture render target (no Texture parent); render into it, then attach to a material or environment (errors when the graphics server is disabled)
+/// graphics.render_texture(w: int, h: int, name?: string) -> entity | create a standalone GPUTexture render target (no
+/// Texture parent); render into it, then attach to a material or environment (errors when the graphics server is
+/// disabled)
 int lRenderTexture(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     if (!w.hasDevice)
@@ -259,14 +281,15 @@ int lRenderTexture(lua_State* L) {
     const auto hpx = (uint32_t)luaL_checkinteger(L, 2);
     const entt::entity e = w.reg.create();
     if (const char* name = luaL_optstring(L, 3, nullptr))
-        w.reg.emplace<Name>(e, name);
+        setName(w.reg, e, name);
     w.reg.emplace<GPUTexture>(e, GPUTexture{wpx, hpx});
     w.graphics.makeGpuTexture(e, wpx, hpx);
     luaPushEnt(L, e);
     return 1;
 }
 
-/// soft.set_floor(y: number) | set the Y of the soft-body (cloth) floor plane (errors when the graphics server is disabled)
+/// soft.set_floor(y: number) | set the Y of the soft-body (cloth) floor plane (errors when the graphics server is
+/// disabled)
 int lSoftFloor(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     if (!w.hasDevice)
@@ -275,7 +298,9 @@ int lSoftFloor(lua_State* L) {
     return 0;
 }
 
-/// physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table | rigid-body raycast; returns {hit = true, pos = vec3, dist = number, entity = entity} or nil when nothing is hit; `excludes` is an array of entities to skip
+/// physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table | rigid-body raycast; returns
+/// {hit = true, pos = vec3, dist = number, entity = entity} or nil when nothing is hit; `excludes` is an array of
+/// entities to skip
 int lRaycast(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const V3 origin = luaReadV3(L, 1);
@@ -373,7 +398,169 @@ int lCollisionException(lua_State* L) {
     return 0;
 }
 
+/// scene.animate(target, field, keys, opts) -> player entity | keyframe animation via a generated clip:
+/// target = named entity|string|{...} (one track per target, shared clock), field = "Component.field",
+/// keys = array of {t = time, v = number|{n1..n4}} (all with the same value count 1/3/4),
+/// opts = {loop = 0 once|1 loop|2 pingpong, speed = n, playing = bool}
+static int lAnimate(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    auto targetName = [&](int idx) -> std::string {
+        if (lua_isnumber(L, idx)) {
+            const entt::entity e = luaReadEnt(L, idx);
+            if (auto* n = w.reg.try_get<Name>(e))
+                return n->id;
+            return "";
+        }
+        const char* s = lua_tostring(L, idx);
+        return s ? s : "";
+    };
+    std::vector<std::string> names;
+    if (lua_istable(L, 1)) {
+        for (int i = 1;; ++i) {
+            lua_geti(L, 1, i);
+            if (lua_isnoneornil(L, -1)) {
+                lua_pop(L, 1);
+                break;
+            }
+            names.push_back(targetName(-1));
+            lua_pop(L, 1);
+        }
+    } else {
+        names.push_back(targetName(1));
+    }
+    for (const auto& n : names)
+        if (n.empty())
+            return luaL_error(L, "scene.animate: targets must be named entities");
+    const std::string field = luaL_checkstring(L, 2);
+    if (!field.contains('.'))
+        return luaL_error(L, "scene.animate: field must be 'Component.field'");
+    luaL_checktype(L, 3, LUA_TTABLE);
+    std::vector<std::pair<float, std::vector<float>>> keys;
+    int wdt = -1;
+    for (int i = 1;; ++i) {
+        lua_geti(L, 3, i);
+        if (lua_isnoneornil(L, -1)) {
+            lua_pop(L, 1);
+            break;
+        }
+        luaL_checktype(L, -1, LUA_TTABLE);
+        lua_getfield(L, -1, "t");
+        const float t = (float)luaL_checknumber(L, -1);
+        lua_pop(L, 1);
+        lua_getfield(L, -1, "v");
+        std::vector<float> v;
+        if (lua_isnumber(L, -1)) {
+            v.push_back((float)lua_tonumber(L, -1));
+        } else if (lua_istable(L, -1)) {
+            for (int j = 1;; ++j) {
+                lua_geti(L, -1, j);
+                if (lua_isnoneornil(L, -1)) {
+                    lua_pop(L, 1);
+                    break;
+                }
+                v.push_back((float)luaL_checknumber(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            return luaL_error(L, "scene.animate: key value must be a number or array");
+        }
+        lua_pop(L, 2); // v + key table
+        if (v.empty() || v.size() > 4)
+            return luaL_error(L, "scene.animate: key value count must be 1..4");
+        if (wdt < 0)
+            wdt = (int)v.size();
+        else if ((int)v.size() != wdt)
+            return luaL_error(L, "scene.animate: all keys must have the same value count");
+        keys.emplace_back(t, std::move(v));
+    }
+    if (keys.empty())
+        return luaL_error(L, "scene.animate: need at least one keyframe");
+    std::sort(keys.begin(), keys.end());
+    int loop = 1;
+    float speed = 1.0f;
+    bool playing = true;
+    if (lua_istable(L, 4)) {
+        lua_getfield(L, 4, "loop");
+        if (lua_isnumber(L, -1))
+            loop = (int)lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        lua_getfield(L, 4, "speed");
+        if (lua_isnumber(L, -1))
+            speed = (float)lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        lua_getfield(L, 4, "playing");
+        if (lua_isboolean(L, -1))
+            playing = lua_toboolean(L, -1);
+        lua_pop(L, 1);
+    }
+    const int nKeys = (int)keys.size();
+    std::vector<std::string> urls;
+    for (const auto& n : names)
+        urls.push_back(n + "." + field);
+    std::vector<float> times, values, trackStart{0.0f}, interps(names.size(), 0.0f);
+    for (const auto& [t, v] : keys) {
+        times.push_back(t);
+        values.insert(values.end(), v.begin(), v.end());
+    }
+    trackStart.push_back((float)nKeys);
+    entt::entity clipE = w.reg.create();
+    CompFields cf;
+    {
+        CompField f;
+        f.name = "targets";
+        f.isStrArr = true;
+        f.strArr = std::move(urls);
+        cf.push_back(std::move(f));
+    }
+    const char* arrNames[4] = {"interps", "trackStart", "times", "values"};
+    const std::vector<float>* arrs[4] = {&interps, &trackStart, &times, &values};
+    for (int i = 0; i < 4; ++i) {
+        CompField f;
+        f.name = arrNames[i];
+        f.isArr = true;
+        f.arr = *arrs[i];
+        cf.push_back(std::move(f));
+    }
+    std::string err;
+    if (!compEmplace(w.reg, clipE, "AnimationClip", cf, err))
+        return luaL_error(L, "scene.animate: %s", err.c_str());
+    entt::entity playerE = w.reg.create();
+    CompFields pf;
+    {
+        CompField f;
+        f.name = "clip";
+        f.hasEnt = true;
+        f.ent = clipE;
+        pf.push_back(std::move(f));
+    }
+    {
+        CompField f;
+        f.name = "loop";
+        f.v[0] = (float)loop;
+        f.n = 1;
+        pf.push_back(std::move(f));
+    }
+    {
+        CompField f;
+        f.name = "speed";
+        f.v[0] = speed;
+        f.n = 1;
+        pf.push_back(std::move(f));
+    }
+    {
+        CompField f;
+        f.name = "playing";
+        f.v[0] = playing ? 1.0f : 0.0f;
+        f.n = 1;
+        pf.push_back(std::move(f));
+    }
+    if (!compEmplace(w.reg, playerE, "AnimationPlayer", pf, err))
+        return luaL_error(L, "scene.animate: %s", err.c_str());
+    luaPushEnt(L, playerE);
+    return 1;
 }
+
+} // namespace
 
 void luaRegisterScene(lua_State* L, SceneScript* host) {
     reg(L, host, "set", lSet);
@@ -383,6 +570,7 @@ void luaRegisterScene(lua_State* L, SceneScript* host) {
     reg(L, host, "scenes", lScenes);
     reg(L, host, "request_scene", lRequestScene);
     reg(L, host, "last_error", lLastError);
+    reg(L, host, "animate", lAnimate);
 }
 
 void luaRegisterGraphicsTable(lua_State* L, SceneScript* host) {

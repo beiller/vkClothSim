@@ -2,9 +2,25 @@
 
 #include <cstring>
 #include <entt/entt.hpp>
+#include <unordered_map>
 
-template <typename M>
-static M& varMap(const M& m) {
+// Per-URL resolution cache. Entries store only what is needed to re-derive the field
+// address (comp + entity + FieldDesc); the base pointer itself is never stored, so a hit
+// is valid iff the component still exists on the entity (checked via tryGet). .LuaScript.
+// URLs never reach the store: they only succeed through resolveVar, which returns
+// map-backed pointers that are not stable across syncs.
+struct UrlEntry {
+    const CompReg* comp = nullptr;
+    entt::entity ent = entt::null;
+    const FieldDesc* field = nullptr;
+};
+static std::unordered_map<std::string, UrlEntry> s_urlCache;
+
+void urlInvalidateAll() {
+    s_urlCache.clear();
+}
+
+template <typename M> static M& varMap(const M& m) {
     return const_cast<M&>(m);
 }
 
@@ -137,6 +153,14 @@ bool resolveUrl(const entt::registry& reg, const std::string& url, UrlRef& out, 
         }
     }
 
+    if (const auto it = s_urlCache.find(url); it != s_urlCache.end()) { // fast path: liveness-checked hit
+        const UrlEntry& e = it->second;
+        if (e.comp && e.comp->tryGet(reg, e.ent)) {
+            out = {e.field, (char*)e.comp->tryGet(reg, e.ent) + e.field->offset};
+            return true;
+        }
+    }
+
     const auto lastDot = url.rfind('.');
     const auto splitDot = url.rfind('.', lastDot - 1);
     if (lastDot == std::string::npos || splitDot == std::string::npos) {
@@ -163,7 +187,15 @@ bool resolveUrl(const entt::registry& reg, const std::string& url, UrlRef& out, 
         return false;
     }
 
-    return resolveEntityField(reg, ent, rest, name, out, err);
+    UrlRef r;
+    if (!resolveEntityField(reg, ent, rest, name, r, err))
+        return false;
+    out = r;
+    if (url.find(".LuaScript.") == std::string::npos) { // map-backed values have no stable pointer: never cached
+        s_urlCache[url] = {compFor(rest.substr(0, rest.find('.'))), ent,
+                           r.field}; // comp may be null: degrades to no cache
+    }
+    return true;
 }
 
 static bool applySet(const UrlRef& r, const float* vals, int n, std::string& err) {

@@ -1,19 +1,20 @@
-#include <span>
 #include "components.hpp"
-#include "ecs.hpp"
 
+#include "anim.hpp"
+#include "ecs.hpp"
 #include "reflect.hpp"
+#include "url.hpp"
 #include <cstring>
+#include <span>
 
 namespace {
 
-template <typename T>
-struct CompT {
+template <typename T> struct CompT {
     static void* tryGet(const entt::registry& reg, entt::entity e) { return const_cast<T*>(reg.try_get<T>(e)); }
     static void emplace(entt::registry& reg, entt::entity e) { reg.emplace<T>(e); }
     static void remove(entt::registry& reg, entt::entity e) { reg.remove<T>(e); }
 };
-}
+} // namespace
 
 static bool validateTaperedCapsule(entt::registry& reg, entt::entity e, std::string& err) {
     const auto& tc = reg.get<TaperedCapsule>(e);
@@ -42,25 +43,54 @@ static bool validateConvexHullShape(entt::registry& reg, entt::entity e, std::st
 
 static bool validateGeometry(entt::registry& reg, entt::entity e, std::string& err);
 static bool bindSkeleton(entt::registry& reg, entt::entity e, std::string& err);
+static bool animClipAfterWrite(entt::registry& reg, entt::entity e, std::string& err);
 
-#define CMP(T) \
-    { #T, refl::findType(#T), &CompT<T>::tryGet, &CompT<T>::emplace, &CompT<T>::remove, nullptr }
-#define CMPV(T, V) \
-    { #T, refl::findType(#T), &CompT<T>::tryGet, &CompT<T>::emplace, &CompT<T>::remove, &(V) }
+#define CMP(T) {#T, refl::findType(#T), &CompT<T>::tryGet, &CompT<T>::emplace, &CompT<T>::remove, nullptr}
+#define CMPV(T, V) {#T, refl::findType(#T), &CompT<T>::tryGet, &CompT<T>::emplace, &CompT<T>::remove, &(V)}
 
 static std::span<const CompReg> comps() {
     static const CompReg kComps[] = {
-    CMP(Transform),     CMP(Material),      CMP(MaterialRef),  CMP(Camera),       CMP(Environment),
-    CMP(PointLight),    CMP(SoftBodyData), CMP(RigidBody),    CMP(KinematicBody), CMP(CapsuleShape),
-    CMP(BoxShape),      CMPV(TaperedCapsule, validateTaperedCapsule), CMPV(SphereShape, validateSphereShape),
-    CMPV(ConvexHullShape, validateConvexHullShape), CMP(Collider), CMP(ControllerInput), CMP(MouseInput),
-    CMP(Renderable),    CMP(Texture),       CMPV(Geometry, validateGeometry), CMPV(Skeleton, bindSkeleton),
-    CMP(Joint),         CMP(SixDofJoint),   CMP(Parent),        CMP(Bind),
-    CMP(UIWidget),      CMP(UIButton),        CMP(UICanvas),     CMP(GPUTexture),
-    CMP(UIWindow),      CMP(UITab),          CMP(UIText),       CMP(UISection),
-    CMP(UISliderF),     CMP(UISliderI),      CMP(UICheckbox),   CMP(UIColorEdit),
-    CMP(UIDragV3),
-};
+        CMP(Transform),
+        CMP(Material),
+        CMP(MaterialRef),
+        CMP(Camera),
+        CMP(Environment),
+        CMP(PointLight),
+        CMP(SoftBodyData),
+        CMP(RigidBody),
+        CMP(KinematicBody),
+        CMP(CapsuleShape),
+        CMP(BoxShape),
+        CMPV(TaperedCapsule, validateTaperedCapsule),
+        CMPV(SphereShape, validateSphereShape),
+        CMPV(ConvexHullShape, validateConvexHullShape),
+        CMP(Collider),
+        CMP(ControllerInput),
+        CMP(MouseInput),
+        CMP(Renderable),
+        CMP(Texture),
+        CMPV(Geometry, validateGeometry),
+        CMPV(Skeleton, bindSkeleton),
+        CMP(Joint),
+        CMP(SixDofJoint),
+        CMP(Parent),
+        CMP(Bind),
+        CMPV(AnimationClip, animClipAfterWrite),
+        CMP(AnimationPlayer),
+        CMP(UIWidget),
+        CMP(UIButton),
+        CMP(UICanvas),
+        CMP(GPUTexture),
+        CMP(UIWindow),
+        CMP(UITab),
+        CMP(UIText),
+        CMP(UISection),
+        CMP(UISliderF),
+        CMP(UISliderI),
+        CMP(UICheckbox),
+        CMP(UIColorEdit),
+        CMP(UIDragV3),
+    };
 
 #undef CMP
 #undef CMPV
@@ -141,10 +171,8 @@ static bool writeField(const TypeDesc* t, void* b, const CompField& f, std::stri
     case FieldKind::DragV3:
     case FieldKind::Quat: {
         const int want = d->kind == FieldKind::Quat ? 4 : 3;
-        if (!checkShape(f, std::to_string(want) + " values", err) || !fieldValue(f, src, len) ||
-            len != want) {
-            err = "field '" + f.name + "' expects " + std::to_string(want) + " values, got " +
-                  std::to_string(len);
+        if (!checkShape(f, std::to_string(want) + " values", err) || !fieldValue(f, src, len) || len != want) {
+            err = "field '" + f.name + "' expects " + std::to_string(want) + " values, got " + std::to_string(len);
             return false;
         }
         std::memcpy(dst, src, (size_t)want * 4);
@@ -267,13 +295,19 @@ bool bindSkeleton(entt::registry& reg, entt::entity e, std::string& err) {
     return true;
 }
 
+bool animClipAfterWrite(entt::registry& reg, entt::entity e, std::string&) {
+    auto& c = reg.get<AnimationClip>(e);
+    if (c.duration <= 0.0f)
+        c.duration = animDuration(c.trackStart, c.times); // any write may change the keyframes
+    return true;
+}
+
 static bool createOrReplace(entt::registry& reg, entt::entity e, const std::string& typeName, const CompFields& fields,
                             bool strict, std::string& err) {
     const CompReg* c = compFor(typeName);
     if (!c) {
-        err = refl::findType(typeName.c_str())
-                  ? "component '" + typeName + "' is engine state, not an entity component"
-                  : "unknown component '" + typeName + "'";
+        err = refl::findType(typeName.c_str()) ? "component '" + typeName + "' is engine state, not an entity component"
+                                               : "unknown component '" + typeName + "'";
         return false;
     }
     const TypeDesc* t = c->desc;
@@ -318,6 +352,17 @@ static bool createOrReplace(entt::registry& reg, entt::entity e, const std::stri
     return !c->afterWrite || c->afterWrite(reg, e, err);
 }
 
+void setName(entt::registry& reg, entt::entity e, const std::string& id) {
+    if (auto* n = reg.try_get<Name>(e)) {
+        if (n->id == id)
+            return; // unchanged: no remap
+        n->id = id; // emplace does not replace in this entt: write in place
+    } else {
+        reg.emplace<Name>(e, id);
+    }
+    urlInvalidateAll(); // a new/changed name may remap every cached URL
+}
+
 bool hasComponentByName(const entt::registry& reg, entt::entity e, const std::string& name) {
     const CompReg* c = compFor(name);
     return c && c->tryGet(reg, e) != nullptr;
@@ -337,9 +382,8 @@ bool compWriteField(entt::registry& reg, entt::entity e, const std::string& type
                     std::string& err) {
     const CompReg* c = compFor(typeName);
     if (!c) {
-        err = refl::findType(typeName.c_str())
-                  ? "component '" + typeName + "' is engine state, not an entity component"
-                  : "unknown component '" + typeName + "'";
+        err = refl::findType(typeName.c_str()) ? "component '" + typeName + "' is engine state, not an entity component"
+                                               : "unknown component '" + typeName + "'";
         return false;
     }
     void* b = c->tryGet(reg, e);
@@ -355,9 +399,8 @@ bool compWriteField(entt::registry& reg, entt::entity e, const std::string& type
 bool compRemove(entt::registry& reg, entt::entity e, const std::string& type, std::string& err) {
     const CompReg* c = compFor(type);
     if (!c) {
-        err = refl::findType(type.c_str())
-                  ? "component '" + type + "' is engine state, not an entity component"
-                  : "unknown component '" + type + "'";
+        err = refl::findType(type.c_str()) ? "component '" + type + "' is engine state, not an entity component"
+                                           : "unknown component '" + type + "'";
         return false;
     }
     if (!c->tryGet(reg, e)) {

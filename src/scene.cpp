@@ -10,8 +10,8 @@
 #include "vk/vkapp.hpp"
 #include <algorithm>
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -87,7 +87,7 @@ entt::entity buildObject(Engine& w, const json& o, const std::string& p, bool al
     const auto name = o.at("name").get<std::string>();
     const std::string what = "object '" + name + "'";
     const entt::entity e = w.reg.create();
-    w.reg.emplace<Name>(e, name);
+    setName(w.reg, e, name);
 
     if (o.contains("components"))
         addComponents(w.reg, e, o["components"], p, what + ":");
@@ -110,11 +110,11 @@ entt::entity buildObject(Engine& w, const json& o, const std::string& p, bool al
     return e;
 }
 
-}
+} // namespace
 
 void spawnSettingsEntity(entt::registry& reg) {
     entt::entity e = reg.create();
-    reg.emplace<Name>(e, "settings");
+    setName(reg, e, "settings");
     reg.emplace<SettingsRoot>(e);
     reg.emplace<RenderSettings>(e);
     reg.emplace<PhysicsSettings>(e);
@@ -141,6 +141,7 @@ void resetScene(Engine& w) {
     if (w.hasDevice)
         w.graphics.flushFrees();
     w.reg.clear();
+    urlInvalidateAll(); // every cached URL target is gone with the registry
     spawnSettingsEntity(w.reg);
     w.physics.reset();
     if (w.hasDevice)

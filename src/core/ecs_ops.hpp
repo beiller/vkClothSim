@@ -1,4 +1,5 @@
 #pragma once
+#include "components.hpp"
 #include "ecs.hpp"
 
 inline void addMesh(entt::registry& reg, entt::entity e, entt::entity geom, entt::entity mat, entt::entity parent,
@@ -12,11 +13,11 @@ inline void addMesh(entt::registry& reg, entt::entity e, entt::entity geom, entt
 }
 
 inline entt::entity spawnMaterial(entt::registry& reg, const V3& baseColor, float metallic, float roughness,
-                                 const V3& emissive, const char* name = nullptr) {
+                                  const V3& emissive, const char* name = nullptr) {
     entt::entity e = reg.create();
     reg.emplace<Material>(e, baseColor, metallic, roughness, emissive);
     if (name)
-        reg.emplace<Name>(e, name);
+        setName(reg, e, name);
     return e;
 }
 
@@ -26,7 +27,8 @@ inline entt::entity makeTexture(entt::registry& reg, const std::string& id, cons
             return e;
     entt::entity e = reg.create();
     reg.emplace<Texture>(e, Texture{id, TexelFormat::RGBA8, "linear",
-                                   std::vector<uint8_t>(rgba, rgba + (size_t)wpx * (size_t)hpx * 4), (uint32_t)wpx, (uint32_t)hpx});
-    reg.emplace<Name>(e, id);
+                                    std::vector<uint8_t>(rgba, rgba + (size_t)wpx * (size_t)hpx * 4), (uint32_t)wpx,
+                                    (uint32_t)hpx});
+    setName(reg, e, id);
     return e;
 }
