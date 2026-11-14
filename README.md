@@ -1,13 +1,13 @@
 # 3dsim
 
-A data-driven 3D engine: ENTT ECS scene graph, Jolt rigid-body physics, GPU soft-body (PBD) and dual-quaternion skinning, a Vulkan renderer, OpenXR support, and Lua-scripted scenes. Two decoupled servers — `PhysicsServer` (CPU, self-paced 120 Hz) and `GraphicsServer` (Vulkan + GPU sim, self-paced 60 Hz) — exchange state only through ECS components; settings are data too (components on a marker entity, bindable by URL).
+A data-driven 3D engine: ENTT ECS scene graph, Jolt rigid-body physics, GPU soft-body (PBD) and dual-quaternion skinning, a Vulkan renderer, OpenXR support, and Lua-scripted scenes. Two servers — `PhysicsServer` (CPU Jolt) and `GraphicsServer` (Vulkan + GPU soft-body/skinning sim) — each step once per frame with the frame's dt (clamped to 1/30 s) and exchange state only through ECS components; settings are data too (components on a marker entity, bindable by URL).
 
 ![3dsim](screenshot1.jpg)
 
 ## Features
 
 ### Full GLTF support
-Load GLTF files with full support for skeleton, shape keys, object higherachy, full shader support including SSS + refraction.
+Load GLTF files with full support for skeletons, shape keys, object hierarchy, and animations (clips + players), plus the full shader feature set including SSS + refraction.
 
 ### GPU soft-body cloth simulation
 Cloth and soft bodies run entirely on the GPU as position-based-dynamics compute shaders (`shaders/softbody.comp`). Each body is a mesh plus flat constraint quads `{a, b, rest, k}` solved in substeps with per-body gravity, damping, friction, tension and stiffness, against a floor and up to `kMaxCapsules` dynamic capsule colliders. 
@@ -16,13 +16,18 @@ Cloth and soft bodies run entirely on the GPU as position-based-dynamics compute
 Meshes deform on the GPU with dual-quaternion skinning plus shape keys
 
 ### PBR renderer
-Forward Vulkan renderer implements metallic-roughness PBR with glTF texture conventions (G = roughness, B = metallic), emissive, normal scaling, opaque/transparent passes with alpha cutoff/blend modes, and **glass refraction**: a `refraction`/`ior` pair re-samples the blurred scene color and depth buffers for refracted views. A dedicated subsurface-scattering pass weighted per color channel.
+Forward Vulkan renderer implements metallic-roughness PBR with glTF texture conventions (G = roughness, B = metallic), emissive, normal scaling, opaque/transparent passes with alpha cutoff/blend modes, and **glass refraction**: a `refraction`/`ior` pair re-samples the blurred scene color and depth buffers for refracted views. A dedicated subsurface-scattering pass weighted per color channel. An optional `renderScale` supersamples the scene buffer (VR resolution is matched to the headset).
 
 ### Image-based lighting and shadow mapping
 Environment maps are generated on the GPU from equirectangular textures with PCF-style texel filtering; light falloff is inverse-square with a hard front-facing gate.
 
 ### Jolt rigid-body physics
-`PhysicsServer` wraps the Jolt engine on the CPU with its own fixed-step accumulator at 120 Hz — it steps independently of frame rate and exposes per-step hooks (`_physics` Lua callbacks) for data-driven behaviour. Scenes declare dynamic, kinematic and static bodies with box/capsule colliders and joints; `collision_shape_solver_test` covers shape fitting (capsules to arbitrary meshes).
+`PhysicsServer` wraps the Jolt engine on the CPU, stepping once per frame with the frame's dt (clamped to 1/30 s), and exposes a per-frame hook (`_physics` Lua callback) for data-driven behaviour. Scenes declare dynamic, kinematic and static bodies with box/capsule/sphere/tapered-capsule/convex-hull colliders, and point or 6-DOF joints (translation/angle limits, soft limits, per-axis motors); `collision_shape_solver_test` covers shape fitting (tapered-capsule compounds to arbitrary meshes).
+
+### Collision shape decomposition
+Two algorithms fit physics shapes to arbitrary meshes from Lua:
+- **Tapered-capsule compounds** — `physics.fit_capsule` fits chains of tapered capsules (spheres for blob-like clouds) to a vertex cloud, with per-part error metrics. The solver in [`solvers/collision_shape_solver.h`](solvers/collision_shape_solver.h) is unit-tested by `collision_shape_solver_test`; the ragdoll workflow in [caps_fit.lua](assets/scenes/caps_fit.lua) fits each bone's rest-pose vertices and builds a TaperedCapsule skeleton from the result.
+- **Convex hulls** — `physics.convex_decompose` runs CoACD convex decomposition ([`src/physics/mesh_decomp.cpp`](src/physics/mesh_decomp.cpp)) and returns per-part vertex sets ready for `ConvexHullShape` colliders; degenerate input falls back to a single full-mesh hull for small meshes. See [sword_decomp.lua](assets/scenes/sword_decomp.lua).
 
 ### OpenXR / VR
 Full stereo OpenXR path: per-eye views from the runtime pose, controller tracking, and a clean camera hand-off — while an XR pose exists all scene cameras are deactivated and the VR camera drives rendering.
@@ -31,10 +36,10 @@ Full stereo OpenXR path: per-eye views from the runtime pose, controller trackin
 Everything is ECS data: scenes are JSON (objects → named entities with components), settings are components on a marker entity, and any field of any component is addressable by URL (`name.Component.field`). UI widgets, scene `Bind` entries and script variables all read/write through the same resolver — so a slider can drive `Material.metallic`, a `Transform.pos`, or a Lua script variable with identical code.
 
 ### Lua scripting
-Scenes attach behaviour via `"script": "scenes/<name>"` (or `scene.attach_script(e, file, params)`). Scripts get lifecycle hooks (`_on_ready`, `_animate`, `_physics`), a `self.vars` table whose entries are bindable by URL (`name.LuaScript.var` — floats, bools, strings, vec3/quat tables with dotted sub-paths), and seven API tables: `scene` (entity/component CRUD, poses, glTF, textures), `math` (vec/quaternion ops on top of the Lua stdlib), `physics` (raycast), `soft`, `graphics`, `ui`, and `input`. A `mesh` standard library generates capsule/sphere/box/plane geometry. The full reference is generated from source annotations: [docs/LUA_API.md](docs/LUA_API.md).
+Scenes attach behaviour via `"script": "scenes/<name>"` (or `scene.attach_script(e, file, params)`). Scripts get lifecycle hooks (`_on_ready`, `_animate`, `_physics`) and a per-attach instance table whose top-level variables are bindable by URL (`name.LuaScript.var`). Eight API tables: `scene` (entity/component CRUD, live component views, batch `spawn`, poses, keyframe `animate`, glTF, textures), `math` (vec/quaternion ops on top of the Lua stdlib), `physics` (raycast, capsule/convex decomposition, collision exceptions), `soft`, `graphics`, `ui`, `engine` (performance metrics), and `input`. A `mesh` standard library generates capsule/sphere/box/plane geometry. Documentation: [docs/LUA_GUIDE.md](docs/LUA_GUIDE.md) (conventions and walkthroughs) and [docs/LUA_API.md](docs/LUA_API.md) (full reference, generated from source annotations).
 
 ### Immersive UI and scene editor
-A PBR-lit UI: windows, tabs, text, sliders (f/i) and buttons are ECS widgets (entities with components) rendered via an ImGui Vulkan backend onto a lit canvas quad — so they respond to the scene's lights. Sliders bind to any URL (component field or script variable). `ui.editor` embeds a full scene editor tab for inspecting and editing entities at runtime.
+A PBR-lit UI: windows, tabs, sections, text, sliders (f/i), checkboxes, color pickers, 3D drag gizmos and buttons are ECS widgets (entities with components) rendered via an ImGui Vulkan backend onto a lit canvas quad — so they respond to the scene's lights. Value widgets bind to any URL (component field or script variable); buttons/callbacks call `name.LuaScript.fn`. `ui.editor` embeds a full scene editor tab for inspecting and editing entities at runtime, and the `require("ui")` stdlib builds all of it from Lua.
 
 ## Hello World Scene
 
@@ -86,7 +91,7 @@ function _on_ready(self)
     uib.bind_slider(tab, "cube refraction", "mat_cube.Material.refraction", 0, 1.0, "%.2f")
     uib.bind_slider(tab, "cube ior", "mat_cube.Material.ior", 1.0, 3.0, "%.2f")
     uib.bind_slider(tab, "cube roughness", "mat_cube.Material.roughness", 0, 1.0, "%.2f")
-    ui.editor(uib.tab(win, "editor"))
+    uib.editor(uib.tab(win, "editor"))
 end
 
 -- runs every graphics frame
@@ -115,9 +120,10 @@ end
 }
 ```
 
-## Full API reference 
+## Lua documentation
 
-[docs/LUA_API.md](docs/LUA_API.md)
+- [docs/LUA_GUIDE.md](docs/LUA_GUIDE.md) — hand-written guide: type conventions (vec3/quat layout), entities/names/refs/URLs, live component views, script hooks, and the `ui`/`mesh` stdlibs.
+- [docs/LUA_API.md](docs/LUA_API.md) — auto-generated per-function reference with return-table shapes and examples, plus the full component field reference (regenerated from source annotations by `tools/gen_lua_api.py`).
 
 ## Build & run
 
@@ -128,9 +134,9 @@ cmake --build build -j
 ./build/vksim --scene assets/scenes/hello_world.json --no-vr  # load a scene, disable VR
 ```
 
-Flags: `--scene <path>`, `--no-vr`, `--no-graphics` (CPU physics only), `--headless` (GPU compute, no window), `--frames <n>` (exit after n frames).
+Flags: `--scene <path>`, `--no-vr`, `--no-graphics` (CPU physics only), `--headless` (GPU compute, no window; simulates at a fixed 60 Hz timestep), `--frames <n>` (exit after n frames).
 
-Re-run the `cmake -S .` step after editing a shader — SPIR-V is baked in at configure time.
+Shader edits are picked up automatically on the next build — SPIR-V is regenerated when a `.vert`/`.frag`/`.comp` source changes.
 
 ## Dependencies
 

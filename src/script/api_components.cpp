@@ -172,7 +172,10 @@ static std::vector<entt::entity> subtreeEntities(entt::registry& reg, entt::enti
     return out;
 }
 
-/// scene.entity(name?: string) -> entity | create a new entity, optionally named
+/// scene.entity(name?: string) -> entity | create a new empty entity and return its id. With `name` it is also
+/// registered under that world name (looked up by scene.get_entity, used in URLs and spawn ref resolution). An entity
+/// does nothing until components are emplaced on it; destroy it with scene.destroy.
+///     local e = scene.entity("hero")
 static int lEntity(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = w.reg.create();
@@ -201,14 +204,19 @@ static int lCompMutate(lua_State* L, const char* op, CompMutateFn fn) {
     return 0;
 }
 
-/// scene.emplace(e: entity, type: string, fields?: table) | create or replace component `type` on e from a field table
-/// (a Geometry table may carry a "shapes" array)
+/// scene.emplace(e: entity, type: string, fields?: table) | create (or replace) component `type` on e from a field
+/// table; see the Component Reference below for valid types and fields. Omitted fields take their C++ defaults; an
+/// unknown type or malformed field is an error. A Geometry table may additionally carry "shapes" = an array of shape-key
+/// tables {name, pos, nrm?, uv?, idx?}. Returns nothing - read the result back with scene.component(e, type).
+///     local e = scene.entity()
+///     scene.emplace(e, "Transform", { pos = {0, 2, 0}, quat = {0, 0.7071, 0, 0.7071} })
 static int lCompEmplace(lua_State* L) {
     return lCompMutate(L, "emplace", compEmplace);
 }
 
-/// scene.replace(e: entity, type: string, fields?: table) | replace an existing component `type` on e from a field
-/// table (errors if the component is absent; Geometry may carry "shapes")
+/// scene.replace(e: entity, type: string, fields?: table) | like scene.emplace, but the component must already exist on
+/// e (error otherwise); use it to rewrite a whole component in place. Same field-table rules as emplace (a Geometry
+/// table may carry "shapes").
 static int lCompReplace(lua_State* L) {
     return lCompMutate(L, "replace", compReplace);
 }
@@ -221,9 +229,18 @@ static entt::entity resolveRef(const std::unordered_map<std::string, entt::entit
     return findNamedEntity(reg, name);
 }
 
-/// scene.spawn(tbl: table, parent?: entity|string) -> table | materialize a name->node map into live entities (node =
-/// component-name -> field table). Refs: integer as-is; string = same-spawn name first, then world name. Returns the
-/// name->entity map.
+/// scene.spawn(tbl: table, parent?: entity|string) -> table | materialize a name->node map into live entities in one
+/// call. Each node is a component-name -> field-table map (e.g. {Transform = {...}, RigidBody = {...}}); the map key
+/// becomes the world name (suffixed "#2", "#3", ... when the name is already taken), and "Name" keys inside a node are
+/// ignored. Refs: an integer is used as-is; a string resolves against this spawn's names first, then world names. A
+/// Renderable without "geom" defaults to the node's own Geometry. `parent` (entity or name, must have a Transform)
+/// parents every root node that has no Parent of its own. Returns the name->entity map.
+///     local e = scene.spawn({
+///         col  = { CapsuleShape = { halfLen = 0.5, radius = 0.3 } },
+///         body = { Transform = { pos = {0, 1, 0} },
+///                  RigidBody = { mass = 10, colliders = { "col" } } },
+///     })
+///     print(e.body)  -- the rigid-body entity
 static int lSpawn(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     luaL_checktype(L, 1, LUA_TTABLE);
@@ -387,7 +404,8 @@ static int lSpawn(lua_State* L) {
     return 1;
 }
 
-/// scene.has(e: entity, type: string) -> bool | whether e has component `type`
+/// scene.has(e: entity, type: string) -> bool | true if e carries component `type` (a reflected component name such as
+/// "Transform" or "RigidBody"); false for unknown types.
 static int lHas(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
@@ -570,8 +588,14 @@ static void compViewMetaEnsure(lua_State* L, SceneScript* host) {
     lua_setfield(L, LUA_REGISTRYINDEX, key);
 }
 
-/// scene.component(e: entity, type: string) -> table|nil | a live view of component `type` on e (nil if absent); reads
-/// resolve per access; writes require the component to exist (create via scene.emplace/replace)
+/// scene.component(e: entity, type: string) -> table|nil | a live view of component `type` on e (nil when absent).
+/// Reads resolve on every access, so the view always sees current values; writes go straight into the component and
+/// require it to already exist (create it with scene.emplace/replace first). The view is not a copy - do not keep it
+/// alive across scene.destroy calls. Unknown types are an error; engine-state types (e.g. "KeyboardInput") are
+/// reported as such. vec3 fields read as {x,y,z}, quats as {x,y,z,w}.
+///     local t = scene.component(e, "Transform")
+///     print(t.pos[1])        -- live x position
+///     t.quat = {0, 0, 0, 1}  -- write-through (component must exist)
 static int lComponent(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
@@ -598,7 +622,8 @@ static int lComponent(lua_State* L) {
     return 1;
 }
 
-/// scene.remove(e: entity, type: string) | remove component `type` from e (errors if absent or unknown type)
+/// scene.remove(e: entity, type: string) | remove component `type` from e; errors if the type is unknown or the
+/// component is absent. Any live views of it become invalid afterwards.
 static int lCompRemove(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
@@ -609,8 +634,9 @@ static int lCompRemove(lua_State* L) {
     return 0;
 }
 
-/// scene.set_pose(e: entity|string, pos: vec3, quat: quat) | set the local Transform of e (errors if e has no
-/// Transform)
+/// scene.set_pose(e: entity|string, pos: vec3, quat: quat) | set the local Transform of e (pos = {x,y,z}, quat =
+/// {x,y,z,w}); errors if e has no Transform. Local means relative to e's parent - read the composed result with
+/// world_pose. Scale is untouched.
 static int lSetPose(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = entityOrName(w, L, 1);
@@ -622,8 +648,10 @@ static int lSetPose(lua_State* L) {
     return 0;
 }
 
-/// scene.get_pose(e: entity|string) -> table | local Transform of e as {pos = {x,y,z}, quat = {x,y,z,w}} (errors if e
-/// has no Transform)
+/// scene.get_pose(e: entity|string) -> table | the local Transform of e as {pos = {x,y,z}, quat = {x,y,z,w}}; errors if
+/// e has no Transform. A snapshot - copy it, mutate, and write back with set_pose to animate.
+///     local p = scene.get_pose("cube")
+///     print(p.pos[1], p.quat[4])  -- x position, quaternion w
 static int lGetPose(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = entityOrName(w, L, 1);
@@ -652,8 +680,9 @@ static int lGetPose(lua_State* L) {
     return 1;
 }
 
-/// scene.world_pose(e: entity|string) -> table | world-space pose of e as {pos = {x,y,z}, quat = {x,y,z,w}}; live
-/// Transform+Parent walk, always current (unlike the per-substep WorldTransform snapshot)
+/// scene.world_pose(e: entity|string) -> table | the world-space pose of e as {pos = {x,y,z}, quat = {x,y,z,w}}. This
+/// walks Transform+Parent live, so it is always current (unlike the per-substep WorldTransform snapshot the renderer
+/// uses). Errors if e has no Transform.
 static int lWorldPose(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = entityOrName(w, L, 1);
@@ -682,8 +711,9 @@ static int lWorldPose(lua_State* L) {
     return 1;
 }
 
-/// scene.set_morph(e: entity|string, name: string, weight: number) | set the blend weight of shape key `name`; on a
-/// skinned character (no Geometry) it applies to all linked meshes
+/// scene.set_morph(e: entity|string, name: string, weight: number) | set the blend weight (0..1) of shape key `name` on
+/// mesh e; when e is a skinned character (no Geometry of its own) the weight is applied to every mesh linked to its
+/// Skeleton. List available keys with scene.shapes.
 static int lSetMorph(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = entityOrName(w, L, 1);
@@ -701,8 +731,9 @@ static int lSetMorph(lua_State* L) {
     return 0;
 }
 
-/// scene.shapes(e: entity|string) -> table | shape keys of mesh e as an array of {name, weight} (errors if e has no
-/// Geometry)
+/// scene.shapes(e: entity|string) -> table | the shape keys of mesh e as an array of {name = string, weight = number}
+/// (empty array when the mesh has none); errors if e has no Geometry.
+///     for _, s in ipairs(scene.shapes("cube")) do print(s.name, s.weight) end
 static int lShapes(lua_State* L) {
     const Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = entityOrName(w, L, 1);
@@ -721,8 +752,8 @@ static int lShapes(lua_State* L) {
     return 1;
 }
 
-/// scene.link_mesh(skel: entity|string, mesh: entity|string) | attach mesh to skeleton skel's skinned meshes (errors if
-/// skel has no Skeleton)
+/// scene.link_mesh(skel: entity|string, mesh: entity|string) | add mesh to the skinned-mesh list of skeleton skel so it
+/// is posed by the same bones and receives scene.set_morph weights; errors if skel has no Skeleton.
 static int lLinkMesh(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity skel = entityOrName(w, L, 1);
@@ -735,7 +766,8 @@ static int lLinkMesh(lua_State* L) {
     return 0;
 }
 
-/// scene.get_entity(name: string) -> entity | look up a named entity (nil if not found)
+/// scene.get_entity(name: string) -> entity|nil | look up a world name (as given to scene.entity or produced by
+/// scene.spawn); nil when no such entity exists.
 static int lFind(lua_State* L) {
     const std::string name = luaL_checkstring(L, 1);
     const entt::entity e = findNamedEntity(SceneScript::sSelf(L)->w().reg, name);
@@ -747,8 +779,9 @@ static int lFind(lua_State* L) {
     return 1;
 }
 
-/// scene.find_components(component: string, root?: entity) -> table | every entity in root's subtree carrying
-/// `component` (all top-level entities when root is omitted), as an array of entities
+/// scene.find_components(component: string, root?: entity) -> table | every entity carrying `component` in root's
+/// subtree (root included) as an array of entities; when root is omitted, all top-level entities are searched - i.e.
+/// the whole world.
 static int lFindComponents(lua_State* L) {
     const Engine& w = SceneScript::sSelf(L)->w();
     const std::string comp = luaL_checkstring(L, 1);
@@ -762,8 +795,8 @@ static int lFindComponents(lua_State* L) {
     return 1;
 }
 
-/// scene.named() -> array of {name = string, entity = entity} | every named entity, sorted by entity id (the editor's
-/// source)
+/// scene.named() -> table | every named entity as an array of {name = string, entity = entity}, sorted by entity id
+/// (the scene editor's source list).
 static int lNamed(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     std::vector<std::pair<entt::entity, std::string>> named;
@@ -783,7 +816,8 @@ static int lNamed(lua_State* L) {
     return 1;
 }
 
-/// scene.components(e: entity) -> array of string | the reflected component type names on e (the editor's field source)
+/// scene.components(e: entity) -> table | the reflected component type names on e as an array of strings (e.g.
+/// {"Transform", "RigidBody"}); the scene editor's field-list source.
 static int lComponents(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
@@ -796,8 +830,9 @@ static int lComponents(lua_State* L) {
     return 1;
 }
 
-/// input.key_down(kb: entity, code: number) -> bool | true if key `code` is held on the KeyboardInput entity kb (false
-/// for out-of-range codes)
+/// input.key_down(kb: entity, code: number) -> bool | true while key `code` (a GLFW key code, e.g. 65 = 'A', 32 = space)
+/// is held on the KeyboardInput entity kb; false for out-of-range codes or when kb has no KeyboardInput. Find the
+/// entity with scene.find_components("KeyboardInput").
 static int lKeyDown(lua_State* L) {
     const Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
@@ -811,8 +846,13 @@ static int lKeyDown(lua_State* L) {
     return 1;
 }
 
-/// scene.attach_script(e: entity, file: string, params?: table) | attach (or re-attach, replacing any existing script)
-/// a Lua module to e; `params` is passed to its _on_ready
+/// scene.attach_script(e: entity, file: string, params?: table) | attach a Lua module to e (re-attaching replaces any
+/// existing script on e). `file` is resolved against the scenes dir ("scenes/camera" or "camera.lua"); the module must
+/// return a table whose hooks (_on_ready, _animate, _physics - see Script Hooks below) are called with a per-attach
+/// instance table as self. `params` is passed to _on_ready. Top-level variables in the module are exposed as
+/// "name.LuaScript.<var>" URLs (bindable by UI widgets).
+///     local cam = scene.entity("cam")
+///     scene.attach_script(cam, "scenes/camera")  -- fly camera: look + wasd/qe movement
 static int lAttachScript(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     Engine& w = self->w();
@@ -832,8 +872,9 @@ static int lAttachScript(lua_State* L) {
     return 0;
 }
 
-/// scene.destroy(e: entity) | destroy e and its whole subtree; errors if e is a shape referenced by a collider, a
-/// texture referenced by a material, or a geometry referenced by a renderable outside the subtree
+/// scene.destroy(e: entity) | destroy e and its whole subtree (all components, world names released). Errors when e is
+/// a shape still referenced by a collider, a texture referenced by a material, or a geometry referenced by a renderable
+/// outside the subtree - remove those references first. A no-op for already-destroyed entities.
 static int lDestroy(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity e = luaReadEnt(L, 1);
@@ -859,7 +900,8 @@ static int lDestroy(lua_State* L) {
 }
 
 /// scene.add_child(parent: entity, child: entity, opts?: table) | reparent child under parent (parent needs a
-/// Transform); opts.keepWorld = true re-expresses the child's local pose so its world position is unchanged
+/// Transform; replaces any existing Parent on child). With opts.keepWorld = true the child's local pose is re-expressed
+/// first so its world position does not change.
 static int lAddChild(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity parent = luaReadEnt(L, 1);

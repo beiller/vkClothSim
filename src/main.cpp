@@ -16,7 +16,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <imgui.h>
-#include <thread>
 
 struct PhaseWatch {
     float poll = 0.0f, wait = 0.0f, cpu = 0.0f, jolt = 0.0f, skel = 0.0f, sim = 0.0f, rend = 0.0f, xend = 0.0f,
@@ -139,7 +138,6 @@ int main(int argc, char** argv) {
     float fpsAccum = 0.0f;
     int fpsFrames = 0;
     float fps = 0.0f;
-    const bool uncapped = std::getenv("NO_VSYNC") != nullptr;
     const bool prof = std::getenv("VKSIM_PROFILE") != nullptr;
     if (prof && engine.hasDevice)
         engine.graphics.profOn() = true;
@@ -153,7 +151,7 @@ int main(int argc, char** argv) {
         if (engine.hasWindow && app.windowShouldClose())
             break;
         const auto nowFrame = std::chrono::steady_clock::now();
-        const float dt = engine.hasWindow ? std::chrono::duration<float>(nowFrame - lastFrame).count() : kFrameDt;
+        const float dt = engine.hasWindow ? std::chrono::duration<float>(nowFrame - lastFrame).count() : kHeadlessDt;
         lastFrame = nowFrame;
         fpsAccum += dt;
         ++fpsFrames;
@@ -239,8 +237,6 @@ int main(int argc, char** argv) {
             engine.graphics.simProf.reset();
         }
         frameJolt = engine.physics.takeJoltMs();
-        if (engine.hasWindow && uncapped && dt < kFrameDt)
-            std::this_thread::sleep_for(std::chrono::duration<double>(kFrameDt - dt));
         const auto tSim = std::chrono::steady_clock::now();
 
         entt::entity cam = entt::null;

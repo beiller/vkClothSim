@@ -14,13 +14,16 @@ void reg(lua_State* L, SceneScript* host, const char* name, lua_CFunction fn) {
     lua_setfield(L, -2, name);
 }
 
-/// ui.seq() -> number | the next UI layout order (shared with the C++ spawn functions)
+/// ui.seq() -> number | the next UI layout order number. Call it once per widget you create and store it in the
+/// widget's "order" field (the `ui` stdlib does this for you); the counter is shared with the C++ spawn functions so
+/// layout stays stable across frames.
 int lUiSeq(lua_State* L) {
     lua_pushnumber(L, SceneScript::sSelf(L)->w().uiSeq++);
     return 1;
 }
 
-/// ui.fire_button(url: string) | call the function named by a "name.LuaScript.fn" url (no arg); the headless stand-in for a button click or widget change
+/// ui.fire_button(url: string) | call the function named by a "name.LuaScript.fn" URL with no argument - the headless
+/// stand-in for a button click or widget change (used by tests).
 int lFireButton(lua_State* L) {
     SceneScript::sSelf(L)->callUrl(luaL_checkstring(L, 1), entt::null);
     return 0;

@@ -59,11 +59,33 @@ def extract_body(text: str, start: int):
     raise ValueError("unbalanced braces")
 
 
-def parse_handlers(files):
-    """symbol -> (doc, body, annotation) for every lXxx(lua_State* L) definition.
+def split_ann(ann_lines):
+    """annotation lines (top to bottom) -> (description, example lines or None).
 
-    `annotation` is the /// line directly above the definition when present
-    (the Option-B doc string); otherwise "".
+    Non-indented lines form the description (joined with spaces); the first line
+    carrying leading whitespace starts an indented Lua example block, and every
+    line after it belongs to the example. Example lines keep their relative
+    indentation (dedented by the block's minimum indent).
+    """
+    desc, ex = [], None
+    for ln in ann_lines:
+        if ex is None and ln[:1] in (" ", "\t"):
+            ex = []
+        (ex if ex is not None else desc).append(ln)
+    if ex:
+        stripped = [ln.rstrip() for ln in ex]
+        indents = [len(ln) - len(ln.lstrip()) for ln in stripped if ln.strip()]
+        pad = min(indents) if indents else 0
+        ex = [ln[pad:] for ln in stripped]
+    return " ".join(d.strip() for d in desc), (ex or None)
+
+
+def parse_handlers(files):
+    """symbol -> (doc, body, annotation lines) for every lXxx(lua_State* L) definition.
+
+    `annotation` is the /// block directly above the definition when present
+    (the doc string); otherwise []. Leading whitespace after /// is preserved so
+    split_ann can separate description from example code.
     """
     handlers = {}
     for f in files:
@@ -77,14 +99,15 @@ def parse_handlers(files):
             for ln in range(line_no - 1, -1, -1):
                 stripped = lines[ln].strip()
                 if stripped.startswith("///"):
-                    ann_lines.append(stripped[3:].strip())
+                    content = lines[ln].split("///", 1)[1]
+                    ann_lines.append(content[1:] if content.startswith(" ") else content)
                 elif stripped.startswith("//"):
                     doc_lines.append(stripped[2:].strip())
                 elif stripped == "":
                     continue
                 else:
                     break
-            handlers[sym] = ("\n".join(reversed(doc_lines)), extract_body(text, m.start())[0], " ".join(reversed(ann_lines)))
+            handlers[sym] = ("\n".join(reversed(doc_lines)), extract_body(text, m.start())[0], list(reversed(ann_lines)))
     return handlers
 
 
@@ -116,18 +139,21 @@ def parse_registrations(files):
 
 
 def comment_above(lines, pos):
-    """contiguous /// or // comment lines directly above the position `pos`"""
+    """contiguous /// or // comment lines directly above the position `pos` (list, top to bottom)"""
     line_no = sum(1 for _ in text_iter_up_to(lines, pos))
     out = []
     for ln in range(line_no - 1, -1, -1):
         stripped = lines[ln].strip()
-        if stripped.startswith("//"):
-            out.append(stripped.lstrip("/").strip())
+        if stripped.startswith("///"):
+            content = lines[ln].split("///", 1)[1]
+            out.append(content[1:] if content.startswith(" ") else content)
+        elif stripped.startswith("//"):
+            out.append(stripped[2:].strip())
         elif stripped == "":
             continue
         else:
             break
-    return "\n".join(reversed(out))
+    return list(reversed(out))
 
 
 def text_iter_up_to(lines, pos):
@@ -196,7 +222,8 @@ def infer_ret(body: str) -> str:
 
 
 # /// <table>.<name>(args) -> ret | description   (the -> ret part is optional)
-ANN_RE = re.compile(r"^(\w+)\.([\w]+)\(([^)]*)\)(?:\s*->\s*([^|]+?))?\s*\|\s*(.+)$")
+# The separator is a spaced pipe " | "; return types may contain bare pipes ("table|nil").
+ANN_RE = re.compile(r"^(\w+)\.([\w]+)\(([^)]*)\)(?:\s*->\s*(.+?))?\s+\|\s+(.*)$")
 
 # /// script-hook _name(args) | description   and   /// script-instance | description
 HOOK_RE = re.compile(r"^script-hook\s+(_\w+)\(([^)]*)\)\s*\|\s*(.+)$")
@@ -238,16 +265,27 @@ KIND_LUA = {
 
 
 def parse_components(reflect_file: Path):
-    """[(type name, desc, [(field, kind, (lo,hi)|None)])] from reflect.hpp's kTypes."""
+    """[(type name, desc, [(field, kind, (lo,hi)|None, doc)])] from reflect.hpp's kTypes.
+
+    A `///` comment line directly above a field entry inside the array is that field's doc.
+    """
     text = reflect_file.read_text()
     arrays = {}
     for m in re.finditer(r"static const FieldDesc (k\w+)\[\]\s*=\s*\{(.*?)\};", text, re.S):
         fields = []
+        prev_end = 0
         for fm in re.finditer(
-            r'\{"(\w+)",\s*[^{]*?FieldKind::(\w+)(?:,\s*([\d.]+f?)\s*,\s*([\d.]+f?))?', m.group(2)
+            r'\{"(\w+)",\s*[^{]*?FieldKind::(\w+)(?:,\s*(-?[\d.]+f?)\s*,\s*(-?[\d.]+f?))?', m.group(2)
         ):
             lo, hi = fm.group(3), fm.group(4)
-            fields.append((fm.group(1), fm.group(2), (lo, hi) if lo else None))
+            # field doc: the /// line directly above this entry (in the gap since the previous one)
+            doc = ""
+            gap = m.group(2)[prev_end : fm.start()]
+            last = [ln for ln in gap.splitlines() if ln.strip()]
+            if last and last[-1].strip().startswith("///"):
+                doc = last[-1].strip()[3:].strip()
+            fields.append((fm.group(1), fm.group(2), (lo, hi) if lo else None, doc))
+            prev_end = fm.end()
         arrays[m.group(1)] = fields
     out = []
     for m in re.finditer(r'\{"(\w+)",\s*(k\w+)\}', text):
@@ -255,9 +293,16 @@ def parse_components(reflect_file: Path):
         desc = ""
         am = re.search(r"static const FieldDesc " + arr + r"\[\]", text)
         if am:
+            # walk up over the whole contiguous /// block (descriptions may span lines)
             i = text[: am.start()].count("\n") - 1
-            line = text.splitlines()[i].strip() if i >= 0 else ""
-            dm = re.match(rf"///\s*{name}\s*\|\s*(.+)$", line)
+            block = []
+            while i >= 0:
+                s = text.splitlines()[i].strip()
+                if not s.startswith("///"):
+                    break
+                block.append(s[3:].strip())
+                i -= 1
+            dm = re.match(rf"{name}\s*\|\s*(.+)$", " ".join(reversed(block)))
             if dm:
                 desc = dm.group(1).strip()
         out.append((name, desc, arrays.get(arr, [])))
@@ -295,7 +340,8 @@ def main():
         "",
         "Generated by `tools/gen_lua_api.py` from the `///` doc strings in `src/script/api_*.cpp` and the component schema in `src/core/reflect.hpp`.",
         "Do not edit by hand; re-run the generator after API changes. Every function must carry a",
-        "`/// table.name(args) -> ret | description` line above its handler (or reg() call).",
+        "`/// table.name(args) -> ret | description` line above its handler (or reg() call); further non-indented",
+        "`///` lines extend the description, and `///` lines indented with leading whitespace form a Lua example.",
         "",
     ]
     total = 0
@@ -312,31 +358,34 @@ def main():
             lines.append("")
         for name, sym in fns:
             if sym.startswith("__lambda_"):
-                doc, body = lambdas.get(sym, ("", ""))
-                ann = doc  # for lambdas the comment above reg() is the annotation itself
+                doc, body = "", ""
+                ann_lines = lambdas.get(sym, ([], ""))[0]  # the comment above reg() is the annotation itself
             else:
-                doc, body, ann = handlers.get(sym, ("", "", ""))
-            args, ret, desc = None, None, None
-            if ann:
-                m = ANN_RE.match(ann)
+                doc, body, ann_lines = handlers.get(sym, ("", "", []))
+            desc, example = split_ann(ann_lines)
+            args, ret, adesc = None, None, None
+            if desc:
+                m = ANN_RE.match(desc)
                 if not m:
-                    print(f"WARNING: bad annotation for {tname}.{name}: {ann}", file=sys.stderr)
+                    print(f"WARNING: bad annotation for {tname}.{name}: {desc}", file=sys.stderr)
                 else:
                     at, aname, aargs, aret, adesc = m.groups()
                     if (at, aname) != (tname, name):
                         print(f"WARNING: annotation says {at}.{aname} but registration is {tname}.{name}", file=sys.stderr)
-                    args, ret, desc = aargs.strip(), (aret or "").strip() or None, adesc.strip()
+                    args, ret, adesc = aargs.strip(), (aret or "").strip() or None, adesc.strip()
             if args is None:  # no usable annotation: fall back to heuristics
                 undocumented.append(f"{tname}.{name}")
                 args = ", ".join(infer_args(body))
                 ret = infer_ret(body)
-                desc = doc or ""
+                adesc = doc or ""
             sig = f"{tname}.{name}({args})"
             if ret:
                 sig += f" -> {ret}"
             lines.append(f"### `{sig}`")
             lines.append("")
-            lines.append(desc if desc else "_no description_")
+            lines.append(adesc if adesc else "_no description_")
+            if example:
+                lines += ["", "```lua"] + example + ["```"]
             lines.append("")
         total += len(fns)
 
@@ -354,11 +403,14 @@ def main():
             lines.append(desc)
         if fields:
             lines.append("")
-            lines.append("| field | type | range |")
-            lines.append("|---|---|---|")
-            for f, kind, rng in fields:
+            has_docs = any(d for *_, d in fields)
+            head = "| field | type | range | description |" if has_docs else "| field | type | range |"
+            sep = "|---|---|---|---|" if has_docs else "|---|---|---|"
+            lines.append(head)
+            lines.append(sep)
+            for f, kind, rng, doc in fields:
                 r = f"[{rng[0].rstrip('f')}, {rng[1].rstrip('f')}]" if rng else ""
-                lines.append(f"| {f} | {KIND_LUA.get(kind, kind)} | {r} |")
+                lines.append(f"| {f} | {KIND_LUA.get(kind, kind)} | {r} | {doc} |" if has_docs else f"| {f} | {KIND_LUA.get(kind, kind)} | {r} |")
         lines.append("")
 
     # script module contract (the "magic" hooks called on attached .lua modules)

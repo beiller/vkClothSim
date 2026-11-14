@@ -8,8 +8,8 @@
 #include <vector>
 
 inline constexpr float kPi = std::numbers::pi_v<float>;
-inline constexpr float kRigidHz = 120.0f;
-inline constexpr float kFrameDt = 1.0f / kRigidHz;
+inline constexpr float kHeadlessHz = 60.0f;
+inline constexpr float kHeadlessDt = 1.0f / kHeadlessHz;
 inline constexpr float kMaxPhysDt = 1.0f / 30.0f;
 
 using V2 = glm::vec2;

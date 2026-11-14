@@ -119,7 +119,18 @@ void pushCompoundFit(lua_State* L, const css::CompoundFit& fit) {
     lua_setfield(L, out, "parts");
 }
 
-/// physics.fit_capsule(pos: number[], nrm?: number[], opts?: table) -> fit, err | fits a compound of tapered-capsule chains (spheres for blob-like clouds) to a vertex cloud; pos is flat xyz, nrm is flat xyz outward normals of the same length (positions-only fit when absent), opts overrides profile_bins, profile_percentile, profile_dilate, underfit_weight, overfit_weight, tolerance, max_segments, overhang_weight, overhang_percentile, sphere_aspect, sphere_percentile, max_clusters; returns nil + message when nothing fits; a part with length 0 and one taper r0 = r1 is a sphere
+/// physics.fit_capsule(pos: number[], nrm?: number[], opts?: table) -> table, err | fit a compound of tapered-capsule
+/// chains (spheres for blob-like clouds) to a vertex cloud. `pos` is flat xyz (at least 3 vertices); `nrm` is flat xyz
+/// outward normals of the same length (positions-only fit when absent). `opts` overrides profile_bins,
+/// profile_percentile, profile_dilate, underfit_weight, overfit_weight, tolerance, max_segments, overhang_weight,
+/// overhang_percentile, sphere_aspect, sphere_percentile, max_clusters. Returns nil + message when nothing fits.
+/// Result: {ok = true, underfit = number, overhang = number, score = number, parts = array of part}, where part =
+/// {origin = vec3, axis = vec3 (unit), length = number, segments = int, rms_error, max_error, mean_signed_error,
+/// profile_score, overhang_score, tapers = array of {s0, s1, r0, r1}}; a part with length 0 and one taper r0 = r1 is a
+/// sphere. Feed the parts straight into TaperedCapsule components (one entity per part).
+///     local fit, err = physics.fit_capsule(pos, nrm)
+///     if not fit then error(err) end
+///     for _, p in ipairs(fit.parts) do print(p.length, p.rms_error) end
 int lFitCapsule(lua_State* L) {
     std::string err;
     std::vector<float> pos, nrm;

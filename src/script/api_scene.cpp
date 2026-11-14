@@ -18,9 +18,10 @@ void reg(lua_State* L, SceneScript* host, const char* name, lua_CFunction fn) {
     lua_setfield(L, -2, name);
 }
 
-/// scene.set(target: entity|string, field: string, value: number|table|string) | set a reflected field (URL form
-/// "Entity.field" or entity + field name); value is a number, an array of up to 4 numbers, or a string for
-/// "name.LuaScript.var" targets
+/// scene.set(target: entity|string, field: string, value: number|table|string) | set a reflected field. Two forms:
+/// (entity, "field", value) writes one component field on an entity, or ("Name.Component.field", value) walks a URL to
+/// a scalar/vec3/quat/color field; ("name.LuaScript.var", string) sets a script variable. `value` is a number, an array
+/// of up to 4 numbers (pos/quat/color), or a string for LuaScript targets. Errors on unknown names or fields.
 int lSet(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     Engine& w = self->w();
@@ -61,9 +62,10 @@ int lSet(lua_State* L) {
     return 0;
 }
 
-/// scene.get(target: entity|string, field?: string) -> number|vec3|vec4|string | read a reflected field (URL form
-/// "Entity.field", or entity + field name); returns a scalar, {x,y,z}, {x,y,z,w}, or a string for "name.LuaScript.var"
-/// targets
+/// scene.get(target: entity|string, field?: string) -> number|vec3|vec4|string | read a reflected field. (entity,
+/// "field") reads one component field; ("Name.Component.field") walks a URL; ("name.LuaScript.var") reads a script
+/// variable as a string. Returns a scalar for 1-component fields, {x,y,z} for vec3/color, {x,y,z,w} for quats, or the
+/// string itself for LuaScript targets. Errors on unknown names or fields.
 int lGet(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     Engine& w = self->w();
@@ -98,8 +100,8 @@ int lGet(lua_State* L) {
     return 1;
 }
 
-/// scene.scenes() -> table | list loadable scenes in the active scenes dir as an array of {label, path} (label from the
-/// json "name" field when present)
+/// scene.scenes() -> table | the loadable scenes in the active scenes dir as an array of {label = string, path =
+/// string}; label comes from the json "name" field when present, else the file stem. Feed `path` to request_scene.
 int lScenes(lua_State* L) {
     const std::string dir = scenesDir();
     LuaTable arr(L);
@@ -126,19 +128,22 @@ int lScenes(lua_State* L) {
     return 1;
 }
 
-/// scene.request_scene(path: string) | queue a scene to load at the end of this frame (e.g. from a UI button)
+/// scene.request_scene(path: string) | queue a scene (a `path` from scene.scenes()) to load at the end of this frame -
+/// the usual way for a UI button to switch scenes. Check scene.last_error() afterwards if it fails.
 int lRequestScene(lua_State* L) {
     SceneScript::sSelf(L)->w().pendingScene = luaL_checkstring(L, 1);
     return 0;
 }
 
-/// scene.last_error() -> string | error message from the last failed scene load (empty when none)
+/// scene.last_error() -> string | the error message from the last failed scene load, or "" when the last load succeeded
+/// (or none was attempted).
 int lLastError(lua_State* L) {
     lua_pushstring(L, SceneScript::sSelf(L)->w().loadError.c_str());
     return 1;
 }
 
-/// scene.time() -> number | seconds since engine start (monotonic, for _animate timing)
+/// scene.time() -> number | seconds since engine start (monotonic); use it for _animate timing rather than accumulating
+/// dt yourself.
 int lTime(lua_State* L) {
     lua_pushnumber(L, SceneScript::sSelf(L)->time());
     return 1;
@@ -174,8 +179,9 @@ const char* kindName(FieldKind k) {
     return "?";
 }
 
-/// scene.fields(type: string) -> array of {name, kind, lo, hi} | reflected field metadata of component type (widget
-/// defaults + introspection)
+/// scene.fields(type: string) -> table | the reflected field metadata of component type as an array of {name = string,
+/// kind = string, lo = number, hi = number}; kind is one of slider_f, slider_i, checkbox, color, drag_v3, ref, str,
+/// str_arr, quat, float_arr, uint_arr, ent_arr. Empty table for unknown types.
 int lFields(lua_State* L) {
     const std::string type = luaL_checkstring(L, 1);
     const TypeDesc* desc = refl::findType(type.c_str());
@@ -224,9 +230,10 @@ void pushFieldsTable(lua_State* L, const CompFields& fields) {
     }
 }
 
-/// graphics.gltf(path: string) -> table | parse a glTF file as a name->node map (node = component-name -> field table);
-/// no world entities are created; pass to scene.spawn to materialize. Compat: graphics.gltf(e, path) still loads
-/// straight into e
+/// graphics.gltf(path: string) -> table | parse a glTF file as a name->node map (node = component-name -> field table)
+/// without creating world entities - pass the result to scene.spawn to materialize it. Nodes carry Transform, Parent,
+/// Geometry, Renderable, Material, Skeleton, AnimationClip and AnimationPlayer components; refs inside are strings that
+/// scene.spawn resolves. Compat form: graphics.gltf(e, path) loads straight into entity e and returns e.
 int lGltf(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     if (lua_isnumber(L, 1)) {
@@ -257,8 +264,9 @@ int lGltf(lua_State* L) {
     return 1;
 }
 
-/// graphics.load_texture(path: string, name?: string) -> entity | create a path-only Texture (file loaded and uploaded
-/// on first use), optionally named
+/// graphics.load_texture(path: string, name?: string) -> entity | create a Texture entity holding `path` (the file is
+/// loaded and uploaded to the GPU lazily on first use); optionally register it under `name`. Use as Material.tex/texMR/
+/// texNormal/texEmissive.
 int lLoadTexture(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const std::string path = luaL_checkstring(L, 1);
@@ -270,9 +278,9 @@ int lLoadTexture(lua_State* L) {
     return 1;
 }
 
-/// graphics.render_texture(w: int, h: int, name?: string) -> entity | create a standalone GPUTexture render target (no
-/// Texture parent); render into it, then attach to a material or environment (errors when the graphics server is
-/// disabled)
+/// graphics.render_texture(w: int, h: int, name?: string) -> entity | create a standalone GPUTexture render target of
+/// w x h pixels (no Texture parent); render into it, then attach it to a material or environment. Errors when the
+/// graphics server is disabled.
 int lRenderTexture(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     if (!w.hasDevice)
@@ -288,8 +296,8 @@ int lRenderTexture(lua_State* L) {
     return 1;
 }
 
-/// soft.set_floor(y: number) | set the Y of the soft-body (cloth) floor plane (errors when the graphics server is
-/// disabled)
+/// soft.set_floor(y: number) | set the Y height of the cloth/soft-body floor plane; errors when the graphics server is
+/// disabled.
 int lSoftFloor(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     if (!w.hasDevice)
@@ -298,9 +306,12 @@ int lSoftFloor(lua_State* L) {
     return 0;
 }
 
-/// physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table | rigid-body raycast; returns
-/// {hit = true, pos = vec3, dist = number, entity = entity} or nil when nothing is hit; `excludes` is an array of
-/// entities to skip
+/// physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table|nil | rigid-body raycast against
+/// the Jolt world. Returns {hit = true, pos = {x,y,z}, dist = number, entity = entity} (entity omitted when the hit
+/// body has no owning entity), or nil when nothing is hit within maxDist. `excludes` is an array of entities whose
+/// colliders are skipped.
+///     local h = physics.raycast({0, 5, 0}, {0, -1, 0}, 10)
+///     if h then print("floor at", h.pos[2]) end
 int lRaycast(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const V3 origin = luaReadV3(L, 1);
@@ -335,10 +346,10 @@ int lRaycast(lua_State* L) {
     return 1;
 }
 
-/// physics.convex_decompose(mesh: entity|Geometry-table, maxHulls?: number, maxVertsPerHull?: number, threshold?:
-/// number) -> table | decompose a mesh into convex parts (CoACD); `mesh` is an entity with Geometry or a raw Geometry
-/// field table; returns an array of hulls, each a flat {x,y,z,...} point list ready for ConvexHullShape.points; falls
-/// back to one hull of all vertices on degenerate input
+/// physics.convex_decompose(mesh: entity|table, maxHulls?: number, maxVertsPerHull?: number, threshold?: number) -> table |
+/// decompose a mesh into convex hulls (CoACD). `mesh` is an entity with Geometry or a raw Geometry field table {pos,
+/// nrm?, uv?, idx}. Returns an array of hulls, each a flat {x,y,z,...} point list ready for ConvexHullShape.points;
+/// falls back to one hull of all vertices on degenerate input.
 int lConvexDecompose(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     Mesh mesh;
@@ -385,8 +396,9 @@ int lConvexDecompose(lua_State* L) {
     return 1;
 }
 
-/// physics.collision_exception(a: entity, b: entity, on?: bool) | toggle the collision exclusion between two bodies:
-/// on = true (default) = ignore collisions between them, false = restore; effective from the next physics step
+/// physics.collision_exception(a: entity, b: entity, on?: bool) | toggle the collision exclusion between two rigid
+/// bodies: on = true (default) makes them ignore each other, false restores normal collision; effective from the next
+/// physics step. Typical use: exclude a character's own colliders or jointed parts from each other.
 int lCollisionException(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     const entt::entity a = luaReadEnt(L, 1);
@@ -398,10 +410,15 @@ int lCollisionException(lua_State* L) {
     return 0;
 }
 
-/// scene.animate(target, field, keys, opts) -> player entity | keyframe animation via a generated clip:
-/// target = named entity|string|{...} (one track per target, shared clock), field = "Component.field",
-/// keys = array of {t = time, v = number|{n1..n4}} (all with the same value count 1/3/4),
-/// opts = {loop = 0 once|1 loop|2 pingpong, speed = n, playing = bool}
+/// scene.animate(target, field, keys, opts?) -> entity | keyframe animation built from a generated clip + player.
+/// target = named entity, name string, or an array of them (one track per target, shared clock); field =
+/// "Component.field"; keys = array of {t = seconds, v = number|{n1..n4}} sorted by t (all keys must carry the same
+/// value count 1/3/4); opts = {loop = 0 once, 1 loop (default), 2 pingpong; speed = number (default 1); playing = bool
+/// (default true)}. Returns the AnimationPlayer entity - control it with scene.component(player, "AnimationPlayer") or
+/// destroy it to stop.
+///     local p = scene.animate("cube", "Transform.pos", {
+///         { t = 0, v = {0, 0, 0} }, { t = 1, v = {2, 0, 0} }, { t = 2, v = {0, 0, 0} },
+///     }, { loop = 1 })
 static int lAnimate(lua_State* L) {
     Engine& w = SceneScript::sSelf(L)->w();
     auto targetName = [&](int idx) -> std::string {

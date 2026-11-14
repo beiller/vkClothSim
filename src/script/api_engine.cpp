@@ -11,7 +11,8 @@ void reg(lua_State* L, SceneScript* host, const char* name, lua_CFunction fn) {
     lua_setfield(L, -2, name);
 }
 
-/// engine.performance_metrics() -> string | the engine's performance summary (fps + per-phase ms averages), written by the engine each frame
+/// engine.performance_metrics() -> string | the engine's per-frame performance summary (fps + per-phase ms averages),
+/// refreshed by the engine every frame; poll it from _animate to display in a UI text widget.
 int lPerformanceMetrics(lua_State* L) {
     const std::string& s = SceneScript::sSelf(L)->w().perfText;
     lua_pushstring(L, s.c_str());
