@@ -57,7 +57,7 @@ local kBones = {
 }
 
 local kWeightThreshold = 0.3 -- skin weight above which a vertex joins a bone's cloud
-local kRadiusScale = 0.8     -- shrink the fitted radii so shapes sit inside the skin
+local kRadiusScale = 0.9     -- shrink the fitted radii so shapes sit inside the skin
 local kFitOptions = { profile_bins = 64, max_segments = 8, profile_percentile = 1.0, sphere_aspect = 5.0 }
 
 -- group every skinned vertex into the cloud of each bone it weights onto (single pass)
@@ -159,6 +159,56 @@ local function buildJoints(skel)
                           pos = wp.pos, quat = wp.quat }
     end
     return out
+end
+
+function create_cloth()
+    local world_scale = 0.25
+    local clothSpan = 8.0 * world_scale
+    local clothDim = 96
+    local clothGeom = geom(mesh.plane({ cw = clothDim, ch = clothDim, span = clothSpan }))
+    clothH = scene.entity("cloth")
+    scene.replace(clothH, "Transform", { pos = {0, 0, 0} })
+    scene.replace(clothH, "Renderable", { geom = clothGeom })
+    scene.replace(clothH, "MaterialRef", { material = scene.get_entity("mat_cloth") })
+    scene.replace(clothH, "SoftBodyData",
+                  { cons = mesh.planeCons({ cw = clothDim, ch = clothDim, span = clothSpan }), mass = 0.15 })
+
+    local tE = 0.2
+    local shape = scene.entity()
+    scene.replace(shape, "SphereShape", { radius = tE * 2.0 })
+    local col = scene.entity()
+    --scene.replace(col, "Transform", { pos = off, quat = q })
+    scene.replace(col, "Collider", { shape = shape })
+
+    -- pin the front edge (plane row gy=0 sits at z=-span/2) where it spawns; set_pins captures current positions
+    local pinW = {}
+    for i = 1, clothDim * clothDim do
+        pinW[i] = 0.0
+    end
+    for i = 1, clothDim do
+        pinW[i] = 1.0
+    end
+
+    local tetra = scene.entity()
+ 
+    scene.replace(tetra, "Geometry", {
+        pos = { tE, tE, tE,  tE, -tE, -tE,
+                -tE, tE, -tE,  -tE, -tE, tE },
+        nrm = { 0.5774, 0.5774, 0.5774,  0.5774, -0.5774, -0.5774,
+                -0.5774, 0.5774, -0.5774,  -0.5774, -0.5774, 0.5774 },
+        idx = { 0, 1, 2,  0, 3, 1,  0, 2, 3,  1, 3, 2 } })
+
+    local tetra_material = scene.entity()
+    scene.replace(tetra_material, "Material", {baseColor = {0,0,0}, emissive={10, 9.5, 9}})
+    
+    local tetra_mesh = scene.entity()
+    scene.replace(tetra_mesh, "Transform", {pos = {0,3,0}})
+    scene.replace(tetra_mesh, "Renderable", {geom = tetra})
+    scene.replace(tetra_mesh, "MaterialRef", {material = tetra_material})
+    scene.replace(tetra_mesh, "KinematicBody", { colliders = { col } })
+    scene.replace(clothH, "Parent", {e = tetra_mesh})
+
+    soft.set_pins(clothH, pinW)
 end
 
 function _on_ready(self)
@@ -333,7 +383,11 @@ function _on_ready(self)
     uib.bind_slider(tab, "kBodyFriction", "caps.LuaScript.kBodyFriction", 0, 100.0, "%.2f", onChange)
     uib.editor(uib.tab(win, "editor"))
     self.metricsText = uib.text(uib.make_window("metrics", 160, 180, { 0.45, 1.72, 2.8 }), "")
+
+    soft.set_floor(0.0001)
+    create_cloth()
 end
+
 
 -- refresh the metrics window from the engine's performance string every frame
 function _animate(self, dt)

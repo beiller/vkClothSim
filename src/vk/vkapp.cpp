@@ -554,6 +554,7 @@ void VkApp::recreateSwapchain() {
         std::printf("3dsim: NO_VSYNC -> present mode %d (%d supported)\n", (int)presentMode, (int)nModes);
     }
     scc.presentMode = presentMode;
+    m_presentMode = presentMode;
     scc.clipped = VK_TRUE;
     VK(vkCreateSwapchainKHR(m_dev, &scc, nullptr, &m_sc));
     vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, nullptr);

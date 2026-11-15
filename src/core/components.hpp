@@ -157,6 +157,11 @@ struct SoftBodyData {
     float friction = 2.0f;
     int steps = kDefaultSteps;
     std::vector<float> cons;
+    // per-vertex pinning: pinW[i] in [0,1] pulls vertex i toward pinT (1 = hard pin); targets are
+    // refreshed from pinSrc (null = the body's own current positions) via soft.update_pins
+    std::vector<float> pinW;
+    std::vector<uint32_t> pinMap; // optional: cloth vertex i takes its target from source vertex pinMap[i]
+    entt::entity pinSrc = entt::null;
 };
 
 struct Environment {

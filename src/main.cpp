@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 #include <imgui.h>
 
 struct PhaseWatch {
@@ -36,6 +37,32 @@ struct PaceWatch {
         }
     }
 };
+
+// Refresh period (ms) of the display driving the window, for vsync-aligned frame pacing
+double vsyncPeriodMs(GLFWwindow* win) {
+    GLFWmonitor* mon = glfwGetPrimaryMonitor();
+    if (win) {
+        int wx = 0, wy = 0;
+        glfwGetWindowPos(win, &wx, &wy);
+        int ww = 0, wh = 0;
+        glfwGetWindowSize(win, &ww, &wh);
+        const int cx = wx + ww / 2, cy = wy + wh / 2; // monitor under the window center
+        int n = 0;
+        for (GLFWmonitor** m = glfwGetMonitors(&n); m != nullptr && *m != nullptr; ++m) {
+            const GLFWvidmode* vm = glfwGetVideoMode(*m);
+            if (!vm)
+                continue;
+            int mx = 0, my = 0;
+            glfwGetMonitorPos(*m, &mx, &my);
+            if (cx >= mx && cx < mx + vm->width && cy >= my && cy < my + vm->height) {
+                mon = *m;
+                break;
+            }
+        }
+    }
+    const GLFWvidmode* vm = glfwGetVideoMode(mon);
+    return (vm && vm->refreshRate > 0) ? 1000.0 / vm->refreshRate : 16.667;
+}
 
 int main(int argc, char** argv) {
     VkApp app;
@@ -135,6 +162,10 @@ int main(int argc, char** argv) {
     }
 
     auto lastFrame = std::chrono::steady_clock::now();
+    // vsync pacing state: nextEdge is the upcoming display refresh edge we present on
+    auto paceEdge = std::chrono::steady_clock::now();
+    const auto pacePeriod = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double, std::milli>(vsyncPeriodMs(app.glfwWindow())));
     float fpsAccum = 0.0f;
     int fpsFrames = 0;
     float fps = 0.0f;
@@ -152,6 +183,9 @@ int main(int argc, char** argv) {
             break;
         const auto nowFrame = std::chrono::steady_clock::now();
         const float dt = engine.hasWindow ? std::chrono::duration<float>(nowFrame - lastFrame).count() : kHeadlessDt;
+        // One clamped step for everything that advances with the sim: physics, animations and Lua time all
+        // use it so a hitch slows the frame down instead of making some systems jump ahead of others.
+        const float simDt = std::min(dt, kMaxPhysDt);
         lastFrame = nowFrame;
         fpsAccum += dt;
         ++fpsFrames;
@@ -220,18 +254,18 @@ int main(int argc, char** argv) {
             stepKeyboard(engine);
         }
         engine.script.activateScripts();
-        engine.script.animateAll(dt);
+        engine.script.animateAll(simDt);
         if (engine.xr) {
             stepXr(engine.reg, fr);
             stepControllers(engine.reg, fr);
         }
 
         float frameJolt = 0.0f, frameSkel = 0.0f, frameSoft = 0.0f, frameAcq = 0.0f;
-        engine.physics.update(engine.reg, dt);
-        stepAnimations(engine.reg, dt);
+        engine.physics.update(engine.reg, simDt);
+        stepAnimations(engine.reg, simDt);
         resolveWorldTransforms(engine.reg);
         if (engine.hasDevice) {
-            engine.graphics.updateSim(engine.reg, dt);
+            engine.graphics.updateSim(engine.reg, simDt);
             frameSkel = engine.graphics.simProf.skel;
             frameSoft = engine.graphics.simProf.soft;
             engine.graphics.simProf.reset();
@@ -344,7 +378,26 @@ int main(int argc, char** argv) {
             }
             if (engine.xr)
                 engine.xr->endFrame(fr.shouldRender);
+            // Vsync-aligned pacing: with a FIFO swapchain present() blocks until the display refresh, so an
+            // unpaced loop drifts out of phase and occasionally misses an edge by a hair -- then present waits
+            // a whole extra frame and the sim takes one big step (a visible jump). Sleeping until just before
+            // the next refresh edge makes present land on it every frame.
+            if (engine.hasWindow && !engine.xr && app.vsynced()) {
+                const auto now = std::chrono::steady_clock::now();
+                if (paceEdge <= now)
+                    while (paceEdge <= now)
+                        paceEdge += pacePeriod; // resync after a long stall
+                const auto wake = paceEdge - std::chrono::milliseconds(2);
+                if (wake > now)
+                    std::this_thread::sleep_until(wake);
+            }
             app.present(idx, !engine.xr);
+            if (engine.hasWindow && !engine.xr && app.vsynced()) {
+                const auto now = std::chrono::steady_clock::now();
+                do
+                    paceEdge += pacePeriod;
+                while (paceEdge <= now);
+            }
         }
         const auto tRender = std::chrono::steady_clock::now();
         const auto tXrEnd = tRender;

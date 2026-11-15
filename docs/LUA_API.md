@@ -60,6 +60,10 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [`physics.collision_exception(a: entity, b: entity, on?: bool)`](#physicscollisionexceptiona-entity-b-entity-on-bool)
 - [soft](#soft)
   - [`soft.set_floor(y: number)`](#softsetfloory-number)
+  - [`soft.set_pins(e: entity, weights: table)`](#softsetpinse-entity-weights-table)
+  - [`soft.set_pin_source(e: entity, src: entity|nil)`](#softsetpinsourcee-entity-src-entitynil)
+  - [`soft.set_pin_map(e: entity, map: table|nil)`](#softsetpinmape-entity-map-tablenil)
+  - [`soft.update_pins(e: entity)`](#softupdatepinse-entity)
 - [ui](#ui)
   - [`ui.seq() -> number`](#uiseq---number)
   - [`ui.fire_button(url: string)`](#uifirebuttonurl-string)
@@ -375,6 +379,33 @@ toggle the collision exclusion between two rigid bodies: on = true (default) mak
 
 set the Y height of the cloth/soft-body floor plane; errors when the graphics server is disabled.
 
+### `soft.set_pins(e: entity, weights: table)`
+
+per-vertex pin weights for a soft body: one number in [0,1] per vertex (0 = free, 1 = hard pin). Pinned vertices are pulled toward their pin targets with step-independent stiffness; setting the weights also refreshes the targets from the current pin source (the body's own positions when no source is set), so a plain call pins vertices where they are now. An empty array clears all pins. Errors when e is not a soft body or the array length differs from the vertex count.
+
+```lua
+local w = {}
+for i = 1, 64 * 64 do w[i] = 0 end
+for i = 1, 64 do w[i] = 1 end -- pin the top row of a 64x64 cloth
+soft.set_pins(cloth, w)
+```
+
+### `soft.set_pin_source(e: entity, src: entity|nil)`
+
+set the pin-target source of a soft body: another mesh entity (skinned or static — its current GPU vertex positions become the targets, transformed to world space), or nil to capture the body's own positions. Takes effect on the next soft.update_pins (or when weights are set).
+
+```lua
+soft.set_pin_source(cloth, characterMesh)
+```
+
+### `soft.set_pin_map(e: entity, map: table|nil)`
+
+remap pin targets when the cloth and source mesh have different topology: one number per cloth vertex — vertex i takes its target from source vertex map[i]. nil (or an empty array) restores the identity mapping. Takes effect on the next soft.update_pins.
+
+### `soft.update_pins(e: entity)`
+
+refresh the pin targets from the body's pin source. Rare by design: between updates a moving target is stale and pinned vertices chase it elastically (the weight controls how hard); call every frame when continuous tracking is wanted. No-op until the body exists — bodies created with nonzero weights refresh automatically on their first step.
+
 ## ui
 
 ### `ui.seq() -> number`
@@ -660,7 +691,7 @@ point light: color (vec3), intensity, radius (falloff), on 0/1, shadow tuning fi
 
 ### SoftBodyData
 
-GPU PBD soft-body params: pinned (0=free, >0=pinned), solver steps/passes, mass/damping/stiffness/tension/friction, cons = constraint param array
+GPU PBD soft-body params: pinned (0=free, >0=pinned), solver steps/passes, mass/damping/stiffness/tension/friction, cons = constraint param array, per-vertex pinning (pinW/pinMap/pinSrc)
 
 | field | type | range | description |
 |---|---|---|---|
@@ -673,6 +704,9 @@ GPU PBD soft-body params: pinned (0=free, >0=pinned), solver steps/passes, mass/
 | tension | number | [0.5, 1.5] | global rest-length scale for all constraints (1 = as built; >1 stretches the cloth) |
 | friction | number | [0.0, 50.0] | contact friction: caps tangential slip per contact correction |
 | cons | number[] |  | distance constraints as flat {a, b, rest, k} quads (vertex indices, rest length, stiffness) |
+| pinW | number[] |  | per-vertex pin weight in [0,1], one entry per vertex (0 = free); pulls the vertex toward its pin target with step-independent stiffness (1 = hard pin) |
+| pinMap | int[] |  | optional target remap: cloth vertex i takes its pin target from source vertex pinMap[i] (default identity) |
+| pinSrc | entity-ref |  | pin target source mesh entity (null = the body's own current positions); refreshed by soft.update_pins |
 
 ### RigidBody
 

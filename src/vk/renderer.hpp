@@ -31,6 +31,8 @@ public:
 
     void init(VkApp& app, int nInstances, const Mat4& viewProj);
     GpuMeshRef requestVerts(const entt::registry& reg, const Mesh& mesh, entt::entity keyEnt);
+    // existing GPU vertices for an entity (slot < 0 when it has none); unlike requestVerts this never creates
+    GpuMeshRef vertsFor(entt::entity keyEnt);
     int addMesh(const Mesh& mesh);
     int instFor(entt::entity e, entt::entity geomEnt, const entt::registry& reg);
     int instOf(entt::entity e) const;

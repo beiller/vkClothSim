@@ -55,6 +55,7 @@ public:
     VkExtent2D renderExtent() const { return m_renderExtent; } // offscreen scene buffers (scaled display size)
     void setRenderExtent(VkExtent2D e);                        // pending until a resizeBuffers applies it
     uint32_t imageCount() const { return (uint32_t)m_images.size(); }
+    bool vsynced() const { return m_presentMode == VK_PRESENT_MODE_FIFO_KHR; } // FIFO present blocks on the display refresh
 
     uint32_t acquireNextImage();
     VkCommandBuffer beginCommands();
@@ -125,4 +126,5 @@ private:
     VkCommandBuffer m_cmd = VK_NULL_HANDLE;
     VkFence m_fence = VK_NULL_HANDLE;
     VkFence m_acqFence = VK_NULL_HANDLE;
+    VkPresentModeKHR m_presentMode = VK_PRESENT_MODE_FIFO_KHR;
 };

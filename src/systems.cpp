@@ -213,8 +213,9 @@ void resolveWorldTransforms(entt::registry& reg) {
     };
     std::vector<Node> nodes;
     for (auto [e, t] : reg.view<Transform>().each()) {
-        if (reg.try_get<SoftBodyData>(e))
-            continue;
+        // Soft-body entities are included too: their vertices are simulated in world space (the renderer draws
+        // them with an identity model), but the node's transform is a live pin anchor — pinned vertices track
+        // restPose x WorldTransform on the GPU, so moving the cloth (or any ancestor) drags the pins with it.
         entt::entity parent = entt::null;
         if (const auto* p = reg.try_get<Parent>(e))
             parent = p->e;

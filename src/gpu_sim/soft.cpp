@@ -1,10 +1,13 @@
 #include "gpu_sim/soft.hpp"
 
 #include "ecs.hpp"
+#include "pinupdate_spv.hpp"
 #include "softbody_spv.hpp"
 #include "vk/vkutil.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace {
 
@@ -24,6 +27,10 @@ void Soft::setRequestVerts(std::function<GpuMeshRef(const entt::registry&, const
     m_request = std::move(request);
 }
 
+void Soft::setVertsFor(std::function<GpuMeshRef(entt::entity)> lookup) {
+    m_vertsFor = std::move(lookup);
+}
+
 void Soft::setFloor(float y) {
     m_floorY = y;
 }
@@ -37,13 +44,19 @@ void Soft::syncCapsules(const entt::registry& reg) {
             return;
         for (entt::entity c : cols) {
             const auto* col = reg.try_get<Collider>(c);
-            const auto* cs = col ? reg.try_get<CapsuleShape>(col->shape) : nullptr;
-            if (!cs || n >= kMaxCapsules)
+            if (!col || n >= kMaxCapsules)
                 continue;
             Transform t = *wt;
             if (const auto* lt = reg.try_get<Transform>(c))
                 t = transformCompose(t, *lt);
-            fillCapsule(caps[n++], t.pos, t.quat, cs->halfLen, cs->radius);
+            if (const auto* cs = reg.try_get<CapsuleShape>(col->shape)) {
+                fillCapsule(caps[n++], t.pos, t.quat, cs->halfLen, cs->radius, cs->radius);
+            } else if (const auto* tc = reg.try_get<TaperedCapsule>(col->shape)) {
+                // Jolt convention: bottomRadius at the -Y end (A), topRadius at +Y (B)
+                fillCapsule(caps[n++], t.pos, t.quat, tc->halfHeight, tc->bottomRadius, tc->topRadius);
+            } else if (const auto* ss = reg.try_get<SphereShape>(col->shape)) {
+                fillCapsule(caps[n++], t.pos, t.quat, 0.0f, ss->radius, ss->radius);
+            }
         }
     };
     for (auto [e, rb] : reg.view<RigidBody>().each())
@@ -89,6 +102,7 @@ void Soft::project(const entt::registry& reg) {
         for (size_t i = 0; i + 3 < sb.cons.size(); i += 4)
             cons.push_back({(int)sb.cons[i], (int)sb.cons[i + 1], sb.cons[i + 2], sb.cons[i + 3]});
         Mesh m = geom->mesh;
+        std::vector<float> restLocal = m.pos; // local-space rest pose: the default pin anchor (restPose x WorldTransform)
         Transform t{};
         if (reg.try_get<Transform>(e))
             t = worldTransform(reg, e);
@@ -109,11 +123,13 @@ void Soft::project(const entt::registry& reg) {
             continue;
         }
         const GpuMeshRef ref = m_request(reg, m, rend->geom);
-        addSoftBody(e, m, cons, ref.rw);
+        addSoftBody(e, m, cons, ref.rw, sb.pinW, sb.pinMap, restLocal);
     }
 }
 
-void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw) {
+void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw,
+                       const std::vector<float>& pinW, const std::vector<uint32_t>& pinMap,
+                       const std::vector<float>& restLocal) {
     GpuBody b;
     b.ent = e;
     b.soft.init(mesh, cons);
@@ -168,7 +184,25 @@ void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::
     mk(b.tris, b.trisMem, 4 * mesh.indices.size(), mesh.indices.data());
     mk(b.triStart, b.triStartMem, 4 * (vn + 1), b.soft.triStart.data());
     mk(b.triList, b.triListMem, 4 * b.soft.triList.size(), b.soft.triList.data());
-    vkMakeBuffer(m_dev, m_pdev, b.paramsBuf, b.paramsMem, 40, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    // rest pose in local space (uploaded once): pin targets = restPose x the node's live WorldTransform, every frame
+    mk(b.restPos, b.restPosMem, 12 * vn, restLocal.data());
+    // pin state: dense per-vertex weight/target/remap. HOST-VISIBLE (vkMakeBuffer, not the device-local mk):
+    // the CPU writes weights and map at runtime, the gather dispatch (recordPinUpdates) re-derives targets every frame.
+    std::vector<float> w0(vn, 0.0f);
+    for (size_t i = 0; i < vn && i < pinW.size(); ++i)
+        w0[i] = std::clamp(pinW[i], 0.0f, 1.0f);
+    std::vector<uint32_t> map0(vn);
+    for (size_t i = 0; i < vn; ++i)
+        map0[i] = (i < pinMap.size()) ? pinMap[i] : (uint32_t)i;
+    vkMakeBuffer(m_dev, m_pdev, b.pinW, b.pinWMem, 4 * vn, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, w0.data());
+    vkMakeBuffer(m_dev, m_pdev, b.pinT, b.pinTMem, 12 * vn, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    vkMakeBuffer(m_dev, m_pdev, b.pinMap, b.pinMapMem, 4 * vn, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, map0.data());
+    for (const float x : w0)
+        if (x > 0.0f) {
+            b.hasPins = true;
+            break;
+        }
+    vkMakeBuffer(m_dev, m_pdev, b.paramsBuf, b.paramsMem, 44, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     m_body.push_back(std::move(b));
     m_ent[e] = (int)m_body.size() - 1;
     if (!m_softPools.empty()) {
@@ -182,7 +216,7 @@ void Soft::build() {
     m_caps.resize(kMaxCapsules);
     vkMakeBuffer(m_dev, m_pdev, m_capsInstances, m_capsInstancesMem, (VkDeviceSize)48 * kMaxCapsules,
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
-    const auto binds = storageBinds(14);
+    const auto binds = storageBinds(16);
     auto maxSets = (uint32_t)m_body.size();
     if (maxSets == 0)
         maxSets = 1;
@@ -193,6 +227,15 @@ void Soft::build() {
     m_softPoolUsed = 0;
     m_softPl = vkMakePipelineLayoutPC(m_dev, m_softDsl, VK_SHADER_STAGE_COMPUTE_BIT, 16);
     m_softPipe = makeComputePipeline(m_dev, softbody_spv, softbody_spv_len / 4, m_softPl);
+    // pin-target gather: 3 SSBOs (source pos, remap, targets) + {mat4 model; int nV; int srcN} push constants
+    const auto pbinds = storageBinds(3);
+    VkDescriptorSetLayoutCreateInfo dslc{};
+    dslc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dslc.bindingCount = (uint32_t)pbinds.size();
+    dslc.pBindings = pbinds.data();
+    VK(vkCreateDescriptorSetLayout(m_dev, &dslc, nullptr, &m_pinDsl));
+    m_pinPl = vkMakePipelineLayoutPC(m_dev, m_pinDsl, VK_SHADER_STAGE_COMPUTE_BIT, 72);
+    m_pinPipe = makeComputePipeline(m_dev, pinupdate_spv, pinupdate_spv_len / 4, m_pinPl);
     for (auto& b : m_body) {
         makeBodySet(b);
         ++m_softPoolUsed;
@@ -209,15 +252,17 @@ void Soft::makeBodySet(GpuBody& b) {
         {b.entries, 0, (VkDeviceSize)16 * b.soft.entries.size()},
         {b.entryStart, 0, (VkDeviceSize)4 * (n + 1)},
         {b.colorVerts, 0, (VkDeviceSize)4 * n},
-        {b.paramsBuf, 0, 40},
+        {b.paramsBuf, 0, 44},
         {b.sub0, 0, (VkDeviceSize)12 * n},
         {b.contactN, 0, (VkDeviceSize)16 * n},
         {b.contactL, 0, (VkDeviceSize)4 * n},
         {b.tris, 0, (VkDeviceSize)4 * b.soft.triList.size()},
         {b.triStart, 0, (VkDeviceSize)4 * (n + 1)},
         {b.triList, 0, (VkDeviceSize)4 * b.soft.triList.size()},
+        {b.pinW, 0, (VkDeviceSize)4 * n},
+        {b.pinT, 0, (VkDeviceSize)12 * n},
     };
-    vkMakeSet(m_dev, m_softPools.back(), m_softDsl, storageBinds(14), b.simSet, bi);
+    vkMakeSet(m_dev, m_softPools.back(), m_softDsl, storageBinds(16), b.simSet, bi);
 }
 
 void Soft::dispatch(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset) {
@@ -275,6 +320,165 @@ void Soft::recordBody(VkCommandBuffer cmd, const GpuBody& b, int iters, int pinn
     recordMode(cmd, b, 2, n, 0);
 }
 
+namespace {
+
+int geomVertexCount(const entt::registry& reg, entt::entity e) {
+    if (const auto* rend = reg.try_get<Renderable>(e))
+        if (const auto* geom = reg.try_get<Geometry>(rend->geom))
+            return geom->mesh.vertexCount();
+    return 0;
+}
+
+}
+
+void Soft::recordPinUpdates(VkCommandBuffer cmd, const entt::registry& reg) {
+    // Last frame's sets are no longer in flight (the queue was fence-waited at present): free them so the small
+    // pool never exhausts under per-frame re-derivation. Every pool is empty again afterwards; allocations
+    // continue from the last one (a fresh pool appears only if a single frame pins more bodies than it holds).
+    for (const PinSet& ps : m_pinSets)
+        vkFreeDescriptorSets(m_dev, ps.pool, 1, &ps.set);
+    m_pinSets.clear();
+    m_pinPoolUsed = 0;
+    bool any = false;
+    for (const GpuBody& b : m_body)
+        if (!b.dead && b.hasPins)
+            any = true;
+    if (!any || m_pinPipe == VK_NULL_HANDLE)
+        return;
+    const auto pbinds = storageBinds(3);
+    for (const GpuBody& b : m_body) {
+        if (b.dead || !b.hasPins)
+            continue;
+        // Pin targets are re-derived every frame, GPU-local: cloth vertex i takes source vertex pinMap[i] transformed
+        // by the anchor node's live world matrix. Default anchor = the body's own node — src holds its local-space
+        // rest pose and model is its WorldTransform — so moving the cloth's Transform (or any ancestor) drags the
+        // pins with it; no per-frame CPU vertex writes. An explicit pinSrc anchors to another mesh instead:
+        // skinned/static meshes store local-space positions and pass their node matrix; soft-body sources are
+        // already world-space and pass identity.
+        VkBuffer srcPos = b.restPos;
+        uint32_t srcN = (uint32_t)b.soft.n;
+        Mat4 model(1.0f);
+        const SoftBodyData* sb = reg.try_get<SoftBodyData>(b.ent);
+        if (!sb)
+            continue;
+        if (sb->pinSrc != entt::null) {
+            // lookup first, then the creating path (geometry uploads lazily on first draw; a source that is
+            // never drawn — e.g. headless — would otherwise miss). Success = vertex count > 0: the no-renderer
+            // fallback path returns slot -1 with valid buffers
+            GpuMeshRef ref = m_vertsFor ? m_vertsFor(sb->pinSrc) : GpuMeshRef{};
+            if (ref.rw.pos.count == 0 && m_request) {
+                if (const auto* rend = reg.try_get<Renderable>(sb->pinSrc))
+                    if (const auto* geom = reg.try_get<Geometry>(rend->geom))
+                        ref = m_request(reg, geom->mesh, sb->pinSrc);
+            }
+            if (ref.rw.pos.count == 0) {
+                if (m_pinWarned.insert(sb->pinSrc).second) {
+                    const auto* n = reg.try_get<Name>(sb->pinSrc);
+                    std::fprintf(stderr, "3dsim: pin source '%s' has no GPU geometry; anchoring to the body's own rest pose\n",
+                                 n ? n->id.c_str() : "?");
+                }
+            } else {
+                srcPos = ref.rw.pos.buffer;
+                srcN = ref.rw.pos.count;
+                if (!reg.try_get<SoftBodyData>(sb->pinSrc))
+                    if (const auto* wt = reg.try_get<WorldTransform>(sb->pinSrc))
+                        model = wt->toMat4();
+            }
+        } else if (const auto* wt = reg.try_get<WorldTransform>(b.ent)) {
+            model = wt->toMat4();
+        }
+        ensurePoolSlot(m_dev, pbinds, kPoolChunk, m_pinPools, m_pinPoolCap, m_pinPoolUsed);
+        VkDescriptorSet set;
+        const std::vector<VkDescriptorBufferInfo> bi = {
+            {srcPos, 0, (VkDeviceSize)12 * srcN},
+            {b.pinMap, 0, (VkDeviceSize)4 * b.soft.n},
+            {b.pinT, 0, (VkDeviceSize)12 * b.soft.n},
+        };
+        vkMakeSet(m_dev, m_pinPools.back(), m_pinDsl, pbinds, set, bi);
+        ++m_pinPoolUsed;
+        m_pinSets.push_back({m_pinPools.back(), set});
+        VkBufferMemoryBarrier bmb[3] = {bufBarrier(srcPos), bufBarrier(b.pinMap), bufBarrier(b.pinT)};
+        stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, bmb, 3);
+        int pc[18] = {}; // mat4 model + nV + srcN (72 bytes)
+        std::memcpy(pc, &model, 64);
+        pc[16] = b.soft.n;
+        pc[17] = (int)srcN;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pinPipe);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pinPl, 0, 1, &set, 0, nullptr);
+        vkCmdPushConstants(cmd, m_pinPl, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), pc);
+        vkCmdDispatch(cmd, (b.soft.n + 63) / 64, 1, 1);
+    }
+}
+
+int Soft::setPinWeights(entt::registry& reg, entt::entity e, const std::vector<float>& w) {
+    if (!reg.try_get<SoftBodyData>(e))
+        return 1;
+    const auto it = m_ent.find(e);
+    if (it == m_ent.end()) {
+        // body not created yet (project() runs later in the frame): validate against the geometry and store;
+        // addSoftBody picks the weights up and queues the initial target refresh. An empty array clears pins
+        const int n = geomVertexCount(reg, e);
+        if (n <= 0)
+            return 1;
+        if (!w.empty() && (int)w.size() != n)
+            return 2;
+        reg.get<SoftBodyData>(e).pinW = w;
+        return 0;
+    }
+    GpuBody& b = m_body[(size_t)it->second];
+    if (b.dead || (!w.empty() && (int)w.size() != b.soft.n))
+        return 2;
+    std::vector<float> w0(w);
+    for (auto& x : w0)
+        x = std::clamp(x, 0.0f, 1.0f);
+    reg.get<SoftBodyData>(e).pinW = w0;
+    if (w0.empty()) {
+        // clear: zero the GPU weights so the shader stops holding vertices
+        std::vector<float> z(b.soft.n, 0.0f);
+        vkWriteBuffer(m_dev, b.pinWMem, z.data(), 4 * (VkDeviceSize)b.soft.n);
+        b.hasPins = false;
+        return 0;
+    }
+    vkWriteBuffer(m_dev, b.pinWMem, w0.data(), 4 * (VkDeviceSize)b.soft.n);
+    b.hasPins = true; // targets track the anchor's live WorldTransform every frame from here on
+    return 0;
+}
+
+int Soft::setPinMap(entt::registry& reg, entt::entity e, const std::vector<uint32_t>& map) {
+    if (!reg.try_get<SoftBodyData>(e))
+        return 1;
+    const auto it = m_ent.find(e);
+    if (it == m_ent.end()) {
+        const int n = geomVertexCount(reg, e);
+        if (n <= 0)
+            return 1;
+        if (!map.empty() && (int)map.size() != n)
+            return 2;
+        reg.get<SoftBodyData>(e).pinMap = map;
+        return 0;
+    }
+    GpuBody& b = m_body[(size_t)it->second];
+    if (b.dead || (!map.empty() && (int)map.size() != b.soft.n))
+        return 2;
+    std::vector<uint32_t> map0(b.soft.n);
+    for (int i = 0; i < b.soft.n; ++i)
+        map0[i] = (i < (int)map.size()) ? map[i] : (uint32_t)i;
+    reg.get<SoftBodyData>(e).pinMap = map;
+    vkWriteBuffer(m_dev, b.pinMapMem, map0.data(), 4 * (VkDeviceSize)b.soft.n);
+    return 0; // the remap applies on the next soft.update_pins
+}
+
+void Soft::setPinSource(entt::registry& reg, entt::entity e, entt::entity src) {
+    if (auto* sb = reg.try_get<SoftBodyData>(e))
+        sb->pinSrc = src; // takes effect on the next soft.update_pins
+}
+
+void Soft::updatePins(entt::entity e) {
+    // Kept for API compatibility: pin targets now track their anchor's live WorldTransform every frame,
+    // so there is nothing to force.
+    (void)e;
+}
+
 void Soft::onBodyDestroyed(entt::registry&, entt::entity e) {
     const auto it = m_ent.find(e);
     if (it == m_ent.end())
@@ -297,6 +501,8 @@ void Soft::flushFrees() {
 }
 
 void Soft::record(VkCommandBuffer cmd, const entt::registry& reg, float dt) {
+    recordPinUpdates(cmd, reg);
+
     for (const GpuBody& b : m_body) {
         if (b.dead)
             continue;
@@ -314,13 +520,15 @@ void Soft::record(VkCommandBuffer cmd, const entt::registry& reg, float dt) {
         phys.stiff = sb->stiffness;
         phys.maxStep = kSoftMaxStep;
         phys.floorY = m_floorY;
-        vkWriteBuffer(m_dev, b.paramsMem, &phys, 40);
+        phys.invSteps = 1.0f / (float)sb->steps;
+        vkWriteBuffer(m_dev, b.paramsMem, &phys, 44);
     }
 
     std::vector<VkBufferMemoryBarrier> first;
     for (const GpuBody& b : m_body)
         if (!b.dead)
-            for (VkBuffer buf : {b.pos, b.nrm, b.prev, b.sub0, b.contactN, b.contactL, b.tris, b.triStart, b.triList})
+            for (VkBuffer buf : {b.pos, b.nrm, b.prev, b.sub0, b.contactN, b.contactL, b.tris, b.triStart, b.triList,
+                                 b.pinW, b.pinT})
                 first.push_back(bufBarrier(buf));
     stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, first.data(),
                  (uint32_t)first.size());
@@ -357,6 +565,10 @@ void Soft::freeBody(GpuBody& b) {
     vkFreeBuffer(m_dev, b.paramsBuf, b.paramsMem);
     vkFreeBuffer(m_dev, b.prev, b.prevMem);
     vkFreeBuffer(m_dev, b.sub0, b.sub0Mem);
+    vkFreeBuffer(m_dev, b.pinW, b.pinWMem);
+    vkFreeBuffer(m_dev, b.pinT, b.pinTMem);
+    vkFreeBuffer(m_dev, b.pinMap, b.pinMapMem);
+    vkFreeBuffer(m_dev, b.restPos, b.restPosMem);
     vkFreeBuffer(m_dev, b.contactN, b.contactNMem);
     vkFreeBuffer(m_dev, b.contactL, b.contactLMem);
     vkFreeBuffer(m_dev, b.entries, b.entriesMem);
@@ -395,6 +607,21 @@ void Soft::reset() {
     m_softPl = VK_NULL_HANDLE;
     vkFree(m_dev, &m_softPipe, vkDestroyPipeline);
     m_softPipe = VK_NULL_HANDLE;
+    for (const PinSet& ps : m_pinSets)
+        vkFreeDescriptorSets(m_dev, ps.pool, 1, &ps.set);
+    m_pinSets.clear();
+    for (auto& p : m_pinPools)
+        vkFree(m_dev, &p, vkDestroyDescriptorPool);
+    m_pinPools.clear();
+    m_pinPoolCap = 0;
+    m_pinPoolUsed = 0;
+    vkFree(m_dev, &m_pinDsl, vkDestroyDescriptorSetLayout);
+    m_pinDsl = VK_NULL_HANDLE;
+    vkFree(m_dev, &m_pinPl, vkDestroyPipelineLayout);
+    m_pinPl = VK_NULL_HANDLE;
+    vkFree(m_dev, &m_pinPipe, vkDestroyPipeline);
+    m_pinPipe = VK_NULL_HANDLE;
+    m_pinWarned.clear();
     vkFreeBuffer(m_dev, m_capsInstances, m_capsInstancesMem);
     m_capsInstances = VK_NULL_HANDLE;
     m_capsInstancesMem = VK_NULL_HANDLE;

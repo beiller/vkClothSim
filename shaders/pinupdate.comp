@@ -1,0 +1,29 @@
+#version 450
+
+// Pin-target refresh for soft-body per-vertex pinning. Runs every frame while a body has pins: cloth vertex i
+// takes its target from source vertex pinMap[i] (identity when no remap is set), transformed by the anchor
+// node's live world matrix. Default anchor = the body's own node — src holds its local-space rest pose and
+// model is its WorldTransform — so moving the cloth's Transform (or any ancestor) drags the pins with it,
+// fully GPU-local. An explicit pinSrc anchors to another mesh instead: skinned/static meshes store local-space
+// positions and pass their node matrix; soft-body sources are already world-space and pass an identity matrix.
+// Runs after this frame's transform resolution/skinning pass, before the soft-body sim reads pinT.
+
+layout(local_size_x = 64) in;
+
+layout(binding = 0) readonly buffer SrcPos { float p[]; } src;
+layout(binding = 1) readonly buffer PinMap { uint v[]; } pinmap;
+layout(binding = 2) writeonly buffer PinT { float p[]; } pint;
+
+layout(push_constant) uniform PC { mat4 model; int nV; int srcN; } pc;
+
+void main() {
+    int i = int(gl_GlobalInvocationID.x);
+    if (i >= pc.nV) return;
+    int j = int(min(pinmap.v[i], uint(pc.srcN - 1)));
+    vec3 p = vec3(src.p[j * 3], src.p[j * 3 + 1], src.p[j * 3 + 2]);
+    vec4 w = pc.model * vec4(p, 1.0);
+    int o = i * 3;
+    pint.p[o] = w.x;
+    pint.p[o + 1] = w.y;
+    pint.p[o + 2] = w.z;
+}

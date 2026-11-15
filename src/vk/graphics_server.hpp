@@ -49,6 +49,15 @@ public:
     }
     void makeGpuTexture(entt::entity e, uint32_t w, uint32_t h) { m_renderer.makeGpuTexture(e, w, h); }
     void setFloor(float y) { m_soft.setFloor(y); }
+    // per-vertex pinning (see Soft::setPinWeights for the return codes: 0 ok, 1 not a soft body, 2 bad length)
+    int setPinWeights(entt::registry& reg, entt::entity e, const std::vector<float>& w) {
+        return m_soft.setPinWeights(reg, e, w);
+    }
+    int setPinMap(entt::registry& reg, entt::entity e, const std::vector<uint32_t>& map) {
+        return m_soft.setPinMap(reg, e, map);
+    }
+    void setPinSource(entt::registry& reg, entt::entity e, entt::entity src) { m_soft.setPinSource(reg, e, src); }
+    void updatePins(entt::entity e) { m_soft.updatePins(e); }
 
     Renderer::ProfMs& prof() { return m_renderer.prof; }
     bool& profOn() { return m_renderer.profOn; }

@@ -34,6 +34,15 @@ void GraphicsServer::init(VkApp& app, bool withRenderer) {
     };
     m_skin.setRequestVerts(requestVerts);
     m_soft.setRequestVerts(requestVerts);
+    m_soft.setVertsFor([this](entt::entity key) -> GpuMeshRef {
+        if (m_rendererOn)
+            return m_renderer.vertsFor(key);
+        auto it = m_fbGeom.find(key);
+        if (it == m_fbGeom.end())
+            return GpuMeshRef{};
+        const FallbackGeom& g = m_fbGeoms[(size_t)it->second];
+        return GpuMeshRef{-1, MeshGpu{VertexStore{g.pos, g.posMem, g.vtxCount}, VertexStore{g.nrm, g.nrmMem, g.vtxCount}}};
+    });
     if (withRenderer) {
         m_renderer.init(app, 256, Mat4(1.0f));
         m_rendererOn = true;

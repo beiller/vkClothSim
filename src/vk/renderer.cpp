@@ -170,6 +170,14 @@ GpuMeshRef Renderer::requestVerts(const entt::registry&, const Mesh& mesh, entt:
     return {slot, MeshGpu{VertexStore{g.pos, g.posMem, g.vtxCount}, VertexStore{g.nrm, g.nrmMem, g.vtxCount}}};
 }
 
+GpuMeshRef Renderer::vertsFor(entt::entity keyEnt) {
+    const auto it = m_entGeom.find(keyEnt);
+    if (it == m_entGeom.end())
+        return {-1, MeshGpu{}};
+    const GpuMesh& g = m_geoms[(size_t)it->second];
+    return {it->second, MeshGpu{VertexStore{g.pos, g.posMem, g.vtxCount}, VertexStore{g.nrm, g.nrmMem, g.vtxCount}}};
+}
+
 int Renderer::geomFor(entt::entity g, const entt::registry& reg) {
     if (g == entt::null)
         return -1;
@@ -609,8 +617,10 @@ void Renderer::prepBuffers(entt::registry& reg) {
             }
         Mat4 model = Mat4(1.0f);
         if (const auto* wt = reg.try_get<WorldTransform>(e)) {
-            model = wt->toMat4();
             im.wpos = wt->pos;
+            // soft-body vertices are simulated in world space: their WorldTransform is the pin anchor, not a render transform
+            if (!reg.try_get<SoftBodyData>(e))
+                model = wt->toMat4();
         }
         im.alphaMode = alphaMode;
         im.refraction = refraction;

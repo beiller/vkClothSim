@@ -4,9 +4,6 @@
 
 local clothH
 local ball
-local pinTime = 0.0
-local released = false
-local PIN_SECS = 3.0
 
 local world_scale = 0.666
 
@@ -54,7 +51,7 @@ function _on_ready(self)
         scene.replace(e, "RigidBody", { colliders = { capCol } })
     end
 
-    -- soft bodies; the entity's Transform is the pinned (spawn) pose, the cloth is released after PIN_SECS
+    -- soft bodies; the cloth's top row is pinned (per-vertex, weight 1) to its spawn pose, the rest hangs free
     local clothSpan = 8.0 * world_scale
     local clothDim = 64
     local clothGeom = geom(mesh.plane({ cw = clothDim, ch = clothDim, span = clothSpan }))
@@ -63,8 +60,16 @@ function _on_ready(self)
     scene.replace(clothH, "Renderable", { geom = clothGeom })
     scene.replace(clothH, "MaterialRef", { material = scene.get_entity("mat_cloth") })
     scene.replace(clothH, "SoftBodyData",
-                  { cons = mesh.planeCons({ cw = clothDim, ch = clothDim, span = clothSpan }),
-                    pinned = 1, mass = 1.0 })
+                  { cons = mesh.planeCons({ cw = clothDim, ch = clothDim, span = clothSpan }), mass = 1.0 })
+    -- pin the front edge (plane row gy=0 sits at z=-span/2) where it spawns; set_pins captures current positions
+    local pinW = {}
+    for i = 1, clothDim * clothDim do
+        pinW[i] = 0.0
+    end
+    for i = 1, clothDim do
+        pinW[i] = 1.0
+    end
+    soft.set_pins(clothH, pinW)
 
     local ballT = mesh.sphere({ subdiv = 3, radius = 1.5 * world_scale })
     ball = scene.entity("ball")
@@ -72,6 +77,32 @@ function _on_ready(self)
     scene.replace(ball, "Renderable", { geom = geom(ballT) })
     scene.replace(ball, "MaterialRef", { material = scene.get_entity("mat_ball") })
     scene.replace(ball, "SoftBodyData", { cons = mesh.ballCons(ballT), mass = 2.0 })
+
+    -- tapered-capsule + sphere rigid bodies: exercise the GPU cloth's tapered/sphere colliders
+    local tcH = 1.2 * world_scale
+    local tcRB = 0.55 * world_scale
+    local tcRT = 0.18 * world_scale
+    local tcShape = scene.entity()
+    scene.replace(tcShape, "TaperedCapsule", { halfHeight = tcH, bottomRadius = tcRB, topRadius = tcRT })
+    local tcCol = scene.entity()
+    scene.replace(tcCol, "Collider", { shape = tcShape })
+    local tcBody = scene.entity("taper")
+    scene.replace(tcBody, "Transform", { pos = {-1.6 * world_scale, 9, 0}, quat = math.qaxis({1, 0, 0}, -0.25) })
+    scene.replace(tcBody, "Renderable",
+                  { geom = geom(mesh.taperedCapsule({ halfHeight = tcH, bottomRadius = tcRB, topRadius = tcRT })) })
+    scene.replace(tcBody, "MaterialRef", { material = matCapsule })
+    scene.replace(tcBody, "RigidBody", { colliders = { tcCol } })
+
+    local spR = 0.6 * world_scale
+    local spShape = scene.entity()
+    scene.replace(spShape, "SphereShape", { radius = spR })
+    local spCol = scene.entity()
+    scene.replace(spCol, "Collider", { shape = spShape })
+    local spBody = scene.entity("sphere")
+    scene.replace(spBody, "Transform", { pos = {1.6 * world_scale, 9, 0} })
+    scene.replace(spBody, "Renderable", { geom = geom(mesh.sphere({ subdiv = 3, radius = spR })) })
+    scene.replace(spBody, "MaterialRef", { material = matCapsule })
+    scene.replace(spBody, "RigidBody", { colliders = { spCol } })
 
     -- glft tests
     -- local m = scene.entity("model")
@@ -97,14 +128,12 @@ function reset_params()
     end
 end
 
-function _physics(self, dt)
-    if released then
-        return
-    end
-    pinTime = pinTime + dt
-    if pinTime >= PIN_SECS then
-        scene.set(clothH, "SoftBodyData.pinned", 0)
-        released = true
+
+local dtAccum = 0.0
+function _animate(self, dt)
+    dtAccum = dtAccum + dt
+    if dtAccum > 1.0 then
+        print(engine.performance_metrics())
+        dtAccum = 0.0
     end
 end
-

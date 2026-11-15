@@ -306,6 +306,108 @@ int lSoftFloor(lua_State* L) {
     return 0;
 }
 
+static std::vector<float> readNumArray(lua_State* L, int idx) {
+    // reject sparse tables up front: a hole would truncate the array (caught later by the length check), but a
+    // table missing index 1 with later elements would otherwise be read as empty = "clear all pins"
+    lua_geti(L, idx, 1);
+    const bool hasFirst = !lua_isnoneornil(L, -1);
+    lua_pop(L, 1);
+    if (!hasFirst) {
+        lua_pushnil(L);
+        if (lua_next(L, idx) != 0) {
+            lua_pop(L, 2);
+            luaL_error(L, "sparse array: fill every index from 1");
+        }
+    }
+    std::vector<float> v;
+    for (lua_Integer i = 1;; ++i) {
+        lua_geti(L, idx, i);
+        if (lua_isnoneornil(L, -1)) {
+            lua_pop(L, 1);
+            break;
+        }
+        v.push_back((float)luaL_checknumber(L, -1));
+        lua_pop(L, 1);
+    }
+    return v;
+}
+
+/// soft.set_pins(e: entity, weights: table) | per-vertex pin weights for a soft body: one number in [0,1] per vertex
+/// (0 = free, 1 = hard pin). Pinned vertices are pulled toward their pin targets with step-independent stiffness.
+/// Targets track the body's own node transform every frame (rest pose x its live world transform), so moving the
+/// cloth's Transform — or any ancestor — drags the pins with it; no per-frame calls needed. An explicit pin source
+/// (soft.set_pin_source) overrides the anchor. An empty array clears all pins. Errors when e is not a soft body or
+/// the array length differs from the vertex count.
+///     local w = {}
+///     for i = 1, 64 * 64 do w[i] = 0 end
+///     for i = 1, 64 do w[i] = 1 end -- pin the top row of a 64x64 cloth
+///     soft.set_pins(cloth, w)
+int lSoftSetPins(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    if (!w.hasDevice)
+        return luaL_error(L, "soft.set_pins: graphics server disabled");
+    if (!lua_istable(L, 2))
+        return luaL_error(L, "soft.set_pins: weights must be an array of numbers");
+    const entt::entity e = luaReadEnt(L, 1);
+    const std::vector<float> wt = readNumArray(L, 2);
+    const int rc = w.graphics.setPinWeights(w.reg, e, wt);
+    if (rc == 1)
+        return luaL_error(L, "soft.set_pins: not a soft body");
+    if (rc == 2)
+        return luaL_error(L, "soft.set_pins: one weight per vertex required");
+    return 0;
+}
+
+/// soft.set_pin_source(e: entity, src: entity|nil) | set the pin-target anchor of a soft body: another mesh entity
+/// (skinned or static — its GPU vertices transformed by its node's live world transform become the targets), or nil
+/// to anchor to the body's own node (rest pose x its live world transform). Tracked every frame, so a moving
+/// anchor drags the pins with it. Takes effect immediately on the next step.
+///     soft.set_pin_source(cloth, characterMesh)
+int lSoftSetPinSource(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    if (!w.hasDevice)
+        return luaL_error(L, "soft.set_pin_source: graphics server disabled");
+    const entt::entity e = luaReadEnt(L, 1);
+    entt::entity src = entt::null;
+    if (!lua_isnoneornil(L, 2))
+        src = luaReadEnt(L, 2);
+    w.graphics.setPinSource(w.reg, e, src);
+    return 0;
+}
+
+/// soft.set_pin_map(e: entity, map: table|nil) | remap pin targets when the cloth and anchor mesh have different
+/// topology: one number per cloth vertex — vertex i takes its target from source vertex map[i]. nil (or an empty
+/// array) restores the identity mapping. Takes effect immediately on the next step.
+int lSoftSetPinMap(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    if (!w.hasDevice)
+        return luaL_error(L, "soft.set_pin_map: graphics server disabled");
+    const entt::entity e = luaReadEnt(L, 1);
+    std::vector<uint32_t> map;
+    if (lua_istable(L, 2)) {
+        const std::vector<float> v = readNumArray(L, 2);
+        map.resize(v.size());
+        for (size_t i = 0; i < v.size(); ++i)
+            map[i] = (uint32_t)v[i];
+    }
+    const int rc = w.graphics.setPinMap(w.reg, e, map);
+    if (rc == 1)
+        return luaL_error(L, "soft.set_pin_map: not a soft body");
+    if (rc == 2)
+        return luaL_error(L, "soft.set_pin_map: one entry per vertex required");
+    return 0;
+}
+
+/// soft.update_pins(e: entity) | kept for compatibility; a no-op now that pin targets track their anchor's live
+/// world transform every frame (moving anchors drag the pins automatically).
+int lSoftUpdatePins(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    if (!w.hasDevice)
+        return luaL_error(L, "soft.update_pins: graphics server disabled");
+    w.graphics.updatePins(luaReadEnt(L, 1));
+    return 0;
+}
+
 /// physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table|nil | rigid-body raycast against
 /// the Jolt world. Returns {hit = true, pos = {x,y,z}, dist = number, entity = entity} (entity omitted when the hit
 /// body has no owning entity), or nil when nothing is hit within maxDist. `excludes` is an array of entities whose
@@ -598,6 +700,10 @@ void luaRegisterGraphicsTable(lua_State* L, SceneScript* host) {
 
 void luaRegisterSoftTable(lua_State* L, SceneScript* host) {
     reg(L, host, "set_floor", lSoftFloor);
+    reg(L, host, "set_pins", lSoftSetPins);
+    reg(L, host, "set_pin_source", lSoftSetPinSource);
+    reg(L, host, "set_pin_map", lSoftSetPinMap);
+    reg(L, host, "update_pins", lSoftUpdatePins);
 }
 
 void luaRegisterPhysicsTable(lua_State* L, SceneScript* host) {

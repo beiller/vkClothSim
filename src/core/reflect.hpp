@@ -156,7 +156,7 @@ static const FieldDesc kPointLight[] = {
     {"shadowMaxRadius", OFF(PointLight, shadowMaxRadius), FieldKind::SliderF, 1.0f, 64.0f},
 };
 /// SoftBodyData | GPU PBD soft-body params: pinned (0=free, >0=pinned), solver steps/passes,
-/// mass/damping/stiffness/tension/friction, cons = constraint param array
+/// mass/damping/stiffness/tension/friction, cons = constraint param array, per-vertex pinning (pinW/pinMap/pinSrc)
 static const FieldDesc kSoftBodyData[] = {
     /// 0 = free, >0 = held in place (e.g. a fixed cloth anchor)
     {"pinned", OFF(SoftBodyData, pinned), FieldKind::SliderI, 0.0f, 2.0f},
@@ -176,6 +176,12 @@ static const FieldDesc kSoftBodyData[] = {
     {"friction", OFF(SoftBodyData, friction), FieldKind::SliderF, 0.0f, 50.0f},
     /// distance constraints as flat {a, b, rest, k} quads (vertex indices, rest length, stiffness)
     {"cons", OFF(SoftBodyData, cons), FieldKind::FloatArr},
+    /// per-vertex pin weight in [0,1], one entry per vertex (0 = free); pulls the vertex toward its pin target with step-independent stiffness (1 = hard pin)
+    {"pinW", OFF(SoftBodyData, pinW), FieldKind::FloatArr},
+    /// optional target remap: cloth vertex i takes its pin target from source vertex pinMap[i] (default identity)
+    {"pinMap", OFF(SoftBodyData, pinMap), FieldKind::UIntArr},
+    /// pin target source mesh entity (null = the body's own current positions); refreshed by soft.update_pins
+    {"pinSrc", OFF(SoftBodyData, pinSrc), FieldKind::Ref},
 };
 /// RigidBody | Jolt dynamic body: friction/restitution/damping/mass, forceSleep, `colliders` = collider entities
 static const FieldDesc kRigidBody[] = {

@@ -24,6 +24,7 @@ layout(binding = 7) buffer PhysP {
     float stiff;
     float maxStep;
     float floorY;
+    float invSteps;
 } ph;
 
 layout(binding = 8) buffer Sub0 { float v[]; } sub0;
@@ -32,6 +33,8 @@ layout(binding = 10) buffer ContactL { float l[]; } contactL;
 layout(binding = 11) buffer Tris { uint t[]; } tris;
 layout(binding = 12) buffer TriStart { int s[]; } triStart;
 layout(binding = 13) buffer TriList { int l[]; } triList;
+layout(binding = 14) buffer PinW { float v[]; } pinW;
+layout(binding = 15) buffer PinT { float p[]; } pint;
 
 layout(push_constant) uniform PC { int mode; int n; int groupOffset; int pad; } pc;
 
@@ -98,21 +101,51 @@ vec3 collideVertex(int i, vec3 P) {
     float cL = contactL.l[i];
     for (int c = 0; c < ph.nCaps; ++c) {
         vec3 center = caps.cs[c].centerRadius.xyz;
-        float radius = caps.cs[c].centerRadius.w;
+        float rA = caps.cs[c].centerRadius.w; // radius at A (bottom, -Y end)
         float hl = caps.cs[c].halfLen.x;
-        float bd = radius + ph.skin + hl;
+        float rB = caps.cs[c].halfLen.y;      // radius at B (top, +Y end); == rA for a plain capsule/sphere
+        float bd = max(rA, rB) + ph.skin + hl;
         vec3 dc = P - center;
         if (dot(dc, dc) > bd * bd) continue;
-        vec3 axis = quatMat(caps.cs[c].quat) * vec3(0.0, hl, 0.0);
-        vec3 A = center - axis, B = center + axis;
-        vec3 AB = B - A;
-        float t = clamp(dot(P - A, AB) / max(dot(AB, AB), 1e-6), 0.0, 1.0);
-        vec3 Q = A + AB * t;
-        vec3 d = P - Q;
-        float dist = length(d);
-        float C = dist - (radius + ph.skin);
+        // Tapered capsule = convex hull of the two end spheres = union of balls Ball(Q(t), rho(t)) swept along AB
+        // with rho linear from rA to rB. The closest point minimizes f(t) = |P - Q(t)| - rho(t); f is convex and
+        // its minimizer has a closed form in P's axial (a) / radial (r) coordinates about A, delta = (rB - rA)/L:
+        //   t* = (a + sgn(delta) * |delta| * r / sqrt(1 - delta^2)) / L, clamped to [0, 1]
+        // (delta = 0 gives the plain-capsule closest point; |delta| >= 1 is a spike and the closest ball is always
+        // the larger end). Exact for outside points; inside, the push direction is still correct.
+        float C;
+        vec3 n;
+        if (hl < 1e-5) {
+            // sphere (or zero-length capsule): radial test about the center
+            float dist = length(dc);
+            C = dist - (max(rA, rB) + ph.skin);
+            n = dist > 1e-5 ? dc / dist : vec3(0.0, 1.0, 0.0);
+        } else {
+            vec3 AB = quatMat(caps.cs[c].quat) * vec3(0.0, 2.0 * hl, 0.0);
+            vec3 A = center - AB * 0.5;
+            float L = length(AB);
+            vec3 wh = AB / L;
+            float a = dot(P - A, wh);
+            float r = length((P - A) - a * wh);
+            float delta = (rB - rA) / L;
+            float t;
+            if (delta >= 1.0)
+                t = 1.0; // spike toward B: the closest ball is always the B end
+            else if (delta <= -1.0)
+                t = 0.0; // spike toward A
+            else if (abs(delta) < 1e-4)
+                t = a / L;
+            else {
+                float s = delta * delta;
+                t = (a + sign(delta) * sqrt(s) * r / sqrt(max((1.0 - delta) * (1.0 + delta), 1e-8))) / L;
+            }
+            t = clamp(t, 0.0, 1.0);
+            vec3 d = P - (A + AB * t);
+            float dist = length(d);
+            C = dist - (mix(rA, rB, t) + ph.skin);
+            n = dist > 1e-5 ? d / dist : vec3(0.0, 1.0, 0.0);
+        }
         if (C < 0.0) {
-            vec3 n = dist > 1e-5 ? d / dist : vec3(0.0, 1.0, 0.0);
             float corr = -C / (1.0 + COLLIDE_COMPLIANCE);
             P += n * corr;
             cN += n * corr;
@@ -152,25 +185,47 @@ void main() {
         wsub0(vi, P);
         contactN.n[vi] = vec4(0.0);
         contactL.l[vi] = 0.0;
-        vec3 d = (P - Pr) * ph.damping + vec3(0.0, ph.gravity, 0.0) * (ph.dt * ph.dt);
-        float dl = length(d);
-        if (dl > ph.maxStep)
-            d *= ph.maxStep / dl;
-        wpos(vi, P + d);
+        if (pinW.v[vi] > 0.0) {
+            // pinned: hold position and zero velocity so unpinning never explodes from a stale prev
+            wprev(vi, P);
+        } else {
+            vec3 d = (P - Pr) * ph.damping + vec3(0.0, ph.gravity, 0.0) * (ph.dt * ph.dt);
+            float dl = length(d);
+            if (dl > ph.maxStep)
+                d *= ph.maxStep / dl;
+            wpos(vi, P + d);
+        }
     } else if (pc.mode == 1) {
-        vec3 P = rpos(vi);
+        // freeness: 1 = free, 0 = pinned. The correction splits by freeness over the legacy total 2k/(2+alpha):
+        // both free -> k/(2+alpha) each (exactly the legacy split); a pinned neighbor takes no motion and the
+        // free side gets the full total. Errors are measured against the vertex's start-of-update position (P0),
+        // not the accumulated one: with a long chain under load, accumulated errors make opposing corrections
+        // within one vertex cancel (T_i ~ 11/6 T_{i-1} is a near-fixed point), locking the cloth into a stretched
+        // "funnel" that creeps instead of draping. P0-based corrections relax the tension gradient directly.
+        vec3 P0 = rpos(vi);
+        vec3 P = P0;
         float alpha = constraintAlpha();
+        float fi = 1.0 - pinW.v[vi];
         for (int e = estart.s[vi]; e < estart.s[vi + 1]; ++e) {
             Entry en = ents.e[e];
-            vec3 d = rpos(en.j) - P;
+            vec3 d = rpos(en.j) - P0;
             float dist = length(d);
             if (dist < 1e-6) continue;
             float rest = en.rest * ph.tension;
-            P += d * ((dist - rest) / dist * (en.k / (2.0 + alpha)));
+            float fj = 1.0 - pinW.v[en.j];
+            P += d * ((dist - rest) / dist * (2.0 * en.k / (2.0 + alpha)) * (fi / max(fi + fj, 1e-4)));
         }
         wpos(vi, P);
     } else if (pc.mode == 2) {
-        vec3 P = collideVertex(vi, rpos(vi));
+        vec3 P = rpos(vi);
+        float pw = pinW.v[vi];
+        if (pw > 0.0) {
+            // step-independent pull toward the pin target: w=1 lands exactly on it, w<1 is elastic
+            int o = vi * 3;
+            vec3 T = vec3(pint.p[o], pint.p[o + 1], pint.p[o + 2]);
+            P += (T - P) * (1.0 - pow(1.0 - pw, ph.invSteps));
+        }
+        P = collideVertex(vi, P);
         wpos(vi, P);
         vec3 v = (P - rsub0(vi)) / ph.dt;
         float nl = length(contactN.n[vi].xyz);
