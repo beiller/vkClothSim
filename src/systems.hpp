@@ -20,6 +20,13 @@ void resolveWorldTransforms(entt::registry& reg);
 
 void stepAnimations(entt::registry& reg, float dt);
 
+// Fixed-timestep bone interpolation (FRAME_PACING.md): snapshotBones captures each skeleton joint's
+// local transform at the end of a tick; interpolateBones writes lerp(prev,curr,alpha) per frame so
+// skinning (which reads bone WorldTransforms) renders between ticks. watchSystems cleans up on destroy.
+void snapshotBones(const entt::registry& reg);
+void interpolateBones(entt::registry& reg, float alpha);
+void watchSystems(entt::registry& reg);
+
 void stepXr(entt::registry& reg, const XrFrame& fr);
 entt::entity spawnVrRoot(entt::registry& reg);
 void spawnControllers(Engine& w);

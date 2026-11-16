@@ -32,7 +32,8 @@ struct PaceWatch {
         if (work > max)
             max = work;
         if (++frames % 120 == 0) {
-            std::fprintf(stderr, "3dsim: vr work avg %.1f ms, max %.1f ms\n", total / 120, max);
+            // too much output noise!
+            //std::fprintf(stderr, "3dsim: vr work avg %.1f ms, max %.1f ms\n", total / 120, max);
             total = max = 0.0f;
         }
     }
@@ -74,8 +75,9 @@ int main(int argc, char** argv) {
             winH = h;
         }
     }
-    bool wantNoVr = false, noGraphics = false, headless = false;
+    bool wantNoVr = false, noGraphics = false, headless = false, noInterp = false, syncSubmit = false;
     int maxFrames = -1;
+    int physHz = kPhysHzDefault;
     std::string scenePath;
     bool scenesDirSet = false;
     for (int i = 1; i < argc; ++i) {
@@ -87,6 +89,12 @@ int main(int argc, char** argv) {
             headless = true;
         else if (std::strcmp(argv[i], "--frames") == 0)
             maxFrames = std::atoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--phys-hz") == 0)
+            physHz = std::atoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--no-interp") == 0)
+            noInterp = true; // render the latest tick state directly: no interpolation latency
+        else if (std::strcmp(argv[i], "--sync") == 0)
+            syncSubmit = true; // legacy blocking GPU submit (bisection for the async pipeline, FRAME_PACING.md p6)
         else if (std::strcmp(argv[i], "--scene") == 0)
             scenePath = argv[++i];
         else if (std::strcmp(argv[i], "--scenes-dir") == 0) {
@@ -119,6 +127,7 @@ int main(int argc, char** argv) {
     }
     if (engine.hasWindow)
         app.initDevice(engine.xr ? engine.xr->device() : app.makeDevice());
+    app.setAsync(!syncSubmit); // async pipeline by default; --sync restores the legacy blocking submit
     initEngine(engine);
     engine.physics.setPhysicsHook([&engine](float sdt) { engine.script.physicsAll(sdt); });
     if (engine.xr) {
@@ -162,12 +171,20 @@ int main(int argc, char** argv) {
     }
 
     auto lastFrame = std::chrono::steady_clock::now();
+    // Fixed-timestep accumulator (integer ns; see FRAME_PACING.md): physics ticks at physHz
+    // regardless of display rate, rendering runs at display rate.
+    const int physHzC = physHz >= 1 && physHz <= 1000 ? physHz : kPhysHzDefault;
+    const int64_t tickNs = 1'000'000'000 / physHzC;
+    const float tickDt = 1.0f / (float)physHzC;
+    const int maxSteps = std::clamp((int)(kMaxSimPerFrameNs / tickNs), 1, 8);
+    int64_t acc = 0;
     // vsync pacing state: nextEdge is the upcoming display refresh edge we present on
     auto paceEdge = std::chrono::steady_clock::now();
     const auto pacePeriod = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
         std::chrono::duration<double, std::milli>(vsyncPeriodMs(app.glfwWindow())));
     float fpsAccum = 0.0f;
     int fpsFrames = 0;
+    int64_t tickAccum = 0; // fixed-tick count, for the profile line (avg ticks/frame)
     float fps = 0.0f;
     const bool prof = std::getenv("VKSIM_PROFILE") != nullptr;
     if (prof && engine.hasDevice)
@@ -182,11 +199,16 @@ int main(int argc, char** argv) {
         if (engine.hasWindow && app.windowShouldClose())
             break;
         const auto nowFrame = std::chrono::steady_clock::now();
-        const float dt = engine.hasWindow ? std::chrono::duration<float>(nowFrame - lastFrame).count() : kHeadlessDt;
-        // One clamped step for everything that advances with the sim: physics, animations and Lua time all
-        // use it so a hitch slows the frame down instead of making some systems jump ahead of others.
-        const float simDt = std::min(dt, kMaxPhysDt);
+        // Frame time in integer ns, clamped so a hitch slows the sim down instead of making it jump.
+        const int64_t frameNs = engine.hasWindow
+            ? std::min<int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(nowFrame - lastFrame).count(),
+                                kMaxFrameNs)
+            : kHeadlessFrameNs;
+        const float dt = (float)frameNs * 1e-9f;
+        // Render-rate hook dt: same clamp as the old per-frame simDt, so _animate scripts see no change.
+        const float frameDt = std::min(dt, kMaxPhysDt);
         lastFrame = nowFrame;
+        acc += frameNs;
         fpsAccum += dt;
         ++fpsFrames;
         if (fpsAccum >= 0.5f) {
@@ -203,18 +225,19 @@ int main(int argc, char** argv) {
             if (prof) {
                 auto& p = engine.graphics.prof();
                 std::printf("prof: %5.1ffps poll %5.2f cpu %5.2f jolt %5.2f skel %5.2f sim %5.2f "
-                            "ui %5.2f acq %5.2f draw %5.2f (ui %5.2f shadow %5.2f scene %5.2f tonemap %5.2f) "
+                            "ticks %4.2f ui %5.2f acq %5.2f draw %5.2f (ui %5.2f shadow %5.2f scene %5.2f tonemap %5.2f) "
                             "idle %5.2f\n",
                             fps, engine.phase.poll, engine.phase.cpu, engine.phase.jolt, engine.phase.skel,
-                            engine.phase.sim, uiAccum / fpsFrames, acqAccum / fpsFrames, drawAccum / fpsFrames,
-                            p.ui / fpsFrames, p.shadow / fpsFrames, p.scene / fpsFrames, p.tonemap / fpsFrames,
-                            engine.phase.idle);
+                            engine.phase.sim, (double)tickAccum / fpsFrames, uiAccum / fpsFrames, acqAccum / fpsFrames,
+                            drawAccum / fpsFrames, p.ui / fpsFrames, p.shadow / fpsFrames, p.scene / fpsFrames,
+                            p.tonemap / fpsFrames, engine.phase.idle);
                 p.reset();
             }
             uiAccum = acqAccum = drawAccum = 0.0f;
             phaseMs.reset();
             fpsAccum = 0.0f;
             fpsFrames = 0;
+            tickAccum = 0;
         }
         engine.fps = fps;
         writePerfText(engine);
@@ -254,18 +277,39 @@ int main(int argc, char** argv) {
             stepKeyboard(engine);
         }
         engine.script.activateScripts();
-        engine.script.animateAll(simDt);
+        engine.script.animateAll(frameDt); // render rate (per frame), as before
         if (engine.xr) {
             stepXr(engine.reg, fr);
             stepControllers(engine.reg, fr);
         }
 
         float frameJolt = 0.0f, frameSkel = 0.0f, frameSoft = 0.0f, frameAcq = 0.0f;
-        engine.physics.update(engine.reg, simDt);
-        stepAnimations(engine.reg, simDt);
-        resolveWorldTransforms(engine.reg);
+        if (engine.hasDevice)
+            engine.graphics.beginFrame(); // async: pick this frame's ring slot, wait on its fence (no-op in steady state)
+        // Fixed-tick loop: every tick runs the whole sim at exactly tickDt. The _physics script hook
+        // dispatches inside physics.update (before Jolt), so kinematic poses take effect same-tick.
+        int steps = 0;
+        while (acc >= tickNs && steps < maxSteps) {
+            engine.physics.update(engine.reg, tickDt);
+            stepAnimations(engine.reg, tickDt);
+            snapshotBones(engine.reg); // capture this tick's bone locals for render interpolation
+            resolveWorldTransforms(engine.reg);
+            if (engine.hasDevice)
+                engine.graphics.stepSoftSim(engine.reg, tickDt);
+            acc -= tickNs;
+            ++steps;
+        }
+        if (steps == maxSteps)
+            acc = 0; // hit the cap: drop excess time — the sim slows down instead of spiraling
+        tickAccum += steps;
+        const float alpha = noInterp ? 1.0f : (float)acc / (float)tickNs;
+        engine.physics.interpolatePoses(engine.reg, alpha); // render-rate pose between the last two ticks
+        interpolateBones(engine.reg, alpha);                // same for skeleton joints (skinning reads them)
+        if (engine.hasDevice)
+            engine.graphics.setInterpAlpha(alpha); // soft-body vertex mix uses the same alpha
+        resolveWorldTransforms(engine.reg); // per frame: covers zero-tick frames & input-driven motion
         if (engine.hasDevice) {
-            engine.graphics.updateSim(engine.reg, simDt);
+            engine.graphics.stepSkinning(engine.reg);
             frameSkel = engine.graphics.simProf.skel;
             frameSoft = engine.graphics.simProf.soft;
             engine.graphics.simProf.reset();
@@ -376,12 +420,14 @@ int main(int argc, char** argv) {
                 engine.graphics.draw(cmd, app, idx, engine.reg);
                 drawAccum += msBetween(tDraw, std::chrono::steady_clock::now());
             }
+            app.endFrame(); // async: submit this frame's batched GPU stages with the slot fence (before present)
             if (engine.xr)
                 engine.xr->endFrame(fr.shouldRender);
-            // Vsync-aligned pacing: with a FIFO swapchain present() blocks until the display refresh, so an
-            // unpaced loop drifts out of phase and occasionally misses an edge by a hair -- then present waits
-            // a whole extra frame and the sim takes one big step (a visible jump). Sleeping until just before
-            // the next refresh edge makes present land on it every frame.
+            // Vsync-aligned pacing: the pacing sleep below lands present on the refresh edge. (In --sync mode
+            // a FIFO present also blocks until the display refresh; async presents return immediately and the
+            // sleep does all the pacing.) An unpaced loop drifts out of phase and occasionally misses an edge
+            // by a hair -- then present waits a whole extra frame and the sim takes one big step (a visible
+            // jump). Sleeping until just before the next refresh edge makes present land on it every frame.
             if (engine.hasWindow && !engine.xr && app.vsynced()) {
                 const auto now = std::chrono::steady_clock::now();
                 if (paceEdge <= now)
@@ -391,13 +437,17 @@ int main(int argc, char** argv) {
                 if (wake > now)
                     std::this_thread::sleep_until(wake);
             }
-            app.present(idx, !engine.xr);
+            // --sync: drain the queue at present (legacy behavior). Async: present returns once scheduled;
+            // the slot fences bound how far ahead the CPU may run.
+            app.present(idx, syncSubmit && !engine.xr);
             if (engine.hasWindow && !engine.xr && app.vsynced()) {
                 const auto now = std::chrono::steady_clock::now();
                 do
                     paceEdge += pacePeriod;
                 while (paceEdge <= now);
             }
+        } else if (engine.hasDevice) {
+            app.endFrame(); // headless: no draw/present — flush the soft/skin batch recorded this frame
         }
         const auto tRender = std::chrono::steady_clock::now();
         const auto tXrEnd = tRender;

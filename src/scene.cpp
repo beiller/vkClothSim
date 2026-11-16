@@ -135,6 +135,7 @@ void initEngine(Engine& w) {
     if (w.hasDevice)
         w.graphics.watch(w.reg);
     w.physics.watch(w.reg);
+    watchSystems(w.reg);
 }
 
 void resetScene(Engine& w) {

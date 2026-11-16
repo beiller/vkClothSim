@@ -20,8 +20,10 @@ struct ModelUbo {
     float ior;           // 128
     float normalScale;   // 132
     float ssssScale;     // 136
-    float ssssSplit;
-    float pad[4];
+    float ssssSplit;     // 140
+    float interpSoft;    // 144 (soft-body render interpolation: mix posPrev→pos in the vertex shader)
+    float interpAlpha;   // 148
+    float pad[2];        // 152
 };
 static_assert(sizeof(ModelUbo) == 160, "ModelUbo must match the shader std140 layout");
 

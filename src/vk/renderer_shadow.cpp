@@ -133,7 +133,7 @@ void Renderer::renderShadowCubes(VkCommandBuffer cmd, const entt::registry& reg)
                     continue;
                 const int inst = instOf(e);
                 if (inst >= 0 && m_insts[(size_t)inst].alphaMode != 2 && m_insts[(size_t)inst].refraction <= 0.0f)
-                    drawInstance(cmd, m_shadowPl, m_geoms[m_insts[(size_t)inst].geom], m_insts[(size_t)inst].set);
+                    drawInstance(cmd, m_shadowPl, m_geoms[m_insts[(size_t)inst].geom], m_insts[(size_t)inst].set[m_slot]);
             }
             vkCmdEndRenderPass(cmd);
         }

@@ -24,7 +24,15 @@ public:
 
     void init(VkApp& app, bool withRenderer = true);
     void build(const entt::registry& reg);
-    void updateSim(entt::registry& reg, float dt);
+    // Fixed-timestep split (see FRAME_PACING.md): the cloth sim runs per physics tick, skinning
+    // per rendered frame (it reads whatever bone state the ECS holds — interpolated from phase 4 on).
+    void stepSoftSim(entt::registry& reg, float dt);
+    void stepSkinning(const entt::registry& reg);
+    // Async pipeline frame boundary (FRAME_PACING.md phase 6): beginFrame picks this frame's ring slot and
+    // waits on its fence (so overwriting the slot's buffers/sets is safe); endFrame flushes the batched GPU
+    // stages with the slot's fence. Both are no-ops in --sync mode.
+    void beginFrame();
+    void endFrame();
     void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry& reg) {
         m_renderer.draw(cmd, app, fb, reg, readSetting<RenderSettings>(reg));
     }
@@ -33,6 +41,7 @@ public:
         m_renderer.drawVr(cmd, app, fb, reg, readSetting<RenderSettings>(reg), cam, xrImg, nXr);
     }
     void setViewProj(const CameraView& cv) { m_renderer.setViewProj(cv); }
+    void setInterpAlpha(float a) { m_renderer.setInterpAlpha(a); }
     void initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vector<std::vector<VkImage>>& images,
                       const VkExtent2D* exts) {
         m_renderer.initXrTarget(app, fmt, nEyes, images, exts);
@@ -78,6 +87,7 @@ private:
     Renderer m_renderer;
     Soft m_soft;
     Skin m_skin;
+    int m_slot = 0; // current async ring slot (see beginFrame)
     VkApp* m_app = nullptr;
     VkDevice m_dev = VK_NULL_HANDLE;
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;

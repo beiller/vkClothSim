@@ -64,6 +64,14 @@ public:
     void buildEnvironment(VkApp& app, entt::entity envEnt, entt::entity eqTex);
     float envIntensity(const entt::registry& reg) const;
     void setViewProj(const CameraView& cv);
+    // Soft-body render interpolation (FRAME_PACING.md): publish a body's posPrev buffer to its geometry
+    // (binding 8; non-soft meshes bind pos itself and the vertex shader skips the mix).
+    void setGeomPosPrev(int geom, VkBuffer buf);
+    // Per-frame alpha = accumulator/tick: how far between the last two tick states to render.
+    void setInterpAlpha(float a) { m_interpAlpha = a; }
+    // Async ring slot for this frame (GraphicsServer::beginFrame). All per-frame UBO writes and descriptor-set
+    // updates below target m_slot; that slot's fence was waited on at frame start, so nothing in flight reads it.
+    void setSlot(int s) { m_slot = s; }
     void shutdown();
     void draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry& reg, const RenderSettings& rs);
 
@@ -86,6 +94,7 @@ private:
     void drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgIdx, const CameraView& cv);
     struct GpuMesh {
         VkBuffer pos = VK_NULL_HANDLE, nrm = VK_NULL_HANDLE, uv = VK_NULL_HANDLE;
+        VkBuffer posPrev = VK_NULL_HANDLE; // soft bodies only: previous tick's positions (render interpolation)
         VkDeviceMemory posMem = VK_NULL_HANDLE, nrmMem = VK_NULL_HANDLE, uvMem = VK_NULL_HANDLE;
         VkBuffer ibuf = VK_NULL_HANDLE;
         VkDeviceMemory ibmem = VK_NULL_HANDLE;
@@ -100,13 +109,18 @@ private:
         uint32_t w = 0, h = 0;
     };
 
+    // Async pipeline ring depth (FRAME_PACING.md phase 6) — must match VkApp::kSlots. Per-frame CPU-written
+    // GPU memory gets one copy per slot; each slot's descriptor sets are created once and never updated while
+    // in flight (per-frame updates touch only the current slot, whose fence was waited on at frame start).
+    static constexpr int kRing = 3;
+
     struct InstancedMesh {
         int geom = -1;
         bool dead = false;
-        VkBuffer modelUbuf = VK_NULL_HANDLE;
-        VkDeviceMemory modelMem = VK_NULL_HANDLE;
-        VkDescriptorSet set = VK_NULL_HANDLE;
-        VkDescriptorSet setTrans = VK_NULL_HANDLE;
+        VkBuffer modelUbuf[kRing] = {};
+        VkDeviceMemory modelMem[kRing] = {};
+        VkDescriptorSet set[kRing] = {};
+        VkDescriptorSet setTrans[kRing] = {};
         int tex[4] = {-2, -2, -2, -2};
         int alphaMode = 0;
         float refraction = 0.0f;
@@ -164,9 +178,10 @@ private:
     VkDevice m_dev = VK_NULL_HANDLE;
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;
     VkRenderPass m_rp = VK_NULL_HANDLE;
+    VkApp* m_app = nullptr; // for waitAll() on rare all-slot descriptor updates / buffer frees
 
-    VkBuffer m_vpUbuf = VK_NULL_HANDLE;
-    VkDeviceMemory m_vpMem = VK_NULL_HANDLE;
+    VkBuffer m_vpUbuf[kRing] = {};
+    VkDeviceMemory m_vpMem[kRing] = {};
     VkBuffer m_dbgBuf = VK_NULL_HANDLE;
     VkDeviceMemory m_dbgMem = VK_NULL_HANDLE;
     uint64_t m_dbgSize = 0;
@@ -181,11 +196,11 @@ private:
 
     VkDescriptorSetLayout m_tmDsl = VK_NULL_HANDLE;
     VkDescriptorPool m_tmPool = VK_NULL_HANDLE;
-    VkDescriptorSet m_tmSet = VK_NULL_HANDLE;
+    VkDescriptorSet m_tmSet[kRing] = {};
     VkPipelineLayout m_tmPl = VK_NULL_HANDLE;
     VkPipeline m_tmPipe = VK_NULL_HANDLE;
-    VkBuffer m_tmUbuf = VK_NULL_HANDLE;
-    VkDeviceMemory m_tmMem = VK_NULL_HANDLE;
+    VkBuffer m_tmUbuf[kRing] = {};
+    VkDeviceMemory m_tmMem[kRing] = {};
     VkImageView m_tmSrcView = VK_NULL_HANDLE;
 
     static constexpr int kTexChannels = 4;
@@ -219,8 +234,10 @@ private:
 
     CameraView m_camView{};
     float m_exposure = 1.0f;
-    VkBuffer m_lightsUbuf = VK_NULL_HANDLE;
-    VkDeviceMemory m_lightsMem = VK_NULL_HANDLE;
+    float m_interpAlpha = 1.0f; // soft-body prev→curr mix (1 = latest tick state)
+    int m_slot = 0;             // current async ring slot (setSlot from GraphicsServer::beginFrame)
+    VkBuffer m_lightsUbuf[kRing] = {};
+    VkDeviceMemory m_lightsMem[kRing] = {};
 
     EnvPass m_sss;
     VkDescriptorSet m_sssSet[2] = {};
@@ -249,9 +266,9 @@ private:
     VkFormat m_xrFmt = VK_FORMAT_UNDEFINED;
     VkRenderPass m_xrRp = VK_NULL_HANDLE;
     VkPipeline m_xrPipe = VK_NULL_HANDLE;
-    VkBuffer m_xrTmUbuf = VK_NULL_HANDLE;
-    VkDeviceMemory m_xrTmMem = VK_NULL_HANDLE;
-    VkDescriptorSet m_xrSet = VK_NULL_HANDLE;
+    VkBuffer m_xrTmUbuf[kRing] = {};
+    VkDeviceMemory m_xrTmMem[kRing] = {};
+    VkDescriptorSet m_xrSet[kRing] = {};
     std::vector<std::vector<VkImageView>> m_xrViews;
     std::vector<std::vector<VkFramebuffer>> m_xrFbs;
     VkExtent2D m_xrExt[2]{};

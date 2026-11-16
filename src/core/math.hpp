@@ -12,6 +12,13 @@ inline constexpr float kHeadlessHz = 60.0f;
 inline constexpr float kHeadlessDt = 1.0f / kHeadlessHz;
 inline constexpr float kMaxPhysDt = 1.0f / 30.0f;
 
+// Fixed-timestep physics (see FRAME_PACING.md): integer-ns accumulator for wall-clock bookkeeping,
+// constant float tick dt passed to the sim (never accumulated, so no float drift in it).
+inline constexpr int kPhysHzDefault = 60;                       // default tick rate (--phys-hz)
+inline constexpr int64_t kMaxFrameNs = 100'000'000;             // frame-time clamp: sim slows, never spirals
+inline constexpr int64_t kMaxSimPerFrameNs = 67'000'000;        // max sim time per frame (~4 ticks at 60 Hz)
+inline constexpr int64_t kHeadlessFrameNs = 1'000'000'000 / 60; // virtual headless frame: exactly 1 tick/frame
+
 using V2 = glm::vec2;
 using V3 = glm::vec3;
 using V4 = glm::vec4;

@@ -566,6 +566,8 @@ inline VkDescriptorPool vkMakePool(VkDevice dev, const std::vector<VkDescriptorS
     }
     VkDescriptorPoolCreateInfo dpc{};
     dpc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    // Sets are freed at runtime (per-body/state teardown, per-slot pin-set recycling), so the pool must allow it.
+    dpc.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     dpc.maxSets = maxSets;
     dpc.poolSizeCount = (uint32_t)sizes.size();
     dpc.pPoolSizes = sizes.data();

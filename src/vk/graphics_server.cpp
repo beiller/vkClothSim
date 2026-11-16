@@ -7,12 +7,23 @@
 #include "vk/vkutil.hpp"
 #include "util.hpp"
 
+void GraphicsServer::beginFrame() {
+    m_slot = m_app->beginFrame();
+    m_soft.setSlot(m_slot);
+    m_skin.setSlot(m_slot);
+    m_renderer.setSlot(m_slot);
+}
+
+void GraphicsServer::endFrame() { m_app->endFrame(); }
+
 void GraphicsServer::init(VkApp& app, bool withRenderer) {
     m_app = &app;
     m_dev = app.device();
     m_pdev = app.pdev();
     m_soft.init(app.device(), app.pdev());
+    m_soft.setApp(&app);
     m_skin.init(app.device(), app.pdev());
+    m_skin.setApp(&app);
     const auto requestVerts = [this](const entt::registry& reg, const Mesh& m, entt::entity key) {
         if (m_rendererOn)
             return m_renderer.requestVerts(reg, m, key);
@@ -21,7 +32,9 @@ void GraphicsServer::init(VkApp& app, bool withRenderer) {
             FallbackGeom g;
             const auto n = (uint32_t)m.vertexCount();
             g.vtxCount = n;
-            vkMakeBufferDev(m_dev, m_pdev, g.pos, g.posMem, 12 * (VkDeviceSize)n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            // TRANSFER bits: the soft sim copies pos→posPrev each tick even in headless (no-renderer) mode
+            vkMakeBufferDev(m_dev, m_pdev, g.pos, g.posMem, 12 * (VkDeviceSize)n,
+                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                            m.pos.data());
             vkMakeBufferDev(m_dev, m_pdev, g.nrm, g.nrmMem, 12 * (VkDeviceSize)n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                            m.nrm.data());
@@ -34,6 +47,11 @@ void GraphicsServer::init(VkApp& app, bool withRenderer) {
     };
     m_skin.setRequestVerts(requestVerts);
     m_soft.setRequestVerts(requestVerts);
+    // Soft-body render interpolation: publish each body's posPrev buffer to its geometry (binding 8)
+    m_soft.setPosPrev([this](int geom, VkBuffer buf) {
+        if (m_rendererOn && geom >= 0)
+            m_renderer.setGeomPosPrev(geom, buf);
+    });
     m_soft.setVertsFor([this](entt::entity key) -> GpuMeshRef {
         if (m_rendererOn)
             return m_renderer.vertsFor(key);
@@ -54,13 +72,7 @@ void GraphicsServer::build(const entt::registry& reg) {
     m_skin.build(reg);
 }
 
-void GraphicsServer::updateSim(entt::registry& reg, float dt) {
-    const auto tS = std::chrono::steady_clock::now();
-    VkCommandBuffer skelCmd = m_app->beginCommands();
-    m_skin.step(reg, skelCmd);
-    m_app->submit(skelCmd);
-    simProf.skel += msBetween(tS, std::chrono::steady_clock::now());
-
+void GraphicsServer::stepSoftSim(entt::registry& reg, float dt) {
     const auto tC = std::chrono::steady_clock::now();
     VkCommandBuffer softCmd = m_app->beginCommands();
     m_soft.syncCapsules(reg);
@@ -70,6 +82,14 @@ void GraphicsServer::updateSim(entt::registry& reg, float dt) {
     simProf.soft += msBetween(tC, std::chrono::steady_clock::now());
 }
 
+void GraphicsServer::stepSkinning(const entt::registry& reg) {
+    const auto tS = std::chrono::steady_clock::now();
+    VkCommandBuffer skelCmd = m_app->beginCommands();
+    m_skin.step(reg, skelCmd);
+    m_app->submit(skelCmd);
+    simProf.skel += msBetween(tS, std::chrono::steady_clock::now());
+}
+
 void GraphicsServer::flushFrees() {
     m_renderer.flushFrees();
     m_soft.flushFrees();
@@ -77,6 +97,8 @@ void GraphicsServer::flushFrees() {
 }
 
 void GraphicsServer::reset() {
+    if (m_app)
+        m_app->drain(); // no frame is being recorded right now: wait on every slot, incl. the last submitted one
     m_soft.reset();
     m_skin.reset();
     m_renderer.reset();
@@ -89,6 +111,8 @@ void GraphicsServer::reset() {
 }
 
 void GraphicsServer::shutdown() {
+    if (m_app)
+        m_app->drain(); // same as reset(): nothing may be in flight once we start freeing GPU resources
     m_soft.shutdown();
     m_skin.shutdown();
     for (auto& g : m_fbGeoms) {

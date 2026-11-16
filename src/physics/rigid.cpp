@@ -80,6 +80,7 @@ void RigidScene::reset() {
     for (const auto& [e, id] : m_body)
         m_phys->GetBodyInterface().RemoveBody(id);
     m_body.clear();
+    m_poses.clear();
     m_shape.clear();
     m_applied.clear();
     m_forceSleep.clear();
@@ -152,6 +153,7 @@ void RigidScene::removeBody(entt::entity e) {
         return;
     const JPH::BodyID id = it->second;
     m_body.erase(it);
+    m_poses.erase(e);
     m_applied.erase(e);
     m_forceSleep.erase(e);
     m_phys->GetBodyInterface().RemoveBody(id);
@@ -762,6 +764,40 @@ Transform RigidScene::pose(entt::entity e) const {
     const JPH::Vec3 p = b.GetPosition();
     const JPH::Quat q = b.GetRotation();
     return {{p.GetX(), p.GetY(), p.GetZ()}, {q.GetW(), q.GetX(), q.GetY(), q.GetZ()}};
+}
+
+void RigidScene::snapshotPose(entt::entity e, const Transform& p) {
+    if (!hasBody(e))
+        return;
+    auto it = m_poses.find(e);
+    if (it == m_poses.end()) {
+        PosePair pp;
+        pp.prevPos = pp.currPos = p.pos; // spawn: no interpolation on the first frame (no pop)
+        pp.prevQuat = pp.currQuat = p.quat;
+        m_poses.emplace(e, std::move(pp));
+    } else {
+        it->second.prevPos = it->second.currPos;
+        it->second.prevQuat = it->second.currQuat;
+        it->second.currPos = p.pos;
+        it->second.currQuat = p.quat;
+    }
+}
+
+void RigidScene::interpolateInto(entt::registry& reg, float alpha) const {
+    if (alpha <= 0.0f)
+        return; // Transform already holds the exact latest-tick pose from the write-back
+    for (const auto& [e, pp] : m_poses) {
+        if (reg.try_get<KinematicBody>(e))
+            continue; // script-driven: its Transform is the source of truth, not a physics output
+        Transform* t = reg.try_get<Transform>(e);
+        if (!t)
+            continue;
+        t->pos = glm::mix(pp.prevPos, pp.currPos, alpha);
+        Quat a = pp.prevQuat, b = pp.currQuat;
+        if (a.x * b.x + a.y * b.y + a.z * b.z < 0.0f)
+            b = -b; // slerp the short way around
+        t->quat = glm::slerp(a, b, alpha);
+    }
 }
 
 RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist,

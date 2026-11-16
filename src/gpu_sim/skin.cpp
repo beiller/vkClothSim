@@ -1,6 +1,7 @@
 #include "gpu_sim/skin.hpp"
 
 #include "ecs.hpp"
+#include "vk/vkapp.hpp"
 #include "skeleton_spv.hpp"
 #include "vk/vkutil.hpp"
 #include <cmath>
@@ -36,8 +37,11 @@ void Skin::sync(const entt::registry& reg) {
             c.dqStaging.resize(s.joints.size());
             const auto bytes = (VkDeviceSize)s.joints.size() * sizeof(DualQuat);
             if (bytes > 0)
-                vkMakeBuffer(m_dev, m_pdev, c.jointDQ.b, c.jointDQ.m, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
-            c.jointDQ.sz = bytes;
+                for (int sl = 0; sl < kRing; ++sl)
+                    vkMakeBuffer(m_dev, m_pdev, c.jointDQ[sl].b, c.jointDQ[sl].m, bytes,
+                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+            for (int sl = 0; sl < kRing; ++sl)
+                c.jointDQ[sl].sz = bytes;
             m_skels.push_back(std::move(c));
             skelGpu = (int)m_skels.size() - 1;
             m_ent[e] = skelGpu;
@@ -118,19 +122,18 @@ void Skin::adoptState(const entt::registry& reg, const Skeleton& s, entt::entity
     mkDev(st.nrm0, 12 * vn, m.nrm.data());
     mkDev(st.joints, 16 * vn, m.joints.data());
     mkDev(st.weights, 16 * vn, m.weights.data());
-    vkMakeBuffer(m_dev, m_pdev, st.activeMorphs.b, st.activeMorphs.m, (VkDeviceSize)8 * kMaxActiveMorphs,
-                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
-    st.activeMorphs.sz = (VkDeviceSize)8 * kMaxActiveMorphs;
+    for (int sl = 0; sl < kRing; ++sl) {
+        vkMakeBuffer(m_dev, m_pdev, st.activeMorphs[sl].b, st.activeMorphs[sl].m, (VkDeviceSize)8 * kMaxActiveMorphs,
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+        st.activeMorphs[sl].sz = (VkDeviceSize)8 * kMaxActiveMorphs;
+    }
     if (share)
         ++m_shapeSets[(size_t)st.shapeSet].refs;
     m_states.push_back(st);
     m_meshState[mesh] = (int)m_states.size() - 1;
     m_skels[(size_t)skelGpu].states.push_back((int)m_states.size() - 1);
-    if (!m_pools.empty()) {
-        ensurePoolSlot(m_dev, storageBinds(9), kPoolChunk, m_pools, m_poolCap, m_poolUsed);
-        makeStateSet(m_states.back());
-        ++m_poolUsed;
-    }
+    if (!m_pools.empty())
+        makeStateSet(m_states.back()); // allocates one set per ring slot (grows pools as needed)
 }
 
 void Skin::build(const entt::registry& reg) {
@@ -138,7 +141,7 @@ void Skin::build(const entt::registry& reg) {
         return;
     sync(reg);
     const auto binds = storageBinds(9);
-    auto maxSets = (uint32_t)m_states.size();
+    auto maxSets = (uint32_t)m_states.size() * kRing;
     if (maxSets == 0)
         maxSets = 1;
     VkDescriptorPool pool;
@@ -149,29 +152,33 @@ void Skin::build(const entt::registry& reg) {
     m_pl = vkMakePipelineLayoutPC(m_dev, m_dsl, VK_SHADER_STAGE_COMPUTE_BIT, 16);
     m_pipe = makeComputePipeline(m_dev, skeleton_spv, skeleton_spv_len / 4, m_pl);
     for (auto& st : m_states) {
-        if (st.set != VK_NULL_HANDLE)
+        if (st.set[0] != VK_NULL_HANDLE)
             continue;
         makeStateSet(st);
-        ++m_poolUsed;
     }
 }
 
 void Skin::makeStateSet(MeshState& st) {
     const Skel& c = m_skels[(size_t)st.skelGpu];
     const Buf& deltas = m_shapeSets[(size_t)st.shapeSet].deltas;
-    std::vector<VkDescriptorBufferInfo> bi = {
-        {st.pos0.b, 0, st.pos0.sz},
-        {st.nrm0.b, 0, st.nrm0.sz},
-        {st.joints.b, 0, st.joints.sz},
-        {st.weights.b, 0, st.weights.sz},
-        {deltas.b, 0, deltas.sz},
-        {c.jointDQ.b, 0, c.jointDQ.sz},
-        {st.activeMorphs.b, 0, st.activeMorphs.sz},
-        {st.out.pos.buffer, 0, (VkDeviceSize)12 * st.out.pos.count},
-        {st.out.nrm.buffer, 0, (VkDeviceSize)12 * st.out.nrm.count},
-    };
-    st.pool = (int)m_pools.size() - 1;
-    vkMakeSet(m_dev, m_pools.back(), m_dsl, storageBinds(9), st.set, bi);
+    for (int sl = 0; sl < kRing; ++sl) {
+        ensurePoolSlot(m_dev, storageBinds(9), kPoolChunk, m_pools, m_poolCap, m_poolUsed);
+        // order must match storageBinds(9): pos0, nrm0, joints, weights, deltas, jointDQ, activeMorphs, outPos, outNrm
+        const std::vector<VkDescriptorBufferInfo> bi = {
+            {st.pos0.b, 0, st.pos0.sz},
+            {st.nrm0.b, 0, st.nrm0.sz},
+            {st.joints.b, 0, st.joints.sz},
+            {st.weights.b, 0, st.weights.sz},
+            {deltas.b, 0, deltas.sz},
+            {c.jointDQ[sl].b, 0, c.jointDQ[sl].sz},
+            {st.activeMorphs[sl].b, 0, st.activeMorphs[sl].sz},
+            {st.out.pos.buffer, 0, (VkDeviceSize)12 * st.out.pos.count},
+            {st.out.nrm.buffer, 0, (VkDeviceSize)12 * st.out.nrm.count},
+        };
+        st.pool[sl] = (int)m_pools.size() - 1;
+        vkMakeSet(m_dev, m_pools.back(), m_dsl, storageBinds(9), st.set[sl], bi);
+        ++m_poolUsed;
+    }
 }
 
 void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
@@ -194,9 +201,9 @@ void Skin::stepSkeleton(const entt::registry& reg, const Skeleton& s, Skel& c) {
         // (addWeighted flip-against-partial-sum, mirroring dq::addWeightedDqDq).
         dq::mat4ToDquat(&c.dqStaging[k], kIdentity4, mm);
     }
-    if (!c.jointDQ.sz)
+    if (!c.jointDQ[0].sz)
         return;
-    vkWriteBuffer(m_dev, c.jointDQ.m, c.dqStaging.data(), c.jointDQ.sz);
+    vkWriteBuffer(m_dev, c.jointDQ[m_slot].m, c.dqStaging.data(), c.jointDQ[m_slot].sz);
 }
 
 void Skin::packMorphs(const entt::registry& reg, MeshState& st) {
@@ -214,7 +221,7 @@ void Skin::packMorphs(const entt::registry& reg, MeshState& st) {
             ++k;
         }
     st.activeCount = k;
-    vkWriteBuffer(m_dev, st.activeMorphs.m, pack, st.activeMorphs.sz);
+    vkWriteBuffer(m_dev, st.activeMorphs[m_slot].m, pack, st.activeMorphs[m_slot].sz);
 }
 
 void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
@@ -236,7 +243,8 @@ void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
             if (st.dead || st.nV <= 0)
                 continue;
             const Buf& deltas = m_shapeSets[(size_t)st.shapeSet].deltas;
-            const Buf* srcs[7] = {&st.pos0, &st.nrm0, &st.joints, &st.weights, &deltas, &c.jointDQ, &st.activeMorphs};
+            const Buf* srcs[7] = {&st.pos0, &st.nrm0, &st.joints, &st.weights, &deltas, &c.jointDQ[m_slot],
+                                  &st.activeMorphs[m_slot]};
             VkBufferMemoryBarrier pre[7];
             for (int i = 0; i < 7; ++i)
                 pre[i] = bufBarrier(srcs[i]->b);
@@ -244,7 +252,7 @@ void Skin::step(const entt::registry& reg, VkCommandBuffer cmd) {
                                  nullptr, 7, pre, 0, nullptr);
             int pc[4] = {st.nV, (int)s.joints.size(), st.activeCount, 0};
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipe);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pl, 0, 1, &st.set, 0, nullptr);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pl, 0, 1, &st.set[m_slot], 0, nullptr);
             vkCmdPushConstants(cmd, m_pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, (uint32_t)sizeof(pc), pc);
             vkCmdDispatch(cmd, (st.nV + 63) / 64, 1, 1);
             VkBufferMemoryBarrier post[2] = {bufBarrier(st.out.pos.buffer), bufBarrier(st.out.nrm.buffer)};
@@ -292,14 +300,17 @@ void Skin::onMeshDestroyed(entt::registry&, entt::entity e) {
 }
 
 void Skin::releaseStateBufs(MeshState& st) {
-    // free the set before the buffers it references (the set holds refs to them)
-    if (st.set != VK_NULL_HANDLE && st.pool >= 0) {
-        VkDescriptorPool pool = m_pools[(size_t)st.pool];
-        vkFreeDescriptorSets(m_dev, pool, 1, &st.set);
-        st.set = VK_NULL_HANDLE;
-        st.pool = -1;
+    // free the sets before the buffers they reference (the sets hold refs to them)
+    for (int sl = 0; sl < kRing; ++sl) {
+        if (st.set[sl] != VK_NULL_HANDLE && st.pool[sl] >= 0) {
+            VkDescriptorPool pool = m_pools[(size_t)st.pool[sl]];
+            vkFreeDescriptorSets(m_dev, pool, 1, &st.set[sl]);
+            st.set[sl] = VK_NULL_HANDLE;
+            st.pool[sl] = -1;
+        }
     }
-    Buf* bufs[5] = {&st.pos0, &st.nrm0, &st.joints, &st.weights, &st.activeMorphs};
+    Buf* bufs[7] = {&st.pos0, &st.nrm0, &st.joints, &st.weights, &st.activeMorphs[0], &st.activeMorphs[1],
+                    &st.activeMorphs[2]};
     for (Buf* bp : bufs) {
         if (bp->b == VK_NULL_HANDLE)
             continue;
@@ -324,6 +335,8 @@ void Skin::releaseStateBufs(MeshState& st) {
 void Skin::flushFrees() {
     if (m_dev == VK_NULL_HANDLE)
         return;
+    if (!m_freeStates.empty() && m_app)
+        m_app->waitAll(); // freed buffers/sets may still be in use by up to kSlots-1 in-flight frames
     for (const int sid : m_freeStates)
         releaseStateBufs(m_states[(size_t)sid]);
     m_freeStates.clear();
@@ -337,12 +350,15 @@ void Skin::watch(entt::registry& reg) {
 void Skin::reset() {
     if (m_dev == VK_NULL_HANDLE)
         return;
+    if (m_app)
+        m_app->waitAll(); // about to free everything in-flight frames may still reference
     flushFrees();
     m_ent.clear();
     m_meshState.clear();
     for (auto& c : m_skels)
-        if (c.jointDQ.b)
-            vkFreeBuffer(m_dev, c.jointDQ.b, c.jointDQ.m);
+        for (int sl = 0; sl < kRing; ++sl)
+            if (c.jointDQ[sl].b)
+                vkFreeBuffer(m_dev, c.jointDQ[sl].b, c.jointDQ[sl].m);
     m_skels.clear();
     for (auto& st : m_states)
         releaseStateBufs(st);

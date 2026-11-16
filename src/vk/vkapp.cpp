@@ -221,11 +221,20 @@ bool VkApp::initHeadless() {
     cai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cai.commandPool = m_pool;
     cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cai.commandBufferCount = 1;
-    VK(vkAllocateCommandBuffers(m_dev, &cai, &m_cmd));
+    cai.commandBufferCount = kCmdPool;
+    VK(vkAllocateCommandBuffers(m_dev, &cai, m_cmds));
+    for (int i = 0; i < kCmdPool; ++i)
+        m_cmdFrame[i] = -1; // never recorded: no fence to wait on
     VkFenceCreateInfo fci{};
     fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VK(vkCreateFence(m_dev, &fci, nullptr, &m_fence));
+    // Created signaled: before the first frame nothing is in flight, and waitAll() may run during scene
+    // construction. beginFrame's wait+reset then puts each fence on its normal submit/wait cycle.
+    VkFenceCreateInfo afci{};
+    afci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    afci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    for (int s = 0; s < kSlots; ++s)
+        VK(vkCreateFence(m_dev, &afci, nullptr, &m_fences[s]));
     return true;
 }
 
@@ -401,17 +410,26 @@ bool VkApp::initDevice(VkDevice dev) {
     cai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cai.commandPool = m_pool;
     cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cai.commandBufferCount = 1;
-    VK(vkAllocateCommandBuffers(m_dev, &cai, &m_cmd));
+    cai.commandBufferCount = kCmdPool;
+    VK(vkAllocateCommandBuffers(m_dev, &cai, m_cmds));
+    for (int i = 0; i < kCmdPool; ++i)
+        m_cmdFrame[i] = -1; // never recorded: no fence to wait on
     VkFenceCreateInfo fci{};
     fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VK(vkCreateFence(m_dev, &fci, nullptr, &m_fence));
+    // Created signaled: before the first frame nothing is in flight, and waitAll() may run during scene
+    // construction. beginFrame's wait+reset then puts each fence on its normal submit/wait cycle.
+    VkFenceCreateInfo afci{};
+    afci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    afci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    for (int s = 0; s < kSlots; ++s)
+        VK(vkCreateFence(m_dev, &afci, nullptr, &m_fences[s]));
     VK(vkCreateFence(m_dev, &fci, nullptr, &m_acqFence));
     return true;
 }
 
 void VkApp::shutdown() {
-    VK(vkDeviceWaitIdle(m_dev));
+    VK(vkDeviceWaitIdle(m_dev)); // also drains any in-flight async frames before the fences/buffers go
     destroySwapchainResources();
     vkDestroyRenderPass(m_dev, m_rp, nullptr);
     vkDestroyRenderPass(m_dev, m_rpScene, nullptr);
@@ -419,6 +437,14 @@ void VkApp::shutdown() {
     vkDestroySampler(m_dev, m_hdrSampler, nullptr);
     vkDestroyFence(m_dev, m_acqFence, nullptr);
     vkDestroyFence(m_dev, m_fence, nullptr);
+    for (int s = 0; s < kSlots; ++s)
+        vkDestroyFence(m_dev, m_fences[s], nullptr);
+    if (m_cmds[0] != VK_NULL_HANDLE) {
+        VkCommandBuffer cb[kCmdPool] = {};
+        for (int s = 0; s < kCmdPool; ++s)
+            cb[s] = m_cmds[s];
+        vkFreeCommandBuffers(m_dev, m_pool, kCmdPool, cb);
+    }
     vkDestroyCommandPool(m_dev, m_pool, nullptr);
     vkDestroyDevice(m_dev, nullptr);
     if (m_surface)
@@ -473,14 +499,32 @@ uint32_t VkApp::acquireNextImage() {
 }
 
 VkCommandBuffer VkApp::beginCommands() {
-    VK(vkResetCommandBuffer(m_cmd, 0));
+    const int i = m_nextCmd % kCmdPool;
+    if (m_async && m_cmdFrame[i] >= 0 && m_frameCount - m_cmdFrame[i] < kSlots) {
+        // This buffer was last recorded within the previous kSlots-1 frames: its frame's fence has not been
+        // waited on yet, so wait for it now. (Once that many frames have passed, beginFrame already waited on
+        // the fence — and had reset it, which is why we track the frame count instead of the handle.) In
+        // steady state the pacing sleep means this is always a no-op.
+        VK(vkWaitForFences(m_dev, 1, &m_fences[m_cmdFrame[i] % kSlots], VK_TRUE, 30000000000ull));
+    }
+    if (m_async)
+        m_cmdFrame[i] = (int64_t)m_frameCount;
+    ++m_nextCmd;
+    VK(vkResetCommandBuffer(m_cmds[i], 0));
     VkCommandBufferBeginInfo cbi{};
     cbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    VK(vkBeginCommandBuffer(m_cmd, &cbi));
-    return m_cmd;
+    VK(vkBeginCommandBuffer(m_cmds[i], &cbi));
+    return m_cmds[i];
 }
 
 void VkApp::submit(VkCommandBuffer cmd) {
+    if (m_async && !m_blocking) {
+        // Batch it: endFrame submits the whole frame's stages in one vkQueueSubmit with the slot's fence, so
+        // CPU work of the next frame overlaps this frame's GPU work.
+        VK(vkEndCommandBuffer(cmd));
+        m_batch.push_back(cmd);
+        return;
+    }
     VK(vkEndCommandBuffer(cmd));
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -489,6 +533,76 @@ void VkApp::submit(VkCommandBuffer cmd) {
     VK(vkQueueSubmit(m_queue, 1, &si, m_fence));
     VK(vkWaitForFences(m_dev, 1, &m_fence, VK_TRUE, 30000000000ull));
     VK(vkResetFences(m_dev, 1, &m_fence));
+}
+
+void VkApp::flushBatch() {
+    if (!m_async || m_batch.empty())
+        return;
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = (uint32_t)m_batch.size();
+    si.pCommandBuffers = m_batch.data();
+    VK(vkQueueSubmit(m_queue, 1, &si, m_fences[m_curSlot]));
+    m_batch.clear();
+    m_flushed = true;
+}
+
+void VkApp::setBlocking(bool on) {
+    m_blocking = on;
+}
+
+void VkApp::setAsync(bool on) {
+    m_async = on;
+}
+
+void VkApp::waitAll() {
+    if (!m_async)
+        return;
+    // Skip the current slot: its fence was reset at beginFrame and only re-signals at this frame's endFrame,
+    // which has not run yet. The only frames that can be in flight while we record frame N are N-1 and N-2 —
+    // exactly the other two slots. (Slot N-3's work was already waited on by beginFrame.)
+    for (int s = 0; s < kSlots; ++s)
+        if (s != m_curSlot)
+            VK(vkWaitForFences(m_dev, 1, &m_fences[s], VK_TRUE, 30000000000ull));
+}
+
+void VkApp::drain() {
+    if (!m_async)
+        return;
+    for (int s = 0; s < kSlots; ++s)
+        VK(vkWaitForFences(m_dev, 1, &m_fences[s], VK_TRUE, 30000000000ull));
+}
+
+int VkApp::beginFrame() {
+    if (!m_async)
+        return 0;
+    m_curSlot = (int)(m_frameCount % kSlots);
+    // Every GPU work item that used this slot's ring buffers/sets was submitted with this fence: wait for it
+    // before the frame overwrites anything. No-op in steady state (the pacing sleep gave the GPU the rest of
+    // the previous frame); under load it degrades to bounded blocking, never corruption.
+    VK(vkWaitForFences(m_dev, 1, &m_fences[m_curSlot], VK_TRUE, 30000000000ull));
+    VK(vkResetFences(m_dev, 1, &m_fences[m_curSlot]));
+    m_batch.clear();
+    m_flushed = false;
+    return m_curSlot;
+}
+
+void VkApp::endFrame() {
+    if (!m_async)
+        return;
+    // The slot fence must be resubmitted every frame so beginCommands' wait can never block on a fence that
+    // was reset but never resubmitted. flushBatch already did so this frame (VR); otherwise submit whatever
+    // is left in the batch -- an empty submit re-signals the fence immediately. (If both ran, the remainder
+    // is legal to submit with the same fence: a signaled fence re-arms on submit.)
+    if (!m_flushed || !m_batch.empty()) {
+        VkSubmitInfo si{};
+        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si.commandBufferCount = (uint32_t)m_batch.size();
+        si.pCommandBuffers = m_batch.data();
+        VK(vkQueueSubmit(m_queue, 1, &si, m_fences[m_curSlot]));
+    }
+    m_flushed = false;
+    ++m_frameCount;
 }
 
 void VkApp::present(uint32_t idx, bool wait) {

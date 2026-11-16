@@ -21,9 +21,12 @@ void PhysicsServer::update(entt::registry& reg, float dt) {
     m_scene.step(reg, pdt);
     reg.view<RigidBody, Transform>().each([&](entt::entity e, auto&, Transform& t) {
         const Transform p = m_scene.pose(e);
+        if (!reg.try_get<KinematicBody>(e))
+            m_scene.snapshotPose(e, p); // dynamic bodies only: kinematics are script-driven
         t.pos = p.pos;
         t.quat = p.quat;
     });
+
     m_joltMs += msBetween(t0, std::chrono::steady_clock::now());
 }
 

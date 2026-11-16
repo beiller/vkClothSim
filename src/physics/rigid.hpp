@@ -36,6 +36,15 @@ public:
     void project(const entt::registry& reg);
     void step(entt::registry& reg, float dt);
     Transform pose(entt::entity e) const;
+    // Fixed-timestep interpolation (see FRAME_PACING.md): each tick shifts curr→prev and stores the
+    // new Jolt pose; per frame, interpolateInto writes lerp(prev,curr,alpha) into dynamic bodies'
+    // local Transforms (kinematic bodies are script-driven and excluded).
+    struct PosePair {
+        V3 prevPos{}, currPos{};
+        Quat prevQuat{1.0f, 0.0f, 0.0f, 0.0f}, currQuat{1.0f, 0.0f, 0.0f, 0.0f};
+    };
+    void snapshotPose(entt::entity e, const Transform& p);
+    void interpolateInto(entt::registry& reg, float alpha) const;
     RayHit raycast(const V3& origin, const V3& dir, float maxDist,
                    const std::vector<entt::entity>& excludes = {}) const;
     entt::entity entityFor(JPH::BodyID id) const;
@@ -102,6 +111,7 @@ private:
     std::vector<JointEntry> m_joints;
     std::unordered_map<entt::entity, int> m_jointIdx;
     std::unordered_map<entt::entity, JPH::BodyID> m_body;
+    std::unordered_map<entt::entity, PosePair> m_poses; // last two tick poses, for render interpolation
     std::unordered_map<entt::entity, JPH::ShapeRefC> m_shape;
     std::unordered_map<entt::entity, Applied> m_applied;
     std::unordered_set<entt::entity> m_forceSleep;

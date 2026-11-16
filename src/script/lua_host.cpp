@@ -455,7 +455,7 @@ void SceneScript::onScriptDestroy(entt::registry& reg, entt::entity e) {
 /// script-instance | per-attach instance table passed as self to every hook; fields: entity (the attached entity), params (the table passed to scene.attach_script, when given); its __index metatable is the module, so module functions act as methods and inst fields hold per-instance state
 /// script-hook _on_ready(inst) | called once when the attached module has loaded
 /// script-hook _animate(inst, dt) | called every frame with the frame delta time in seconds
-/// script-hook _physics(inst, dt) | called once per frame (render rate) before the Jolt step, with the frame dt; the place to write kinematic poses
+/// script-hook _physics(inst, dt) | called every physics tick (fixed rate, default 60 Hz, --phys-hz) before the Jolt step, with the tick dt; the place to write kinematic poses
 void SceneScript::activateScripts() {
     if (!L)
         return;

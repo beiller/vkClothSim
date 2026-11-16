@@ -20,7 +20,7 @@ layout(binding = 3) uniform UBO {
     vec2 screenSize;
     vec4 pad2;
 } ubo;
-layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; vec3 ssssWeight; float refraction; float ior; float normalScale; float ssssScale; float ssssSplit; vec3 pad; }
+layout(binding = 4) uniform Model { mat4 model; vec3 baseColor; float metallic; float roughness; float baseAlpha; float alphaCutoff; float alphaMode; vec3 emissive; float pad0; vec3 ssssWeight; float refraction; float ior; float normalScale; float ssssScale; float ssssSplit; float interpSoft; float interpAlpha; vec2 pad; }
     modelU;
 layout(binding = 6) uniform sampler2D albedoTex;
 layout(binding = 7) uniform sampler2D mrTex; // glTF metallicRoughness: G = roughness, B = metallic

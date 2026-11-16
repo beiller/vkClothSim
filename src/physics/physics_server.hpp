@@ -10,6 +10,8 @@ public:
     void init();
     void setPhysicsHook(std::function<void(float)> fn) { m_hook = std::move(fn); }
     void update(entt::registry& reg, float dt);
+    // Per-frame render-rate pose: lerp(prevTick, currTick, alpha) into dynamic bodies' Transforms.
+    void interpolatePoses(entt::registry& reg, float alpha) { m_scene.interpolateInto(reg, alpha); }
     RayHit raycast(const V3& origin, const V3& dir, float maxDist,
                    const std::vector<entt::entity>& excludes = {}) const;
     Transform pose(entt::entity e) const { return m_scene.pose(e); }

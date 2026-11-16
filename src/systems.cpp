@@ -299,6 +299,80 @@ void stepAnimations(entt::registry& reg, float dt) {
     }
 }
 
+namespace {
+// Fixed-timestep bone interpolation state (see FRAME_PACING.md). Joints are owned by skeletons; the
+// skelJoints copy exists because the Skeleton component is already gone when its destroy observer fires.
+struct BonePair {
+    V3 prevPos{}, currPos{};
+    Quat prevQuat{1.0f, 0.0f, 0.0f, 0.0f}, currQuat{1.0f, 0.0f, 0.0f, 0.0f};
+};
+struct BoneState {
+    std::unordered_map<entt::entity, BonePair> pairs; // joint -> last two tick poses
+    std::unordered_map<entt::entity, std::vector<entt::entity>> skelJoints; // skeleton -> joints (cleanup)
+};
+BoneState& boneState() {
+    static BoneState s;
+    return s;
+}
+void onSkeletonDestroyed(entt::registry&, entt::entity sk) {
+    auto& bs = boneState();
+    if (auto jt = bs.skelJoints.find(sk); jt != bs.skelJoints.end()) {
+        for (entt::entity j : jt->second)
+            bs.pairs.erase(j);
+        bs.skelJoints.erase(jt);
+    }
+}
+} // namespace
+
+void snapshotBones(const entt::registry& reg) {
+    auto& bs = boneState();
+    for (auto [sk, s] : reg.view<Skeleton>().each()) {
+        bs.skelJoints[sk] = s.joints;
+        for (entt::entity j : s.joints) {
+            const Transform* t = reg.try_get<Transform>(j);
+            if (!t)
+                continue;
+            auto it = bs.pairs.find(j);
+            if (it == bs.pairs.end()) {
+                BonePair p;
+                p.prevPos = p.currPos = t->pos; // first tick: no interpolation (no pop)
+                p.prevQuat = p.currQuat = t->quat;
+                bs.pairs.emplace(j, std::move(p));
+            } else {
+                it->second.prevPos = it->second.currPos;
+                it->second.prevQuat = it->second.currQuat;
+                it->second.currPos = t->pos;
+                it->second.currQuat = t->quat;
+            }
+        }
+    }
+}
+
+void interpolateBones(entt::registry& reg, float alpha) {
+    if (alpha <= 0.0f)
+        return; // transforms already hold the exact latest-tick poses
+    auto& bs = boneState();
+    for (auto it = bs.pairs.begin(); it != bs.pairs.end();) {
+        Transform* t = reg.try_get<Transform>(it->first);
+        if (!t) {
+            it = bs.pairs.erase(it); // joint gone without a skeleton destroy event
+            continue;
+        }
+        const BonePair& p = it->second;
+        t->pos = glm::mix(p.prevPos, p.currPos, alpha);
+        Quat a = p.prevQuat, b = p.currQuat;
+        if (a.x * b.x + a.y * b.y + a.z * b.z < 0.0f)
+            b = -b; // slerp the short way around
+        t->quat = glm::slerp(a, b, alpha);
+        ++it;
+    }
+}
+
+void watchSystems(entt::registry& reg) {
+    // EnTT 4 signals take compile-time candidates only (no lambdas).
+    reg.on_destroy<Skeleton>().connect<&onSkeletonDestroyed>();
+}
+
 void stepBinds(entt::registry& reg) {
     for (auto [e, b] : reg.view<Bind>().each()) {
         if (b.target.empty())

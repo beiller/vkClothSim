@@ -11,12 +11,20 @@
 #include <unordered_map>
 #include <vector>
 
+class VkApp;
+
 class Skin {
 public:
     static constexpr int kMaxActiveMorphs = 256;
     static constexpr int kPoolChunk = 16;
+    // Async pipeline ring depth (FRAME_PACING.md phase 6) — must match VkApp::kSlots. jointDQ and activeMorphs
+    // are CPU-written every frame, so each gets one buffer per slot; each slot's descriptor set references only
+    // that slot's buffers and is never updated while in flight.
+    static constexpr int kRing = 3;
 
     void init(VkDevice dev, VkPhysicalDevice pdev);
+    void setSlot(int s) { m_slot = s; }
+    void setApp(VkApp* app) { m_app = app; } // for waitAll() on rare buffer frees (in-flight frames may hold refs)
     void setRequestVerts(std::function<GpuMeshRef(const entt::registry&, const Mesh&, entt::entity)> request);
     void sync(const entt::registry& reg);
     void build(const entt::registry& reg);
@@ -46,15 +54,16 @@ private:
         bool dead = false;
         bool freed = false;
         int shapeSet = -1;
-        int pool = -1; // m_pools index of `set`; sets must be freed before their pool is destroyed
-        Buf pos0, nrm0, joints, weights, activeMorphs;
+        int pool[kRing] = {-1, -1, -1}; // m_pools index of set[s]; sets must be freed before their pool is destroyed
+        Buf pos0, nrm0, joints, weights;
+        Buf activeMorphs[kRing];
         MeshGpu out;
-        VkDescriptorSet set = VK_NULL_HANDLE;
+        VkDescriptorSet set[kRing] = {};
     };
     struct Skel {
         bool dead = false;
         std::vector<int> states;
-        Buf jointDQ;
+        Buf jointDQ[kRing];
         std::vector<DualQuat> dqStaging;
     };
 
@@ -69,6 +78,8 @@ private:
 
     VkDevice m_dev = VK_NULL_HANDLE;
     VkPhysicalDevice m_pdev = VK_NULL_HANDLE;
+    int m_slot = 0; // current async ring slot (setSlot from GraphicsServer::beginFrame)
+    VkApp* m_app = nullptr;
     std::vector<Skel> m_skels;
     std::unordered_map<entt::entity, int> m_ent;
     std::unordered_map<entt::entity, int> m_meshState;

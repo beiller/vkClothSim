@@ -152,6 +152,10 @@ void Renderer::buildEnvironment(VkApp& app, entt::entity envEnt, entt::entity eq
 
     m_envReady = true;
     m_envEqEnt = eqTex;
+    // Rare path: wait for in-flight frames, then refresh every slot's env binding.
+    if (m_app)
+        m_app->waitAll();
     for (auto& inst : m_insts)
-        writeEnvSet(inst.set);
+        for (int sl = 0; sl < kRing; ++sl)
+            writeEnvSet(inst.set[sl]);
 }

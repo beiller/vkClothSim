@@ -52,6 +52,7 @@ std::vector<VkDescriptorSetLayoutBinding> meshBinds() {
         {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT},
         {4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT},
         {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}, // posPrev (soft-body interpolation)
         {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {9, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
@@ -78,15 +79,21 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     m_dev = app.device();
     m_pdev = app.pdev();
     m_rp = app.renderPass();
+    m_app = &app;
 
     m_camView.viewProj = viewProj;
-    vkMakeBuffer(m_dev, m_pdev, m_vpUbuf, m_vpMem, sizeof(ViewUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
-    vkMakeBuffer(m_dev, m_pdev, m_lightsUbuf, m_lightsMem, sizeof(LightsUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                 nullptr);
+    // Per-frame UBOs are ring-buffered over the async slots (FRAME_PACING.md phase 6).
+    for (int s = 0; s < kRing; ++s) {
+        vkMakeBuffer(m_dev, m_pdev, m_vpUbuf[s], m_vpMem[s], sizeof(ViewUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                     nullptr);
+        vkMakeBuffer(m_dev, m_pdev, m_lightsUbuf[s], m_lightsMem[s], sizeof(LightsUbo),
+                     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
+    }
     VkDescriptorPool pool;
-    vkMakeDslPool(m_dev, meshBinds(), (uint32_t)nInstances, m_dsl, pool);
+    // 2 sets (set + setTrans) per instance per ring slot.
+    vkMakeDslPool(m_dev, meshBinds(), (uint32_t)nInstances * 2 * kRing, m_dsl, pool);
     m_meshPools.push_back(pool);
-    m_poolCap = nInstances;
+    m_poolCap = nInstances * 2 * kRing; // tracked in sets
     m_poolUsed = 0;
     m_pl = vkMakePipelineLayoutPC(m_dev, m_dsl, VK_SHADER_STAGE_FRAGMENT_BIT, 4);
     m_pipe = makeGraphicsPipeline(m_dev, app.sceneRenderPass(), mesh_vert_spv, mesh_vert_spv_len / 4, mesh_frag_spv,
@@ -104,9 +111,11 @@ void Renderer::init(VkApp& app, int nInstances, const Mat4& viewProj) {
     vkMakeSamplerEx(m_dev, m_pdev, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, true, 0.0f, 16.0f,
                     m_texSampler);
 
-    vkMakeBuffer(m_dev, m_pdev, m_tmUbuf, m_tmMem, 32, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
+    for (int s = 0; s < kRing; ++s)
+        vkMakeBuffer(m_dev, m_pdev, m_tmUbuf[s], m_tmMem[s], 32, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
     const auto tmBinds = tonemapBinds();
-    vkMakeDslPool(m_dev, tmBinds, 2, m_tmDsl, m_tmPool);
+    // One set per ring slot (plus a second for the XR eye when ready).
+    vkMakeDslPool(m_dev, tmBinds, 2 * kRing, m_tmDsl, m_tmPool);
     m_tmPl = vkMakePipelineLayout(m_dev, m_tmDsl);
     m_tmPipe = makeGraphicsPipeline(m_dev, app.renderPass(), tonemap_vert_spv, tonemap_vert_spv_len / 4,
                                     tonemap_frag_spv, tonemap_frag_spv_len / 4, m_tmPl, false);
@@ -148,7 +157,10 @@ int Renderer::addMesh(const Mesh& mesh) {
     GpuMesh g;
     g.vtxCount = n;
     g.idxCount = (uint32_t)mesh.indices.size();
-    vkMakeBufferDev(m_dev, m_pdev, g.pos, g.posMem, attrSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.pos.data());
+    // TRANSFER bits: soft bodies copy pos→posPrev (render interpolation) at each tick start
+    vkMakeBufferDev(m_dev, m_pdev, g.pos, g.posMem, attrSize,
+                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    mesh.pos.data());
     vkMakeBufferDev(m_dev, m_pdev, g.nrm, g.nrmMem, attrSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, mesh.nrm.data());
     vkMakeBufferDev(m_dev, m_pdev, g.uv, g.uvMem, (VkDeviceSize)8 * n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                     mesh.uv.data());
@@ -219,37 +231,48 @@ int Renderer::allocInstance(int geom) {
     InstancedMesh inst;
     inst.geom = geom;
     const ModelUbo modelInit = packModel(Mat4(1.0f), V3{1.0f, 1.0f, 1.0f}, 0.0f, 0.5f, V3{0.0f, 0.0f, 0.0f}, 1.0f,
-                                        0.5f, 0.0f, V3{0.0f, 0.0f, 0.0f}, 0.0f, 1.5f, 1.0f, 0.15f, 0.333f);
-    vkMakeBuffer(m_dev, m_pdev, inst.modelUbuf, inst.modelMem, sizeof(ModelUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                 &modelInit);
+                                         0.5f, 0.0f, V3{0.0f, 0.0f, 0.0f}, 0.0f, 1.5f, 1.0f, 0.15f, 0.333f);
+    for (int s = 0; s < kRing; ++s)
+        vkMakeBuffer(m_dev, m_pdev, inst.modelUbuf[s], inst.modelMem[s], sizeof(ModelUbo),
+                     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, &modelInit);
     const VkDeviceSize attrSize = (VkDeviceSize)12 * g.vtxCount;
-    std::vector<VkDescriptorBufferInfo> bi = {{g.pos, 0, attrSize},
-                                              {g.nrm, 0, attrSize},
-                                              {m_vpUbuf, 0, sizeof(ViewUbo)},
-                                              {inst.modelUbuf, 0, sizeof(ModelUbo)},
-                                              {g.uv, 0, (VkDeviceSize)8 * g.vtxCount}};
-    if (m_poolUsed + 1 >= m_poolCap) {
+    if (m_poolUsed + 2 * kRing > m_poolCap) {
         m_meshPools.push_back(vkMakePool(m_dev, meshBinds(), (uint32_t)kPoolChunk));
         m_poolCap = kPoolChunk;
         m_poolUsed = 0;
     }
-    vkMakeSet(m_dev, m_meshPools.back(), m_dsl, meshBinds(), inst.set, bi);
-    vkMakeSet(m_dev, m_meshPools.back(), m_dsl, meshBinds(), inst.setTrans, bi);
-    m_poolUsed += 2;
+    // One set pair per ring slot; each slot's sets reference only that slot's UBOs and are never updated while
+    // in flight (see the kRing comment in renderer.hpp).
+    for (int s = 0; s < kRing; ++s) {
+        // order must match meshBinds(): [0 pos, 1 nrm, 3 viewUbo, 4 modelUbo, 5 uv, 8 posPrev]
+        const std::vector<VkDescriptorBufferInfo> bi = {{g.pos, 0, attrSize},
+                                                        {g.nrm, 0, attrSize},
+                                                        {m_vpUbuf[s], 0, sizeof(ViewUbo)},
+                                                        {inst.modelUbuf[s], 0, sizeof(ModelUbo)},
+                                                        {g.uv, 0, (VkDeviceSize)8 * g.vtxCount},
+                                                        {g.posPrev != VK_NULL_HANDLE ? g.posPrev : g.pos, 0, attrSize}};
+        vkMakeSet(m_dev, m_meshPools.back(), m_dsl, meshBinds(), inst.set[s], bi);
+        vkMakeSet(m_dev, m_meshPools.back(), m_dsl, meshBinds(), inst.setTrans[s], bi);
+    }
+    m_poolUsed += 2 * kRing;
     m_insts.push_back(inst);
     const int id = (int)m_insts.size() - 1;
     for (int c = 0; c < kTexChannels; ++c)
         setTexture(id, c, -1);
-    VkDescriptorBufferInfo lb{m_lightsUbuf, 0, sizeof(LightsUbo)};
     WriteDescs sw;
-    sw.image(inst.set, 12, m_shadowInfo);
-    sw.image(inst.setTrans, 12, m_shadowInfo);
-    sw.buffer(inst.set, 13, lb);
-    sw.buffer(inst.setTrans, 13, lb);
+    for (int s = 0; s < kRing; ++s) {
+        const VkDescriptorBufferInfo lb{m_lightsUbuf[s], 0, sizeof(LightsUbo)};
+        sw.image(inst.set[s], 12, m_shadowInfo);
+        sw.image(inst.setTrans[s], 12, m_shadowInfo);
+        sw.buffer(inst.set[s], 13, lb);
+        sw.buffer(inst.setTrans[s], 13, lb);
+    }
     sw.update(m_dev);
     if (m_envReady) {
-        writeEnvSet(inst.set);
-        writeEnvSet(inst.setTrans);
+        for (int s = 0; s < kRing; ++s) {
+            writeEnvSet(inst.set[s]);
+            writeEnvSet(inst.setTrans[s]);
+        }
     }
     m_samplersDirty = true;
     return id;
@@ -469,11 +492,15 @@ void Renderer::onUiCanvasDestroyed(entt::registry&, entt::entity e) {
 }
 
 void Renderer::flushFrees() {
+    if (!m_freeInst.empty() && m_app)
+        m_app->waitAll(); // freed buffers are referenced by in-flight frames' sets until their fences signal
     for (const int inst : m_freeInst) {
         InstancedMesh& im = m_insts[(size_t)inst];
-        vkFreeBuffer(m_dev, im.modelUbuf, im.modelMem);
-        im.modelUbuf = VK_NULL_HANDLE;
-        im.modelMem = VK_NULL_HANDLE;
+        for (int s = 0; s < kRing; ++s) {
+            vkFreeBuffer(m_dev, im.modelUbuf[s], im.modelMem[s]);
+            im.modelUbuf[s] = VK_NULL_HANDLE;
+            im.modelMem[s] = VK_NULL_HANDLE;
+        }
     }
     m_freeInst.clear();
     for (const int id : m_freeTex) {
@@ -505,9 +532,14 @@ void Renderer::setTexture(int inst, int channel, int texId) {
         tp = &m_white;
     const GpuTexture& t = *tp;
     const VkDescriptorImageInfo ii{m_texSampler, t.view, VK_IMAGE_LAYOUT_GENERAL};
+    // Rare path: wait for all in-flight frames, then update every slot's sets.
+    if (m_app)
+        m_app->waitAll();
     WriteDescs w;
-    w.image(im.set, kBinding[channel], ii);
-    w.image(im.setTrans, kBinding[channel], ii);
+    for (int s = 0; s < kRing; ++s) {
+        w.image(im.set[s], kBinding[channel], ii);
+        w.image(im.setTrans[s], kBinding[channel], ii);
+    }
     w.update(m_dev);
 }
 
@@ -516,7 +548,8 @@ void Renderer::reset() {
         return;
     flushFrees();
     for (auto& inst : m_insts)
-        vkFreeBuffer(m_dev, inst.modelUbuf, inst.modelMem);
+        for (int s = 0; s < kRing; ++s)
+            vkFreeBuffer(m_dev, inst.modelUbuf[s], inst.modelMem[s]);
     m_insts.clear();
     m_freeInst.clear();
     m_entInst.clear();
@@ -578,7 +611,7 @@ void Renderer::writeViewUbo(const CameraView& cv, float envIntensity, VkExtent2D
     u.zFar = cv.zFar;
     u.screenSize[0] = (float)ext.width;
     u.screenSize[1] = (float)ext.height;
-    vkWriteBuffer(m_dev, m_vpMem, &u, sizeof(ViewUbo));
+    vkWriteBuffer(m_dev, m_vpMem[m_slot], &u, sizeof(ViewUbo));
 }
 
 void Renderer::prepBuffers(entt::registry& reg) {
@@ -616,10 +649,11 @@ void Renderer::prepBuffers(entt::registry& reg) {
                     setTexture(inst, c, textureFor(slots[c], reg));
             }
         Mat4 model = Mat4(1.0f);
+        const bool isSoft = reg.try_get<SoftBodyData>(e) != nullptr;
         if (const auto* wt = reg.try_get<WorldTransform>(e)) {
             im.wpos = wt->pos;
             // soft-body vertices are simulated in world space: their WorldTransform is the pin anchor, not a render transform
-            if (!reg.try_get<SoftBodyData>(e))
+            if (!isSoft)
                 model = wt->toMat4();
         }
         im.alphaMode = alphaMode;
@@ -631,9 +665,11 @@ void Renderer::prepBuffers(entt::registry& reg) {
             m_hasGlass = true;
         if (alphaMode == 2 || refraction > 0.0f)
             m_hasTrans = true;
-        const ModelUbo mb = packModel(model, base, metallic, roughness, emissive, baseAlpha, alphaCutoff, (float)alphaMode,
-                                      ssssWeight, refraction, ior, normalScale, ssssScale, ssssSplit);
-        vkWriteBuffer(m_dev, im.modelMem, &mb, sizeof(ModelUbo));
+        ModelUbo mb = packModel(model, base, metallic, roughness, emissive, baseAlpha, alphaCutoff, (float)alphaMode,
+                                ssssWeight, refraction, ior, normalScale, ssssScale, ssssSplit);
+        mb.interpSoft = isSoft ? 1.0f : 0.0f; // vertex shader mixes posPrev→pos for soft bodies only
+        mb.interpAlpha = m_interpAlpha;
+        vkWriteBuffer(m_dev, im.modelMem[m_slot], &mb, sizeof(ModelUbo));
     }
 }
 
@@ -684,7 +720,7 @@ void Renderer::renderOpaquePass(VkCommandBuffer cmd, VkApp& app, const float bg[
     for (const auto& im : m_insts) {
         if (!im.visible || im.dead || im.alphaMode == 2 || im.refraction > 0.0f)
             continue;
-        drawInstance(cmd, m_pl, m_geoms[im.geom], im.set);
+        drawInstance(cmd, m_pl, m_geoms[im.geom], im.set[m_slot]);
     }
     vkCmdEndRenderPass(cmd);
 }
@@ -721,7 +757,7 @@ void Renderer::renderTransparentPass(VkCommandBuffer cmd, VkApp& app, const V3& 
     for (int i : trans) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           m_insts[i].refraction > 0.0f ? m_pipeBlendCull : m_pipeBlend);
-        drawInstance(cmd, m_pl, m_geoms[m_insts[i].geom], m_insts[i].setTrans);
+        drawInstance(cmd, m_pl, m_geoms[m_insts[i].geom], m_insts[i].setTrans[m_slot]);
     }
     vkCmdEndRenderPass(cmd);
 }
@@ -897,6 +933,10 @@ void Renderer::ensureSceneSamplers(VkApp& app) {
 }
 
 void Renderer::updateSceneSamplers(VkApp& app) {
+    // Rare path (view changes / new instances): wait for all in-flight frames before touching any set — the
+    // SSS sets and every instance's slot sets may all be in use by up to kSlots-1 older frames.
+    if (m_app)
+        m_app->waitAll();
     m_sssSceneView = app.sceneColorView();
     m_sssTempView = app.sceneColorTempView();
     m_sssDepthView = app.depthView();
@@ -937,10 +977,12 @@ void Renderer::updateSceneSamplers(VkApp& app) {
     for (const auto& inst : m_insts) {
         if (inst.dead)
             continue;
-        wi.image(inst.set, 2, neutral);
-        wi.image(inst.setTrans, 2, dcopySam);
-        wi.image(inst.set, 15, neutral);
-        wi.image(inst.setTrans, 15, sceneSam);
+        for (int s = 0; s < kRing; ++s) {
+            wi.image(inst.set[s], 2, neutral);
+            wi.image(inst.setTrans[s], 2, dcopySam);
+            wi.image(inst.set[s], 15, neutral);
+            wi.image(inst.setTrans[s], 15, sceneSam);
+        }
     }
     wi.update(m_dev);
 }
@@ -992,7 +1034,7 @@ void Renderer::hdrBarrier(VkCommandBuffer cmd, VkApp& app) {
 
 void Renderer::writeTonemapUbo(float ox, float oy, float sx, float sy) {
     const float tm[8] = {ox, oy, sx, sy, m_exposure, 0.0f, 0.0f, 0.0f};
-    vkWriteBuffer(m_dev, m_tmMem, tm, 32);
+    vkWriteBuffer(m_dev, m_tmMem[m_slot], tm, 32);
 }
 
 void Renderer::drawTonemapRegion(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const VkRect2D& region, bool clear) {
@@ -1010,7 +1052,7 @@ void Renderer::drawTonemapRegion(VkCommandBuffer cmd, VkApp& app, uint32_t fb, c
     vkCmdSetViewport(cmd, 0, 1, &vpt);
     vkCmdSetScissor(cmd, 0, 1, &region);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPipe);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPl, 0, 1, &m_tmSet, 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPl, 0, 1, &m_tmSet[m_slot], 0, nullptr);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 
@@ -1039,7 +1081,26 @@ void Renderer::writeLights(const entt::registry& reg) {
         g.maxRadius = p.shadowMaxRadius;
     });
     u.count = n;
-    vkWriteBuffer(m_dev, m_lightsMem, &u, sizeof(LightsUbo));
+    vkWriteBuffer(m_dev, m_lightsMem[m_slot], &u, sizeof(LightsUbo));
+}
+
+void Renderer::setGeomPosPrev(int geom, VkBuffer buf) {
+    if (geom < 0 || geom >= (int)m_geoms.size())
+        return;
+    m_geoms[(size_t)geom].posPrev = buf;
+    // Instances are normally created on first draw (after the soft body is projected); if one already
+    // exists, refresh its posPrev binding. Rare path (body spawn): wait for all in-flight frames first.
+    VkDescriptorBufferInfo bi{buf, 0, (VkDeviceSize)12 * m_geoms[(size_t)geom].vtxCount};
+    if (m_app)
+        m_app->waitAll();
+    WriteDescs w;
+    for (auto& im : m_insts)
+        if (im.geom == geom && !im.dead)
+            for (int s = 0; s < kRing; ++s) {
+                w.buffer(im.set[s], 8, bi, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+                w.buffer(im.setTrans[s], 8, bi, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+            }
+    w.update(m_dev);
 }
 
 void Renderer::drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuMesh& g, VkDescriptorSet set) {
@@ -1049,25 +1110,29 @@ void Renderer::drawInstance(VkCommandBuffer cmd, VkPipelineLayout pl, const GpuM
 }
 
 void Renderer::rebuildTonemapSet(VkApp& app) {
+    if (m_app)
+        m_app->waitAll(); // pool reset invalidates sets that in-flight frames may still be using
     vkResetDescriptorPool(m_dev, m_tmPool, 0);
-    VkDescriptorSet sets[2]{};
-    const uint32_t n = m_xrReady ? 2 : 1;
-    VkDescriptorSetLayout layouts[2] = {m_tmDsl, m_tmDsl};
+    VkDescriptorSet sets[2 * kRing]{};
+    const uint32_t n = m_xrReady ? 2 * kRing : (uint32_t)kRing;
+    std::vector<VkDescriptorSetLayout> layouts(n, m_tmDsl);
     VkDescriptorSetAllocateInfo sai{};
     sai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     sai.descriptorPool = m_tmPool;
     sai.descriptorSetCount = n;
-    sai.pSetLayouts = layouts;
+    sai.pSetLayouts = layouts.data();
     VK(vkAllocateDescriptorSets(m_dev, &sai, sets));
-    m_tmSet = sets[0];
-    m_xrSet = m_xrReady ? sets[1] : VK_NULL_HANDLE;
     const VkDescriptorImageInfo ii{app.hdrSampler(), app.hdrView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     WriteDescs w;
-    w.image(sets[0], 0, ii);
-    w.buffer(sets[0], 1, {m_tmUbuf, 0, 32});
-    if (m_xrReady) {
-        w.image(sets[1], 0, ii);
-        w.buffer(sets[1], 1, {m_xrTmUbuf, 0, 32});
+    for (int s = 0; s < kRing; ++s) {
+        m_tmSet[s] = sets[s];
+        w.image(sets[s], 0, ii);
+        w.buffer(sets[s], 1, {m_tmUbuf[s], 0, 32});
+        if (m_xrReady) {
+            m_xrSet[s] = sets[kRing + s];
+            w.image(sets[kRing + s], 0, ii);
+            w.buffer(sets[kRing + s], 1, {m_xrTmUbuf[s], 0, 32});
+        }
     }
     w.update(m_dev);
     m_tmSrcView = app.hdrView();
@@ -1321,6 +1386,11 @@ void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::regist
                       entt::entity cam, const uint32_t* xrImg, int nXr) {
     m_exposure = rs.exposure;
     m_sssDepthReject = rs.sssDepthReject;
+    // The eye passes below CPU-write per-eye UBOs (view/tonemap) between eyes, so each eye must execute on
+    // the queue before the next eye's UBO is written: submit everything from here on blocking (legacy
+    // semantics). Pre-draw stages recorded earlier this frame (skin/cloth) go on the queue first.
+    app.flushBatch();
+    app.setBlocking(true);
     syncEnvironments(app, reg);
     prepBuffers(reg);
     const VkExtent2D rend = app.renderExtent();
@@ -1360,6 +1430,7 @@ void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::regist
         if (eye != nViews - 1)
             cmd = app.beginCommands();
     }
+    app.setBlocking(false);
 }
 
 void Renderer::initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vector<std::vector<VkImage>>& images,
@@ -1377,7 +1448,8 @@ void Renderer::initXrTarget(VkApp& app, VkFormat fmt, int nEyes, const std::vect
     m_xrRp = makeSimpleRenderPass(m_dev, att);
     m_xrPipe = makeGraphicsPipeline(m_dev, m_xrRp, tonemap_vert_spv, tonemap_vert_spv_len / 4, tonemap_frag_spv,
                                     tonemap_frag_spv_len / 4, m_tmPl, false);
-    vkMakeBuffer(m_dev, m_pdev, m_xrTmUbuf, m_xrTmMem, 32, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
+    for (int s = 0; s < kRing; ++s)
+        vkMakeBuffer(m_dev, m_pdev, m_xrTmUbuf[s], m_xrTmMem[s], 32, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, nullptr);
     m_xrViews.resize(nEyes);
     m_xrFbs.resize(nEyes);
     for (int i = 0; i < nEyes; ++i) {
@@ -1400,7 +1472,7 @@ void Renderer::drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgI
         rebuildTonemapSet(app);
     const uint32_t w = m_xrExt[eye].width, h = m_xrExt[eye].height;
     const float tm[8] = {0.0f, 0.0f, (float)w, (float)h, m_exposure, 0.0f, 0.0f, 0.0f};
-    vkWriteBuffer(m_dev, m_xrTmMem, tm, 32);
+    vkWriteBuffer(m_dev, m_xrTmMem[m_slot], tm, 32);
     VkClearValue clr[1]{};
     clr[0].color = {0.0f, 0.0f, 0.0f, 1.0f};
     VkRenderPassBeginInfo rpb{};
@@ -1416,7 +1488,7 @@ void Renderer::drawXrEye(VkCommandBuffer cmd, VkApp& app, int eye, uint32_t imgI
     vkCmdSetViewport(cmd, 0, 1, &vp);
     vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_xrPipe);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPl, 0, 1, &m_xrSet, 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_tmPl, 0, 1, &m_xrSet[m_slot], 0, nullptr);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);
 }
@@ -1452,7 +1524,8 @@ void Renderer::shutdown() {
     m_freeInst.clear();
     m_freeTex.clear();
     for (auto& inst : m_insts)
-        vkFreeBuffer(m_dev, inst.modelUbuf, inst.modelMem);
+        for (int s = 0; s < kRing; ++s)
+            vkFreeBuffer(m_dev, inst.modelUbuf[s], inst.modelMem[s]);
     for (auto& g : m_geoms) {
         vkFreeBuffer(m_dev, g.pos, g.posMem);
         vkFreeBuffer(m_dev, g.nrm, g.nrmMem);
@@ -1485,21 +1558,25 @@ void Renderer::shutdown() {
                 vkDestroyImageView(m_dev, v, nullptr);
         vkFree(m_dev, &m_xrPipe, vkDestroyPipeline);
         vkFree(m_dev, &m_xrRp, vkDestroyRenderPass);
-        vkFreeBuffer(m_dev, m_xrTmUbuf, m_xrTmMem);
+        for (int s = 0; s < kRing; ++s)
+            vkFreeBuffer(m_dev, m_xrTmUbuf[s], m_xrTmMem[s]);
     }
     vkFree(m_dev, &m_tmPool, vkDestroyDescriptorPool);
     vkFree(m_dev, &m_tmDsl, vkDestroyDescriptorSetLayout);
     vkFree(m_dev, &m_tmPl, vkDestroyPipelineLayout);
     vkFree(m_dev, &m_tmPipe, vkDestroyPipeline);
-    vkFreeBuffer(m_dev, m_tmUbuf, m_tmMem);
-    vkFreeBuffer(m_dev, m_vpUbuf, m_vpMem);
+    for (int s = 0; s < kRing; ++s) {
+        vkFreeBuffer(m_dev, m_tmUbuf[s], m_tmMem[s]);
+        vkFreeBuffer(m_dev, m_vpUbuf[s], m_vpMem[s]);
+    }
     for (uint32_t l = 0; l < kMaxLights * 6; ++l) {
         vkDestroyFramebuffer(m_dev, m_shadowFb[l], nullptr);
         vkDestroyImageView(m_dev, m_shadowColorFace[l], nullptr);
     }
     for (auto* face : m_shadowDepthFace)
         vkDestroyImageView(m_dev, face, nullptr);
-    vkFreeBuffer(m_dev, m_lightsUbuf, m_lightsMem);
+    for (int s = 0; s < kRing; ++s)
+        vkFreeBuffer(m_dev, m_lightsUbuf[s], m_lightsMem[s]);
     vkFree(m_dev, &m_shadowPipe, vkDestroyPipeline);
     vkFree(m_dev, &m_shadowPl, vkDestroyPipelineLayout);
     vkFree(m_dev, &m_shadowRp, vkDestroyRenderPass);

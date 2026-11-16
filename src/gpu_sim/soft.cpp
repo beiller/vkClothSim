@@ -1,5 +1,7 @@
 #include "gpu_sim/soft.hpp"
 
+#include "vk/vkapp.hpp"
+
 #include "ecs.hpp"
 #include "pinupdate_spv.hpp"
 #include "softbody_spv.hpp"
@@ -124,8 +126,12 @@ void Soft::project(const entt::registry& reg) {
         }
         const GpuMeshRef ref = m_request(reg, m, rend->geom);
         addSoftBody(e, m, cons, ref.rw, sb.pinW, sb.pinMap, restLocal);
+        if (m_posPrev)
+            m_posPrev(ref.slot, m_body[(size_t)m_ent[e]].posPrev);
     }
 }
+
+void Soft::setPosPrev(std::function<void(int, VkBuffer)> fn) { m_posPrev = std::move(fn); }
 
 void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::Constraint>& cons, const MeshGpu& rw,
                        const std::vector<float>& pinW, const std::vector<uint32_t>& pinMap,
@@ -186,6 +192,8 @@ void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::
     mk(b.triList, b.triListMem, 4 * b.soft.triList.size(), b.soft.triList.data());
     // rest pose in local space (uploaded once): pin targets = restPose x the node's live WorldTransform, every frame
     mk(b.restPos, b.restPosMem, 12 * vn, restLocal.data());
+    // render interpolation: starts equal to pos (the sim's initial world positions); copied from pos at each tick start
+    mk(b.posPrev, b.posPrevMem, 12 * vn, mesh.pos.data());
     // pin state: dense per-vertex weight/target/remap. HOST-VISIBLE (vkMakeBuffer, not the device-local mk):
     // the CPU writes weights and map at runtime, the gather dispatch (recordPinUpdates) re-derives targets every frame.
     std::vector<float> w0(vn, 0.0f);
@@ -202,22 +210,21 @@ void Soft::addSoftBody(entt::entity e, const Mesh& mesh, const std::vector<sim::
             b.hasPins = true;
             break;
         }
-    vkMakeBuffer(m_dev, m_pdev, b.paramsBuf, b.paramsMem, 44, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    for (int sl = 0; sl < kRing; ++sl)
+        vkMakeBuffer(m_dev, m_pdev, b.paramsBuf[sl], b.paramsMem[sl], 44, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     m_body.push_back(std::move(b));
     m_ent[e] = (int)m_body.size() - 1;
-    if (!m_softPools.empty()) {
-        ensurePoolSlot(m_dev, storageBinds(14), kPoolChunk, m_softPools, m_softPoolCap, m_softPoolUsed);
-        makeBodySet(m_body.back());
-        ++m_softPoolUsed;
-    }
+    if (!m_softPools.empty())
+        makeBodySet(m_body.back()); // allocates one set per ring slot (grows pools as needed)
 }
 
 void Soft::build() {
     m_caps.resize(kMaxCapsules);
-    vkMakeBuffer(m_dev, m_pdev, m_capsInstances, m_capsInstancesMem, (VkDeviceSize)48 * kMaxCapsules,
-                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
+    for (int sl = 0; sl < kRing; ++sl)
+        vkMakeBuffer(m_dev, m_pdev, m_capsInstances[sl], m_capsInstancesMem[sl], (VkDeviceSize)48 * kMaxCapsules,
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nullptr);
     const auto binds = storageBinds(16);
-    auto maxSets = (uint32_t)m_body.size();
+    auto maxSets = (uint32_t)m_body.size() * kRing;
     if (maxSets == 0)
         maxSets = 1;
     VkDescriptorPool pool;
@@ -236,39 +243,43 @@ void Soft::build() {
     VK(vkCreateDescriptorSetLayout(m_dev, &dslc, nullptr, &m_pinDsl));
     m_pinPl = vkMakePipelineLayoutPC(m_dev, m_pinDsl, VK_SHADER_STAGE_COMPUTE_BIT, 72);
     m_pinPipe = makeComputePipeline(m_dev, pinupdate_spv, pinupdate_spv_len / 4, m_pinPl);
-    for (auto& b : m_body) {
+    for (auto& b : m_body)
         makeBodySet(b);
-        ++m_softPoolUsed;
-    }
 }
 
 void Soft::makeBodySet(GpuBody& b) {
     const int n = b.soft.n;
-    std::vector<VkDescriptorBufferInfo> bi = {
-        {b.pos, 0, (VkDeviceSize)12 * n},
-        {b.nrm, 0, (VkDeviceSize)12 * n},
-        {b.prev, 0, (VkDeviceSize)12 * n},
-        {m_capsInstances, 0, 48 * (VkDeviceSize)kMaxCapsules},
-        {b.entries, 0, (VkDeviceSize)16 * b.soft.entries.size()},
-        {b.entryStart, 0, (VkDeviceSize)4 * (n + 1)},
-        {b.colorVerts, 0, (VkDeviceSize)4 * n},
-        {b.paramsBuf, 0, 44},
-        {b.sub0, 0, (VkDeviceSize)12 * n},
-        {b.contactN, 0, (VkDeviceSize)16 * n},
-        {b.contactL, 0, (VkDeviceSize)4 * n},
-        {b.tris, 0, (VkDeviceSize)4 * b.soft.triList.size()},
-        {b.triStart, 0, (VkDeviceSize)4 * (n + 1)},
-        {b.triList, 0, (VkDeviceSize)4 * b.soft.triList.size()},
-        {b.pinW, 0, (VkDeviceSize)4 * n},
-        {b.pinT, 0, (VkDeviceSize)12 * n},
-    };
-    vkMakeSet(m_dev, m_softPools.back(), m_softDsl, storageBinds(16), b.simSet, bi);
+    for (int sl = 0; sl < kRing; ++sl) {
+        ensurePoolSlot(m_dev, storageBinds(16), kPoolChunk, m_softPools, m_softPoolCap, m_softPoolUsed);
+        // order must match storageBinds(16); slot-specific entries: capsule list + phys params
+        const std::vector<VkDescriptorBufferInfo> bi = {
+            {b.pos, 0, (VkDeviceSize)12 * n},
+            {b.nrm, 0, (VkDeviceSize)12 * n},
+            {b.prev, 0, (VkDeviceSize)12 * n},
+            {m_capsInstances[sl], 0, 48 * (VkDeviceSize)kMaxCapsules},
+            {b.entries, 0, (VkDeviceSize)16 * b.soft.entries.size()},
+            {b.entryStart, 0, (VkDeviceSize)4 * (n + 1)},
+            {b.colorVerts, 0, (VkDeviceSize)4 * n},
+            {b.paramsBuf[sl], 0, 44},
+            {b.sub0, 0, (VkDeviceSize)12 * n},
+            {b.contactN, 0, (VkDeviceSize)16 * n},
+            {b.contactL, 0, (VkDeviceSize)4 * n},
+            {b.tris, 0, (VkDeviceSize)4 * b.soft.triList.size()},
+            {b.triStart, 0, (VkDeviceSize)4 * (n + 1)},
+            {b.triList, 0, (VkDeviceSize)4 * b.soft.triList.size()},
+            {b.pinW, 0, (VkDeviceSize)4 * n},
+            {b.pinT, 0, (VkDeviceSize)12 * n},
+        };
+        b.simPool[sl] = (int)m_softPools.size() - 1;
+        vkMakeSet(m_dev, m_softPools.back(), m_softDsl, storageBinds(16), b.simSet[sl], bi);
+        ++m_softPoolUsed;
+    }
 }
 
 void Soft::dispatch(VkCommandBuffer cmd, const GpuBody& b, int mode, int n, int groupOffset) {
     int pc[4] = {mode, n, groupOffset, 0};
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPipe);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPl, 0, 1, &b.simSet, 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_softPl, 0, 1, &b.simSet[m_slot], 0, nullptr);
     vkCmdPushConstants(cmd, m_softPl, VK_SHADER_STAGE_COMPUTE_BIT, 0, (uint32_t)sizeof(pc), pc);
     vkCmdDispatch(cmd, (n + 63) / 64, 1, 1);
 }
@@ -335,10 +346,15 @@ void Soft::recordPinUpdates(VkCommandBuffer cmd, const entt::registry& reg) {
     // Last frame's sets are no longer in flight (the queue was fence-waited at present): free them so the small
     // pool never exhausts under per-frame re-derivation. Every pool is empty again afterwards; allocations
     // continue from the last one (a fresh pool appears only if a single frame pins more bodies than it holds).
-    for (const PinSet& ps : m_pinSets)
-        vkFreeDescriptorSets(m_dev, ps.pool, 1, &ps.set);
-    m_pinSets.clear();
-    m_pinPoolUsed = 0;
+    // This slot's sets are from kRing frames ago: beginFrame waited on this slot's fence, so they're done.
+    auto& mine = m_pinSetsBySlot[m_slot];
+    for (const PinSet& ps : mine) {
+        if (ps.pool >= 0 && (size_t)ps.pool < m_pinPools.size()) {
+            vkFreeDescriptorSets(m_dev, m_pinPools[(size_t)ps.pool], 1, &ps.set);
+            ++m_pinPoolFree[(size_t)ps.pool];
+        }
+    }
+    mine.clear();
     bool any = false;
     for (const GpuBody& b : m_body)
         if (!b.dead && b.hasPins)
@@ -387,16 +403,27 @@ void Soft::recordPinUpdates(VkCommandBuffer cmd, const entt::registry& reg) {
         } else if (const auto* wt = reg.try_get<WorldTransform>(b.ent)) {
             model = wt->toMat4();
         }
-        ensurePoolSlot(m_dev, pbinds, kPoolChunk, m_pinPools, m_pinPoolCap, m_pinPoolUsed);
+        // Prefer a pool with free slots (newest first); freed sets return to their own pool.
+        int pi = -1;
+        for (int i = (int)m_pinPools.size() - 1; i >= 0; --i)
+            if (m_pinPoolFree[(size_t)i] > 0) {
+                pi = i;
+                break;
+            }
+        if (pi < 0) {
+            m_pinPools.push_back(vkMakePool(m_dev, pbinds, (uint32_t)kPoolChunk));
+            m_pinPoolFree.push_back(kPoolChunk);
+            pi = (int)m_pinPools.size() - 1;
+        }
+        --m_pinPoolFree[(size_t)pi];
         VkDescriptorSet set;
         const std::vector<VkDescriptorBufferInfo> bi = {
             {srcPos, 0, (VkDeviceSize)12 * srcN},
             {b.pinMap, 0, (VkDeviceSize)4 * b.soft.n},
             {b.pinT, 0, (VkDeviceSize)12 * b.soft.n},
         };
-        vkMakeSet(m_dev, m_pinPools.back(), m_pinDsl, pbinds, set, bi);
-        ++m_pinPoolUsed;
-        m_pinSets.push_back({m_pinPools.back(), set});
+        vkMakeSet(m_dev, m_pinPools[(size_t)pi], m_pinDsl, pbinds, set, bi);
+        mine.push_back({pi, set});
         VkBufferMemoryBarrier bmb[3] = {bufBarrier(srcPos), bufBarrier(b.pinMap), bufBarrier(b.pinT)};
         stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, bmb, 3);
         int pc[18] = {}; // mat4 model + nV + srcN (72 bytes)
@@ -428,6 +455,8 @@ int Soft::setPinWeights(entt::registry& reg, entt::entity e, const std::vector<f
     GpuBody& b = m_body[(size_t)it->second];
     if (b.dead || (!w.empty() && (int)w.size() != b.soft.n))
         return 2;
+    if (m_app)
+        m_app->waitAll(); // about to write a buffer in-flight frames' sim sets reference
     std::vector<float> w0(w);
     for (auto& x : w0)
         x = std::clamp(x, 0.0f, 1.0f);
@@ -460,6 +489,8 @@ int Soft::setPinMap(entt::registry& reg, entt::entity e, const std::vector<uint3
     GpuBody& b = m_body[(size_t)it->second];
     if (b.dead || (!map.empty() && (int)map.size() != b.soft.n))
         return 2;
+    if (m_app)
+        m_app->waitAll(); // about to write a buffer in-flight frames' sim sets reference
     std::vector<uint32_t> map0(b.soft.n);
     for (int i = 0; i < b.soft.n; ++i)
         map0[i] = (i < (int)map.size()) ? map[i] : (uint32_t)i;
@@ -493,6 +524,8 @@ void Soft::watch(entt::registry& reg) {
 }
 
 void Soft::flushFrees() {
+    if (!m_free.empty() && m_app)
+        m_app->waitAll(); // freed buffers/sets may still be in use by up to kSlots-1 in-flight frames
     for (const int id : m_free) {
         GpuBody& b = m_body[(size_t)id];
         freeBody(b);
@@ -501,6 +534,14 @@ void Soft::flushFrees() {
 }
 
 void Soft::record(VkCommandBuffer cmd, const entt::registry& reg, float dt) {
+    // Render interpolation (FRAME_PACING.md): snapshot this tick's starting positions so the vertex
+    // shader can mix prev→curr with the frame's alpha. Must precede any sim dispatch that writes pos.
+    for (const GpuBody& b : m_body) {
+        if (b.dead || b.posPrev == VK_NULL_HANDLE)
+            continue;
+        const VkBufferCopy r{0, 0, 12 * (VkDeviceSize)b.soft.n};
+        vkCmdCopyBuffer(cmd, b.pos, b.posPrev, 1, &r);
+    }
     recordPinUpdates(cmd, reg);
 
     for (const GpuBody& b : m_body) {
@@ -521,7 +562,7 @@ void Soft::record(VkCommandBuffer cmd, const entt::registry& reg, float dt) {
         phys.maxStep = kSoftMaxStep;
         phys.floorY = m_floorY;
         phys.invSteps = 1.0f / (float)sb->steps;
-        vkWriteBuffer(m_dev, b.paramsMem, &phys, 44);
+        vkWriteBuffer(m_dev, b.paramsMem[m_slot], &phys, 44);
     }
 
     std::vector<VkBufferMemoryBarrier> first;
@@ -553,8 +594,8 @@ void Soft::record(VkCommandBuffer cmd, const entt::registry& reg, float dt) {
 
     for (const GpuBody& b : m_body)
         if (!b.dead) {
-            VkBufferMemoryBarrier bmb[2] = {bufBarrier(b.pos), bufBarrier(b.nrm)};
-            stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, bmb, 2);
+            VkBufferMemoryBarrier bmb[3] = {bufBarrier(b.pos), bufBarrier(b.nrm), bufBarrier(b.posPrev)};
+            stageBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, bmb, 3);
         }
 }
 
@@ -562,13 +603,21 @@ void Soft::freeBody(GpuBody& b) {
     if (b.freed)
         return;
     b.freed = true;
-    vkFreeBuffer(m_dev, b.paramsBuf, b.paramsMem);
+    for (int sl = 0; sl < kRing; ++sl) {
+        if (b.simSet[sl] != VK_NULL_HANDLE && b.simPool[sl] >= 0) {
+            vkFreeDescriptorSets(m_dev, m_softPools[(size_t)b.simPool[sl]], 1, &b.simSet[sl]);
+            b.simSet[sl] = VK_NULL_HANDLE;
+            b.simPool[sl] = -1;
+        }
+        vkFreeBuffer(m_dev, b.paramsBuf[sl], b.paramsMem[sl]);
+    }
     vkFreeBuffer(m_dev, b.prev, b.prevMem);
     vkFreeBuffer(m_dev, b.sub0, b.sub0Mem);
     vkFreeBuffer(m_dev, b.pinW, b.pinWMem);
     vkFreeBuffer(m_dev, b.pinT, b.pinTMem);
     vkFreeBuffer(m_dev, b.pinMap, b.pinMapMem);
     vkFreeBuffer(m_dev, b.restPos, b.restPosMem);
+    vkFreeBuffer(m_dev, b.posPrev, b.posPrevMem);
     vkFreeBuffer(m_dev, b.contactN, b.contactNMem);
     vkFreeBuffer(m_dev, b.contactL, b.contactLMem);
     vkFreeBuffer(m_dev, b.entries, b.entriesMem);
@@ -583,12 +632,14 @@ void Soft::uploadCapsules(int n) {
     m_nCaps = n;
     if (n == 0)
         return;
-    vkWriteBuffer(m_dev, m_capsInstancesMem, m_caps.data(), 48 * (VkDeviceSize)n);
+    vkWriteBuffer(m_dev, m_capsInstancesMem[m_slot], m_caps.data(), 48 * (VkDeviceSize)n);
 }
 
 void Soft::reset() {
     if (m_dev == VK_NULL_HANDLE)
         return;
+    if (m_app)
+        m_app->waitAll(); // about to free everything in-flight frames may still reference
     flushFrees();
     for (auto& b : m_body)
         freeBody(b);
@@ -607,14 +658,16 @@ void Soft::reset() {
     m_softPl = VK_NULL_HANDLE;
     vkFree(m_dev, &m_softPipe, vkDestroyPipeline);
     m_softPipe = VK_NULL_HANDLE;
-    for (const PinSet& ps : m_pinSets)
-        vkFreeDescriptorSets(m_dev, ps.pool, 1, &ps.set);
-    m_pinSets.clear();
+    for (auto& bySlot : m_pinSetsBySlot)
+        for (const PinSet& ps : bySlot)
+            if (ps.pool >= 0 && (size_t)ps.pool < m_pinPools.size())
+                vkFreeDescriptorSets(m_dev, m_pinPools[(size_t)ps.pool], 1, &ps.set);
+    for (auto& bySlot : m_pinSetsBySlot)
+        bySlot.clear();
     for (auto& p : m_pinPools)
         vkFree(m_dev, &p, vkDestroyDescriptorPool);
     m_pinPools.clear();
-    m_pinPoolCap = 0;
-    m_pinPoolUsed = 0;
+    m_pinPoolFree.clear();
     vkFree(m_dev, &m_pinDsl, vkDestroyDescriptorSetLayout);
     m_pinDsl = VK_NULL_HANDLE;
     vkFree(m_dev, &m_pinPl, vkDestroyPipelineLayout);
@@ -622,9 +675,11 @@ void Soft::reset() {
     vkFree(m_dev, &m_pinPipe, vkDestroyPipeline);
     m_pinPipe = VK_NULL_HANDLE;
     m_pinWarned.clear();
-    vkFreeBuffer(m_dev, m_capsInstances, m_capsInstancesMem);
-    m_capsInstances = VK_NULL_HANDLE;
-    m_capsInstancesMem = VK_NULL_HANDLE;
+    for (int sl = 0; sl < kRing; ++sl) {
+        vkFreeBuffer(m_dev, m_capsInstances[sl], m_capsInstancesMem[sl]);
+        m_capsInstances[sl] = VK_NULL_HANDLE;
+        m_capsInstancesMem[sl] = VK_NULL_HANDLE;
+    }
     m_caps.clear();
     m_nCaps = 0;
     m_floorY = -std::numeric_limits<float>::infinity();

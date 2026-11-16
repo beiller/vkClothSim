@@ -552,9 +552,10 @@ void Xr::pollControllers(XrFrame& fr) {
             const XrResult lr = m_loader.xrLocateSpace(*space, m_refSpace, m_fs.predictedDisplayTime, &loc);
             const bool ok = XR_SUCCEEDED(lr) && (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
                             (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT);
-            if (!ok && m_diagFrame % 60 == 0)
-                diagAppend("xr: hand[%d] locate %s result=%d flags=0x%x\n", h, name, (int)lr,
-                           (unsigned)loc.locationFlags);
+            // this runs too often, useless info.
+            // if (!ok && m_diagFrame % 60 == 0)
+            //     diagAppend("xr: hand[%d] locate %s result=%d flags=0x%x\n", h, name, (int)lr,
+            //                (unsigned)loc.locationFlags);
             if (!ok)
                 return false;
             outP = {loc.pose.position.x, loc.pose.position.y, loc.pose.position.z};
