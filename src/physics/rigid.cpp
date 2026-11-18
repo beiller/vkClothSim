@@ -56,7 +56,7 @@ void RigidScene::init() {
     JPH::RegisterTypes();
     m_temp = new JPH::TempAllocatorImpl((size_t)10 * 1024 * 1024);
     const unsigned hw = std::max(std::thread::hardware_concurrency(), 1u);
-    m_job = new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, (int)(hw > 1 ? hw - 1 : 1));
+    m_job = new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, (int)std::min(hw, 8u));
 
     m_pair = new JPH::ObjectLayerPairFilterTable(2);
     m_pair->EnableCollision(0, 0);
@@ -136,6 +136,7 @@ void RigidScene::buildBody(entt::entity e, const std::vector<ColliderDesc>& coll
         cs.mMassPropertiesOverride.mMass = body.mass;
     }
     m_body[e] = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
+    syncExcludes(e); // apply any collision exceptions registered before this body existed
 }
 
 void RigidScene::buildKinematic(entt::entity e, const std::vector<ColliderDesc>& colliders, const Transform& t) {
@@ -145,6 +146,7 @@ void RigidScene::buildKinematic(entt::entity e, const std::vector<ColliderDesc>&
     JPH::BodyCreationSettings cs(buildShape(colliders, t.scale), JPH::RVec3(t.pos.x, t.pos.y, t.pos.z), jQuat(t.quat),
                                  JPH::EMotionType::Kinematic, 1);
     m_body[e] = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
+    syncExcludes(e); // apply any collision exceptions registered before this body existed
 }
 
 void RigidScene::removeBody(entt::entity e) {
@@ -166,12 +168,6 @@ void RigidScene::removeBody(entt::entity e) {
             releaseJoint((int)i);
         }
     }
-    if (const auto ex = m_excludes.find(e); ex != m_excludes.end())
-        for (entt::entity other : ex->second) {
-            m_excludes[other].erase(e);
-            syncExcludes(other);
-        }
-    m_excludes.erase(e);
 }
 
 bool RigidScene::hasBody(entt::entity e) const {
@@ -221,6 +217,13 @@ const JPH::Shape* RigidScene::shape(const entt::registry& reg, entt::entity e) {
 }
 
 void RigidScene::onBodyDestroyed(entt::registry&, entt::entity e) {
+    // drop this body's exceptions (and tell its partners); keep them across rebuilds, which call removeBody too
+    if (const auto ex = m_excludes.find(e); ex != m_excludes.end())
+        for (entt::entity other : ex->second) {
+            m_excludes[other].erase(e);
+            syncExcludes(other);
+        }
+    m_excludes.erase(e);
     removeBody(e);
 }
 

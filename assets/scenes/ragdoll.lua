@@ -254,7 +254,7 @@ function M.excludeCollisions(list)
     end
     local n = 0
     for i = 1, #es do
-        for j = i + 1, #es do
+        for j = 1, #es do
             if es[i] ~= es[j] then
                 physics.collision_exception(es[i], es[j])
                 n = n + 1
@@ -262,6 +262,88 @@ function M.excludeCollisions(list)
         end
     end
     return n
+end
+
+-- sub-ragdoll defaults (hands/feet); pass opts to createSubRagdoll for per-call overrides
+M.kToneFreq = 20.0        -- Hz; springback speed of the joint position motors (>~50 destabilizes at zeta=1)
+M.kToneDamp = 1.0       -- damping ratio; 1 = critical (no oscillation)
+M.kGripTorque = 1.0      -- N m max friction torque per rotation axis
+M.kBodyDamping = 0.05    -- linear/angular damping of the sub-ragdoll bodies
+M.kBodyFriction = 10.0   -- high friction: static grip holds the pose at rest
+M.kWeightThreshold = 0.7 -- skin weight above which a vertex joins a bone's cloud
+M.kRadiusScale = 0.9     -- shrink the fitted radii so shapes sit inside the skin
+-- max_clusters = 1: one collider per bone (a single tapered capsule / sphere)
+M.kFitOptions = { profile_bins = 64, max_segments = 1, profile_percentile = 1.0,
+                  sphere_aspect = 5.0, max_clusters = 1 }
+M.kDebugVisuals = false   -- render one capsule per bone, parented to the body
+
+local kLimitsPaths = { "assets/local/genesis8_bone_limits.json", "local/genesis8_bone_limits.json" }
+
+-- sub-ragdoll for a named bone set (hands/feet): one RigidBody + weld per bone; parents outside
+-- the set resolve against boneEnt. Returns { bodies = { l, r }, joints = { l, r }, jointsByName = { l, r } }
+function M.createSubRagdoll(ch, char_prefix, boneEnt, boneNames, tag, opts)
+    opts = opts or {}
+    local tone = { freq = opts.tone and opts.tone.freq or M.kToneFreq,
+                   damp = opts.tone and opts.tone.damp or M.kToneDamp,
+                   grip = opts.tone and opts.tone.grip or M.kGripTorque }
+
+    local skelEnt = scene.find_components("Skeleton", ch)[1]
+    assert(skelEnt, tag .. ": no skeleton under the character root")
+    local skel = scene.component(skelEnt, "Skeleton")
+
+    -- captured before any bodies exist: attachBone reparents the gltf bones under the new rigid
+    -- bodies, so the skeleton-ancestor walk only works while the original hierarchy is intact
+    local kLimits = M.loadLimits(kLimitsPaths, tag)
+    local kJoints = M.buildJoints(skel)
+    local jointBy = {}
+    for _, j in ipairs(kJoints) do
+        jointBy[j.name] = j
+    end
+
+    local kFits = M.buildFits(skel, boneNames, {
+        tag = tag,
+        weightThreshold = opts.weightThreshold or M.kWeightThreshold,
+        radiusScale = opts.radiusScale or M.kRadiusScale,
+        fitOptions = opts.fitOptions or M.kFitOptions
+    })
+    -- one RigidBody per fitted bone, kept in two lists (left / right)
+    local bodies, bodyBy = { l = {}, r = {} }, {}
+    for _, f in ipairs(kFits) do
+        local body = M.makeBoneBody(f, {
+            material = opts.material,
+            debugVisuals = opts.debugVisuals ~= nil and opts.debugVisuals or M.kDebugVisuals,
+            damping = opts.damping or M.kBodyDamping,
+            friction = opts.friction or M.kBodyFriction })
+        bodyBy[f.name] = body
+        bodies[f.name:sub(1, 1)][f.name] = body -- "l..." / "r..."
+        -- reparent the character's skinned bone under the rigid body so the skin follows
+        M.attachBone(body, scene.get_entity(char_prefix .. f.name))
+    end
+
+    local joints = { l = {}, r = {} }
+    local jointsByName = { l = {}, r = {} }
+    local toneHz = {} -- weld -> motorFreq; lets the scene keep a sub-rig's own tone when global sliders move
+    for _, f in ipairs(kFits) do
+        local j = jointBy[f.name]
+        if not j then
+            print(tag .. ": no skeleton joint for '" .. f.name .. "', left free")
+        else
+            local parentBody = bodies.l[j.parent] or bodies.r[j.parent] or boneEnt[j.parent]
+            if not parentBody then
+                print(tag .. ": '" .. f.name .. "' has no body for parent '" .. j.parent .. "', left free")
+            else
+                local sname = f.name:sub(1, 1)
+                local w = M.makeWeld(bodyBy[f.name], parentBody, j, kLimits[f.name], tone)
+                joints[sname][#joints[sname] + 1] = w
+                jointsByName[sname][f.name] = w
+                toneHz[w] = tone.freq
+            end
+        end
+    end
+
+    print(tag .. ": " .. #kFits .. " bones in " .. (#joints.l + #joints.r) .. " joints")
+
+    return { bodies = bodies, joints = joints, jointsByName = jointsByName, toneHz = toneHz }
 end
 
 return M

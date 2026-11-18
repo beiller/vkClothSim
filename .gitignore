@@ -1,6 +1,7 @@
 build/
 build-dbg/
 build-prof/
+build-*
 *.png
 !assets/*.png
 *.spv
