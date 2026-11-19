@@ -441,6 +441,8 @@ static const FieldDesc kPhysicsSettings[] = {
     {"velocitySteps", OFF(PhysicsSettings, velocitySteps), FieldKind::SliderI, 1.0f, 512.0f},
     /// Jolt position solver iterations per step
     {"positionSteps", OFF(PhysicsSettings, positionSteps), FieldKind::SliderI, 1.0f, 512.0f},
+    /// fixed physics tick rate in Hz (accumulator steps the sim at this rate regardless of display rate)
+    {"physHz", OFF(PhysicsSettings, physHz), FieldKind::SliderI, 1.0f, 1000.0f},
 };
 
 /// Bind | per-frame URL copy: source `url` -> `target` field (empty = widget value); `dir` 0=Both 1=Read 2=Write

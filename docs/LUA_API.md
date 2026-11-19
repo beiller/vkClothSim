@@ -22,6 +22,7 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [`scene.link_mesh(skel: entity|string, mesh: entity|string)`](#scenelinkmeshskel-entitystring-mesh-entitystring)
   - [`scene.spawn(tbl: table, parent?: entity|string) -> table`](#scenespawntbl-table-parent-entitystring---table)
   - [`scene.get_entity(name: string) -> entity|nil`](#scenegetentityname-string---entitynil)
+  - [`scene.name(e: entity) -> string|nil`](#scenenamee-entity---stringnil)
   - [`scene.named() -> table`](#scenenamed---table)
   - [`scene.components(e: entity) -> table`](#scenecomponentse-entity---table)
   - [`scene.find_components(component: string, root?: entity) -> table`](#scenefindcomponentscomponent-string-root-entity---table)
@@ -211,6 +212,10 @@ print(e.body)  -- the rigid-body entity
 
 look up a world name (as given to scene.entity or produced by scene.spawn); nil when no such entity exists.
 
+### `scene.name(e: entity) -> string|nil`
+
+the world name of e (as given to scene.entity or produced by scene.spawn); nil when e has no Name component. The reverse of get_entity.
+
 ### `scene.named() -> table`
 
 every named entity as an array of {name = string, entity = entity}, sorted by entity id (the scene editor's source list).
@@ -381,7 +386,7 @@ set the Y height of the cloth/soft-body floor plane; errors when the graphics se
 
 ### `soft.set_pins(e: entity, weights: table)`
 
-per-vertex pin weights for a soft body: one number in [0,1] per vertex (0 = free, 1 = hard pin). Pinned vertices are pulled toward their pin targets with step-independent stiffness; setting the weights also refreshes the targets from the current pin source (the body's own positions when no source is set), so a plain call pins vertices where they are now. An empty array clears all pins. Errors when e is not a soft body or the array length differs from the vertex count.
+per-vertex pin weights for a soft body: one number in [0,1] per vertex (0 = free, 1 = hard pin). Pinned vertices are pulled toward their pin targets with step-independent stiffness. Targets track the body's own node transform every frame (rest pose x its live world transform), so moving the cloth's Transform — or any ancestor — drags the pins with it; no per-frame calls needed. An explicit pin source (soft.set_pin_source) overrides the anchor. An empty array clears all pins. Errors when e is not a soft body or the array length differs from the vertex count.
 
 ```lua
 local w = {}
@@ -392,7 +397,7 @@ soft.set_pins(cloth, w)
 
 ### `soft.set_pin_source(e: entity, src: entity|nil)`
 
-set the pin-target source of a soft body: another mesh entity (skinned or static — its current GPU vertex positions become the targets, transformed to world space), or nil to capture the body's own positions. Takes effect on the next soft.update_pins (or when weights are set).
+set the pin-target anchor of a soft body: another mesh entity (skinned or static — its GPU vertices transformed by its node's live world transform become the targets), or nil to anchor to the body's own node (rest pose x its live world transform). Tracked every frame, so a moving anchor drags the pins with it. Takes effect immediately on the next step.
 
 ```lua
 soft.set_pin_source(cloth, characterMesh)
@@ -400,11 +405,11 @@ soft.set_pin_source(cloth, characterMesh)
 
 ### `soft.set_pin_map(e: entity, map: table|nil)`
 
-remap pin targets when the cloth and source mesh have different topology: one number per cloth vertex — vertex i takes its target from source vertex map[i]. nil (or an empty array) restores the identity mapping. Takes effect on the next soft.update_pins.
+remap pin targets when the cloth and anchor mesh have different topology: one number per cloth vertex — vertex i takes its target from source vertex map[i]. nil (or an empty array) restores the identity mapping. Takes effect immediately on the next step.
 
 ### `soft.update_pins(e: entity)`
 
-refresh the pin targets from the body's pin source. Rare by design: between updates a moving target is stale and pinned vertices chase it elastically (the weight controls how hard); call every frame when continuous tracking is wanted. No-op until the body exists — bodies created with nonzero weights refresh automatically on their first step.
+kept for compatibility; a no-op now that pin targets track their anchor's live world transform every frame (moving anchors drag the pins automatically).
 
 ## ui
 
@@ -933,6 +938,7 @@ global physics solver steps (emplace on a marker entity): velocitySteps/position
 |---|---|---|---|
 | velocitySteps | int | [1.0, 512.0] | Jolt velocity solver iterations per step |
 | positionSteps | int | [1.0, 512.0] | Jolt position solver iterations per step |
+| physHz | int | [1.0, 1000.0] | fixed physics tick rate in Hz (accumulator steps the sim at this rate regardless of display rate) |
 
 ## script hooks (attached modules)
 
@@ -950,4 +956,4 @@ called every frame with the frame delta time in seconds
 
 ### `_physics(inst, dt)`
 
-called once per frame (render rate) before the Jolt step, with the frame dt; the place to write kinematic poses
+called every physics tick (fixed rate, default 60 Hz, --phys-hz) before the Jolt step, with the tick dt; the place to write kinematic poses

@@ -779,6 +779,19 @@ static int lFind(lua_State* L) {
     return 1;
 }
 
+/// scene.name(e: entity) -> string|nil | the world name of e (as given to scene.entity or produced by scene.spawn);
+/// nil when e has no Name component. The reverse of get_entity.
+static int lName(lua_State* L) {
+    Engine& w = SceneScript::sSelf(L)->w();
+    const entt::entity e = luaReadEnt(L, 1);
+    if (auto* n = w.reg.try_get<Name>(e)) {
+        lua_pushstring(L, n->id.c_str());
+        return 1;
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
 /// scene.find_components(component: string, root?: entity) -> table | every entity carrying `component` in root's
 /// subtree (root included) as an array of entities; when root is omitted, all top-level entities are searched - i.e.
 /// the whole world.
@@ -942,6 +955,7 @@ void luaRegisterComponents(lua_State* L, SceneScript* host) {
     reg(L, host, "link_mesh", lLinkMesh);
     reg(L, host, "spawn", lSpawn);
     reg(L, host, "get_entity", lFind);
+    reg(L, host, "name", lName);
     reg(L, host, "named", lNamed);
     reg(L, host, "components", lComponents);
     reg(L, host, "find_components", lFindComponents);

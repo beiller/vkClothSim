@@ -8,8 +8,26 @@ local kFootBones = { "Foot", "Metatarsals", "Toe",
                      "SmallToe1", "SmallToe1_2", "SmallToe2", "SmallToe2_2",
                      "SmallToe3", "SmallToe3_2", "SmallToe4", "SmallToe4_2" }
 
--- toe tone; 50 Hz sat borderline at zeta=1 (workplans/JOLT_PERF.md), kept at the body default
-M.kToneFreq = 20.0
+local defaultOpts = {
+    tone = {
+        freq = 60.0,
+        damp = 10.0,
+        grip = 1.0,
+    },
+    damping = 0.1,
+    friction = 10.0,
+    weightThreshold = 0.5,
+    radiusScale = 0.9,
+    fitOptions = { 
+        profile_bins = 64, 
+        max_segments = 1, 
+        profile_percentile = 1.0,
+        sphere_aspect = 5.0, 
+        max_clusters = 1 
+    },
+    debugVisuals = false,
+    mass = 0.04
+}
 
 local function footBoneNames()
     local names = {}
@@ -22,9 +40,8 @@ local function footBoneNames()
 end
 
 function M.createFootRig(ch, char_prefix, boneEnt, opts)
-    opts = opts or {}
-    local tone = opts.tone or { freq = M.kToneFreq, damp = rag.kToneDamp, grip = rag.kGripTorque }
-    return rag.createSubRagdoll(ch, char_prefix, boneEnt, footBoneNames(), "feet", { tone = tone })
+    opts = opts or defaultOpts
+    return rag.createSubRagdoll(ch, char_prefix, boneEnt, footBoneNames(), "feet", opts)
 end
 
 return M

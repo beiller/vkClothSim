@@ -105,14 +105,9 @@ function _on_ready(self)
     scene.replace(spBody, "RigidBody", { colliders = { spCol } })
 
     -- glft tests
-    -- local m = scene.entity("model")
-    -- scene.replace(m, "Transform", { pos = { 0, 3, 0 } })
-    -- graphics.gltf(m, "scenes/models/cube_test.glb")
-
-    local ch = scene.entity("hashimoto")
-    scene.replace(ch, "Transform", { pos = { -5, 0, 0 } })
--- entity-form gltf load: skinned model (the table API supports skinning too; kept on the entity path for full parity)
-    graphics.gltf(ch, "local/basegen8.glb")
+    local m = scene.entity("model")
+    scene.replace(m, "Transform", { pos = { 3, 0, 0 } })
+    graphics.gltf(m, "scenes/models/cube_test.glb")
 end
 
 -- struct defaults, as the JSON "reset params" button expects (demo.LuaScript.reset_params)

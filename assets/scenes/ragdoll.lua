@@ -50,10 +50,27 @@ end
 -- returns clouds[jointIndex] = { pos = flat xyz, nrm = flat xyz (or nil), sumX/sumY/sumZ },
 -- keyed by the RAW glTF joint index from JOINTS_0 -- i.e. 0-based, so bone i of
 -- skel.boneNames (1-based) is clouds[i - 1]
-function M.boneClouds(skel, weightThreshold)
+
+local function ends_with(s, suffix)
+  return suffix == "" or s:sub(-#suffix) == suffix
+end
+
+local function valid_material(meshMaterialsCollisionShapes, materialName)
+    for _, v in ipairs(meshMaterialsCollisionShapes) do
+        if ends_with(materialName, "/" .. v) then return true end
+    end
+    return false
+end
+
+function M.boneClouds(skel, weightThreshold, meshMaterialsCollisionShapes)
     local clouds = {}
     for _, me in ipairs(skel.meshes) do
         local g = scene.component(me, "Geometry")
+        if meshMaterialsCollisionShapes ~= nil then
+            if not valid_material(meshMaterialsCollisionShapes, scene.name(scene.component(me, "MaterialRef").material)) then 
+                goto cont 
+            end
+        end
         if not g.pos then goto cont end
         -- read each array once: the component view re-converts on every field access
         local posArr, nrmArr, jArr, wArr = g.pos, g.nrm, g.joints, g.weights
@@ -98,14 +115,14 @@ end
 --       is used as-is (no radius scaling -- the fitter applies its own), otherwise the
 --       default physics.fit_capsule path runs. A nil return therefore falls back cleanly.
 -- returns an array of { name, com = vec3, caps = { { origin, axis, seg = { {s0,s1,r0,r1}, ... } } } }
-function M.buildFits(skel, boneNames, opts)
+function M.buildFits(skel, boneNames, meshMaterialsCollisionShapes, opts)
     opts = opts or {}
     local tag = opts.tag or "ragdoll"
     local radiusScale = opts.radiusScale or 1.0
     local fitOptions = opts.fitOptions or {}
     local idxByName = {}
     for i, n in ipairs(skel.boneNames) do idxByName[n] = i end
-    local clouds = M.boneClouds(skel, opts.weightThreshold or 0.3)
+    local clouds = M.boneClouds(skel, opts.weightThreshold or 0.3, meshMaterialsCollisionShapes)
     local fits = {}
     for _, name in ipairs(boneNames) do
         -- clouds is keyed by the raw (0-based) glTF joint index; idxByName is 1-based
@@ -206,8 +223,13 @@ function M.makeBoneBody(fit, opts)
             cols[#cols + 1] = col
         end
     end
-    scene.replace(body, "RigidBody", { colliders = cols, forceSleep = false,
-                                      damping = opts.damping or 0, friction = opts.friction or 1 })
+    scene.replace(body, "RigidBody", { 
+        colliders = cols, 
+        forceSleep = false,
+        damping = opts.damping or 0, 
+        friction = opts.friction or 1,
+        mass = opts.mass or 0
+    })
     return body
 end
 
@@ -265,23 +287,23 @@ function M.excludeCollisions(list)
 end
 
 -- sub-ragdoll defaults (hands/feet); pass opts to createSubRagdoll for per-call overrides
-M.kToneFreq = 20.0        -- Hz; springback speed of the joint position motors (>~50 destabilizes at zeta=1)
-M.kToneDamp = 1.0       -- damping ratio; 1 = critical (no oscillation)
-M.kGripTorque = 1.0      -- N m max friction torque per rotation axis
+M.kToneFreq = 50.0        -- Hz; springback speed of the joint position motors (>~50 destabilizes at zeta=1)
+M.kToneDamp = 50.0       -- damping ratio; 1 = critical (no oscillation)
+M.kGripTorque = 10.0      -- N m max friction torque per rotation axis
 M.kBodyDamping = 0.05    -- linear/angular damping of the sub-ragdoll bodies
 M.kBodyFriction = 10.0   -- high friction: static grip holds the pose at rest
-M.kWeightThreshold = 0.7 -- skin weight above which a vertex joins a bone's cloud
-M.kRadiusScale = 0.9     -- shrink the fitted radii so shapes sit inside the skin
+M.kWeightThreshold = 0.5 -- skin weight above which a vertex joins a bone's cloud
+M.kRadiusScale = 1.05     -- shrink the fitted radii so shapes sit inside the skin
 -- max_clusters = 1: one collider per bone (a single tapered capsule / sphere)
 M.kFitOptions = { profile_bins = 64, max_segments = 1, profile_percentile = 1.0,
                   sphere_aspect = 5.0, max_clusters = 1 }
-M.kDebugVisuals = false   -- render one capsule per bone, parented to the body
+M.kDebugVisuals = false
 
 local kLimitsPaths = { "assets/local/genesis8_bone_limits.json", "local/genesis8_bone_limits.json" }
 
 -- sub-ragdoll for a named bone set (hands/feet): one RigidBody + weld per bone; parents outside
 -- the set resolve against boneEnt. Returns { bodies = { l, r }, joints = { l, r }, jointsByName = { l, r } }
-function M.createSubRagdoll(ch, char_prefix, boneEnt, boneNames, tag, opts)
+function M.createSubRagdoll(ch, char_prefix, boneEnt, boneNames, tag, opts, meshMaterialsCollisionShapes)
     opts = opts or {}
     local tone = { freq = opts.tone and opts.tone.freq or M.kToneFreq,
                    damp = opts.tone and opts.tone.damp or M.kToneDamp,
@@ -300,7 +322,7 @@ function M.createSubRagdoll(ch, char_prefix, boneEnt, boneNames, tag, opts)
         jointBy[j.name] = j
     end
 
-    local kFits = M.buildFits(skel, boneNames, {
+    local kFits = M.buildFits(skel, boneNames, meshMaterialsCollisionShapes, {
         tag = tag,
         weightThreshold = opts.weightThreshold or M.kWeightThreshold,
         radiusScale = opts.radiusScale or M.kRadiusScale,
@@ -313,7 +335,9 @@ function M.createSubRagdoll(ch, char_prefix, boneEnt, boneNames, tag, opts)
             material = opts.material,
             debugVisuals = opts.debugVisuals ~= nil and opts.debugVisuals or M.kDebugVisuals,
             damping = opts.damping or M.kBodyDamping,
-            friction = opts.friction or M.kBodyFriction })
+            friction = opts.friction or M.kBodyFriction,
+            mass = opts.mass or 0
+         })
         bodyBy[f.name] = body
         bodies[f.name:sub(1, 1)][f.name] = body -- "l..." / "r..."
         -- reparent the character's skinned bone under the rigid body so the skin follows

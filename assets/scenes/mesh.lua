@@ -244,6 +244,16 @@ function sphere(p)
     return { pos = pos, nrm = nrm, uv = uv, idx = idx }
 end
 
+function tetrahedron(tE)
+    return {
+        pos = { tE, tE, tE,  tE, -tE, -tE,
+                -tE, tE, -tE,  -tE, -tE, tE },
+        nrm = { 0.5774, 0.5774, 0.5774,  0.5774, -0.5774, -0.5774,
+                -0.5774, 0.5774, -0.5774,  -0.5774, -0.5774, 0.5774 },
+        idx = { 0, 1, 2,  0, 3, 1,  0, 2, 3,  1, 3, 2 } 
+    }
+end
+
 -- axis-aligned box centered at the origin; p = {hx, hy, hz} half-extents
 function box(p)
     local hx, hy, hz = p[1], p[2], p[3]

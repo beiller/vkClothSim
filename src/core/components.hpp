@@ -194,8 +194,9 @@ struct RenderSettings {
 };
 
 struct PhysicsSettings {
-    int velocitySteps = 500;
-    int positionSteps = 500;
+    int velocitySteps = 25;
+    int positionSteps = 25;
+    int physHz = 240; // fixed physics tick rate (Hz); CLI --phys-hz overrides the scene value
 };
 
 struct Camera {

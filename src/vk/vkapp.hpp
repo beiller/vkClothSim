@@ -149,7 +149,7 @@ private:
     VkExtent2D m_renderExtent{};
     VkExtent2D m_pendingRenderExtent{};
     VkCommandPool m_pool = VK_NULL_HANDLE;
-    // Command-buffer pool: a frame records several stages (soft per tick, skin, shadow, env, render...), each in
+    // Command-buffer pool: a frame records several stages (soft per frame, skin, shadow, env, render...), each in
     // its own buffer. A buffer is safe to reset once the fence of the frame it was submitted with has been
     // waited on — tracked per buffer via m_cmdFrame (see beginCommands).
     static constexpr int kCmdPool = 48;

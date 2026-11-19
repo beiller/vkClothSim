@@ -71,27 +71,5 @@
         { "name": "char" },
         { "name": "caps", "script": "scenes/caps_fit" },
         { "name": "vr", "script": "scenes/vr_controller" }
-    ],
-    "ui": {
-        "title": "3dsim",
-        "size": [320, 800],
-        "widgets": [
-            { "type": "color", "label": "background", "bind": "settings.RenderSettings.bgColor" },
-            { "type": "text", "label": "sim: GPU (cloth + ball)" },
-            {
-                "type": "section",
-                "label": "cloth",
-                "children": [
-                    { "type": "slider-f", "label": "mass", "bind": "cloth.SoftBodyData.mass" },
-                    { "type": "slider-f", "label": "damping", "bind": "cloth.SoftBodyData.damping", "fmt": "%.3f" },
-                    { "type": "slider-i", "label": "passes", "bind": "cloth.SoftBodyData.passes" },
-                    { "type": "slider-f", "label": "stiffness", "bind": "cloth.SoftBodyData.stiffness" },
-                    { "type": "slider-f", "label": "tension", "bind": "cloth.SoftBodyData.tension" },
-                    { "type": "slider-f", "label": "friction", "bind": "cloth.SoftBodyData.friction" },
-                    { "type": "slider-i", "label": "steps", "bind": "cloth.SoftBodyData.steps" }
-                ]
-            }
-        ]
-    }
-
+    ]
 }

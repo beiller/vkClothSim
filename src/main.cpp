@@ -78,6 +78,7 @@ int main(int argc, char** argv) {
     bool wantNoVr = false, noGraphics = false, headless = false, noInterp = false, syncSubmit = false;
     int maxFrames = -1;
     int physHz = kPhysHzDefault;
+    bool cliPhysHz = false;
     std::string scenePath;
     bool scenesDirSet = false;
     for (int i = 1; i < argc; ++i) {
@@ -89,8 +90,10 @@ int main(int argc, char** argv) {
             headless = true;
         else if (std::strcmp(argv[i], "--frames") == 0)
             maxFrames = std::atoi(argv[++i]);
-        else if (std::strcmp(argv[i], "--phys-hz") == 0)
+        else if (std::strcmp(argv[i], "--phys-hz") == 0) {
             physHz = std::atoi(argv[++i]);
+            cliPhysHz = true;
+        }
         else if (std::strcmp(argv[i], "--no-interp") == 0)
             noInterp = true; // render the latest tick state directly: no interpolation latency
         else if (std::strcmp(argv[i], "--sync") == 0)
@@ -172,11 +175,23 @@ int main(int argc, char** argv) {
 
     auto lastFrame = std::chrono::steady_clock::now();
     // Fixed-timestep accumulator (integer ns; see FRAME_PACING.md): physics ticks at physHz
-    // regardless of display rate, rendering runs at display rate.
-    const int physHzC = physHz >= 1 && physHz <= 1000 ? physHz : kPhysHzDefault;
-    const int64_t tickNs = 1'000'000'000 / physHzC;
-    const float tickDt = 1.0f / (float)physHzC;
-    const int maxSteps = std::clamp((int)(kMaxSimPerFrameNs / tickNs), 1, 8);
+    // regardless of display rate, rendering runs at display rate. Rate comes from the scene's
+    // PhysicsSettings.physHz unless overridden by CLI --phys-hz. Resolved per frame so a scene
+    // can change it live (e.g. via a UI slider bound to settings.PhysicsSettings.physHz).
+    int64_t tickNs = 0;
+    float tickDt = 0.0f;
+    int maxSteps = 1;
+    int physHzCur = -1;
+    auto applyPhysHz = [&](int hz) {
+        if (hz < 1 || hz > 1000)
+            hz = kPhysHzDefault;
+        if (hz == physHzCur)
+            return;
+        physHzCur = hz;
+        tickNs = 1'000'000'000 / hz;
+        tickDt = 1.0f / (float)hz;
+        maxSteps = std::clamp((int)(kMaxSimPerFrameNs / tickNs), 1, 8);
+    };
     int64_t acc = 0;
     // vsync pacing state: nextEdge is the upcoming display refresh edge we present on
     auto paceEdge = std::chrono::steady_clock::now();
@@ -288,19 +303,24 @@ int main(int argc, char** argv) {
             engine.graphics.beginFrame(); // async: pick this frame's ring slot, wait on its fence (no-op in steady state)
         // Fixed-tick loop: every tick runs the whole sim at exactly tickDt. The _physics script hook
         // dispatches inside physics.update (before Jolt), so kinematic poses take effect same-tick.
+        applyPhysHz(cliPhysHz ? physHz : readSetting<PhysicsSettings>(engine.reg).physHz);
         int steps = 0;
         while (acc >= tickNs && steps < maxSteps) {
             engine.physics.update(engine.reg, tickDt);
             stepAnimations(engine.reg, tickDt);
             snapshotBones(engine.reg); // capture this tick's bone locals for render interpolation
             resolveWorldTransforms(engine.reg);
-            if (engine.hasDevice)
-                engine.graphics.stepSoftSim(engine.reg, tickDt);
             acc -= tickNs;
             ++steps;
         }
         if (steps == maxSteps)
             acc = 0; // hit the cap: drop excess time — the sim slows down instead of spiraling
+        // Cloth runs once per rendered frame at frame rate, not per physics tick: record() substeps
+        // internally (SoftBodyData.steps over the passed dt), so this keeps its substep size and
+        // per-frame work at what they were when physics ran at display rate. After the loop so
+        // pinning/capsule sync sees this frame's final bone state.
+        if (engine.hasDevice)
+            engine.graphics.stepSoftSim(engine.reg, frameDt);
         tickAccum += steps;
         const float alpha = noInterp ? 1.0f : (float)acc / (float)tickNs;
         engine.physics.interpolatePoses(engine.reg, alpha); // render-rate pose between the last two ticks
