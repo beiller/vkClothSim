@@ -456,6 +456,89 @@ void SceneScript::onScriptDestroy(entt::registry& reg, entt::entity e) {
 /// script-hook _on_ready(inst) | called once when the attached module has loaded
 /// script-hook _animate(inst, dt) | called every frame with the frame delta time in seconds
 /// script-hook _physics(inst, dt) | called every physics tick (fixed rate, default 60 Hz, --phys-hz) before the Jolt step, with the tick dt; the place to write kinematic poses
+int SceneScript::activateOne(entt::entity e) {
+    if (!w().reg.valid(e))
+        return -1;
+    std::string file;
+    int paramsRef = -1;
+    {
+        const auto& ls = w().reg.get<LuaScript>(e);
+        file = ls.file;
+        paramsRef = ls.params;
+    }
+    std::string err;
+    const int mod = includeModule(file, err);
+    if (mod < 0) {
+        std::fprintf(stderr, "3dsim: script '%s': %s\n", file.c_str(), err.c_str());
+        if (auto* ls = w().reg.try_get<LuaScript>(e))
+            ls->ready = true;
+        return -1;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, mod);
+    lua_newtable(L);
+    luaPushEnt(L, e);
+    lua_setfield(L, -2, "entity");
+    if (paramsRef > 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, paramsRef);
+        lua_setfield(L, -2, "params");
+    }
+    lua_newtable(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, mod);
+    lua_setfield(L, -2, "__index");
+    lua_setmetatable(L, -2);
+    const int instRef = newRef(L, -1);
+    int onReadyRef = -1, animateRef = -1, physicsRef = -1;
+    const auto grab = [this, mod](const char* name, int& out) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, mod);
+        lua_getfield(L, -1, name);
+        if (lua_isfunction(L, -1))
+            out = newRef(L, -1);
+        lua_pop(L, 2);
+    };
+    grab("_on_ready", onReadyRef);
+    grab("_animate", animateRef);
+    grab("_physics", physicsRef);
+    lua_pop(L, 2);
+    auto* ls = w().reg.try_get<LuaScript>(e);
+    if (!ls) {
+        dropRef(instRef);
+        dropRef(onReadyRef);
+        dropRef(animateRef);
+        dropRef(physicsRef);
+        return -1;
+    }
+    ls->mod = mod;
+    ls->inst = instRef;
+    syncVars(w().reg, false);
+    const bool ok = (onReadyRef <= 0) || callOnReady(onReadyRef, instRef);
+    // _on_ready may emplace/destroy LuaScript components (attach_script, scene.destroy): the pool can
+    // reallocate, so never write back through a pointer held across it
+    ls = w().reg.try_get<LuaScript>(e);
+    if (!ls) {
+        dropRef(instRef);
+        dropRef(paramsRef);
+        dropRef(onReadyRef);
+        dropRef(animateRef);
+        dropRef(physicsRef);
+        return -1;
+    }
+    if (!ok) {
+        dropRef(instRef);
+        dropRef(paramsRef);
+        dropRef(onReadyRef);
+        dropRef(animateRef);
+        dropRef(physicsRef);
+        ls->inst = ls->params = ls->onReady = ls->animate = ls->physics = -1;
+        return -1;
+    }
+    syncVars(w().reg, false);
+    ls->onReady = onReadyRef;
+    ls->animate = animateRef;
+    ls->physics = physicsRef;
+    ls->ready = true;
+    return instRef;
+}
+
 void SceneScript::activateScripts() {
     if (!L)
         return;
@@ -466,76 +549,8 @@ void SceneScript::activateScripts() {
                 pending.push_back(e);
         if (pending.empty())
             break;
-        for (auto e : pending) {
-            if (!w().reg.valid(e))
-                continue;
-            std::string file;
-            int paramsRef = -1;
-            {
-                const auto& ls = w().reg.get<LuaScript>(e);
-                file = ls.file;
-                paramsRef = ls.params;
-            }
-            std::string err;
-            const int mod = includeModule(file, err);
-            if (mod < 0) {
-                std::fprintf(stderr, "3dsim: script '%s': %s\n", file.c_str(), err.c_str());
-                if (auto* ls = w().reg.try_get<LuaScript>(e))
-                    ls->ready = true;
-                continue;
-            }
-            lua_rawgeti(L, LUA_REGISTRYINDEX, mod);
-            lua_newtable(L);
-            luaPushEnt(L, e);
-            lua_setfield(L, -2, "entity");
-            if (paramsRef > 0) {
-                lua_rawgeti(L, LUA_REGISTRYINDEX, paramsRef);
-                lua_setfield(L, -2, "params");
-            }
-            lua_newtable(L);
-            lua_rawgeti(L, LUA_REGISTRYINDEX, mod);
-            lua_setfield(L, -2, "__index");
-            lua_setmetatable(L, -2);
-            const int instRef = newRef(L, -1);
-            int onReadyRef = -1, animateRef = -1, physicsRef = -1;
-            const auto grab = [this, mod](const char* name, int& out) {
-                lua_rawgeti(L, LUA_REGISTRYINDEX, mod);
-                lua_getfield(L, -1, name);
-                if (lua_isfunction(L, -1))
-                    out = newRef(L, -1);
-                lua_pop(L, 2);
-            };
-            grab("_on_ready", onReadyRef);
-            grab("_animate", animateRef);
-            grab("_physics", physicsRef);
-            lua_pop(L, 2);
-            auto* ls = w().reg.try_get<LuaScript>(e);
-            if (!ls) {
-                dropRef(instRef);
-                dropRef(onReadyRef);
-                dropRef(animateRef);
-                dropRef(physicsRef);
-                continue;
-            }
-            ls->mod = mod;
-            ls->inst = instRef;
-            syncVars(w().reg, false);
-            const bool ok = (onReadyRef <= 0) || callOnReady(onReadyRef, instRef);
-            if (!ok) {
-                dropRef(instRef);
-                dropRef(paramsRef);
-                dropRef(onReadyRef);
-                dropRef(animateRef);
-                dropRef(physicsRef);
-                ls->inst = ls->params = ls->onReady = ls->animate = ls->physics = -1;
-            } else {
-                syncVars(w().reg, false);
-                ls->onReady = onReadyRef;
-                ls->animate = animateRef;
-                ls->physics = physicsRef;
-            }
-            ls->ready = true;
-        }
+        for (auto e : pending)
+            activateOne(e);
     }
 }
 
@@ -585,6 +600,7 @@ static void pullValue(lua_State* L, int idx, const std::string& key, LuaScript& 
 }
 
 static void setDotted(lua_State* L, int baseIdx, const std::string& key, int valAbs) {
+    // relative cur goes stale once key/value are pushed: pin absolute indexes before pushing
     int cur = baseIdx;
     int pushed = 0;
     size_t start = 0;
@@ -593,18 +609,20 @@ static void setDotted(lua_State* L, int baseIdx, const std::string& key, int val
         const bool last = dot == std::string::npos;
         const std::string seg = key.substr(start, last ? std::string::npos : dot - start);
         if (last) {
+            const int tAbs = lua_absindex(L, cur);
             lua_pushstring(L, seg.c_str());
             lua_pushvalue(L, valAbs);
-            lua_settable(L, cur);
+            lua_settable(L, tAbs);
             break;
         }
         lua_getfield(L, cur, seg.c_str());
         if (!lua_istable(L, -1)) {
+            const int pAbs = lua_absindex(L, cur);
             lua_pop(L, 1);
             lua_newtable(L);
             lua_pushstring(L, seg.c_str());
-            lua_settable(L, cur);
-            lua_getfield(L, cur, seg.c_str());
+            lua_settable(L, pAbs);
+            lua_getfield(L, pAbs, seg.c_str());
         }
         ++pushed;
         cur = -1;

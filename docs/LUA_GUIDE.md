@@ -111,6 +111,11 @@ A file attached with `scene.attach_script(e, file, params)` must **return a tabl
 functions act as methods and you can keep per-instance state on it (`self.cube = ...`). Top-level variables
 in the module are exposed as `"name.LuaScript.<var>"` URLs — that's how UI sliders bind to script state.
 
+Scripts reach each other's instances directly: `scene.attach_script` activates immediately and returns the
+fresh `inst`, and `scene.get_script(name|entity)` fetches another entity's `inst` as a plain table — read or
+write its per-instance fields, call its methods with its own self (`other:fn()`). Fetch fresh; the table goes
+stale when the entity is destroyed or re-attached.
+
 Shared modules (e.g. `char_ctrl.lua`) return a plain table of functions and are used with `require`; only
 *attached* scripts get hooks.
 

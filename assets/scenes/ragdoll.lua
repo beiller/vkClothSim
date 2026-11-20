@@ -346,7 +346,6 @@ function M.createSubRagdoll(ch, char_prefix, boneEnt, boneNames, tag, opts, mesh
 
     local joints = { l = {}, r = {} }
     local jointsByName = { l = {}, r = {} }
-    local toneHz = {} -- weld -> motorFreq; lets the scene keep a sub-rig's own tone when global sliders move
     for _, f in ipairs(kFits) do
         local j = jointBy[f.name]
         if not j then
@@ -360,14 +359,12 @@ function M.createSubRagdoll(ch, char_prefix, boneEnt, boneNames, tag, opts, mesh
                 local w = M.makeWeld(bodyBy[f.name], parentBody, j, kLimits[f.name], tone)
                 joints[sname][#joints[sname] + 1] = w
                 jointsByName[sname][f.name] = w
-                toneHz[w] = tone.freq
             end
         end
     end
 
     print(tag .. ": " .. #kFits .. " bones in " .. (#joints.l + #joints.r) .. " joints")
-
-    return { bodies = bodies, joints = joints, jointsByName = jointsByName, toneHz = toneHz }
+    return { bodies = bodies, joints = joints, jointsByName = jointsByName }
 end
 
 return M

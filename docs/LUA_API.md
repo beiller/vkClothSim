@@ -22,11 +22,12 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [`scene.link_mesh(skel: entity|string, mesh: entity|string)`](#scenelinkmeshskel-entitystring-mesh-entitystring)
   - [`scene.spawn(tbl: table, parent?: entity|string) -> table`](#scenespawntbl-table-parent-entitystring---table)
   - [`scene.get_entity(name: string) -> entity|nil`](#scenegetentityname-string---entitynil)
+  - [`scene.get_script(target: string|entity) -> table|nil`](#scenegetscripttarget-stringentity---tablenil)
   - [`scene.name(e: entity) -> string|nil`](#scenenamee-entity---stringnil)
   - [`scene.named() -> table`](#scenenamed---table)
   - [`scene.components(e: entity) -> table`](#scenecomponentse-entity---table)
   - [`scene.find_components(component: string, root?: entity) -> table`](#scenefindcomponentscomponent-string-root-entity---table)
-  - [`scene.attach_script(e: entity, file: string, params?: table)`](#sceneattachscripte-entity-file-string-params-table)
+  - [`scene.attach_script(e: entity, file: string, params?: table) -> table|nil`](#sceneattachscripte-entity-file-string-params-table---tablenil)
   - [`scene.destroy(e: entity)`](#scenedestroye-entity)
   - [`scene.add_child(parent: entity, child: entity, opts?: table)`](#sceneaddchildparent-entity-child-entity-opts-table)
   - [`scene.set(target: entity|string, field: string, value: number|table|string)`](#scenesettarget-entitystring-field-string-value-numbertablestring)
@@ -212,6 +213,10 @@ print(e.body)  -- the rigid-body entity
 
 look up a world name (as given to scene.entity or produced by scene.spawn); nil when no such entity exists.
 
+### `scene.get_script(target: string|entity) -> table|nil`
+
+the instance table of the script attached to the named entity (or the given entity) - the same table its hooks receive as self, so per-instance fields are readable and writable and module functions act as methods (`other:fn()`). nil when no ready script is attached. Don't hold it across destroys or re-attaches; fetch fresh each use.
+
 ### `scene.name(e: entity) -> string|nil`
 
 the world name of e (as given to scene.entity or produced by scene.spawn); nil when e has no Name component. The reverse of get_entity.
@@ -228,13 +233,13 @@ the reflected component type names on e as an array of strings (e.g. {"Transform
 
 every entity carrying `component` in root's subtree (root included) as an array of entities; when root is omitted, all top-level entities are searched - i.e. the whole world.
 
-### `scene.attach_script(e: entity, file: string, params?: table)`
+### `scene.attach_script(e: entity, file: string, params?: table) -> table|nil`
 
-attach a Lua module to e (re-attaching replaces any existing script on e). `file` is resolved against the scenes dir ("scenes/camera" or "camera.lua"); the module must return a table whose hooks (_on_ready, _animate, _physics - see Script Hooks below) are called with a per-attach instance table as self. `params` is passed to _on_ready. Top-level variables in the module are exposed as "name.LuaScript.<var>" URLs (bindable by UI widgets).
+attach a Lua module to e and activate it immediately, returning its instance table (the same table its hooks receive as self; nil when the module fails to load, error printed). Re-attaching replaces any existing script on e. `file` is resolved against the scenes dir ("scenes/camera" or "camera.lua"); the module must return a table whose hooks (_on_ready, _animate, _physics - see Script Hooks below) are called with the instance table as self. `params` is passed to _on_ready. Top-level variables in the module are exposed as "name.LuaScript.<var>" URLs (bindable by UI widgets).
 
 ```lua
 local cam = scene.entity("cam")
-scene.attach_script(cam, "scenes/camera")  -- fly camera: look + wasd/qe movement
+local fly = scene.attach_script(cam, "scenes/camera")  -- fly camera: look + wasd/qe movement
 ```
 
 ### `scene.destroy(e: entity)`

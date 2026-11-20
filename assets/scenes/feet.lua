@@ -39,7 +39,7 @@ local function footBoneNames()
     return names
 end
 
-function M.createFootRig(ch, char_prefix, boneEnt, opts)
+function M.createFootRig(ch, char_prefix, boneEnt, win, opts)
     opts = opts or defaultOpts
     return rag.createSubRagdoll(ch, char_prefix, boneEnt, footBoneNames(), "feet", opts)
 end

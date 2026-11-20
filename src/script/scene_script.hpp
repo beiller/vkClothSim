@@ -24,6 +24,7 @@ public:
     void shutdown();
 
     void activateScripts();
+    int activateOne(entt::entity e);
     void animateAll(float dt);
     void physicsAll(float dt);
     float time() const { return m_time; }

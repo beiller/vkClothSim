@@ -1,7 +1,6 @@
-local uib = require("ui")
+local uib = require "ui"
 local rag = require "ragdoll"
-local hand_rig = require("hands")
-local foot_rig = require("feet")
+local foot_rig = require "feet"
 
 
 -- script variables, bindable via "caps.LuaScript.<var>"
@@ -10,15 +9,10 @@ kToneDamp = 50.0 -- damping ratio; 1 = critical (no oscillation)
 kGripTorque = 10.0 -- N m max friction torque per rotation axis
 kBodyDamping = 0.1
 kBodyFriction = 10.0
-lHandGrasp = 0.0
-rHandGrasp = 0.0
-lHandGraspHz = 10.0
-rHandGraspHz = 10.0
 
 local joints = {} -- every SixDofJoint entity (base ragdoll + hands), retuned by applyTone
 local boneEnt = {} -- base ragdoll: boneName -> RigidBody entity (also the hand rig's attachment table)
 local bodies = {} -- every RigidBody entity (base ragdoll + hands), retuned by applyTone
-local graspJoints = {} -- per side: handBoneName -> weld entity (set from createHandRig)
 local kLimits = {}
 
 local meshMaterialsCollisionShapes = {
@@ -157,10 +151,15 @@ function _on_ready(self)
         end
     end
 
+    local win = uib.make_window("ragdoll demo", 320, 200, { 0, 1.5, 2.8 })
 
-    local handData = hand_rig.createHandRig(ch, gltfName .. "/", boneEnt)
-    graspJoints = handData.jointsByName
-    local footData = foot_rig.createFootRig(ch, gltfName .. "/", boneEnt)
+    local hand_rig_e = scene.entity("hand_rig")
+    local hand_rig = scene.attach_script(hand_rig_e, "scenes/hands", {
+        characterEntity = ch, gltfName = gltfName, boneEnt = boneEnt, 
+        win = win, kLimits = kLimits, meshMaterialsCollisionShapes = meshMaterialsCollisionShapes
+    })
+
+    local footData = foot_rig.createFootRig(ch, gltfName .. "/", boneEnt, win)
 
     -- the pelvis has no shaped parent (its joint ancestor "hip" is a graft, not a body): weld it at the hip
     if kLimits["pelvis"] then
@@ -195,24 +194,24 @@ function _on_ready(self)
         boneEnt["rShin"], footData.bodies.r["rFoot"], footData.bodies.r["rMetatarsals"]
     })
 
-    rag.excludeCollisions({
-        boneEnt["lForearmTwist"], footData.bodies.l["lHand"], footData.bodies.l["lThumb1"]
-    })
+    -- rag.excludeCollisions({
+    --     boneEnt["lForearmTwist"], footData.bodies.l["lHand"], footData.bodies.l["lThumb1"]
+    -- })
 
-    rag.excludeCollisions({
-        boneEnt["rForearmTwist"], footData.bodies.r["rHand"], footData.bodies.r["rThumb1"]
-    })
+    -- rag.excludeCollisions({
+    --     boneEnt["rForearmTwist"], footData.bodies.r["rHand"], footData.bodies.r["rThumb1"]
+    -- })
 
     -- hands and feet: every bone of a side ignores its fellow bones (fingers/toes overlap at rest)
-    rag.excludeCollisions(handData.bodies.l)
-    rag.excludeCollisions(handData.bodies.r)
+    -- rag.excludeCollisions(handData.bodies.l)
+    -- rag.excludeCollisions(handData.bodies.r)
     rag.excludeCollisions(footData.bodies.l)
     rag.excludeCollisions(footData.bodies.r)
 
     print("caps_fit: " .. n .. " capsule segments in " .. #kFits .. " bone bodies, " .. nj .. " joints (" .. nlim .. " limited)")
 
     -- the ui: one window, a text line, sliders, and the scene editor
-    local win = uib.make_window("ragdoll demo", 320, 200, { 0, 1.5, 2.8 })
+    
     local tab = uib.tab(win, "scene")
     uib.text(tab, "Rig settings")
     local onChange = "caps.LuaScript.applyTone" -- url for function to call when slider changed
@@ -221,11 +220,6 @@ function _on_ready(self)
     uib.bind_slider(tab, "kGripTorque", "caps.LuaScript.kGripTorque", 0, 10000.0, "%.2f", onChange)
     uib.bind_slider(tab, "kBodyDamping", "caps.LuaScript.kBodyDamping", 0, 100.0, "%.2f", onChange)
     uib.bind_slider(tab, "kBodyFriction", "caps.LuaScript.kBodyFriction", 0, 100.0, "%.2f", onChange)
-    local onChangeGrasp = "caps.LuaScript.applyGrasp"
-    uib.bind_slider(tab, "lHandGrasp", "caps.LuaScript.lHandGrasp", -1.0, 1.0, "%.2f", onChangeGrasp)
-    uib.bind_slider(tab, "rHandGrasp", "caps.LuaScript.rHandGrasp", -1.0, 1.0, "%.2f", onChangeGrasp)
-    uib.bind_slider(tab, "lHandGraspHz", "caps.LuaScript.lHandGraspHz", 0.5, 30.0, "%.1f", onChangeGrasp)
-    uib.bind_slider(tab, "rHandGraspHz", "caps.LuaScript.rHandGraspHz", 0.5, 30.0, "%.1f", onChangeGrasp)
     uib.editor(uib.tab(win, "editor"))
     self.metricsText = uib.text(uib.make_window("metrics", 160, 180, { 0.45, 1.72, 2.8 }), "")
 
@@ -255,28 +249,6 @@ function applyTone(self)
         rb.damping = kBodyDamping
         rb.friction = kBodyFriction
     end
-end
-
-local function setHand(side, g, hz)
-    local s = side == "l" and 1 or -1
-    for name, w in pairs(graspJoints[side] or {}) do
-        local t = hand_rig.kGrasp[name:sub(2)]
-        if t then
-            local a = s * t[2] * g
-            local lim = kLimits[name] and kLimits[name][t[1][3] > 0 and "z" or "y"]
-            if lim then -- clamp to the joint limits: Jolt mis-clamps targets far out of range
-                a = math.max(-math.deg(lim[2]), math.min(-math.deg(lim[1]), a))
-            end
-            local j = scene.component(w, "SixDofJoint")
-            j.motorTargetQuat = math.qaxis(t[1], math.rad(a))
-            j.motorFreq = { hz, hz, hz }
-        end
-    end
-end
-
-function applyGrasp(self)
-    setHand("l", lHandGrasp, lHandGraspHz)
-    setHand("r", rHandGrasp, rHandGraspHz)
 end
 
 function _physics(self, dt)

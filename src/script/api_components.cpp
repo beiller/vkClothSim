@@ -859,13 +859,34 @@ static int lKeyDown(lua_State* L) {
     return 1;
 }
 
-/// scene.attach_script(e: entity, file: string, params?: table) | attach a Lua module to e (re-attaching replaces any
-/// existing script on e). `file` is resolved against the scenes dir ("scenes/camera" or "camera.lua"); the module must
-/// return a table whose hooks (_on_ready, _animate, _physics - see Script Hooks below) are called with a per-attach
-/// instance table as self. `params` is passed to _on_ready. Top-level variables in the module are exposed as
-/// "name.LuaScript.<var>" URLs (bindable by UI widgets).
+/// scene.get_script(target: string|entity) -> table|nil | the instance table of the script attached to the named entity
+/// (or the given entity) - the same table its hooks receive as self, so per-instance fields are readable and writable and
+/// module functions act as methods (`other:fn()`). nil when no ready script is attached. Don't hold it across destroys or
+/// re-attaches; fetch fresh each use.
+static int lGetScript(lua_State* L) {
+    auto* self = SceneScript::sSelf(L);
+    const entt::entity e = entityOrName(self->w(), L, 1);
+    if (e == entt::null) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const auto* ls = self->w().reg.try_get<LuaScript>(e);
+    if (!ls || ls->inst < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ls->inst);
+    return 1;
+}
+
+/// scene.attach_script(e: entity, file: string, params?: table) -> table|nil | attach a Lua module to e and activate it
+/// immediately, returning its instance table (the same table its hooks receive as self; nil when the module fails to
+/// load, error printed). Re-attaching replaces any existing script on e. `file` is resolved against the scenes dir
+/// ("scenes/camera" or "camera.lua"); the module must return a table whose hooks (_on_ready, _animate, _physics - see
+/// Script Hooks below) are called with the instance table as self. `params` is passed to _on_ready. Top-level variables
+/// in the module are exposed as "name.LuaScript.<var>" URLs (bindable by UI widgets).
 ///     local cam = scene.entity("cam")
-///     scene.attach_script(cam, "scenes/camera")  -- fly camera: look + wasd/qe movement
+///     local fly = scene.attach_script(cam, "scenes/camera")  -- fly camera: look + wasd/qe movement
 static int lAttachScript(lua_State* L) {
     auto* self = SceneScript::sSelf(L);
     Engine& w = self->w();
@@ -882,7 +903,13 @@ static int lAttachScript(lua_State* L) {
     ls.file = file;
     if (lua_istable(L, 3))
         ls.params = self->newRef(L, 3);
-    return 0;
+    const int inst = self->activateOne(e);
+    if (inst < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, inst);
+    return 1;
 }
 
 /// scene.destroy(e: entity) | destroy e and its whole subtree (all components, world names released). Errors when e is
@@ -955,6 +982,7 @@ void luaRegisterComponents(lua_State* L, SceneScript* host) {
     reg(L, host, "link_mesh", lLinkMesh);
     reg(L, host, "spawn", lSpawn);
     reg(L, host, "get_entity", lFind);
+    reg(L, host, "get_script", lGetScript);
     reg(L, host, "name", lName);
     reg(L, host, "named", lNamed);
     reg(L, host, "components", lComponents);
