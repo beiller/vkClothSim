@@ -6,6 +6,71 @@ local kbH
 local animState
 local rbH -- capsule entity (spawned by char_ctrl.setup)
 
+-- run/walk crossfade: both players play while either has weight; strengths cross over FADE seconds so
+-- the blended pose (relative weights, sum ~1) moves continuously between clips - ANIMATION_BLEND_PLAN.md
+local FADE = 0.25
+local RUN_P, WALK_P = "alien-grey-rigged/run.AnimationPlayer", "alien-grey-rigged/walk.AnimationPlayer"
+local RUN_D, WALK_D = "alien-grey-rigged/run_clip.AnimationClip.duration",
+    "alien-grey-rigged/walk_clip.AnimationClip.duration"
+local runW, walkW = 0, 0 -- current strengths (source of truth)
+local fromRun, fromWalk, tgtRun, tgtWalk = 0, 0, 0, 0
+local fadeT, fading = 0, false
+local speedSm = 0 -- low-passed speed for state selection: per-tick r.speed oscillates (joint catch-up at
+                  -- 240Hz), and unfiltered it flaps the idle/walk/run state every tick
+
+-- map `fromP`'s gait phase onto `toP`'s clock (crude cycle mapping - the clips have different keyframe
+-- counts, so this aligns stride fraction, not pose). Without it a clip resuming from a stopped clock
+-- would mix at a random relative phase and the crossfade reads as two unrelated poses.
+local function phaseAlign(fromP, toP, fromDurUrl, toDurUrl)
+    local fd, td = scene.get(fromDurUrl), scene.get(toDurUrl)
+    if fd > 0 and td > 0 then
+        scene.set(toP .. ".time", (scene.get(fromP .. ".time") / fd) % 1 * td)
+    end
+end
+
+local function setAnim(state)
+    if state == animState then
+        return
+    end
+    animState = state
+    if state == "run" then
+        tgtRun, tgtWalk = 1, 0
+    elseif state == "walk" then
+        tgtRun, tgtWalk = 0, 1
+    else -- idle: fade both out to hold the last pose
+        tgtRun, tgtWalk = 0, 0
+    end
+    fromRun, fromWalk = runW, walkW -- resume from wherever a previous fade left off
+    fadeT = 0
+    fading = (fromRun ~= tgtRun) or (fromWalk ~= tgtWalk)
+    -- phase-match a clip resuming from a stopped clock to the other clip's gait phase
+    if state == "run" and runW <= 0 then
+        phaseAlign(WALK_P, RUN_P, WALK_D, RUN_D)
+    elseif state == "walk" and walkW <= 0 then
+        phaseAlign(RUN_P, WALK_P, RUN_D, WALK_D)
+    end
+    scene.set(RUN_P .. ".playing", (tgtRun + runW) > 0 and 1 or 0)
+    scene.set(WALK_P .. ".playing", (tgtWalk + walkW) > 0 and 1 or 0)
+end
+
+local function tickFade(dt)
+    if not fading then
+        return
+    end
+    fadeT = fadeT + dt
+    local f = math.min(fadeT / FADE, 1.0)
+    runW = fromRun + (tgtRun - fromRun) * f
+    walkW = fromWalk + (tgtWalk - fromWalk) * f
+    scene.set(RUN_P .. ".strength", runW)
+    scene.set(WALK_P .. ".strength", walkW)
+    if f >= 1.0 then
+        fading = false
+        -- stop the player that faded out so its clock no longer advances
+        scene.set(RUN_P .. ".playing", tgtRun > 0 and 1 or 0)
+        scene.set(WALK_P .. ".playing", tgtWalk > 0 and 1 or 0)
+    end
+end
+
 function _on_ready(self)
     local ents = cc.setup({ alien = scene.get_entity("alien") }) -- spawns the character rig itself
     rbH = ents.rb
@@ -15,23 +80,6 @@ function _on_ready(self)
     local ground = scene.get_entity("ground")
     scene.replace(ground, "Renderable", { geom = g })
     scene.replace(ground, "MaterialRef", { material = scene.get_entity("mat_ground") })
-end
-
-local function setAnim(state)
-    if state == animState then
-        return
-    end
-    animState = state
-    if state == "run" then
-        scene.set("alien-grey-rigged/run.AnimationPlayer.playing", 1)
-        scene.set("alien-grey-rigged/walk.AnimationPlayer.playing", 0)
-    elseif state == "walk" then
-        scene.set("alien-grey-rigged/walk.AnimationPlayer.playing", 1)
-        scene.set("alien-grey-rigged/run.AnimationPlayer.playing", 0)
-    else -- idle: hold the last pose
-        scene.set("alien-grey-rigged/walk.AnimationPlayer.playing", 0)
-        scene.set("alien-grey-rigged/run.AnimationPlayer.playing", 0)
-    end
 end
 
 function _physics(self, dt)
@@ -45,7 +93,10 @@ function _physics(self, dt)
     if input.key_down(kbH, D) then dx = dx + 1 end
     local r = cc.update(dt, { dx, dz }, input.key_down(kbH, SPACE), input.key_down(kbH, SHIFT))
 
-    setAnim(r.speed < 0.3 and "idle" or (r.speed > 3.0 and "run" or "walk"))
+    -- low-pass the speed (tau ~0.1s) so a single noisy tick can't flap the anim state
+    speedSm = speedSm + (r.speed - speedSm) * math.min(1, dt / 0.1)
+    setAnim(speedSm < 0.3 and "idle" or (speedSm > 3.0 and "run" or "walk"))
+    tickFade(dt)
 end
 
 
