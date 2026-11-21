@@ -159,7 +159,7 @@ private:
     static void hdrBarrier(VkCommandBuffer cmd, VkApp& app);
     void initSss(VkApp& app);
     void releaseSss();
-    void writeTonemapUbo(float ox, float oy, float sx, float sy);
+    void writeTonemapUbo(float ox, float oy, float sx, float sy, float lsb);
     void drawTonemapRegion(VkCommandBuffer cmd, VkApp& app, uint32_t fb, const VkRect2D& region, bool clear);
     void ensureNoClearFbs(VkApp& app);
     static Mat4 eyeVP(const View& v);

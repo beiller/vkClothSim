@@ -389,8 +389,14 @@ int main(int argc, char** argv) {
                         cameraView(engine.reg, cam, (float)app.extent().width / (float)app.extent().height);
                     double mx, my;
                     glfwGetCursorPos(app.glfwWindow(), &mx, &my);
-                    const float x = 2.0f * (float)mx / (float)app.extent().width - 1.0f;
-                    const float y = 1.0f - 2.0f * (float)my / (float)app.extent().height;
+                    // The cursor is in window (logical) coordinates while app.extent() is the framebuffer
+                    // (physical pixels): on Retina they differ by the content scale, which would compress
+                    // the NDC range to a quarter of the frustum. Normalize against the window size instead —
+                    // same aspect as the framebuffer, same coordinate space as the cursor.
+                    int ww = 0, wh = 0;
+                    glfwGetWindowSize(app.glfwWindow(), &ww, &wh);
+                    const float x = 2.0f * (float)mx / (float)std::max(ww, 1) - 1.0f;
+                    const float y = 1.0f - 2.0f * (float)my / (float)std::max(wh, 1);
                     const V3 cd = {(x * 0.5f + 0.5f) * (cv.tanR - cv.tanL) + cv.tanL,
                                    (y * 0.5f + 0.5f) * (cv.tanU - cv.tanD) + cv.tanD, -1.0f};
                     const V3 o = cv.pos;
@@ -480,6 +486,12 @@ int main(int argc, char** argv) {
             pace.add(msBetween(nowFrame, tXrEnd) - wait);
     }
 
+    // Quiesce the GPU before any resource destruction below: uiShutdown destroys ImGui's pipelines and
+    // fonts while the last frame's commands may still be in flight; freeing them under an active queue
+    // puts MoltenVK into an error state and the next vkWaitForFences (graphics.shutdown's drain) aborts
+    // with FEATURE_UNAVAILABLE. No-op in --sync mode (the queue is already drained at every present).
+    if (engine.hasDevice)
+        app.drain();
     if (engine.hasWindow)
         uiShutdown();
     if (engine.hasDevice)

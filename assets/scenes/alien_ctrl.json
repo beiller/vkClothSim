@@ -3,7 +3,7 @@
 
     "objects": [
         { "name": "env_tex", "components": { "Texture": { "path": "fly-studio-03_1K.exr" } } },
-        { "name": "env", "components": { "Environment": { "intensity": 0.025, "tex": "env_tex" } } },
+        { "name": "env", "components": { "Environment": { "intensity": 0.15, "tex": "env_tex" } } },
         {
             "name": "cam",
             "components": {
@@ -15,7 +15,7 @@
             "name": "key light",
             "components": {
                 "Transform": { "pos": [-2, 3, 4.0] },
-                "PointLight": { "color": [1, 0.95, 0.9], "intensity": 1.0, "radius": 0.25 }
+                "PointLight": { "color": [1, 0.95, 0.9], "intensity": 10.0, "radius": 0.25 }
             }
         },
         { "name": "alien", "gltf": "alien-grey-rigged.glb" },

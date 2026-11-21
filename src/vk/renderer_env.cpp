@@ -108,6 +108,10 @@ void Renderer::buildEnvironment(VkApp& app, entt::entity envEnt, entt::entity eq
     wd.image(m_pcIrr.set, 1, irrImg, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
     wd.update(m_dev);
 
+    // One-shot work outside the frame window: submit it immediately. In async mode a plain submit() would
+    // batch this into m_batch, which the next beginFrame() clears before it is ever submitted — scene load
+    // happens before (or between) frames, so the environment would silently stay unbuilt and IBL dead.
+    app.setBlocking(true);
     VkCommandBuffer cmd = app.beginCommands();
 
     vkImgBarrier(cmd, m_envEqImg, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, 0,
@@ -148,7 +152,8 @@ void Renderer::buildEnvironment(VkApp& app, entt::entity envEnt, entt::entity eq
     vkImgBarrier(cmd, m_envIrr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                  VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, 1,
                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 6);
-    app.submit(cmd);
+    app.submit(cmd); // blocking: completes before we return, so the cube is ready for the first frame
+    app.setBlocking(false);
 
     m_envReady = true;
     m_envEqEnt = eqTex;

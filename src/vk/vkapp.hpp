@@ -144,6 +144,7 @@ private:
     VkFormat m_hdrFmt = VK_FORMAT_R16G16B16A16_SFLOAT;
     VkFormat m_scfmt = VK_FORMAT_UNDEFINED;
     VkSurfaceFormatKHR m_fmt{};
+    std::vector<VkSurfaceFormatKHR> m_fmtCands; // preference ladder, walked on first swapchain creation only
     VkExtent2D m_extent{};
     VkExtent2D m_pendingExtent{};
     VkExtent2D m_renderExtent{};

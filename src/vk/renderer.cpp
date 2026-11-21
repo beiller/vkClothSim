@@ -1032,8 +1032,19 @@ void Renderer::hdrBarrier(VkCommandBuffer cmd, VkApp& app) {
                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 }
 
-void Renderer::writeTonemapUbo(float ox, float oy, float sx, float sy) {
-    const float tm[8] = {ox, oy, sx, sy, m_exposure, 0.0f, 0.0f, 0.0f};
+// ±half-LSB dither step matching the swapchain's quantization (consumed by tonemap.frag).
+// Float targets quantize far below visible banding, so no dither there.
+static float tonemapLsb(VkFormat f) {
+    switch (f) {
+    case VK_FORMAT_B8G8R8A8_UNORM:
+    case VK_FORMAT_R8G8B8A8_UNORM: return 1.0f / 255.0f;
+    case VK_FORMAT_A2B10G10R10_UNORM_PACK32: return 1.0f / 1023.0f;
+    default: return 0.0f;
+    }
+}
+
+void Renderer::writeTonemapUbo(float ox, float oy, float sx, float sy, float lsb) {
+    const float tm[8] = {ox, oy, sx, sy, m_exposure, lsb, 0.0f, 0.0f};
     vkWriteBuffer(m_dev, m_tmMem[m_slot], tm, 32);
 }
 
@@ -1159,7 +1170,7 @@ void Renderer::draw(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::registry
     hdrBarrier(cmd, app);
     if (app.hdrView() != m_tmSrcView)
         rebuildTonemapSet(app);
-    writeTonemapUbo(0.0f, 0.0f, (float)ext.width, (float)ext.height);
+    writeTonemapUbo(0.0f, 0.0f, (float)ext.width, (float)ext.height, tonemapLsb(app.swapchainFormat()));
     drawTonemapRegion(cmd, app, fb, {0, 0, ext.width, ext.height}, true);
     if (profOn) {
         prof.ui += tSh;
@@ -1421,7 +1432,8 @@ void Renderer::drawVr(VkCommandBuffer cmd, VkApp& app, uint32_t fb, entt::regist
             rebuildTonemapSet(app);
         const VkRect2D r = eyeRegion(v, ext, eye);
         const bool first = eye == 0;
-        writeTonemapUbo((float)r.offset.x, (float)r.offset.y, (float)r.extent.width, (float)r.extent.height);
+        writeTonemapUbo((float)r.offset.x, (float)r.offset.y, (float)r.extent.width, (float)r.extent.height,
+                        tonemapLsb(app.swapchainFormat()));
         drawTonemapRegion(cmd, app, fb, r, first);
         vkCmdEndRenderPass(cmd);
         if (xrImg && eye < nXr)

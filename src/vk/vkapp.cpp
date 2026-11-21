@@ -260,12 +260,37 @@ bool VkApp::initDevice(VkDevice dev) {
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_pdev, m_surface, &nf, nullptr);
     std::vector<VkSurfaceFormatKHR> fmts(nf);
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_pdev, m_surface, &nf, fmts.data());
-    // format list order is driver-specific (nvidia UNORM first, radv SRGB first); the tonemap encodes sRGB itself, an sRGB swapchain would double-encode
-    m_fmt = fmts[0];
-    for (const auto& f : fmts)
-        if (f.format == VK_FORMAT_B8G8R8A8_UNORM)
-            m_fmt = f;
-    m_scfmt = m_fmt.format;
+    // The tonemap encodes sRGB itself, so only UNORM + SRGB_NONLINEAR formats are safe (an sRGB swapchain
+    // would double-encode). Preference: 10-bit first (kills 8-bit banding where the display supports it),
+    // then 8-bit. The surface-format list is the capability query — a driver/display that can't do 10-bit
+    // (most Linux setups) simply doesn't list it, so this falls back gracefully with no platform checks.
+    // Single exception: the macOS window server composites 10-bit surfaces through a different color
+    // pipeline and presents them dark — the swapchain buffer contents are identical to the 8-bit case, so
+    // the loss is in the compositor and invisible to every Vulkan query (surface list, create, readback).
+    // A platform macro is the honest encoding of that; VKSIM_SWAPCHAIN_10BIT=1 overrides it.
+    m_fmtCands.clear();
+    const VkFormat kPrefAll[2] = {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_B8G8R8A8_UNORM};
+    const VkFormat kPref8[1] = {VK_FORMAT_B8G8R8A8_UNORM};
+    const VkFormat* kPref = kPrefAll;
+    size_t nPref = 2;
+#ifdef __APPLE__
+    if (std::getenv("VKSIM_SWAPCHAIN_10BIT") == nullptr) {
+        kPref = kPref8;
+        nPref = 1;
+    }
+#endif
+    for (size_t i = 0; i < nPref; ++i)
+        for (const auto& f : fmts)
+            if (f.format == kPref[i] && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                m_fmtCands.push_back(f);
+                break;
+            }
+    if (m_fmtCands.empty()) {
+        // UNDEFINED means "any format is acceptable"; otherwise take the first offered.
+        m_fmt = fmts[0].format == VK_FORMAT_UNDEFINED ? VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_UNORM,
+                                                                            VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}
+                                                       : fmts[0];
+    }
 
     VkAttachmentDescription satt[5]{};
     satt[0].format = m_hdrFmt;
@@ -369,17 +394,6 @@ bool VkApp::initDevice(VkDevice dev) {
     nrpc.pSubpasses = &nss;
     VK(vkCreateRenderPass(m_dev, &nrpc, nullptr, &m_rpSceneNoClear));
 
-    VkAttachmentDescription batt[1]{};
-    batt[0].format = m_fmt.format;
-    batt[0].samples = VK_SAMPLE_COUNT_1_BIT;
-    batt[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    batt[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    batt[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    batt[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    batt[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    batt[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    m_rp = makeSimpleRenderPass(m_dev, batt[0]);
-
     VkSamplerCreateInfo sci{};
     sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     sci.magFilter = VK_FILTER_LINEAR;
@@ -400,6 +414,18 @@ bool VkApp::initDevice(VkDevice dev) {
     VK(vkCreateSampler(m_dev, &sci, nullptr, &m_hdrSampler));
 
     recreateSwapchain();
+
+    // The present render pass must match the swapchain format that survived the preference ladder above.
+    VkAttachmentDescription batt[1]{};
+    batt[0].format = m_fmt.format;
+    batt[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    batt[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    batt[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    batt[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    batt[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    batt[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    batt[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    m_rp = makeSimpleRenderPass(m_dev, batt[0]);
 
     VkCommandPoolCreateInfo cpc{};
     cpc.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -617,8 +643,17 @@ void VkApp::present(uint32_t idx, bool wait) {
         VK(vkQueueWaitIdle(m_queue));
 }
 
+static const char* scfmtName(VkFormat f) {
+    switch (f) {
+    case VK_FORMAT_A2B10G10R10_UNORM_PACK32: return "A2B10G10R10_UNORM_PACK32 (10-bit)";
+    case VK_FORMAT_B8G8R8A8_UNORM: return "B8G8R8A8_UNORM (8-bit)";
+    default: return "other";
+    }
+}
+
 void VkApp::recreateSwapchain() {
     VK(vkDeviceWaitIdle(m_dev));
+    const bool first = m_sc == VK_NULL_HANDLE;
     destroySwapchainResources();
 
     VkSurfaceCapabilitiesKHR caps;
@@ -670,7 +705,26 @@ void VkApp::recreateSwapchain() {
     scc.presentMode = presentMode;
     m_presentMode = presentMode;
     scc.clipped = VK_TRUE;
-    VK(vkCreateSwapchainKHR(m_dev, &scc, nullptr, &m_sc));
+    if (first && !m_fmtCands.empty()) {
+        // Walk the preference ladder: a listed format can still be rejected at create time for this
+        // extent/usage. Resizes keep the format that already worked (scc defaults above).
+        bool made = false;
+        for (const auto& f : m_fmtCands) {
+            scc.imageFormat = f.format;
+            scc.imageColorSpace = f.colorSpace;
+            if (vkCreateSwapchainKHR(m_dev, &scc, nullptr, &m_sc) == VK_SUCCESS) {
+                m_fmt = f;
+                made = true;
+                break;
+            }
+        }
+        if (!made)
+            VK(vkCreateSwapchainKHR(m_dev, &scc, nullptr, &m_sc)); // re-raise the last error loudly
+    } else
+        VK(vkCreateSwapchainKHR(m_dev, &scc, nullptr, &m_sc));
+    m_scfmt = m_fmt.format;
+    if (first)
+        std::printf("3dsim: swapchain %s\n", scfmtName(m_scfmt));
     vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, nullptr);
     m_images.resize(icnt);
     vkGetSwapchainImagesKHR(m_dev, m_sc, &icnt, m_images.data());
