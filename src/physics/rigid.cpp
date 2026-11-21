@@ -69,11 +69,13 @@ void RigidScene::init() {
     const unsigned hw = std::max(std::thread::hardware_concurrency(), 1u);
     m_job = new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, (int)std::min(hw, 8u));
 
+    // Diagonal matrix: a layer only collides with its own layer (1x1, 2x2, ...). No cross-layer
+    // collision - e.g. UI windows on layer 2 never block gameplay bodies on layer 1. kLayerOff
+    // collides with nothing at all (per-body on/off switch). Queries are unaffected: they filter by
+    // ObjectLayerFilter only and never consult this matrix.
     m_pair = new JPH::ObjectLayerPairFilterTable(kNumLayers);
-    for (int i = 0; i < kNumLayers; ++i)
-        for (int j = 0; j < kNumLayers; ++j)
-            if (i != kLayerOff && j != kLayerOff)
-                m_pair->EnableCollision(i, j);
+    for (int i = 0; i < kLayerOff; ++i)
+        m_pair->EnableCollision(i, i);
     m_bpl = new JPH::BroadPhaseLayerInterfaceTable(kNumLayers, 2);
     for (int i = 0; i < kNumLayers; ++i)
         m_bpl->MapObjectToBroadPhaseLayer(i, JPH::BroadPhaseLayer(i % 2));
