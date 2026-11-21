@@ -1,9 +1,12 @@
 -- gltf table check: graphics.gltf(path) -> table (no entities), scene.spawn materialization,
--- physics.convex_decompose on a raw Geometry table vs an entity.
+-- physics.convex_decompose on a raw Geometry table vs an entity, and a RigidBody built from the
+-- decomposed hulls settling to rest (folded in from decomp_check).
 
 local MAX_HULLS = 6
 local MAX_VERTS = 12
 local THRESHOLD = 0.05
+
+local tick = 0
 
 function _on_ready(self)
     -- 1. parse as a table; zero world entities should be created by this call
@@ -78,21 +81,61 @@ function _on_ready(self)
             tostring(rend and rend.geom))
 
     -- 4. convex_decompose on the spawned entity; must match the table result
-    local ok4, hullsEnt = pcall(physics.convex_decompose, e, MAX_HULLS, MAX_VERTS, THRESHOLD)
-    t.check("decompose(entity)", ok4 and #hullsEnt > 0, tostring(hullsEnt))
-    if ok4 then
-        local same = #hullsEnt == #hullsTbl
-        for i = 1, #hullsEnt do
-            if #hullsEnt[i] ~= #hullsTbl[i] then
-                same = false
-            end
-        end
-        t.check("entity hulls match table", same, string.format("ent=%d tbl=%d", #hullsEnt, #hullsTbl))
+    local ok4, hulls = pcall(physics.convex_decompose, e, MAX_HULLS, MAX_VERTS, THRESHOLD)
+    t.check("decompose(entity)", ok4 and #hulls > 0, tostring(hulls))
+    if not ok4 or #hulls == 0 then
+        t.done()
+        return
     end
+    local same = #hulls == #hullsTbl
+    for i = 1, #hulls do
+        if #hulls[i] ~= #hullsTbl[i] then
+            same = false
+        end
+    end
+    t.check("entity hulls match table", same, string.format("ent=%d tbl=%d", #hulls, #hullsTbl))
 
     -- 5. error case: missing file must raise
     local okE = pcall(graphics.gltf, "does_not_exist.glb")
     t.check("missing file raises", not okE)
-    t.done()
+
+    -- 6. hulls -> ConvexHullShape colliders -> RigidBody: dropped from y=30, must settle on the ground
+    local ground = scene.entity("ground")
+    scene.replace(ground, "Transform", { pos = { 0, -1, 0 } })
+    local gShape = scene.entity()
+    scene.replace(gShape, "BoxShape", { half = { 55, 1, 55 } })
+    local gCol = scene.entity()
+    scene.replace(gCol, "Collider", { shape = gShape })
+    scene.replace(ground, "KinematicBody", { colliders = { gCol } })
+
+    local body = scene.entity("decompBody")
+    scene.replace(body, "Transform", { pos = { 0, 30, 0 } })
+    local cols = {}
+    for _, h in ipairs(hulls) do
+        local s = scene.entity()
+        scene.replace(s, "ConvexHullShape", { points = h })
+        local c = scene.entity()
+        scene.replace(c, "Collider", { shape = s })
+        table.insert(cols, c)
+    end
+    scene.replace(body, "RigidBody", { colliders = cols })
+end
+
+local restY = nil
+function _physics(self, dt)
+    tick = tick + 1
+    if tick % 30 == 0 then
+        local y = scene.get_pose("decompBody").pos[2]
+        print(string.format("DECOMP t=%d bodyY=%.3f", tick, y))
+        if tick == 870 then
+            restY = y -- reference sample; the check at 900 compares against this (30 ticks earlier)
+        end
+    end
+    if tick == 900 then -- free fall from y=30 lands ~tick 594; by 870 the body is at rest
+        local y = scene.get_pose("decompBody").pos[2]
+        t.check("hull body settled (stable, above ground)", restY and y > 0 and math.abs(y - restY) < 0.05,
+                string.format("y=%.3f restY=%s", y, tostring(restY)))
+        t.done()
+    end
 end
 

@@ -24,7 +24,8 @@ function make_window(title, w, h, pos)
     local matEnt = scene.entity()
     scene.replace(matEnt, "Material", { tex = canvas, alphaMode = 2 })
     scene.replace(canvas, "MaterialRef", { material = matEnt })
-    scene.replace(canvas, "KinematicBody", { colliders = { col } })
+    -- UI windows live on layer 2: only the UI pointer raycasts that layer
+    scene.replace(canvas, "KinematicBody", { colliders = { col }, layer = 2 })
     local win = scene.entity()
     scene.emplace(win, "UIWindow", { title = title, canvas = canvas, w = w, h = h, flags = WIN_FLAGS, order = ui.seq() })
     return win

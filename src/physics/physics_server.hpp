@@ -13,7 +13,7 @@ public:
     // Per-frame render-rate pose: lerp(prevTick, currTick, alpha) into dynamic bodies' Transforms.
     void interpolatePoses(entt::registry& reg, float alpha) { m_scene.interpolateInto(reg, alpha); }
     RayHit raycast(const V3& origin, const V3& dir, float maxDist,
-                   const std::vector<entt::entity>& excludes = {}) const;
+                   const std::vector<entt::entity>& excludes = {}, int layer = -1) const;
     Transform pose(entt::entity e) const { return m_scene.pose(e); }
     entt::entity entityFor(JPH::BodyID id) const { return m_scene.entityFor(id); }
     void reset() { m_scene.reset(); }

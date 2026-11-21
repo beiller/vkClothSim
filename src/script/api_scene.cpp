@@ -408,10 +408,11 @@ int lSoftUpdatePins(lua_State* L) {
     return 0;
 }
 
-/// physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table|nil | rigid-body raycast against
-/// the Jolt world. Returns {hit = true, pos = {x,y,z}, dist = number, entity = entity} (entity omitted when the hit
-/// body has no owning entity), or nil when nothing is hit within maxDist. `excludes` is an array of entities whose
-/// colliders are skipped.
+/// physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table, layer?: int) -> table|nil | rigid-body
+/// raycast against the Jolt world. Returns {hit = true, pos = {x,y,z}, dist = number, entity = entity} (entity
+/// omitted when the hit body has no owning entity), or nil when nothing is hit within maxDist. `excludes` is an
+/// array of entities whose colliders are skipped; `layer` restricts the cast to bodies on that collision layer
+/// (default: all layers, including kLayerOff = 7).
 ///     local h = physics.raycast({0, 5, 0}, {0, -1, 0}, 10)
 ///     if h then print("floor at", h.pos[2]) end
 int lRaycast(lua_State* L) {
@@ -430,7 +431,10 @@ int lRaycast(lua_State* L) {
             excludes.push_back(luaReadEnt(L, -1));
             lua_pop(L, 1);
         }
-    const RayHit hit = w.physics.raycast(origin, dir, maxDist, excludes);
+    int layer = -1;
+    if (lua_isnumber(L, 5))
+        layer = (int)luaL_checkinteger(L, 5);
+    const RayHit hit = w.physics.raycast(origin, dir, maxDist, excludes, layer);
     if (!hit.hit) {
         lua_pushnil(L);
         return 1;

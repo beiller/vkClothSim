@@ -96,6 +96,11 @@ struct Collider {
     entt::entity shape = entt::null;
 };
 
+// collision object layers (Jolt): 0..kNumLayers-2 collide with each other; kLayerOff collides with
+// nothing (a per-body on/off switch). Queries (physics.raycast) can still hit any layer when unfiltered.
+constexpr int kNumLayers = 8;
+constexpr int kLayerOff = kNumLayers - 1;
+
 struct RigidBody {
     float friction = 0.7f;
     float restitution = 0.05f;
@@ -103,12 +108,14 @@ struct RigidBody {
     float mass = 0.0f;
     bool forceSleep = false;
     std::vector<entt::entity> colliders;
+    /// collision object layer, 0..7 (default 1; 2 = UI window; 7 = kLayerOff: collides with nothing)
+    int layer = 1;
     V3 force{};
     V3 impulse{};
 
     bool operator==(const RigidBody& o) const {
         return friction == o.friction && restitution == o.restitution && damping == o.damping && mass == o.mass &&
-               colliders == o.colliders;
+               colliders == o.colliders && layer == o.layer;
     }
 };
 
@@ -234,6 +241,8 @@ struct ControllerInput {
 
 struct KinematicBody {
     std::vector<entt::entity> colliders;
+    /// collision object layer, 0..7 (default 1; 2 = UI window; 7 = kLayerOff: collides with nothing)
+    int layer = 1;
 };
 
 struct MouseInput {

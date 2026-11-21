@@ -355,12 +355,8 @@ int main(int argc, char** argv) {
                 return V2{320.0f, 200.0f};
             };
             auto tryRay = [&](entt::entity canvas, const V3& o, const V3& d, UiFeed& f) {
-                std::vector<entt::entity> excl;
-                engine.reg.view<Name>().each([&](entt::entity e, const Name& n) {
-                    if (std::strstr(n.id.c_str(), "hand") || std::strstr(n.id.c_str(), "controller"))
-                        excl.push_back(e);
-                });
-                const RayHit h = engine.physics.raycast(o, d, 30.0f, excl);
+                // UI windows live on layer 2: the pointer only ever hits them
+                const RayHit h = engine.physics.raycast(o, d, 30.0f, {}, 2);
                 if (!h.hit || engine.physics.entityFor(h.body) != canvas)
                     return false;
                 V2 uv;

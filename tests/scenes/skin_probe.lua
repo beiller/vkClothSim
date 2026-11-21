@@ -25,11 +25,17 @@ function _on_ready()
         weights = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 },
     })
     print("skin probe: bad-size rejected = " .. tostring(not bad))
+    -- skeleton: boneNames/joints count mismatch must be rejected (folded in from lua_skin)
+    local badSkel = pcall(scene.replace, scene.entity(), "Skeleton", {
+        boneNames = { "a", "b" },
+        joints = { scene.entity() }, -- wrong count: must be rejected
+    })
     t.eq("skeleton boneNames readback", nb, 3)
     t.check("geometry replace ok", ok, err)
     t.eq("joints readback", nj, 16)
     t.eq("weights readback", nw, 16)
     t.check("bad-size rejected", not bad)
+    t.check("skeleton mismatch rejected", not badSkel)
     t.done()
 end
 

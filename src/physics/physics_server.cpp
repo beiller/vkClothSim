@@ -31,6 +31,6 @@ void PhysicsServer::update(entt::registry& reg, float dt) {
 }
 
 RayHit PhysicsServer::raycast(const V3& origin, const V3& dir, float maxDist,
-                             const std::vector<entt::entity>& excludes) const {
-    return m_scene.raycast(origin, dir, maxDist, excludes);
+                              const std::vector<entt::entity>& excludes, int layer) const {
+    return m_scene.raycast(origin, dir, maxDist, excludes, layer);
 }

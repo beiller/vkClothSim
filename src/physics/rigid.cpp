@@ -48,6 +48,17 @@ JPH::ShapeRefC applyBodyScale(JPH::ShapeRefC shape, const V3& s) {
     return r.Get() ? r.Get() : shape;
 }
 
+int clampLayer(int l) {
+    return l < 0 ? 0 : (l >= kNumLayers ? kNumLayers - 1 : l);
+}
+
+// query-side object layer filter: -1 = all layers, else only that layer
+struct LayerFilter final : public JPH::ObjectLayerFilter {
+    int l = -1;
+    explicit LayerFilter(int layer) : l(layer) {}
+    bool ShouldCollide(JPH::ObjectLayer o) const override { return l < 0 || (int)o == l; }
+};
+
 }
 
 void RigidScene::init() {
@@ -58,15 +69,15 @@ void RigidScene::init() {
     const unsigned hw = std::max(std::thread::hardware_concurrency(), 1u);
     m_job = new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, (int)std::min(hw, 8u));
 
-    m_pair = new JPH::ObjectLayerPairFilterTable(2);
-    m_pair->EnableCollision(0, 0);
-    m_pair->EnableCollision(0, 1);
-    m_pair->EnableCollision(1, 0);
-    m_pair->EnableCollision(1, 1);
-    m_bpl = new JPH::BroadPhaseLayerInterfaceTable(2, 2);
-    m_bpl->MapObjectToBroadPhaseLayer(0, JPH::BroadPhaseLayer(0));
-    m_bpl->MapObjectToBroadPhaseLayer(1, JPH::BroadPhaseLayer(1));
-    m_ovb = new JPH::ObjectVsBroadPhaseLayerFilterTable(*m_bpl, 2, *m_pair, 2);
+    m_pair = new JPH::ObjectLayerPairFilterTable(kNumLayers);
+    for (int i = 0; i < kNumLayers; ++i)
+        for (int j = 0; j < kNumLayers; ++j)
+            if (i != kLayerOff && j != kLayerOff)
+                m_pair->EnableCollision(i, j);
+    m_bpl = new JPH::BroadPhaseLayerInterfaceTable(kNumLayers, 2);
+    for (int i = 0; i < kNumLayers; ++i)
+        m_bpl->MapObjectToBroadPhaseLayer(i, JPH::BroadPhaseLayer(i % 2));
+    m_ovb = new JPH::ObjectVsBroadPhaseLayerFilterTable(*m_bpl, 2, *m_pair, kNumLayers);
 
     m_phys = new JPH::PhysicsSystem();
     m_phys->Init(1024, 0, 1024, 2048, *m_bpl, *m_ovb, *m_pair);
@@ -127,7 +138,7 @@ void RigidScene::buildBody(entt::entity e, const std::vector<ColliderDesc>& coll
     auto& bi = m_phys->GetBodyInterface();
     JPH::ShapeRefC shape = buildShape(colliders, t.scale);
     JPH::BodyCreationSettings cs(shape, JPH::RVec3(t.pos.x, t.pos.y, t.pos.z), jQuat(t.quat),
-                                JPH::EMotionType::Dynamic, 1);
+                                JPH::EMotionType::Dynamic, clampLayer(body.layer));
     cs.mFriction = body.friction;
     cs.mRestitution = body.restitution;
     cs.mLinearDamping = body.damping;
@@ -139,12 +150,13 @@ void RigidScene::buildBody(entt::entity e, const std::vector<ColliderDesc>& coll
     syncExcludes(e); // apply any collision exceptions registered before this body existed
 }
 
-void RigidScene::buildKinematic(entt::entity e, const std::vector<ColliderDesc>& colliders, const Transform& t) {
+void RigidScene::buildKinematic(entt::entity e, const std::vector<ColliderDesc>& colliders, const Transform& t,
+                                int layer) {
     if (colliders.empty())
         return;
     auto& bi = m_phys->GetBodyInterface();
     JPH::BodyCreationSettings cs(buildShape(colliders, t.scale), JPH::RVec3(t.pos.x, t.pos.y, t.pos.z), jQuat(t.quat),
-                                 JPH::EMotionType::Kinematic, 1);
+                                 JPH::EMotionType::Kinematic, clampLayer(layer));
     m_body[e] = bi.CreateAndAddBody(cs, JPH::EActivation::Activate);
     syncExcludes(e); // apply any collision exceptions registered before this body existed
 }
@@ -548,6 +560,7 @@ void RigidScene::syncScalars(entt::entity e, const RigidBody& rb) {
     const JPH::BodyID id = it->second;
     bi.SetFriction(id, rb.friction);
     bi.SetRestitution(id, rb.restitution);
+    bi.SetObjectLayer(id, clampLayer(rb.layer)); // self-locking + broadphase update; no-op when unchanged
     JPH::BodyLockWrite lock(m_phys->GetBodyLockInterface(), id);
     JPH::Body& b = lock.GetBody();
     JPH::MotionProperties* mp = b.GetMotionProperties();
@@ -588,7 +601,7 @@ void RigidScene::rebuildBody(entt::entity e, const entt::registry& reg, const Ri
 }
 
 void RigidScene::rebuildKinematic(entt::entity e, const entt::registry& reg, const std::vector<entt::entity>& cols,
-                                  const Transform& t) {
+                                  const Transform& t, int layer) {
     std::vector<entt::entity> joints;
     const auto it = m_body.find(e);
     if (it != m_body.end())
@@ -597,7 +610,7 @@ void RigidScene::rebuildKinematic(entt::entity e, const entt::registry& reg, con
         if (const auto* col = reg.try_get<Collider>(c))
             m_shape.erase(col->shape);
     removeBody(e);
-    buildKinematic(e, colliderDescs(reg, cols), t);
+    buildKinematic(e, colliderDescs(reg, cols), t, layer);
     rejoinJoints(joints, reg);
 }
 
@@ -679,12 +692,19 @@ void RigidScene::project(const entt::registry& reg) {
         if (a != m_applied.end() && !a->second.kinematic)
             continue;
         const uint64_t sh = shapeFingerprint(reg, kb.colliders);
-        if (a != m_applied.end() && a->second.body.colliders == kb.colliders && a->second.shapeHash == sh)
-            continue;
-        RigidBody rec;
-        rec.colliders = kb.colliders;
-        rebuildKinematic(e, reg, kb.colliders, *t);
-        m_applied[e] = appliedFor(rec, sh, true);
+        const int l = clampLayer(kb.layer);
+        const bool structural = a == m_applied.end() || a->second.body.colliders != kb.colliders ||
+                                a->second.shapeHash != sh;
+        if (structural) {
+            rebuildKinematic(e, reg, kb.colliders, *t, l);
+            RigidBody rec;
+            rec.colliders = kb.colliders;
+            rec.layer = l;
+            m_applied[e] = appliedFor(rec, sh, true);
+        } else if (a->second.body.layer != l) {
+            m_phys->GetBodyInterface().SetObjectLayer(m_body[e], l);
+            a->second.body.layer = l;
+        }
     }
     for (auto [e, j] : reg.view<Joint>().each()) {
         const auto it = m_jointIdx.find(e);
@@ -804,7 +824,7 @@ void RigidScene::interpolateInto(entt::registry& reg, float alpha) const {
 }
 
 RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist,
-                           const std::vector<entt::entity>& excludes) const {
+                           const std::vector<entt::entity>& excludes, int layer) const {
     RayHit out{};
     JPH::RRayCast ray(JPH::RVec3(origin.x, origin.y, origin.z), JPH::Vec3(dir.x, dir.y, dir.z) * maxDist);
     JPH::RayCastResult hit;
@@ -812,7 +832,8 @@ RayHit RigidScene::raycast(const V3& origin, const V3& dir, float maxDist,
     for (const entt::entity x : excludes)
         if (const auto it = m_body.find(x); it != m_body.end())
             filter.IgnoreBody(it->second);
-    if (!m_phys->GetNarrowPhaseQuery().CastRay(ray, hit, {}, {}, filter))
+    LayerFilter lf(layer < 0 ? -1 : clampLayer(layer)); // -1 = all layers
+    if (!m_phys->GetNarrowPhaseQuery().CastRay(ray, hit, {}, lf, filter))
         return out;
     const JPH::Vec3 hp = ray.GetPointOnRay(hit.mFraction);
     out.hit = true;

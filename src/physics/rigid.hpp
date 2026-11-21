@@ -46,7 +46,7 @@ public:
     void snapshotPose(entt::entity e, const Transform& p);
     void interpolateInto(entt::registry& reg, float alpha) const;
     RayHit raycast(const V3& origin, const V3& dir, float maxDist,
-                   const std::vector<entt::entity>& excludes = {}) const;
+                   const std::vector<entt::entity>& excludes = {}, int layer = -1) const;
     entt::entity entityFor(JPH::BodyID id) const;
     const JPH::Shape* shape(const entt::registry& reg, entt::entity e);
     void watch(entt::registry& reg);
@@ -64,7 +64,7 @@ private:
     static JPH::ShapeRefC buildShape(const std::vector<ColliderDesc>& colliders, const V3& scale);
     void buildBody(entt::entity e, const std::vector<ColliderDesc>& colliders, const RigidBody& body,
                    const Transform& t);
-    void buildKinematic(entt::entity e, const std::vector<ColliderDesc>& colliders, const Transform& t);
+    void buildKinematic(entt::entity e, const std::vector<ColliderDesc>& colliders, const Transform& t, int layer);
     bool makeJoint(entt::entity e, const Joint& j);
     bool makeSixDofJoint(entt::entity e, const SixDofJoint& j);
     void releaseJoint(int idx);
@@ -73,7 +73,7 @@ private:
     void syncScalars(entt::entity e, const RigidBody& rb);
     void rebuildBody(entt::entity e, const entt::registry& reg, const RigidBody& rb, const Transform& t);
     void rebuildKinematic(entt::entity e, const entt::registry& reg, const std::vector<entt::entity>& cols,
-                          const Transform& t);
+                          const Transform& t, int layer);
     std::vector<entt::entity> affectedJoints(JPH::BodyID id) const;
     void rejoinJoints(const std::vector<entt::entity>& list, const entt::registry& reg);
     void onBodyDestroyed(entt::registry&, entt::entity e);

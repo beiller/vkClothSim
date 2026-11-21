@@ -57,7 +57,7 @@ Do not edit by hand; re-run the generator after API changes. Every function must
   - [`graphics.render_texture(w: int, h: int, name?: string) -> entity`](#graphicsrendertexturew-int-h-int-name-string---entity)
 - [physics](#physics)
   - [`physics.fit_capsule(pos: number[], nrm?: number[], opts?: table) -> table, err`](#physicsfitcapsulepos-number-nrm-number-opts-table---table-err)
-  - [`physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table|nil`](#physicsraycastorigin-vec3-dir-vec3-maxdist-number-excludes-table---tablenil)
+  - [`physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table, layer?: int) -> table|nil`](#physicsraycastorigin-vec3-dir-vec3-maxdist-number-excludes-table-layer-int---tablenil)
   - [`physics.convex_decompose(mesh: entity|table, maxHulls?: number, maxVertsPerHull?: number, threshold?: number) -> table`](#physicsconvexdecomposemesh-entitytable-maxhulls-number-maxvertsperhull-number-threshold-number---table)
   - [`physics.collision_exception(a: entity, b: entity, on?: bool)`](#physicscollisionexceptiona-entity-b-entity-on-bool)
 - [soft](#soft)
@@ -366,9 +366,9 @@ if not fit then error(err) end
 for _, p in ipairs(fit.parts) do print(p.length, p.rms_error) end
 ```
 
-### `physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table) -> table|nil`
+### `physics.raycast(origin: vec3, dir: vec3, maxDist: number, excludes?: table, layer?: int) -> table|nil`
 
-rigid-body raycast against the Jolt world. Returns {hit = true, pos = {x,y,z}, dist = number, entity = entity} (entity omitted when the hit body has no owning entity), or nil when nothing is hit within maxDist. `excludes` is an array of entities whose colliders are skipped.
+rigid-body raycast against the Jolt world. Returns {hit = true, pos = {x,y,z}, dist = number, entity = entity} (entity omitted when the hit body has no owning entity), or nil when nothing is hit within maxDist. `excludes` is an array of entities whose colliders are skipped; `layer` restricts the cast to bodies on that collision layer (default: all layers, including kLayerOff = 7).
 
 ```lua
 local h = physics.raycast({0, 5, 0}, {0, -1, 0}, 10)
@@ -720,7 +720,7 @@ GPU PBD soft-body params: pinned (0=free, >0=pinned), solver steps/passes, mass/
 
 ### RigidBody
 
-Jolt dynamic body: friction/restitution/damping/mass, forceSleep, `colliders` = collider entities
+Jolt dynamic body: friction/restitution/damping/mass, forceSleep, `colliders` = collider entities; layer = collision object layer, 0..7 (default 1; 2 = UI window; 7 = off)
 
 | field | type | range | description |
 |---|---|---|---|
@@ -730,16 +730,18 @@ Jolt dynamic body: friction/restitution/damping/mass, forceSleep, `colliders` = 
 | mass | number | [0.0, 1000.0] | mass in kg (0 = static body) |
 | forceSleep | bool |  | force the body to sleep immediately |
 | colliders | entity[] |  | collider entities attached to this body |
+| layer | int |  | collision object layer 0..7; 7 (kLayerOff) disables all collisions for the body |
 | force | vec3 |  | persistent external force (N), applied every physics step until changed |
 | impulse | vec3 |  | one-shot impulse (N*s), applied on the next step then cleared to zero |
 
 ### KinematicBody
 
-Jolt kinematic (script-driven) body: `colliders` = collider entities
+Jolt kinematic (script-driven) body: `colliders` = collider entities; layer = collision object layer, 0..7 (default 1; 2 = UI window; 7 = off)
 
 | field | type | range | description |
 |---|---|---|---|
 | colliders | entity[] |  | collider entities attached to this body; move it by writing its Transform |
+| layer | int |  | collision object layer 0..7; 7 (kLayerOff) disables all collisions for the body |
 
 ### CapsuleShape
 

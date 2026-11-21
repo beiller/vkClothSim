@@ -177,9 +177,9 @@ local function grab()
             scene.get(ctrlH, "ControllerInput.aim_qz"), scene.get(ctrlH, "ControllerInput.aim_qw"),
         }
         local fwd = math.qrot(aq, {0, 0, -1})
-        -- exclude the kinematic anchor: the ray starts at its center and a convex self-hit
-        -- would otherwise always win at fraction 0
-        local hit = physics.raycast(aimWorld, fwd, kGrabRange, { handAnchor })
+        -- layer 2 only (UI windows) for now; the anchor is excluded because the ray starts at
+        -- its center and a convex self-hit would otherwise always win at fraction 0
+        local hit = physics.raycast(aimWorld, fwd, kGrabRange, { handAnchor }, 2)
         if hit and hit.entity and isDynamic(hit.entity) then
             -- welded SixDOF joint: all axes fixed at the grab pose. relQuat = object^-1 * hand
             -- (Jolt's rest state is q2 = q1 * r0, so r0 = bodyA * bodyB^-1 expressed as

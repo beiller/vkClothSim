@@ -302,7 +302,7 @@ M.kDebugVisuals = false
 local kLimitsPaths = { "assets/local/genesis8_bone_limits.json", "local/genesis8_bone_limits.json" }
 
 -- sub-ragdoll for a named bone set (hands/feet): one RigidBody + weld per bone; parents outside
--- the set resolve against boneEnt. Returns { bodies = { l, r }, joints = { l, r }, jointsByName = { l, r } }
+-- the set resolve against boneEnt. Returns { bodies = { l, r }, joints = { l, r }, jointsByName = { l, r }, limits }
 function M.createSubRagdoll(ch, char_prefix, boneEnt, boneNames, tag, opts, meshMaterialsCollisionShapes)
     opts = opts or {}
     local tone = { freq = opts.tone and opts.tone.freq or M.kToneFreq,
@@ -364,7 +364,7 @@ function M.createSubRagdoll(ch, char_prefix, boneEnt, boneNames, tag, opts, mesh
     end
 
     print(tag .. ": " .. #kFits .. " bones in " .. (#joints.l + #joints.r) .. " joints")
-    return { bodies = bodies, joints = joints, jointsByName = jointsByName }
+    return { bodies = bodies, joints = joints, jointsByName = jointsByName, limits = kLimits }
 end
 
 return M

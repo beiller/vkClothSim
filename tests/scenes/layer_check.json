@@ -1,0 +1,6 @@
+{
+    "name": "layer check",
+    "objects": [
+        { "name": "probe", "script": "layer_check" }
+    ]
+}

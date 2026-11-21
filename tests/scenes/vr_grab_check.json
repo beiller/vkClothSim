@@ -1,0 +1,6 @@
+{
+    "name": "vr grab check",
+    "objects": [
+        { "name": "probe", "script": "vr_grab_check" }
+    ]
+}

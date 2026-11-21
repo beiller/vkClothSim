@@ -99,7 +99,8 @@ Rules of thumb:
 
 ## Script modules
 
-A file attached with `scene.attach_script(e, file, params)` must **return a table**. The engine calls:
+A file attached with `scene.attach_script(e, file, params)` should **return a table**: hooks and bindable
+vars are looked up on the returned module (with no return, the file's environment table is used). The engine calls:
 
 | hook | when | use for |
 |---|---|---|

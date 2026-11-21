@@ -183,7 +183,8 @@ static const FieldDesc kSoftBodyData[] = {
     /// pin target source mesh entity (null = the body's own current positions); refreshed by soft.update_pins
     {"pinSrc", OFF(SoftBodyData, pinSrc), FieldKind::Ref},
 };
-/// RigidBody | Jolt dynamic body: friction/restitution/damping/mass, forceSleep, `colliders` = collider entities
+/// RigidBody | Jolt dynamic body: friction/restitution/damping/mass, forceSleep, `colliders` = collider entities;
+/// layer = collision object layer, 0..7 (default 1; 2 = UI window; 7 = off)
 static const FieldDesc kRigidBody[] = {
     /// Coulomb friction coefficient 0..1
     {"friction", OFF(RigidBody, friction), FieldKind::SliderF, 0.0f, 1.0f},
@@ -197,15 +198,20 @@ static const FieldDesc kRigidBody[] = {
     {"forceSleep", OFF(RigidBody, forceSleep), FieldKind::Checkbox},
     /// collider entities attached to this body
     {"colliders", OFF(RigidBody, colliders), FieldKind::EntArr},
+    /// collision object layer 0..7; 7 (kLayerOff) disables all collisions for the body
+    {"layer", OFF(RigidBody, layer), FieldKind::SliderI, 0.0f, kNumLayers - 1.0f},
     /// persistent external force (N), applied every physics step until changed
     {"force", OFF(RigidBody, force), FieldKind::DragV3},
     /// one-shot impulse (N*s), applied on the next step then cleared to zero
     {"impulse", OFF(RigidBody, impulse), FieldKind::DragV3},
 };
-/// KinematicBody | Jolt kinematic (script-driven) body: `colliders` = collider entities
+/// KinematicBody | Jolt kinematic (script-driven) body: `colliders` = collider entities;
+/// layer = collision object layer, 0..7 (default 1; 2 = UI window; 7 = off)
 static const FieldDesc kKinematicBody[] = {
     /// collider entities attached to this body; move it by writing its Transform
     {"colliders", OFF(KinematicBody, colliders), FieldKind::EntArr},
+    /// collision object layer 0..7; 7 (kLayerOff) disables all collisions for the body
+    {"layer", OFF(KinematicBody, layer), FieldKind::SliderI, 0.0f, kNumLayers - 1.0f},
 };
 /// CapsuleShape | capsule collider shape: halfLen + radius
 static const FieldDesc kCapsuleShape[] = {

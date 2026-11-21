@@ -3,7 +3,7 @@
 #include <cmath>
 
 // verifies the eyeVP pipeline (projFov * poseView) maps known world points to the
-// expected NDC, using the lua_skin camera (pos 1.25,0.5,3; fov 50deg; identity quat)
+// expected NDC, using a fixed camera (pos 1.25,0.5,3; fov 50deg; identity quat)
 int main() {
     const V3 camPos{1.25f, 0.5f, 3.0f};
     const Quat camQuat{1.0f, 0.0f, 0.0f, 0.0f};

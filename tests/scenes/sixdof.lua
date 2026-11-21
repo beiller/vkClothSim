@@ -1,7 +1,14 @@
 -- SixDofJoint test: a box welded to the world (all axes fixed) must not fall;
--- a Y-pinned box floats but is free in X/Z and rotation; a control box falls.
+-- a Y-pinned box floats but is free in X/Z and rotation; a control box falls; a box welded to a
+-- MOVING kinematic anchor follows it rigidly (folded in from weld_check).
 
 local kFree = 1e30
+
+local function qangle(a, b)
+    local d = a[1] * b[1] + a[2] * b[2] + a[3] * b[3] + a[4] * b[4]
+    if d > 1 then d = 1 elseif d < -1 then d = -1 end
+    return 2 * math.acos(math.abs(d))
+end
 
 local function boxBody(name, px, py, pz, mat)
     local g = scene.entity()
@@ -23,6 +30,7 @@ local function y(e)
 end
 
 local welded, slider, control, lim, motored, live, jlive
+local hand2, obj2, Qh, Qo, r30, y30
 local n = 0
 
 function _on_ready(self)
@@ -87,6 +95,50 @@ function _on_ready(self)
         limOn = 1,
         limTransMin = { -kFree, -kFree, -kFree }, limTransMax = { kFree, kFree, kFree },
         limAngMin = { -kFree, -kFree, -kFree }, limAngMax = { kFree, kFree, kFree } })
+
+    -- moving-anchor weld (from weld_check): a kinematic "hand" carries a welded box; the box must
+    -- follow rigidly (position + relative orientation) when the hand translates and rolls
+    Qh = math.qaxis({ 0, 1, 0 }, 0.5)
+    hand2 = scene.entity("weld_hand")
+    scene.replace(hand2, "Transform", { pos = { 10, 5, 0 }, quat = Qh })
+    local hs = scene.entity()
+    scene.replace(hs, "CapsuleShape", { halfLen = 0.06, radius = 0.03 })
+    local hc = scene.entity()
+    scene.replace(hc, "Collider", { shape = hs })
+    scene.replace(hand2, "KinematicBody", { colliders = { hc } })
+    Qo = math.qaxis({ 1, 0, 0 }, 0.9)
+    local s2 = scene.entity()
+    scene.replace(s2, "BoxShape", { half = { 0.5, 0.5, 0.5 } })
+    local c2 = scene.entity()
+    scene.replace(c2, "Collider", { shape = s2 })
+    obj2 = scene.entity("weld_obj")
+    scene.replace(obj2, "Transform", { pos = { 10, 5, 2 }, quat = Qo })
+    scene.replace(obj2, "RigidBody", { colliders = { c2 } })
+end
+
+local tick = 0
+function _physics(self, dt)
+    tick = tick + 1
+    if tick == 5 then
+        local relQ = math.qmul(math.qinv(Qo), Qh) -- qinv(bodyB)*bodyA: rigid carry, no snap
+        local j = scene.entity()
+        scene.replace(j, "SixDofJoint", {
+            bodyA = hand2, bodyB = obj2, grabPos = { 10, 5, 2 }, relQuat = relQ, limOn = 1,
+            limTransMin = { 0, 0, 0 }, limTransMax = { 0, 0, 0 },
+            limAngMin = { 0, 0, 0 }, limAngMax = { 0, 0, 0 } })
+    elseif tick == 30 then
+        local hq = scene.world_pose(hand2).quat
+        r30 = math.qmul(math.qinv(hq), scene.world_pose(obj2).quat)
+        y30 = scene.world_pose(obj2).pos[2]
+    elseif tick == 31 then
+        scene.replace(hand2, "Transform", { pos = { 10, 7, 0 }, quat = math.qmul(math.qaxis({ 0, 0, 1 }, 0.5), Qh) })
+    elseif tick == 60 then
+        local hq = scene.world_pose(hand2).quat
+        local r60 = math.qmul(math.qinv(hq), scene.world_pose(obj2).quat)
+        t.check("weld: obj held at ~5", math.abs(y30 - 5.0) < 0.2)
+        t.check("weld: obj follows hand to ~7", math.abs(scene.world_pose(obj2).pos[2] - 7.0) < 0.2)
+        t.check("weld: rel drift ~0", qangle(r60, r30) < 0.05)
+    end
 end
 
 function _animate(self, dt)

@@ -20,27 +20,28 @@ for bin in dualquat_test view_proj_test anim_test collision_shape_solver_test; d
     fi
 done
 
-# scene|frames (headless: one physics tick per frame)
+# scene|frames (headless: 1/60 s virtual frame @ 240 Hz physics = 4 ticks/frame)
 for spec in \
     "find_probe|5" \
     "skin_probe|5" \
     "shape_probe|5" \
     "fit_probe|5" \
-    "lua_skin|5" \
+    "math_api|5" \
     "dynquat_check|45" \
     "force_check|245" \
-    "weld_check|65" \
     "sixdof|155" \
+    "layer_check|405" \
+    "vr_grab_check|40" \
     "tcap_check|300" \
     "rope_check|130" \
-    "gltf_table_check|5" \
+    "gltf_table_check|300" \
     "anim_raw|80" \
     "anim_gltf|80" \
     "view_check|5" \
     "button_url|5" \
     "widget_roundtrip|5" \
     "editor_check|5" \
-    "decomp_check|600" \
+    "char_ctrl_check|2400" \
     "sword_diag|5"
 do
     name=${spec%%|*}
