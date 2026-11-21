@@ -135,7 +135,7 @@ function M.update(dt, dir, wantJump, run)
     pos[1] = pos[1] + vx * dt
     pos[3] = pos[3] + vz * dt
     if len > 1e-4 then
-        q = math.qaxis({ 0, 1, 0 }, math.atan2(dx, dz)) -- face input; rotation lock carries it to the capsule
+        q = math.qaxis({ 0, 1, 0 }, math.atan(dx, dz)) -- face input; rotation lock carries it to the capsule (atan(y, x) since Lua 5.3)
     end
     scene.replace(S.ghost, "Transform", { pos = pos, quat = q })
 

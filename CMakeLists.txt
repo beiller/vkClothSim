@@ -97,17 +97,25 @@ set(JPH_USE_DX12 OFF)
 set(JPH_USE_CPU_COMPUTE OFF)
 include(${PHYSICS_REPO_ROOT}/Jolt/Jolt.cmake)
 
-find_path(LUA_INCLUDE_DIR lua.hpp PATH_SUFFIXES lua5.4)
-find_library(LUA_LIBRARY NAMES lua5.4 lua)
-if(NOT LUA_INCLUDE_DIR OR NOT LUA_LIBRARY)
-    message(FATAL_ERROR "Lua 5.4 not found (need lua5.4 dev headers + lib)")
+# Lua 5.4 is vendored via fetch_libs.sh: build the interpreter as a static lib from the .c
+# files at the repo root (minus the standalone lua/luac/onelua binaries and the ltests
+# harness). Headers sit next to the sources, so #include <lua.hpp> resolves against lib/lua.
+set(LUA_DIR ${CMAKE_SOURCE_DIR}/lib/lua)
+if(NOT EXISTS ${LUA_DIR}/lua.hpp)
+    message(FATAL_ERROR "lib/lua missing - run ./fetch_libs.sh")
 endif()
+file(GLOB LUA_SRC ${LUA_DIR}/*.c)
+list(FILTER LUA_SRC EXCLUDE REGEX ".*/(lua|luac|onelua|ltests)\\.c$")
+add_library(lua54 STATIC ${LUA_SRC})
+target_include_directories(lua54 PUBLIC ${LUA_DIR})
 
 # third-party (object/static)
 add_library(tinygltf_v3 STATIC ${CMAKE_SOURCE_DIR}/lib/tinygltf/tiny_gltf_v3.c)
 target_include_directories(tinygltf_v3 PUBLIC ${CMAKE_SOURCE_DIR}/lib/tinygltf)
 add_library(tinyexr STATIC ${CMAKE_SOURCE_DIR}/lib/tinyexr/tinyexr.cc)
-target_include_directories(tinyexr PUBLIC ${CMAKE_SOURCE_DIR}/lib/tinyexr)
+# tinyexr.h defaults TINYEXR_USE_MINIZ to 1 and does #include <miniz.h>, so miniz's headers
+# must be visible here and to every consumer of tinyexr.h.
+target_include_directories(tinyexr PUBLIC ${CMAKE_SOURCE_DIR}/lib/tinyexr ${CMAKE_SOURCE_DIR}/lib/miniz)
 add_library(miniz STATIC ${CMAKE_SOURCE_DIR}/lib/miniz/miniz.c)
 target_include_directories(miniz PUBLIC ${CMAKE_SOURCE_DIR}/lib/miniz)
 # CoACD (approximate convex decomposition, SIGGRAPH'22). Built in "OFF" mode: no boost/
@@ -117,13 +125,19 @@ list(FILTER COACD_SRC EXCLUDE REGEX ".*/preprocess.*")
 add_library(coacd STATIC ${COACD_SRC} ${CMAKE_SOURCE_DIR}/lib/coacd/public/coacd.cpp)
 target_compile_features(coacd PRIVATE cxx_std_20)
 target_include_directories(coacd PUBLIC ${CMAKE_SOURCE_DIR}/lib/coacd/public
-                                     PRIVATE ${CMAKE_SOURCE_DIR}/lib/coacd/3rd/cdt/CDT/include)
+                                      PRIVATE ${CMAKE_SOURCE_DIR}/lib/coacd/3rd/cdt/CDT/include)
 target_compile_definitions(coacd PRIVATE WITH_3RD_PARTY_LIBS=0 DISABLE_SPDLOG WITH_STD_THREADS=1)
+# upstream logger.h's no-spdlog fallback uses std::cout/ostream without including <iostream>
+# (compiles on libstdc++ via transitive includes, breaks on libc++); force-include it so the
+# fix survives a fetch_libs.sh --force re-fetch.
+target_compile_options(coacd PRIVATE -include iostream)
 find_package(Threads REQUIRED)
 target_link_libraries(coacd PUBLIC Threads::Threads)
 add_library(imgui STATIC ${IMGUI_SOURCES})
 target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
-target_link_libraries(imgui PRIVATE glfw)
+# imgui_impl_vulkan.cpp includes <vulkan/vulkan.h>, so the Vulkan headers must be on imgui's own
+# include path (linking Vulkan::Vulkan into 3dsim_ui is not enough for compiling the backend).
+target_link_libraries(imgui PRIVATE glfw Vulkan::Vulkan)
 target_compile_features(imgui PRIVATE cxx_std_23)
 
 # subsystem libraries
@@ -193,8 +207,10 @@ add_library(3dsim_script STATIC
     src/script/api_ui.cpp
     src/script/api_engine.cpp)
 target_compile_features(3dsim_script PRIVATE cxx_std_23)
-target_include_directories(3dsim_script PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/ui ${LUA_INCLUDE_DIR})
-target_link_libraries(3dsim_script PUBLIC 3dsim_core 3dsim_io 3dsim_solvers 3dsim_graphics 3dsim_ui 3dsim_physics PRIVATE Jolt::Jolt ${LUA_LIBRARY})
+target_include_directories(3dsim_script PRIVATE ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/ui)
+# Vulkan::Vulkan is linked directly (not via 3dsim_graphics, which keeps it PRIVATE): the script
+# APIs include app/engine.hpp -> vk/graphics_server.hpp -> <vulkan/vulkan.h>.
+target_link_libraries(3dsim_script PUBLIC 3dsim_core 3dsim_io 3dsim_solvers 3dsim_graphics 3dsim_ui 3dsim_physics PRIVATE Jolt::Jolt Vulkan::Vulkan lua54)
 
 # the app: glue (main loop, systems, scene loading) + all subsystems
 add_executable(vksim
@@ -205,7 +221,7 @@ target_compile_features(vksim PRIVATE cxx_std_23)
 target_include_directories(vksim PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/vk ${CMAKE_SOURCE_DIR}/src/gpu_sim ${CMAKE_SOURCE_DIR}/src/ui ${XR_INCLUDES} ${GEN_DIR})
 target_link_libraries(vksim PRIVATE
     3dsim_script 3dsim_physics 3dsim_graphics 3dsim_xr 3dsim_io
-    glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB dl ${LUA_LIBRARY})
+    glfw Vulkan::Vulkan Jolt::Jolt ZLIB::ZLIB dl lua54)
 
 # CPU self-test for the ported dual-quaternion math (Blender ground truth). Build with -Dvksim's
 # default; run ./build/dualquat_test (no GPU needed).

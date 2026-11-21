@@ -15,6 +15,7 @@
 #   tinyexr  github.com/syoyo/tinyexr              v1.0.3          1.0.x
 #   miniz    github.com/syoyo/tinyexr (deps/miniz) v1.0.3          miniz 2.x
 #   tinygltf github.com/syoyo/tinygltf (glTF v3 C) 0d9ce1a         glTF 2.0 parser
+#   lua      github.com/lua/lua                  v5.4.9          5.4.9
 #   coacd    github.com/SarahWeiii/CoACD          1.0.9           CoACD 1.0.9
 #   cdt      github.com/artem-ogre/CDT            ec03b309        CDT (CoACD's pinned dep)
 #
@@ -96,6 +97,21 @@ fetch_files miniz https://github.com/syoyo/tinyexr v1.0.3 deps/miniz/miniz.h dep
 fetch_files tinygltf https://github.com/syoyo/tinygltf 0d9ce1a9561688c6c6e7471430d15a50a0b15f1a \
     tiny_gltf_v3.h tiny_gltf_v3.c tinygltf_json_c.h LICENSE
 
+# Lua: the git repo has the C sources at its root (no src/ dir, that's a tarball layout) and
+# ships no lua.hpp (also tarball-only). Our code does #include <lua.hpp>, so add the standard
+# C++ wrapper after fetching.
+fetch_full lua https://github.com/lua/lua v5.4.9
+cat > lib/lua/lua.hpp <<'EOF'
+// lua.hpp
+// Lua C++ header wrapper
+
+extern "C" {
+#include "lua.h"
+#include "lualib.h"
+#include "lauxlib.h"
+}
+EOF
+
 # CoACD (approximate convex decomposition). Its CDT dependency is a git submodule, which a
 # plain clone does not fetch, so we clone it separately into the nested path the build uses.
 fetch_full coacd https://github.com/SarahWeiii/CoACD 1.0.9
@@ -118,6 +134,67 @@ if [ ! -e "lib/coacd/3rd/cdt/CDT/CMakeLists.txt" ] || [ "$FORCE" -eq 1 ]; then
     rm -rf "lib/coacd/3rd/cdt/CDT/.git" "$tmp"
 fi
 
+# CoACD v1.0.9's public/coacd.cpp unconditionally includes src/preprocess.h (openvdb) and calls
+# ManifoldPreprocess()/spdlog, so upstream's "no 3rd-party libs" mode does not compile. We build
+# that mode, so patch the fetched copy: guard those parts behind WITH_3RD_PARTY_LIBS /
+# DISABLE_SPDLOG. The engine always runs CoACD with preprocess "off", so the guarded-out paths
+# are unreachable at runtime. Idempotent; fails loudly if the upstream text changes.
+python3 - <<'PYEOF'
+import pathlib, sys
+p = pathlib.Path("lib/coacd/public/coacd.cpp")
+s = p.read_text()
+if '#if WITH_3RD_PARTY_LIBS\n#include "../src/preprocess.h"' in s:
+    print("  [skip] lib/coacd/public/coacd.cpp already patched")
+    sys.exit(0)
+repls = [
+    ('#include "../src/preprocess.h"',
+     '#if WITH_3RD_PARTY_LIBS\n#include "../src/preprocess.h"\n#endif'),
+    ('''  if (params.preprocess_mode == std::string("auto")) {
+    bool is_manifold = IsManifold(m);
+    logger::info("Mesh Manifoldness: {}", is_manifold);
+    if (!is_manifold)
+      ManifoldPreprocess(params, m);
+  } else if (params.preprocess_mode == std::string("on")) {
+    ManifoldPreprocess(params, m);
+  }''',
+     '''#if WITH_3RD_PARTY_LIBS
+  if (params.preprocess_mode == std::string("auto")) {
+    bool is_manifold = IsManifold(m);
+    logger::info("Mesh Manifoldness: {}", is_manifold);
+    if (!is_manifold)
+      ManifoldPreprocess(params, m);
+  } else if (params.preprocess_mode == std::string("on")) {
+    ManifoldPreprocess(params, m);
+  }
+#else
+  if (params.preprocess_mode != std::string("off")) {
+    throw std::runtime_error("CoACD: preprocessing requires a WITH_3RD_PARTY_LIBS build");
+  }
+#endif'''),
+    ('void set_log_level(std::string_view level) {\n  if (level == "off") {',
+     'void set_log_level(std::string_view level) {\n#ifndef DISABLE_SPDLOG\n  if (level == "off") {'),
+    ('''    throw std::runtime_error("invalid log level " + std::string(level));
+  }
+}
+
+} // namespace coacd''',
+     '''    throw std::runtime_error("invalid log level " + std::string(level));
+  }
+#else
+  (void)level; // no spdlog in this build: nothing to configure
+#endif
+}
+
+} // namespace coacd'''),
+]
+for old, new in repls:
+    if old not in s:
+        sys.exit("error: coacd.cpp patch target not found (upstream changed? adjust the patch):\n" + old[:100])
+    s = s.replace(old, new, 1)
+p.write_text(s)
+print("  [patch] lib/coacd/public/coacd.cpp (OFF-mode guards)")
+PYEOF
+
 # sanity: each lib's key file is present and non-empty
 for f in \
     lib/entt/single_include/entt/entt.hpp \
@@ -132,6 +209,8 @@ for f in \
     lib/miniz/miniz.h \
     lib/tinygltf/tiny_gltf_v3.h \
     lib/tinygltf/tiny_gltf_v3.c \
+    lib/lua/lua.hpp \
+    lib/lua/lapi.c \
     lib/coacd/public/coacd.h \
     lib/coacd/CMakeLists.txt \
     lib/coacd/3rd/cdt/CDT/CMakeLists.txt
