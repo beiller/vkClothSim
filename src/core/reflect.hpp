@@ -479,7 +479,7 @@ static const FieldDesc kAnimationClip[] = {
     {"tangents", OFF(AnimationClip, tangents), FieldKind::FloatArr},
 };
 /// AnimationPlayer | plays an AnimationClip: `clip` = clip entity ref, time/speed, loop 0=once 1=loop 2=pingpong,
-/// playing start/stop
+/// playing start/stop, strength contribution weight (players sharing a target field blend by relative weight)
 static const FieldDesc kAnimationPlayer[] = {
     /// the AnimationClip entity to play
     {"clip", OFF(AnimationPlayer, clip), FieldKind::Ref},
@@ -491,6 +491,9 @@ static const FieldDesc kAnimationPlayer[] = {
     {"loop", OFF(AnimationPlayer, loop), FieldKind::SliderI, 0.0f, 2.0f},
     /// pause/resume playback
     {"playing", OFF(AnimationPlayer, playing), FieldKind::Checkbox},
+    /// contribution weight: pull factor toward the sampled pose (0 = no-op, 1 = full); multiple players on the
+    /// same field blend by relative weight (crossfade) - ANIMATION_BLEND_PLAN.md
+    {"strength", OFF(AnimationPlayer, strength), FieldKind::SliderF, 0.0f, 1.0f},
 };
 
 /// UIWidget | marker for a drawable UI widget; `order` is its layout position among siblings

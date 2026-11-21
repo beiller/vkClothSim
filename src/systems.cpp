@@ -5,6 +5,7 @@
 #include "ecs_ops.hpp"
 #include "url.hpp"
 #include "vk/vkapp.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -281,9 +282,40 @@ bool uiPanelUv(const entt::registry& reg, entt::entity canvas, const V3& hitPos,
     return true;
 }
 
+namespace {
+// One playing player with a valid clip this tick (wrapped time + weight captured up front).
+struct AnimActive {
+    AnimationClip* c;
+    float t;        // wrapped playback time after this tick's advance
+    float strength; // contribution weight
+};
+
+// Pull the current value at base toward smp by s (0 = keep, 1 = take). Quats slerp the short way;
+// everything else lerps per component. In-place safe: each output component reads its own input first.
+void applyAnimBlend(void* base, FieldKind kind, int width, const float* smp, float s) {
+    if (s >= 1.0f) {
+        std::memcpy(base, smp, (size_t)width * 4);
+        return;
+    }
+    float* cur = (float*)base;
+    if (kind == FieldKind::Quat) {
+        animQuatSlerp(cur, smp, s, cur);
+        return;
+    }
+    for (int k = 0; k < width; ++k)
+        cur[k] += s * (smp[k] - cur[k]);
+}
+} // namespace
+
 // advance all players and sample their clips into the target fields (before world flattening, so
-// animated joints feed this frame's resolveWorldTransforms); lazy glTF parse on first step
+// animated joints feed this frame's resolveWorldTransforms).
+//
+// Blending: when several playing players drive the same target field, their samples are combined by
+// relative strength and the result is pulled toward the current value by the total weight (clamped to
+// 1) - a crossfade that degrades to a plain fade for a lone player. A single full-strength player takes
+// the legacy direct-write path (bit-identical output, no extra work). See ANIMATION_BLEND_PLAN.md.
 void stepAnimations(entt::registry& reg, float dt) {
+    std::vector<AnimActive> actives;
     for (auto [e, p] : reg.view<AnimationPlayer>().each()) {
         if (!p.playing)
             continue;
@@ -295,7 +327,96 @@ void stepAnimations(entt::registry& reg, float dt) {
         if (c->duration <= 0.0f || c->targets.empty())
             continue;
         p.time += dt * p.speed;
-        animStepClip(reg, *c, animWrap(p.time, c->duration, p.loop));
+        actives.push_back({c, animWrap(p.time, c->duration, p.loop), p.strength});
+    }
+    if (actives.empty())
+        return;
+
+    // Fast path: one full-strength player -> direct writes, exactly the legacy behavior.
+    if (actives.size() == 1 && actives[0].strength >= 1.0f) {
+        animStepClip(reg, *actives[0].c, actives[0].t);
+        return;
+    }
+
+    // Blend path, pass 1: sample every active player's tracks into contributions keyed by target pointer.
+    struct Contrib {
+        void* base;
+        FieldKind kind;
+        int width;
+        float weight;
+        float smp[4];
+    };
+    std::vector<Contrib> contribs;
+    for (const auto& a : actives) {
+        std::vector<AnimTrack> trks;
+        animResolveTracks(reg, *a.c, trks);
+        for (const auto& k : trks) {
+            if (!k.ok)
+                continue;
+            Contrib cb{};
+            cb.base = k.u.base;
+            cb.kind = k.u.field->kind;
+            cb.width = k.wf;
+            cb.weight = a.strength;
+            animSampleTrack(*a.c, k, a.t, cb.smp);
+            contribs.push_back(std::move(cb));
+        }
+    }
+
+    // Pass 2: resolve each target once - weighted mix of the samples, pulled toward current by sumW.
+    struct Target {
+        void* base;
+        FieldKind kind;
+        int width;
+        float sumW = 0.0f;
+        std::vector<size_t> idx; // indices into contribs
+    };
+    std::vector<Target> targets;
+    for (size_t i = 0; i < contribs.size(); ++i) { // n is small (tracks of the active players); linear scan
+        Target* tg = nullptr;
+        for (auto& t : targets)
+            if (t.base == contribs[i].base) {
+                tg = &t;
+                break;
+            }
+        if (!tg) {
+            targets.push_back({contribs[i].base, contribs[i].kind, contribs[i].width, 0.0f, {}});
+            tg = &targets.back();
+        }
+        tg->idx.push_back(i);
+        tg->sumW += contribs[i].weight;
+    }
+    for (auto& tg : targets) {
+        if (tg.sumW <= 0.0f)
+            continue; // no effective contribution: hold the current value
+        const float pull = std::min(tg.sumW, 1.0f);
+        if (tg.idx.size() == 1) {
+            applyAnimBlend(tg.base, tg.kind, tg.width, contribs[tg.idx[0]].smp, pull);
+            continue;
+        }
+        float mix[4] = {};
+        if (tg.kind == FieldKind::Quat) {
+            // weighted slerp chain: fold lighter samples into the heavier result
+            std::sort(tg.idx.begin(), tg.idx.end(),
+                      [&](size_t a, size_t b) { return contribs[a].weight > contribs[b].weight; });
+            std::memcpy(mix, contribs[tg.idx[0]].smp, 16);
+            float accW = contribs[tg.idx[0]].weight;
+            for (size_t j = 1; j < tg.idx.size(); ++j) {
+                const Contrib& cb = contribs[tg.idx[j]];
+                if (cb.weight <= 0.0f || accW <= 0.0f)
+                    continue;
+                animQuatSlerp(mix, cb.smp, cb.weight / (accW + cb.weight), mix);
+                accW += cb.weight;
+            }
+        } else {
+            for (int k = 0; k < tg.width; ++k) {
+                float s = 0.0f;
+                for (size_t j : tg.idx)
+                    s += contribs[j].smp[k] * contribs[j].weight;
+                mix[k] = s / tg.sumW;
+            }
+        }
+        applyAnimBlend(tg.base, tg.kind, tg.width, mix, pull);
     }
 }
 

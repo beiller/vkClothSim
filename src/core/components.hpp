@@ -295,6 +295,8 @@ struct AnimationPlayer {
     float time = 0.0f, speed = 1.0f;
     int loop = 1;         // 0=once(clamp), 1=loop, 2=pingpong
     bool playing = false; // paused by default: imported clips start only when explicitly started
+    float strength = 1.0f;// contribution weight (0 = no-op, 1 = full). Multiple players driving the same
+                          // target field blend by relative weight (crossfade) - ANIMATION_BLEND_PLAN.md
 };
 
 struct Texture {

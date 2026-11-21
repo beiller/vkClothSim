@@ -152,19 +152,27 @@ inline void animSample(const float* times, const float* values, const float* tan
         out[k] = v0[k] + f * (v1[k] - v0[k]);
 }
 
-// sample all of a clip's tracks at the (already wrapped) time t and write them to their targets.
-// Value/tangent segments are concatenated per track; offsets accumulate using each track's own width.
-inline void animStepClip(const entt::registry& reg, AnimationClip& c, float t) {
+// A resolved clip track: keyframe range + value/tangent offsets + resolved target. Shared by the
+// direct-write path (animStepClip) and the blend path (stepAnimations).
+struct AnimTrack {
+    UrlRef u;
+    int wf = 0; // floats per keyframe value (0 = unresolved or not animatable)
+    size_t start = 0; // keyframes [start, start+n) of c.times
+    int n = 0;
+    size_t vOff = 0; // offset into c.values
+    int interp = 0;
+    const float* tangents = nullptr; // into c.tangents (valid while c lives)
+    bool ok = false;                 // resolvable + animatable + values segment present: sample this track
+};
+
+// Resolve every track of a clip so all widths are known for the offset math. Value/tangent segments are
+// concatenated per track; offsets accumulate using each track's own width (an unresolved track assumes
+// vec3, so offsets after it may drift - same as before).
+inline void animResolveTracks(const entt::registry& reg, const AnimationClip& c, std::vector<AnimTrack>& trks) {
     const size_t nT = c.targets.size();
-    struct Trk {
-        UrlRef u;
-        int wf = 0; // floats per keyframe value (0 = unresolved or not animatable)
-        size_t start = 0;
-        int n = 0;
-    };
-    std::vector<Trk> trks(nT);
-    for (size_t i = 0; i < nT; ++i) { // resolve every track so all widths are known for offset math
-        Trk& k = trks[i];
+    trks.assign(nT, AnimTrack{});
+    for (size_t i = 0; i < nT; ++i) {
+        AnimTrack& k = trks[i];
         if (c.trackStart.size() >= nT + 1) {
             k.start = (size_t)c.trackStart[i];
             k.n = (int)(c.trackStart[i + 1] - c.trackStart[i]);
@@ -187,7 +195,7 @@ inline void animStepClip(const entt::registry& reg, AnimationClip& c, float t) {
     }
     size_t vOff = 0, tanBase = 0;
     for (size_t i = 0; i < nT; ++i) {
-        const Trk& k = trks[i];
+        AnimTrack& k = trks[i];
         if (k.n < 1)
             continue;
         const int wf = k.wf > 0 ? k.wf : 3; // unresolved width: assume vec3, offsets after this track may drift
@@ -198,14 +206,28 @@ inline void animStepClip(const entt::registry& reg, AnimationClip& c, float t) {
         }
         if (vOff + (size_t)k.n * (size_t)wf > c.values.size())
             continue; // values segment too short for this field width
-        const int interp = i < c.interps.size() ? (int)c.interps[i] : 0;
+        k.vOff = vOff;
+        k.interp = i < c.interps.size() ? (int)c.interps[i] : 0;
         const size_t tanSeg = (k.n > 1 ? (size_t)2 * (size_t)(k.n - 1) : 0) * (size_t)wf;
-        const float* tangents = nullptr;
         if (!c.tangents.empty() && tanBase + tanSeg <= c.tangents.size())
-            tangents = c.tangents.data() + tanBase;
-        animSample(c.times.data() + k.start, c.values.data() + vOff, tangents, k.n, wf, interp,
-                   k.u.field->kind == FieldKind::Quat, t, (float*)k.u.base);
+            k.tangents = c.tangents.data() + tanBase;
+        k.ok = true;
         vOff += (size_t)k.n * (size_t)wf;
         tanBase += tanSeg;
     }
+}
+
+// sample one resolved track at time t into out (width floats); quat targets slerp
+inline void animSampleTrack(const AnimationClip& c, const AnimTrack& k, float t, float* out) {
+    animSample(c.times.data() + k.start, c.values.data() + k.vOff, k.tangents, k.n, k.wf, k.interp,
+               k.u.field->kind == FieldKind::Quat, t, out);
+}
+
+// sample all of a clip's tracks at the (already wrapped) time t and write them to their targets
+inline void animStepClip(const entt::registry& reg, AnimationClip& c, float t) {
+    std::vector<AnimTrack> trks;
+    animResolveTracks(reg, c, trks);
+    for (const auto& k : trks)
+        if (k.ok)
+            animSampleTrack(c, k, t, (float*)k.u.base);
 }
